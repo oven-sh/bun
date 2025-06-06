@@ -573,7 +573,7 @@ pub const Style = union(enum) {
                 if (is_optional and !is_catch_all)
                     return log.fail("Optional parameters can only be catch-all (change to \"[[...{s}]]\" or remove extra brackets)", .{param_name}, start, len);
                 // Potential future proofing
-                if (std.mem.indexOfAny(u8, param_name, "?*{}()=:#,")) |bad_char_index|
+                if (bun.strings.indexOfAny(param_name, "?*{}()=:#,")) |bad_char_index|
                     return log.fail("Parameter name cannot contain \"{c}\"", .{param_name[bad_char_index]}, start + bad_char_index, 1);
 
                 if (has_ending_double_bracket and !is_optional)
@@ -1094,14 +1094,14 @@ pub const JSFrameworkRouter = struct {
 
     const validators = bun.JSC.Node.validators;
 
-    pub fn getBindings(global: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSObject.create(.{
+    pub fn getBindings(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        return (try JSC.JSObject.create(.{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
             .FrameworkRouter = js.getConstructor(global),
-        }, global).toJS();
+        }, global)).toJS();
     }
 
-    pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !*JSFrameworkRouter {
+    pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*JSFrameworkRouter {
         const opts = callframe.argumentsAsArray(1)[0];
         if (!opts.isObject())
             return global.throwInvalidArguments("FrameworkRouter needs an object as it's first argument", .{});
@@ -1144,7 +1144,7 @@ pub const JSFrameworkRouter = struct {
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
         );
         if (jsfr.stored_parse_errors.items.len > 0) {
-            const arr = JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
+            const arr = try JSValue.createEmptyArray(global, jsfr.stored_parse_errors.items.len);
             for (jsfr.stored_parse_errors.items, 0..) |*item, i| {
                 arr.putIndex(
                     global,
@@ -1176,7 +1176,7 @@ pub const JSFrameworkRouter = struct {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 
-            return JSC.JSObject.create(.{
+            return (try JSC.JSObject.create(.{
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
@@ -1187,7 +1187,7 @@ pub const JSFrameworkRouter = struct {
                     break :params obj;
                 } else .null,
                 .route = try jsfr.routeToJsonInverse(global, index, alloc),
-            }, global).toJS();
+            }, global)).toJS();
         }
 
         return .null;
@@ -1204,7 +1204,7 @@ pub const JSFrameworkRouter = struct {
 
     fn routeToJson(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return JSC.JSObject.create(.{
+        return (try JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1214,7 +1214,7 @@ pub const JSFrameworkRouter = struct {
                 var next = route.first_child.unwrap();
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap())
                     len += 1;
-                const arr = JSValue.createEmptyArray(global, len);
+                const arr = try JSValue.createEmptyArray(global, len);
                 next = route.first_child.unwrap();
                 var i: u32 = 0;
                 while (next) |r| : (next = jsfr.router.routePtr(r).next_sibling.unwrap()) {
@@ -1223,12 +1223,12 @@ pub const JSFrameworkRouter = struct {
                 }
                 break :brk arr;
             },
-        }, global).toJS();
+        }, global)).toJS();
     }
 
     fn routeToJsonInverse(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return JSC.JSObject.create(.{
+        return (try JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1237,7 +1237,7 @@ pub const JSFrameworkRouter = struct {
                 try routeToJsonInverse(jsfr, global, parent, allocator)
             else
                 .null,
-        }, global).toJS();
+        }, global)).toJS();
     }
 
     pub fn finalize(this: *JSFrameworkRouter) void {

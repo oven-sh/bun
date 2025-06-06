@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 

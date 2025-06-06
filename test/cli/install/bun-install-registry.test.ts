@@ -1,29 +1,28 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, mkdir, readlink, rm, writeFile, lstat } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  isFlaky,
+  isMacOS,
   isWindows,
   mergeWindowEnvs,
+  readdirSorted,
   runBunInstall,
   runBunUpdate,
-  pack,
+  stderrForInstall,
   tempDirWithFiles,
+  tls,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  writeShebangScript,
-  stderrForInstall,
-  tls,
-  isFlaky,
-  isMacOS,
-  readdirSorted,
   VerdaccioRegistry,
+  writeShebangScript,
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
@@ -36,7 +35,7 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var verdaccio: VerdaccioRegistry;
+var registry: VerdaccioRegistry;
 var port: number;
 var packageDir: string;
 /** packageJson = join(packageDir, "package.json"); */
@@ -46,18 +45,18 @@ let users: Record<string, string> = {};
 
 beforeAll(async () => {
   setDefaultTimeout(1000 * 60 * 5);
-  verdaccio = new VerdaccioRegistry();
-  port = verdaccio.port;
-  await verdaccio.start();
+  registry = new VerdaccioRegistry();
+  port = registry.port;
+  await registry.start();
 });
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  verdaccio.stop();
+  registry.stop();
 });
 
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir({ saveTextLockfile: false }));
+  ({ packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false }));
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -66,7 +65,7 @@ beforeEach(async () => {
 });
 
 function registryUrl() {
-  return verdaccio.registryUrl();
+  return registry.registryUrl();
 }
 
 /**
@@ -99,385 +98,6 @@ async function generateRegistryUser(username: string, password: string): Promise
     throw new Error("Failed to create user:", response.statusText);
   }
 }
-
-describe("npmrc", async () => {
-  const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
-
-  it("works with empty file", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ ``;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {},
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("sets default registry", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry = http://localhost:${port}/
-`;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("sets scoped registry", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
-  });
-
-  it("works with home config", async () => {
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-
-    const ini = /* ini */ `
-  registry=http://localhost:${port}/
-  `;
-
-    await Bun.$`echo ${ini} > ${homeDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("works with two configs", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ `
-    registry = http://localhost:${port}/
-    `;
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
-
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("package config overrides home config", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${port}/
-  `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ "@types:registry=https://registry.npmjs.org/";
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
-
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("default registry from env variable", async () => {
-    const ini = /* ini */ `
-registry=\${LOL}
-  `;
-
-    const result = loadNpmrc(ini, { LOL: `http://localhost:${port}/` });
-
-    expect(result.default_registry_url).toBe(`http://localhost:${port}/`);
-  });
-
-  it("default registry from env variable 2", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry=http://localhost:\${PORT}/
-  `;
-
-    const result = loadNpmrc(ini, { ...env, PORT: port });
-
-    expect(result.default_registry_url).toEqual(`http://localhost:${port}/`);
-  });
-
-  async function makeTest(
-    options: [option: string, value: string][],
-    check: (result: {
-      default_registry_url: string;
-      default_registry_token: string;
-      default_registry_username: string;
-      default_registry_password: string;
-    }) => void,
-  ) {
-    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
-    test(optionName.join(" "), async () => {
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const iniInner = await Promise.all(
-        options.map(async ([option, value]) => {
-          let finalValue = value;
-          finalValue = isBase64Encoded(option) ? Buffer.from(finalValue).toString("base64") : finalValue;
-          return `//registry.npmjs.org/:${option}=${finalValue}`;
-        }),
-      );
-
-      const ini = /* ini */ `
-${iniInner.join("\n")}
-`;
-
-      await Bun.$`echo ${JSON.stringify({
-        name: "hello",
-        main: "index.js",
-        version: "1.0.0",
-        dependencies: {
-          "is-even": "1.0.0",
-        },
-      })} > package.json`.cwd(packageDir);
-
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-
-      const result = loadNpmrc(ini);
-
-      check(result);
-    });
-  }
-
-  await makeTest([["_authToken", "skibidi"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_token).toEqual("skibidi");
-  });
-
-  await makeTest(
-    [
-      ["username", "zorp"],
-      ["_password", "skibidi"],
-    ],
-    result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-      expect(result.default_registry_username).toEqual("zorp");
-      expect(result.default_registry_password).toEqual("skibidi");
-    },
-  );
-
-  it("authentication works", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry = http://localhost:${port}/
-@needs-auth:registry=http://localhost:${port}/
-//localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
-`;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "hi",
-      main: "index.js",
-      version: "1.0.0",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@needs-auth/test-pkg": "1.0.0",
-      },
-      "publishConfig": {
-        "registry": `http://localhost:${port}`,
-      },
-    })} > package.json`.cwd(packageDir);
-
-    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
-  });
-
-  type EnvMap =
-    | Omit<
-        {
-          [key: string]: string;
-        },
-        "dotEnv"
-      >
-    | { dotEnv?: Record<string, string> };
-
-  function registryConfigOptionTest(
-    name: string,
-    _opts: Record<string, string> | (() => Promise<Record<string, string>>),
-    _env?: EnvMap | (() => Promise<EnvMap>),
-    check?: (stdout: string, stderr: string) => void,
-  ) {
-    it(`sets scoped registry option: ${name}`, async () => {
-      console.log("PACKAGE DIR", packageDir);
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const { dotEnv, ...restOfEnv } = _env
-        ? typeof _env === "function"
-          ? await _env()
-          : _env
-        : { dotEnv: undefined };
-      const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
-      const dotEnvInner = dotEnv
-        ? Object.entries(dotEnv)
-            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
-            .join("\n")
-        : "";
-
-      const ini = `
-registry = http://localhost:${port}/
-${Object.keys(opts)
-  .map(
-    k =>
-      `//localhost:${port}/:${k}=${isBase64Encoded(k) && !opts[k].includes("${") ? Buffer.from(opts[k]).toString("base64") : opts[k]}`,
-  )
-  .join("\n")}
-`;
-
-      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-      await Bun.$`echo ${JSON.stringify({
-        name: "hi",
-        main: "index.js",
-        version: "1.0.0",
-        dependencies: {
-          "@needs-auth/test-pkg": "1.0.0",
-        },
-        "publishConfig": {
-          "registry": `http://localhost:${port}`,
-        },
-      })} > package.json`.cwd(packageDir);
-
-      const { stdout, stderr } = await Bun.$`${bunExe()} install`
-        .env({ ...env, ...restOfEnv })
-        .cwd(packageDir)
-        .throws(check === undefined);
-
-      if (check) check(stdout.toString(), stderr.toString());
-    });
-  }
-
-  registryConfigOptionTest("_authToken", async () => ({
-    "_authToken": await generateRegistryUser("bilbo_baggins", "verysecure"),
-  }));
-  registryConfigOptionTest(
-    "_authToken with env variable value",
-    async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
-    async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
-  );
-  registryConfigOptionTest("username and password", async () => {
-    await generateRegistryUser("gandalf429", "verysecure");
-    return { username: "gandalf429", _password: "verysecure" };
-  });
-  registryConfigOptionTest(
-    "username and password with env variable password",
-    async () => {
-      await generateRegistryUser("gandalf422", "verysecure");
-      return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      SUPER_SECRET_PASSWORD: Buffer.from("verysecure").toString("base64"),
-    },
-  );
-  registryConfigOptionTest(
-    "username and password with .env variable password",
-    async () => {
-      await generateRegistryUser("gandalf421", "verysecure");
-      return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
-    },
-  );
-
-  registryConfigOptionTest("_auth", async () => {
-    await generateRegistryUser("linus", "verysecure");
-    const _auth = "linus:verysecure";
-    return { _auth };
-  });
-
-  registryConfigOptionTest(
-    "_auth from .env variable",
-    async () => {
-      await generateRegistryUser("zack", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
-    },
-    {
-      dotEnv: { SECRET_AUTH: "zack:verysecure" },
-    },
-  );
-
-  registryConfigOptionTest(
-    "_auth from .env variable with no value",
-    async () => {
-      await generateRegistryUser("zack420", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
-    },
-    {
-      dotEnv: { SECRET_AUTH: "" },
-    },
-    (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
-    },
-  );
-});
 
 describe("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
@@ -744,7 +364,7 @@ ljelkjwelkgjw;lekj;lkejflkj
 
 describe("whoami", async () => {
   test("can get username", async () => {
-    const bunfig = await verdaccio.authBunfig("whoami");
+    const bunfig = await registry.authBunfig("whoami");
     await Promise.all([
       write(
         packageJson,
@@ -2148,7 +1768,7 @@ saveTextLockfile = false
     ),
   ]);
 
-  // first install this package from verdaccio
+  // first install this package from registry
   await runBunInstall(env, packageDir);
   const lockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(lockfile.packages) as any) {
@@ -8824,9 +8444,49 @@ describe("outdated", () => {
     expect(out).not.toContain("@foo/bar");
     expect(out).toContain("@scope/pkg1");
   });
+
+  test("catalog dependencies", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "catalog-outdated-test",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "1.0.0",
+            },
+            catalogs: {
+              dev: {
+                "a-dep": "1.0.1",
+              },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "catalog:",
+          },
+          devDependencies: {
+            "a-dep": "catalog:dev",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("no-deps");
+    expect(out).toContain("a-dep");
+  });
 });
 
-// TODO: setup verdaccio to run across multiple test files, then move this and a few other describe
+// TODO: setup registry to run across multiple test files, then move this and a few other describe
 // scopes (update, hoisting, ...) to other files
 //
 // test/cli/install/registry/bun-install-windowsshim.test.ts:

@@ -132,7 +132,8 @@ pub const FD = packed struct(backing_int) {
     /// When calling fd function, you may not be able to close the returned fd.
     /// To close the fd, you have to call `.close()` on the `bun.FD`.
     pub fn native(fd: FD) fd_t {
-        if (Environment.isDebug and !@inComptime()) bun.assert(fd.isValid());
+        // Do not assert that the fd is valid, as there are many syscalls where
+        // we deliberately pass an invalid file descriptor.
         return switch (os) {
             else => fd.value.as_system,
             .windows => switch (fd.decodeWindows()) {

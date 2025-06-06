@@ -1,10 +1,10 @@
-import { describe, beforeAll, it, expect, afterEach, afterAll } from "bun:test";
-import path from "node:path";
+import type { BuildOutput } from "bun";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { render } from "svelte/server";
 import { SveltePlugin } from "../src";
-import type { BuildOutput } from "bun";
 
 const fixturePath = (...segs: string[]) => path.join(import.meta.dirname, "fixtures", ...segs);
 

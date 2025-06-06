@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -197,7 +197,6 @@ Set path where coverage reports will be saved. Please notice, that it works only
 [test]
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
-
 
 ## Package manager
 

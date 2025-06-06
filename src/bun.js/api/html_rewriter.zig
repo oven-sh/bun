@@ -923,7 +923,7 @@ fn HandlerCallback(
                     this.global.bunVM().waitForPromise(promise);
                     const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
-                        _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue(this.global));
+                        _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
                     }
                     return fail;
                 }
@@ -1632,7 +1632,7 @@ pub const AttributeIterator = struct {
         const value = attribute.value();
         const name = attribute.name();
 
-        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), bun.String.toJSArray(
+        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), try bun.String.toJSArray(
             globalObject,
             &[_]bun.String{
                 name.toString(),

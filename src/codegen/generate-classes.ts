@@ -1,8 +1,8 @@
 // @ts-nocheck
 import path from "path";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -426,15 +426,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
         "onStructuredCloneDeserialize",
       )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
   }
-  if (obj.customInspect) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(typeName, "customInspect")}(JSC::JSGlobalObject*, JSC::CallFrame*);\n`;
-
-    specialSymbols += `
-    this->putDirect(vm, builtinNames(vm).inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${protoSymbolName(
-      typeName,
-      "customInspect",
-    )}, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
-  }
   if (obj.finalize) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "finalize")}(void*);` + "\n";
@@ -457,14 +448,31 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       const privateSymbol = protoFields[name].privateSymbol;
       const fn = protoFields[name].fn;
       if (!fn) throw Error(`(field: ${name}) private field needs 'fn' key `);
+      const observable_name = protoFields[name].name ?? fn;
 
       specialSymbols += `
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
       protoFields[name].length || 0
-    }, String("${fn}"_s), ${protoSymbolName(
+    }, String("${observable_name}"_s), ${protoSymbolName(
       typeName,
       fn,
     )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+      continue;
+    }
+
+    if (protoFields[name].publicSymbol !== undefined) {
+      const publicSymbol = protoFields[name].publicSymbol;
+      const fn = protoFields[name].fn;
+      if (!fn) throw Error(`(field: ${name}) public field needs 'fn' key `);
+      const observable_name = protoFields[name].name ?? fn;
+
+      specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${publicSymbol}PublicName(), JSFunction::create(vm, globalObject, ${
+      protoFields[name].length || 0
+    }, String("${observable_name}"_s), ${protoSymbolName(
+      typeName,
+      fn,
+    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
       continue;
     }
 
@@ -647,7 +655,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
-    if (UNLIKELY(!ptr || scope.exception())) {
+    if (!ptr || scope.exception()) [[unlikely]] {
       return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -674,7 +682,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     JSObject* newTarget = asObject(callFrame->newTarget());
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
-    if (UNLIKELY(constructor != newTarget)) {
+    if (constructor != newTarget) [[unlikely]] {
       auto* functionGlobalObject = defaultGlobalObject(
         // ShadowRealm functions belong to a different global object.
         getFunctionRealm(globalObject, newTarget)
@@ -689,7 +697,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
       ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
       return JSValue::encode(JSC::jsUndefined());
     }
@@ -1006,8 +1014,9 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
 
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
+    }
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
 }
 
@@ -1065,7 +1074,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -1113,7 +1122,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1175,7 +1184,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
-  if (UNLIKELY(!thisObject)) {
+  if (!thisObject) [[unlikely]] {
       ${
         invalidThisBehavior == InvalidThisBehavior.Throw
           ? `
@@ -1291,8 +1300,9 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           {
               auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
               if (${name}::hasPendingActivity(controller->wrapped())) {
-                  if (UNLIKELY(reason))
+                  if (reason) [[unlikely]] {
                     *reason = "has pending activity"_s;
+                  }
                   return true;
               }
 
@@ -1560,7 +1570,7 @@ static JSC::JSValue construct${symbolName(obj.name, name)}PropertyCallback(JSC::
     output += `
 ${name}::~${name}()
 {
-    if (LIKELY(m_ctx)) {
+    if (m_ctx) [[likely]] {
         ${classSymbolName(typeName, "finalize")}(m_ctx);
     }
 }
@@ -1653,7 +1663,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
 
   Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(object->globalObject());
 
-  if (UNLIKELY(globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id())) {
+  if (globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id()) [[unlikely]] {
     return nullptr;
   }
 
@@ -1787,7 +1797,6 @@ function generateZig(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    customInspect = false,
     getInternalProperties = false,
     callbacks = {},
   } = {} as ClassDefinition,
@@ -1810,10 +1819,6 @@ function generateZig(
     }
 
     exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
-  }
-
-  if (customInspect) {
-    exports.set("customInspect", symbolName(typeName, "customInspect"));
   }
 
   proto = {
@@ -2093,19 +2098,6 @@ const JavaScriptCoreBindings = struct {
         _ = ctx;
         _ = writeBytes;
         @compileLog("onStructuredCloneSerialize not implemented for ${typeName}");
-      }
-      `;
-    }
-
-    if (customInspect) {
-      // TODO: perhaps exposing this on classes directly isn't the best API choice long term
-      // it would be better to make a different signature that accepts a writer, then a generated-only function that returns a js string
-      // the writer function can integrate with our native console.log implementation, the generated function can call the writer version and collect the result
-      exports.set("customInspect", protoSymbolName(typeName, "customInspect"));
-      output += `
-      pub fn ${protoSymbolName(typeName, "customInspect")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        if (comptime Environment.enable_logs) JSC.markBinding(@src());
-        return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.customInspect, .{thisValue, globalObject, callFrame})});
       }
       `;
     }

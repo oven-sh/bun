@@ -963,6 +963,16 @@ pub const SystemErrno = enum(u16) {
             if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
+                // uv error codes
+                inline for (@typeInfo(SystemErrno).@"enum".fields) |field| {
+                    if (comptime std.mem.startsWith(u8, field.name, "UV_")) {
+                        if (comptime @hasField(SystemErrno, field.name["UV_".len..])) {
+                            if (code == field.value) {
+                                return @field(SystemErrno, field.name["UV_".len..]);
+                            }
+                        }
+                    }
+                }
                 if (comptime bun.Environment.allow_assert)
                     bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
 
@@ -1079,7 +1089,6 @@ pub const SystemErrno = enum(u16) {
         if (code < 0)
             return init(-code);
 
-        if (code >= max) return null;
         return @as(SystemErrno, @enumFromInt(code));
     }
 };

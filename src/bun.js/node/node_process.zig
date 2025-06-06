@@ -50,7 +50,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     if (vm.worker) |worker| {
         // was explicitly overridden for the worker?
         if (worker.execArgv) |execArgv| {
-            const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+            const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len) catch return .zero;
             for (0..execArgv.len) |i| {
                 array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
             }
@@ -114,7 +114,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         break;
     }
 
-    return bun.String.toJSArray(globalObject, args.items);
+    return bun.String.toJSArray(globalObject, args.items) catch .zero;
 }
 
 fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -180,7 +180,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     }
 
-    return bun.String.toJSArray(globalObject, args_list.items);
+    return bun.String.toJSArray(globalObject, args_list.items) catch .zero;
 }
 
 extern fn Bun__Process__getArgv(global: *JSGlobalObject) JSValue;
@@ -255,15 +255,15 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
 // TODO(@190n) this may need to be noreturn
 pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
-    if (vm.worker) |worker| {
-        vm.exit_handler.exit_code = code;
-        worker.requestTerminate();
-        return;
-    }
-
     vm.exit_handler.exit_code = code;
-    vm.onExit();
-    vm.globalExit();
+    if (vm.worker) |worker| {
+        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
+        // instead to terminate the worker sooner
+        worker.exit();
+    } else {
+        vm.onExit();
+        vm.globalExit();
+    }
 }
 
 // TODO: switch this to using *bun.wtf.String when it is added

@@ -1,6 +1,6 @@
-import net from "node:net";
-import { tempDirWithFiles, nodeExe } from "harness";
 import { expect, test } from "bun:test";
+import { nodeExe, tempDirWithFiles } from "harness";
+import net from "node:net";
 
 async function nodeRun(callback, clients = 1) {
   const cwd = tempDirWithFiles("server", {

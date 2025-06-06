@@ -229,30 +229,30 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
         pub fn ref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const new_count = counter.active_counts.fetchAdd(1, .seq_cst);
+            const old_count = counter.active_counts.fetchAdd(1, .seq_cst);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x}   ref {d} -> {d}", .{
                     @intFromPtr(self),
-                    new_count - 1,
-                    new_count,
+                    old_count,
+                    old_count + 1,
                 });
             }
-            bun.debugAssert(new_count > 0);
+            bun.debugAssert(old_count > 0);
         }
 
         pub fn deref(self: *T) void {
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
-            const new_count = counter.active_counts.fetchSub(1, .seq_cst);
+            const old_count = counter.active_counts.fetchSub(1, .seq_cst);
             if (comptime bun.Environment.enable_logs) {
                 scope.log("0x{x} deref {d} -> {d}", .{
                     @intFromPtr(self),
-                    new_count + 1,
-                    new_count,
+                    old_count,
+                    old_count - 1,
                 });
             }
-            bun.debugAssert(new_count > 0);
-            if (new_count == 1) {
+            bun.debugAssert(old_count > 0);
+            if (old_count == 1) {
                 if (enable_debug) {
                     counter.debug.deinit(std.mem.asBytes(self), @returnAddress());
                 }
@@ -275,7 +275,7 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         pub fn dumpActiveRefs(count: *@This()) void {
             if (enable_debug) {
-                const ptr: *T = @fieldParentPtr(field_name, count);
+                const ptr: *T = @alignCast(@fieldParentPtr(field_name, count));
                 count.debug.dump(@typeName(T), ptr, count.active_counts.load(.seq_cst));
             }
         }
@@ -428,7 +428,7 @@ pub fn DebugData(thread_safe: bool) type {
         const Debug = @This();
         const Count = if (thread_safe) std.atomic.Value(u32) else u32;
 
-        magic: enum(u128) { valid = 0x2f84e51d } align(@alignOf(u32)),
+        magic: enum(u128) { valid = 0x2f84e51d, _ } align(@alignOf(u32)),
         lock: if (thread_safe) std.debug.SafetyLock else bun.Mutex,
         next_id: u32,
         map: std.AutoHashMapUnmanaged(TrackedRef.Id, TrackedRef),

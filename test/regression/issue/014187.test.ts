@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { on, EventEmitter } from "events";
+import { expect, test } from "bun:test";
+import { EventEmitter, on } from "events";
 
 test("issue-14187", async () => {
   const ac = new AbortController();

@@ -1,9 +1,9 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
+import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
-import { familySync } from "detect-libc";
+import { basename, join, resolve } from "path";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -330,7 +330,7 @@ it("process.binding", () => {
   expect(() => process.binding("crypto/x509")).not.toThrow();
   expect(() => process.binding("fs")).not.toThrow();
   expect(() => process.binding("fs_event_wrap")).toThrow();
-  expect(() => process.binding("http_parser")).toThrow();
+  expect(() => process.binding("http_parser")).not.toThrow();
   expect(() => process.binding("icu")).toThrow();
   expect(() => process.binding("inspector")).toThrow();
   expect(() => process.binding("js_stream")).toThrow();
@@ -1113,4 +1113,21 @@ it("should handle user assigned `default` properties", async () => {
   });
 
   await promise;
+});
+
+it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle exceptions without crashing", stream => {
+  expect([
+    /* js */ `
+      const old = process;
+      process = null;
+      try {
+        old.${stream};
+      } catch {}
+      if (typeof old.${stream} !== "undefined") {
+        console.log("wrong");
+      }
+    `,
+    "",
+    1,
+  ]).toRunInlineFixture();
 });

@@ -645,9 +645,7 @@ var InternalResolver = class Resolver {
 function Resolver(options) {
   return new InternalResolver(options);
 }
-Resolver.prototype = {};
-Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
-Object.setPrototypeOf(Resolver, InternalResolver);
+$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,

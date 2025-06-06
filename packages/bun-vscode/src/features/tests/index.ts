@@ -204,7 +204,6 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
   context.subscriptions.push(watchTestCommand);
 }
 
-
 /**
  * Escape any special characters in the input string, so that regex-matching on it
  * will work as expected.

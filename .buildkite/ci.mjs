@@ -228,13 +228,7 @@ function getRetry(limit = 0) {
     manual: {
       permit_on_passed: true,
     },
-    automatic: [
-      { exit_status: 1, limit },
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
-      { signal_reason: "cancel", limit: 1 },
-      { signal_reason: "agent_stop", limit: 1 },
-    ],
+    automatic: false,
   };
 }
 
@@ -316,6 +310,19 @@ function getCppAgent(platform, options) {
 }
 
 /**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.21",
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Agent}
@@ -323,9 +330,14 @@ function getCppAgent(platform, options) {
 function getZigAgent(platform, options) {
   const { arch } = platform;
 
-  return {
-    queue: "build-zig",
-  };
+  // Uncomment to restore to using macOS on-prem for Zig.
+  // return {
+  //   queue: "build-zig",
+  // };
+
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
 }
 
 /**
@@ -438,7 +450,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    // We used to build the C++ dependencies and bun in seperate steps.
+    // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
     command: [`${command} --target bun`, `${command} --target dependencies`],
@@ -557,7 +569,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
-    timeout_in_minutes: profile === "asan" ? 90 : 30,
+    timeout_in_minutes: profile === "asan" ? 45 : 30,
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -634,15 +646,15 @@ function getReleaseStep(buildPlatforms, options) {
  * @param {Platform[]} buildPlatforms
  * @returns {Step}
  */
-function getBenchmarkStep(buildPlatforms) {
+function getBenchmarkStep() {
   return {
     key: "benchmark",
     label: "📊",
     agents: {
       queue: "build-image",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
-    command: "node .buildkite/scripts/upload-benchmark.ts",
+    depends_on: `linux-x64-build-bun`,
+    command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }
 
@@ -910,7 +922,7 @@ function getOptionsStep() {
       {
         key: "unified-builds",
         select: "Do you want to build each platform in a single step?",
-        hint: "If true, builds will not be split into seperate steps (this will likely slow down the build)",
+        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -918,7 +930,7 @@ function getOptionsStep() {
       {
         key: "unified-tests",
         select: "Do you want to run tests in a single step?",
-        hint: "If true, tests will not be split into seperate steps (this will be very slow)",
+        hint: "If true, tests will not be split into separate steps (this will be very slow)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -952,8 +964,13 @@ async function getPipelineOptions() {
     return;
   }
 
+  let filteredBuildPlatforms = buildPlatforms;
+  if (isMainBranch()) {
+    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+  }
+
   const canary = await getCanaryRevision();
-  const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
+  const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
   if (isManual) {
@@ -1081,10 +1098,21 @@ async function getPipeline(options = {}) {
     }
   }
 
+  const includeASAN = !isMainBranch();
+
   if (!buildId) {
+    const relevantBuildPlatforms = includeASAN
+      ? buildPlatforms
+      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
     steps.push(
-      ...buildPlatforms.map(target => {
+      ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
+        if (imagePlatforms.has(imageKey)) {
+          dependsOn.push(`${imageKey}-build-image`);
+        }
 
         return getStepWithDependsOn(
           {
@@ -1094,7 +1122,7 @@ async function getPipeline(options = {}) {
               ? [getBuildBunStep(target, options)]
               : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
           },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          ...dependsOn,
         );
       }),
     );
@@ -1115,8 +1143,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    steps.push(getBenchmarkStep(buildPlatforms));
   }
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

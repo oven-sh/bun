@@ -9,21 +9,16 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const JSON = bun.JSON;
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
-const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
 
 pub const InitCommand = struct {
     pub fn prompt(
@@ -372,6 +367,9 @@ pub const InitCommand = struct {
         var auto_yes = false;
         var parse_flags = true;
         var initialize_in_folder: ?[]const u8 = null;
+
+        var template: Template = .blank;
+        var prev_flag_was_react = false;
         for (init_args) |arg_| {
             const arg = bun.span(arg_);
             if (parse_flags and arg.len > 0 and arg[0] == '-') {
@@ -380,12 +378,27 @@ pub const InitCommand = struct {
                     Global.exit(0);
                 } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
                     minimal = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
                     auto_yes = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "--")) {
                     parse_flags = false;
+                    prev_flag_was_react = false;
+                } else if (strings.eqlComptime(arg, "--react") or strings.eqlComptime(arg, "-r")) {
+                    template = .react_blank;
+                    prev_flag_was_react = true;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "tailwind") or strings.eqlComptime(arg, "--react=tailwind")) or strings.eqlComptime(arg, "r=tailwind")) {
+                    template = .react_tailwind;
+                    prev_flag_was_react = false;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "shadcn") or strings.eqlComptime(arg, "--react=shadcn")) or strings.eqlComptime(arg, "r=shadcn")) {
+                    template = .react_tailwind_shadcn;
+                    prev_flag_was_react = false;
+                    auto_yes = true;
                 } else {
-                    // invalid flag; ignore
+                    prev_flag_was_react = false;
                 }
             } else {
                 if (initialize_in_folder == null) {
@@ -540,8 +553,6 @@ pub const InitCommand = struct {
                 logger.Loc.Empty,
             ).data.e_object;
         }
-
-        var template: Template = .blank;
 
         if (!auto_yes) {
             if (!did_load_package_json) {
@@ -795,6 +806,13 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
+                if (Template.getCursorRule()) |template_file| {
+                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
+                    result catch {
+                        // No big deal if this fails
+                    };
+                }
+
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
                     Output.flush();
@@ -993,6 +1011,52 @@ const Template = enum {
         return s;
     }
 
+    const agent_rule = @embedFile("../init/rule.md");
+    const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
+
+    fn isCursorInstalled() bool {
+        // Give some way to opt-out.
+        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED")) {
+            return false;
+        }
+
+        // Detect if they're currently using cursor.
+        if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
+            if (env.len > 0) {
+                return true;
+            }
+        }
+
+        if (Environment.isMac) {
+            if (bun.sys.exists("/Applications/Cursor.app")) {
+                return true;
+            }
+        }
+
+        if (Environment.isWindows) {
+            if (bun.getenvZAnyCase("USER")) |user| {
+                const pathbuf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(pathbuf);
+                const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {
+                    return false;
+                };
+
+                if (bun.sys.exists(path)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+    pub fn getCursorRule() ?*const TemplateFile {
+        if (isCursorInstalled()) {
+            return &cursor_rule;
+        }
+
+        return null;
+    }
+
     const ReactBlank = struct {
         const files: []const TemplateFile = &.{
             .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-app/bunfig.toml") },
@@ -1071,6 +1135,13 @@ const Template = enum {
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
+        if (Template.getCursorRule()) |rule| {
+            const result = InitCommand.Assets.createNew(rule.path, rule.contents);
+            result catch {
+                // No big deal if this fails
+            };
+        }
+
         inline for (comptime this.files()) |file| {
             const path = file.path;
             const contents = file.contents;

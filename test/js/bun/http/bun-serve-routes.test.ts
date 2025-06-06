@@ -1,6 +1,5 @@
+import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { isBroken, isMacOS } from "harness";
-import type { Server, ServeOptions, BunRequest } from "bun";
 
 describe("path parameters", () => {
   let server: Server;
@@ -357,6 +356,80 @@ describe("route reloading", () => {
     expect(await res.text()).toBe("updated");
   });
 
+  it("handles different HTTP methods on reload", async () => {
+    // Reload with routes for different HTTP methods
+    server.reload({
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/method-test": {
+          GET: () => new Response("GET response"),
+          POST: () => new Response("POST response"),
+          PUT: () => new Response("PUT response"),
+          DELETE: () => new Response("DELETE response"),
+          OPTIONS: () => new Response("OPTIONS response"),
+        },
+      },
+    } as ServeOptions);
+
+    // Test GET request
+    let res = await fetch(new URL(`/method-test`, server.url).href);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("GET response");
+
+    // Test POST request
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("POST response");
+
+    // Test PUT request
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "PUT" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("PUT response");
+
+    // Test DELETE request
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("DELETE response");
+
+    // Test OPTIONS request
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "OPTIONS" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OPTIONS response");
+
+    server.reload({
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/method-test": {
+          OPTIONS: new Response("OPTIONS response 2"),
+          GET: () => new Response("GET response 2"),
+          POST: () => new Response("POST response 2"),
+          PUT: () => new Response("PUT response 2"),
+          DELETE: () => new Response("DELETE response 2"),
+        },
+      },
+    } as ServeOptions);
+
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "GET" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("GET response 2");
+
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("POST response 2");
+
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "PUT" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("PUT response 2");
+
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("DELETE response 2");
+
+    res = await fetch(new URL(`/method-test`, server.url).href, { method: "OPTIONS" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OPTIONS response 2");
+  });
+
   it("handles removing routes on reload", async () => {
     // Reload with empty routes
     server.reload({
@@ -549,4 +622,98 @@ it("don't crash on server.fetch()", async () => {
   });
 
   expect(server.fetch("/test")).rejects.toThrow("fetch() requires the server to have a fetch handler");
+});
+
+it("route precedence for any routes", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/test": () => new Response("test"),
+      "/test/GET": () => new Response("GET /test/GET"),
+      "/*": () => new Response("/*"),
+    },
+    fetch(req) {
+      return new Response("fallback");
+    },
+  });
+
+  expect(await fetch(new URL("/test", server.url)).then(res => res.text())).toBe("test");
+  expect(await fetch(new URL("/test/GET", server.url)).then(res => res.text())).toBe("GET /test/GET");
+});
+
+it("route precedence for method-specific routes", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/test": {
+        GET: () => new Response("GET /test"),
+        POST: () => new Response("POST /test"),
+      },
+      "/test/POST": {
+        POST: () => new Response("POST /test/POST"),
+      },
+      "/test/GET": {
+        GET: () => new Response("GET /test/GET"),
+      },
+      "/*": () => new Response("/*"),
+    },
+    fetch(req) {
+      return new Response("fallback");
+    },
+  });
+
+  expect(await fetch(new URL("/test", server.url), { method: "GET" }).then(res => res.text())).toBe("GET /test");
+  expect(await fetch(new URL("/test/GET", server.url), { method: "GET" }).then(res => res.text())).toBe(
+    "GET /test/GET",
+  );
+  expect(await fetch(new URL("/test/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
+    "POST /test/POST",
+  );
+});
+
+it("route precedence for mix of method-specific routes and any routes", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/test": {
+        GET: () => new Response("GET /test"),
+        POST: () => new Response("POST /test"),
+      },
+      "/test/POST": {
+        POST: () => new Response("POST /test/POST"),
+      },
+      "/test/GET": {
+        GET: () => new Response("GET /test/GET"),
+      },
+      "/test/ANY": () => new Response("ANY /test/ANY"),
+      "/test/ANY/POST": {
+        POST: () => new Response("POST /test/ANY/POST"),
+      },
+      "/*": {
+        GET: () => new Response("GET /*"),
+        POST: () => new Response("POST /*"),
+      },
+    },
+    fetch(req) {
+      return new Response("fallback");
+    },
+  });
+
+  expect(await fetch(new URL("/test", server.url), { method: "GET" }).then(res => res.text())).toBe("GET /test");
+  expect(await fetch(new URL("/test/GET", server.url), { method: "GET" }).then(res => res.text())).toBe(
+    "GET /test/GET",
+  );
+  expect(await fetch(new URL("/test/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
+    "POST /test/POST",
+  );
+  expect(await fetch(new URL("/test/ANY", server.url), { method: "GET" }).then(res => res.text())).toBe(
+    "ANY /test/ANY",
+  );
+  expect(await fetch(new URL("/test/ANY/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
+    "POST /test/ANY/POST",
+  );
+  expect(await fetch(new URL("/test/ANY/POST", server.url), { method: "GET" }).then(res => res.text())).toBe("GET /*");
+  expect(await fetch(new URL("/test/ANY/POST", server.url), { method: "POST" }).then(res => res.text())).toBe(
+    "POST /test/ANY/POST",
+  );
 });

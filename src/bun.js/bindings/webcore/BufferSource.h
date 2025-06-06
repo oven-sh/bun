@@ -97,7 +97,7 @@ std::optional<BufferSource> BufferSource::decode(Decoder& decoder)
         return BufferSource();
 
     auto dataSize = CheckedSize { *size };
-    if (UNLIKELY(dataSize.hasOverflowed()))
+    if (dataSize.hasOverflowed()) [[unlikely]]
         return std::nullopt;
 
     const uint8_t* data = decoder.decodeFixedLengthReference(dataSize, alignof(uint8_t));

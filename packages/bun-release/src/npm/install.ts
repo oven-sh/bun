@@ -1,10 +1,10 @@
-import { fetch } from "../fetch";
-import { spawn } from "../spawn";
-import { chmod, join, rename, rm, tmp, write } from "../fs";
 import { unzipSync } from "zlib";
-import type { Platform } from "../platform";
-import { os, arch, abi, supportedPlatforms } from "../platform";
 import { debug, error } from "../console";
+import { fetch } from "../fetch";
+import { chmod, join, rename, rm, tmp, write } from "../fs";
+import type { Platform } from "../platform";
+import { abi, arch, os, supportedPlatforms } from "../platform";
+import { spawn } from "../spawn";
 
 declare const version: string;
 declare const module: string;

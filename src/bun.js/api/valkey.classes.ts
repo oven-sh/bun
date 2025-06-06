@@ -31,6 +31,10 @@ export default [
         fn: "get",
         length: 1,
       },
+      getBuffer: {
+        fn: "getBuffer",
+        length: 1,
+      },
       set: {
         fn: "set",
         length: 2,

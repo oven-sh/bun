@@ -74,6 +74,9 @@
 #include <wtf/Platform.h>
 
 #ifdef __cplusplus
+#if OS(LINUX)
+#include <limits>
+#endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>

@@ -25,6 +25,43 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+/// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+    debug_allocator_data.allocator
+else
+    default_allocator;
+pub const debug_allocator_data = struct {
+    comptime {
+        if (!Environment.isDebug) @compileError("only available in debug");
+    }
+    pub var backing: ?std.heap.DebugAllocator(.{}) = null;
+    pub const allocator: std.mem.Allocator = .{
+        .ptr = undefined,
+        .vtable = &.{
+            .alloc = &alloc,
+            .resize = &resize,
+            .remap = &remap,
+            .free = &free,
+        },
+    };
+
+    fn alloc(_: *anyopaque, new_len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
+    }
+
+    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    }
+};
+
 pub extern "c" fn powf(x: f32, y: f32) f32;
 pub extern "c" fn pow(x: f64, y: f64) f64;
 
@@ -735,7 +772,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 }
 
 pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
-pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
@@ -744,7 +781,7 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag)) |val|
+                    const enabled = if (getenvZ(@tagName(flag))) |val|
                         strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
                     else
                         false;
@@ -1949,6 +1986,116 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
+fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+    var i: usize = 0;
+    var offset_in_args: usize = 1;
+    while (i < env.len) {
+        // skip whitespace
+        while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
+        if (i >= env.len) break;
+
+        // Handle all command-line arguments with quotes preserved
+        const start = i;
+        var j = i;
+
+        // Check if this is an option (starts with --)
+        const is_option = j + 2 <= env.len and env[j] == '-' and env[j + 1] == '-';
+
+        if (is_option) {
+            // Find the end of the option flag (--flag)
+            while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
+
+            var found_equals = false;
+
+            // Check for equals sign
+            if (j < env.len and env[j] == '=') {
+                found_equals = true;
+                j += 1; // Move past the equals sign
+            } else if (j < env.len and std.ascii.isWhitespace(env[j])) {
+                j += 1; // Move past the space
+                // Skip any additional whitespace
+                while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Handle quoted values
+            if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
+                const quote_char = env[j];
+                j += 1; // Move past opening quote
+
+                // Find the closing quote
+                while (j < env.len and env[j] != quote_char) : (j += 1) {}
+                if (j < env.len) j += 1; // Move past closing quote
+            } else if (found_equals) {
+                // If we had --flag=value (no quotes), find next whitespace
+                while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Copy the entire argument including quotes
+            const arg_len = j - start;
+            const arg = try allocator.allocSentinel(u8, arg_len, 0);
+            @memcpy(arg, env[start..j]);
+            try args.insert(offset_in_args, arg);
+            offset_in_args += 1;
+
+            i = j;
+            continue;
+        }
+
+        // Non-option arguments or standalone values
+        var buf = std.ArrayList(u8).init(allocator);
+
+        var in_single = false;
+        var in_double = false;
+        var escape = false;
+        while (i < env.len) : (i += 1) {
+            const ch = env[i];
+            if (escape) {
+                try buf.append(ch);
+                escape = false;
+                continue;
+            }
+
+            if (ch == '\\') {
+                escape = true;
+                continue;
+            }
+
+            if (in_single) {
+                if (ch == '\'') {
+                    in_single = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (in_double) {
+                if (ch == '"') {
+                    in_double = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (ch == '\'') {
+                in_single = true;
+            } else if (ch == '"') {
+                in_double = true;
+            } else if (std.ascii.isWhitespace(ch)) {
+                break;
+            } else {
+                try buf.append(ch);
+            }
+        }
+
+        try buf.append(0);
+        const owned = try buf.toOwnedSlice();
+        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        offset_in_args += 1;
+    }
+}
+
 pub fn initArgv(allocator: std.mem.Allocator) !void {
     if (comptime Environment.isPosix) {
         argv = try allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2007,6 +2154,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = out_argv;
     } else {
         argv = try std.process.argsAlloc(allocator);
+    }
+
+    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        try appendOptionsEnv(opts, &argv_list, allocator);
+        argv = argv_list.items;
     }
 }
 

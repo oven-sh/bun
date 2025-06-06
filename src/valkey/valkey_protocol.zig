@@ -1,8 +1,8 @@
 const std = @import("std");
+
 const bun = @import("bun");
 const JSC = bun.JSC;
 const String = bun.String;
-const debug = bun.Output.scoped(.Redis, false);
 
 pub const RedisError = error{
     AuthenticationFailed,
@@ -244,23 +244,40 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    // Convert RESPValue to JSValue
     pub fn toJS(self: *RESPValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        return self.toJSWithOptions(globalObject, .{});
+    }
+
+    pub const ToJSOptions = struct {
+        return_as_buffer: bool = false,
+    };
+
+    fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *const ToJSOptions) bun.JSError!JSC.JSValue {
+        if (options.return_as_buffer) {
+            // TODO: handle values > 4.7 GB
+            const buf = JSC.ArrayBuffer.createBuffer(globalObject, str);
+            return buf.toJS(globalObject);
+        } else {
+            return bun.String.createUTF8ForJS(globalObject, str);
+        }
+    }
+
+    pub fn toJSWithOptions(self: *RESPValue, globalObject: *JSC.JSGlobalObject, options: ToJSOptions) bun.JSError!JSC.JSValue {
         switch (self.*) {
-            .SimpleString => |str| return bun.String.createUTF8ForJS(globalObject, str),
+            .SimpleString => |str| return valkeyStrToJSValue(globalObject, str, &options),
             .Error => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidResponse),
             .Integer => |int| return JSC.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
-                    return bun.String.createUTF8ForJS(globalObject, str);
+                    return valkeyStrToJSValue(globalObject, str, &options);
                 } else {
                     return JSC.JSValue.jsNull();
                 }
             },
             .Array => |array| {
-                var js_array = JSC.JSValue.createEmptyArray(globalObject, array.len);
+                var js_array = try JSC.JSValue.createEmptyArray(globalObject, array.len);
                 for (array, 0..) |*item, i| {
-                    const js_item = try item.toJS(globalObject);
+                    const js_item = try item.toJSWithOptions(globalObject, options);
                     js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
@@ -269,23 +286,23 @@ pub const RESPValue = union(RESPType) {
             .Double => |d| return JSC.JSValue.jsNumber(d),
             .Boolean => |b| return JSC.JSValue.jsBoolean(b),
             .BlobError => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidBlobError),
-            .VerbatimString => |verbatim| return bun.String.createUTF8ForJS(globalObject, verbatim.content),
+            .VerbatimString => |verbatim| return valkeyStrToJSValue(globalObject, verbatim.content, &options),
             .Map => |entries| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
                 for (entries) |*entry| {
-                    const js_key = try entry.key.toJS(globalObject);
+                    const js_key = try entry.key.toJSWithOptions(globalObject, .{});
                     var key_str = try js_key.toBunString(globalObject);
                     defer key_str.deref();
-                    const js_value = try entry.value.toJS(globalObject);
+                    const js_value = try entry.value.toJSWithOptions(globalObject, options);
 
                     js_obj.putMayBeIndex(globalObject, &key_str, js_value);
                 }
                 return js_obj;
             },
             .Set => |set| {
-                var js_array = JSC.JSValue.createEmptyArray(globalObject, set.len);
+                var js_array = try JSC.JSValue.createEmptyArray(globalObject, set.len);
                 for (set, 0..) |*item, i| {
-                    const js_item = try item.toJS(globalObject);
+                    const js_item = try item.toJSWithOptions(globalObject, options);
                     js_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 return js_array;
@@ -293,7 +310,7 @@ pub const RESPValue = union(RESPType) {
             .Attribute => |attribute| {
                 // For now, we just return the value and ignore attributes
                 // In the future, we could attach the attributes as a hidden property
-                return try attribute.value.toJS(globalObject);
+                return try attribute.value.toJSWithOptions(globalObject, options);
             },
             .Push => |push| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
@@ -303,9 +320,9 @@ pub const RESPValue = union(RESPType) {
                 js_obj.put(globalObject, "type", kind_str);
 
                 // Add the data as an array
-                var data_array = JSC.JSValue.createEmptyArray(globalObject, push.data.len);
+                var data_array = try JSC.JSValue.createEmptyArray(globalObject, push.data.len);
                 for (push.data, 0..) |*item, i| {
-                    const js_item = try item.toJS(globalObject);
+                    const js_item = try item.toJSWithOptions(globalObject, options);
                     data_array.putIndex(globalObject, @intCast(i), js_item);
                 }
                 js_obj.put(globalObject, "data", data_array);

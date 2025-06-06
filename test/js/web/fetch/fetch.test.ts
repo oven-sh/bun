@@ -6,24 +6,22 @@ import {
   bunExe,
   gc,
   isBroken,
+  isFlaky,
+  isMacOS,
   isWindows,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
-  isMacOS,
-  isFlaky,
 } from "harness";
-import { spawn, ChildProcess } from "child_process";
 
+import { once } from "events";
 import { mkfifo } from "mkfifo";
+import type { AddressInfo } from "net";
 import net from "net";
 import { join } from "path";
-import { gzipSync } from "zlib";
 import { Readable } from "stream";
-import { once } from "events";
-import type { AddressInfo } from "net";
+import { gzipSync } from "zlib";
 const tmp_dir = tmpdirSync();
-import http from "http";
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");

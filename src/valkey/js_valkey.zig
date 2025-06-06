@@ -173,7 +173,7 @@ pub const JSValkeyClient = struct {
         }
 
         const promise_ptr = JSC.JSPromise.create(globalObject);
-        const promise = promise_ptr.asValue(globalObject);
+        const promise = promise_ptr.toJS();
         js.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
@@ -532,8 +532,7 @@ pub const JSValkeyClient = struct {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
-                        var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
                         vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;
@@ -544,7 +543,7 @@ pub const JSValkeyClient = struct {
                     vm.rareData().valkey_context.tls orelse brk_ctx: {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err).?;
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                         vm.rareData().valkey_context.tls = ctx_;
                         break :brk_ctx ctx_;
@@ -555,7 +554,7 @@ pub const JSValkeyClient = struct {
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
-                    const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
+                    const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                     break :brk_ctx .{ ctx_, true };
                 },
@@ -649,6 +648,7 @@ pub const JSValkeyClient = struct {
     pub const expire = fns.expire;
     pub const expiretime = fns.expiretime;
     pub const get = fns.get;
+    pub const getBuffer = fns.getBuffer;
     pub const getdel = fns.getdel;
     pub const getex = fns.getex;
     pub const getset = fns.getset;
@@ -808,7 +808,7 @@ fn SocketHandler(comptime ssl: bool) type {
 const Options = struct {
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, options_obj: JSC.JSValue) !valkey.Options {
         var this = valkey.Options{
-            .enable_auto_pipelining = !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING"),
+            .enable_auto_pipelining = !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING),
         };
 
         if (try options_obj.getOptionalInt(globalObject, "idleTimeout", u32)) |idle_timeout| {

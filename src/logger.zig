@@ -5,18 +5,12 @@ const ImportKind = @import("./import_record.zig").ImportKind;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
-const unicode = std.unicode;
-const Ref = @import("./ast/base.zig").Ref;
-const expect = std.testing.expect;
 const assert = bun.assert;
 const StringBuilder = bun.StringBuilder;
 const Index = @import("./ast/base.zig").Index;
@@ -777,14 +771,14 @@ pub const Log = struct {
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) bun.OOM!JSC.JSValue {
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) bun.JSError!JSC.JSValue {
         return global.createAggregateErrorWithArray(message, try this.toJSArray(global, bun.default_allocator));
     }
 
-    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.OOM!JSC.JSValue {
+    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
 
-        const arr = JSC.JSValue.createEmptyArray(global, msgs.len);
+        const arr = try JSC.JSValue.createEmptyArray(global, msgs.len);
         for (msgs, 0..) |msg, i| {
             arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
         }

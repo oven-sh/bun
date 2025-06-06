@@ -111,8 +111,8 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
-        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().reject(globalThis, val);
+        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSError!JSC.JSValue) void {
+            this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
@@ -141,7 +141,7 @@ pub const JSPromise = opaque {
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
                 .strong = .create(
-                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                    JSC.JSPromise.create(globalThis).toJS(),
                     globalThis,
                 ),
             };
@@ -174,7 +174,7 @@ pub const JSPromise = opaque {
         }
     };
 
-    pub fn toJS(this: *JSPromise) JSValue {
+    pub inline fn toJS(this: *JSPromise) JSValue {
         return JSValue.fromCell(this);
     }
 

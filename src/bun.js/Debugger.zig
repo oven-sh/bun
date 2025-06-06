@@ -16,7 +16,7 @@ mode: enum {
 test_reporter_agent: TestReporterAgent = .{},
 lifecycle_reporter_agent: LifecycleAgent = .{},
 frontend_dev_server_agent: BunFrontendDevServerAgent = .{},
-
+http_server_agent: HTTPServerAgent = .{},
 must_block_until_connected: bool = false,
 
 pub const Wait = enum { off, shortly, forever };
@@ -167,6 +167,7 @@ pub export fn Debugger__didConnect() void {
     if (this.debugger.?.wait_for_connection != .off) {
         this.debugger.?.wait_for_connection = .off;
         this.debugger.?.poll_ref.unref(this);
+        this.eventLoop().wakeup();
     }
 }
 
@@ -414,7 +415,9 @@ pub const LifecycleAgent = struct {
     }
 };
 
+pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
+pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
 const std = @import("std");
 const bun = @import("bun");

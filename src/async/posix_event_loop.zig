@@ -665,7 +665,7 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(this: *FilePoll, loop: *Loop) void {
-        loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        if (this.flags.contains(.has_incremented_poll_count)) loop.dec();
         this.flags.remove(.has_incremented_poll_count);
 
         loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
@@ -677,7 +677,7 @@ pub const FilePoll = struct {
     fn activate(this: *FilePoll, loop: *Loop) void {
         this.flags.remove(.closed);
 
-        loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
+        if (!this.flags.contains(.has_incremented_poll_count)) loop.inc();
         this.flags.insert(.has_incremented_poll_count);
 
         if (this.flags.contains(.keeps_event_loop_alive)) {

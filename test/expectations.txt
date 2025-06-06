@@ -82,6 +82,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/bake/dev/html.test.ts [ CRASH ]
 [ ASAN ] test/bake/dev/react-spa.test.ts [ CRASH ]
 [ ASAN ] test/bake/dev/ecosystem.test.ts [ CRASH ]
+[ ASAN ] test/cli/inspect/HTTPServerAgent.test.ts [ CRASH ] # filesystem watcher bug
 
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]

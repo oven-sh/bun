@@ -107,7 +107,7 @@ struct addrinfo_result {
 #define us_internal_ssl_socket_context_r struct us_internal_ssl_socket_context_t *nonnull_arg
 #define us_internal_ssl_socket_r struct us_internal_ssl_socket_t *nonnull_arg
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
@@ -170,6 +170,8 @@ struct us_socket_flags {
     bool allow_half_open: 1; 
     /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2 = was in low-prio queue in this iteration */
     unsigned char low_prio_state: 2; 
+    /* If true, the socket should be read using readmsg to support receiving file descriptors */
+    bool is_ipc: 1;
 
 } __attribute__((packed));
 
@@ -287,6 +289,7 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip,
                                  int ip_length);
   struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
+  struct us_socket_t *(*on_fd)(struct us_socket_t *, int fd);
   struct us_socket_t *(*on_writable)(struct us_socket_t *);
   struct us_socket_t *(*on_close)(struct us_socket_t *, int code, void *reason);
   // void (*on_timeout)(struct us_socket_context *);

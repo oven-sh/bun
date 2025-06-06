@@ -591,12 +591,12 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return JSC.JSObject.create(.{
+        return (try JSC.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
-        }, globalThis).toJS();
+        }, globalThis)).toJS();
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -875,7 +875,7 @@ pub fn loadNpmrcConfig(
     }
 
     for (npmrc_paths) |npmrc_path| {
-        const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        const source = bun.sys.File.toSource(npmrc_path, allocator, .{ .convert_bom = true }).unwrap() catch |err| {
             if (auto_loaded) continue;
             Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
             Global.crash();

@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION c244f567ab804c2558067d00733013c01725d824)
+  set(WEBKIT_VERSION 85b01f72bb53299e75bd0889ee67431a84c7bdb6)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -41,14 +41,6 @@ if(WEBKIT_LOCAL)
   return()
 endif()
 
-if(EXISTS ${WEBKIT_PATH}/package.json)
-  file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
-
-  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
-    return()
-  endif()
-endif()
-
 if(WIN32)
   set(WEBKIT_OS "windows")
 elseif(APPLE)
@@ -79,13 +71,24 @@ else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
-if(ENABLE_ASAN AND ((APPLE AND DEBUG AND ARCH STREQUAL "aarch64") OR (LINUX AND RELEASE)))
+if(ENABLE_ASAN)
+  # We cannot mix and match ASan Bun + non-ASan WebKit, or vice versa, because some WebKit classes
+  # change their layout according to whether ASan is used, for example:
+  # https://github.com/oven-sh/WebKit/blob/eda8b0fb4fb1aa23db9c2b00933df8b58bcdd289/Source/WTF/wtf/Vector.h#L682
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 
-set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
+setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+
+if(EXISTS ${WEBKIT_PATH}/package.json)
+  file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
+
+  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
+    return()
+  endif()
+endif()
 
 file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)

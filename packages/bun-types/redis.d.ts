@@ -110,9 +110,16 @@ declare module "bun" {
     /**
      * Get the value of a key
      * @param key The key to get
-     * @returns Promise that resolves with the key's value, or null if the key doesn't exist
+     * @returns Promise that resolves with the key's value as a string, or null if the key doesn't exist
      */
     get(key: string | ArrayBufferView | Blob): Promise<string | null>;
+
+    /**
+     * Get the value of a key as a Uint8Array
+     * @param key The key to get
+     * @returns Promise that resolves with the key's value as a Uint8Array, or null if the key doesn't exist
+     */
+    getBuffer(key: string | ArrayBufferView | Blob): Promise<Uint8Array<ArrayBuffer> | null>;
 
     /**
      * Set key to hold the string value
@@ -589,6 +596,19 @@ declare module "bun" {
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
     getex(key: string | ArrayBufferView | Blob): Promise<string | null>;
+
+    /**
+     *  Ping the server
+     *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(): Promise<"PONG">;
+
+    /**
+     *  Ping the server with a message
+     *  @param message The message to send to the server
+     *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(message: string | ArrayBufferView | Blob): Promise<string>;
   }
 
   /**

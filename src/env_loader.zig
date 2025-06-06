@@ -3,15 +3,9 @@ const logger = bun.logger;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const CodePoint = bun.CodePoint;
 
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
@@ -174,6 +168,10 @@ pub const Loader = struct {
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
         return this.getHttpProxy(url.isHTTP(), url.hostname);
+    }
+
+    pub fn hasHTTPProxy(this: *const Loader) bool {
+        return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
     pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
@@ -1339,8 +1337,5 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
-
-const expectString = std.testing.expectEqualStrings;
-const expect = std.testing.expect;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";

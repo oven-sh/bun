@@ -1,8 +1,7 @@
+import { a, br, code, count, duration, h, table, ul } from "html";
 import { appendFileSync } from "node:fs";
-import { resolve, basename } from "node:path";
-import { a, h, count, duration, table, br, ul, code } from "html";
-import { TestError, TestStatus, printTest } from "runner";
-import { runTests } from "runner";
+import { basename, resolve } from "node:path";
+import { TestError, TestStatus, printTest, runTests } from "runner";
 
 const cwd = resolve(import.meta.dir, "..", "..", "..", "test");
 const filters = process.argv.slice(2); // TODO

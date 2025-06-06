@@ -1,5 +1,5 @@
-import { importBun, optimizeBun } from "../src/npm/install";
 import { execFileSync } from "child_process";
+import { importBun } from "../src/npm/install";
 
 importBun()
   .then(bun => {

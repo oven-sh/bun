@@ -2,11 +2,9 @@ const std = @import("std");
 const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
 
 pub const Percentage = struct {
@@ -333,38 +331,10 @@ pub fn DimensionPercentage(comptime D: type) type {
                 std.mem.swap(This, &a, &b);
             }
 
-            if (a == .calc and b == .calc) {
-                return .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.add(allocator, b.calc.*)) };
-            } else if (a == .calc) {
-                if (a.calc.* == .value) {
-                    return a.calc.value.addImpl(allocator, b);
-                } else {
-                    return .{
-                        .calc = bun.create(
-                            allocator,
-                            Calc(DimensionPercentage(D)),
-                            .{ .sum = .{
-                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.*),
-                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.intoCalc(allocator)),
-                            } },
-                        ),
-                    };
-                }
-            } else if (b == .calc) {
-                if (b.calc.* == .value) {
-                    return a.addImpl(allocator, b.calc.value.*);
-                } else {
-                    return .{
-                        .calc = bun.create(
-                            allocator,
-                            Calc(DimensionPercentage(D)),
-                            .{ .sum = .{
-                                .left = bun.create(allocator, Calc(DimensionPercentage(D)), a.intoCalc(allocator)),
-                                .right = bun.create(allocator, Calc(DimensionPercentage(D)), b.calc.*),
-                            } },
-                        ),
-                    };
-                }
+            if (a == .calc and a.calc.* == .value and b != .calc) {
+                return a.calc.value.addImpl(allocator, b);
+            } else if (b == .calc and b.calc.* == .value and a != .calc) {
+                return a.addImpl(allocator, b.calc.value.*);
             } else {
                 return .{
                     .calc = bun.create(

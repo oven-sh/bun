@@ -1,7 +1,6 @@
-import { describe, test, expect, beforeEach } from "bun:test";
 import { randomUUIDv7, RedisClient } from "bun";
-import { createClient, ctx, DEFAULT_REDIS_URL, ConnectionType, isEnabled } from "./test-utils";
-import { expectType } from "./test-utils";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(() => {

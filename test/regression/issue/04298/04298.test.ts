@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, test } from "bun:test";
+import { test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("node:http should not crash when server throws, and should abruptly close the socket", async () => {

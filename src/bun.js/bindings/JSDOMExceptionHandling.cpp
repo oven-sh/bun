@@ -146,7 +146,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    if (UNLIKELY(vm.hasPendingTerminationException()))
+    if (vm.hasPendingTerminationException()) [[unlikely]]
         return jsUndefined();
 
     switch (ec) {
@@ -184,6 +184,9 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
 
     case ExceptionCode::CryptoOperationFailedError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);
+
+    case ExceptionCode::EVENT_RECURSION:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
 
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
@@ -278,9 +281,13 @@ JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::
     return throwVMError(&lexicalGlobalObject, scope, createReferenceError(&lexicalGlobalObject, makeString(interfaceName, " constructor associated execution context is unavailable"_s)));
 }
 
-void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
+void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral functionName, ASCIILiteral argumentName)
 {
-    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    if (functionName && argumentName) {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, makeString(functionName, ": "_s, argumentName, " is not iterable."_s));
+    } else {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    }
 }
 
 void throwNonFiniteTypeError(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
-import { isWindows } from "harness";
 
 describe("bun build", () => {
   test("warnings dont return exit code 1", () => {
@@ -238,7 +237,7 @@ test("log case 1", () => {
   writeFileSync(inputFile2, 'console.log("Hello, world!");');
 
   const { exitCode, stdout } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--outdir=" + tmpdir + '/out', inputFile, inputFile2],
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile, inputFile2],
     env: bunEnv,
     cwd: tmpdir,
   });
@@ -260,7 +259,7 @@ test("log case 2", () => {
   writeFileSync(inputFile, 'console.log("Hello, world!");');
 
   const { exitCode, stdout } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--outdir=" + tmpdir + '/out', inputFile],
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
     env: bunEnv,
     cwd: tmpdir,
   });

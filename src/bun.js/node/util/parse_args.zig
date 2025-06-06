@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
-const strings = bun.strings;
 const String = bun.String;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -268,7 +267,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
 /// - `option_value`: value from user args
 /// - `options`: option configs, from `parseArgs({ options })`
 /// - `values`: option values returned in `values` by parseArgs
-fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, negative: bool, options: []const OptionDefinition, values: JSValue) void {
+fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, negative: bool, options: []const OptionDefinition, values: JSValue) bun.JSError!void {
     var key = option_name.asBunString(globalThis);
     if (key.eqlComptime("__proto__")) {
         return;
@@ -289,7 +288,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         if (values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
-            var value_list = JSValue.createEmptyArray(globalThis, 1);
+            var value_list = try JSValue.createEmptyArray(globalThis, 1);
             value_list.putIndex(globalThis, 0, new_value);
             values.putMayBeIndex(globalThis, &key, value_list);
         }
@@ -591,7 +590,7 @@ const ParseArgsState = struct {
                     try checkOptionUsage(globalThis, this.option_defs, this.allow_positionals, token);
                     try checkOptionLikeValue(globalThis, token);
                 }
-                storeOption(globalThis, token.name, token.value, token.option_idx, token.negative, this.option_defs, this.values);
+                try storeOption(globalThis, token.name, token.value, token.option_idx, token.negative, this.option_defs, this.values);
             },
             .positional => |token| {
                 if (!this.allow_positionals) {
@@ -714,8 +713,8 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
     const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
-    const positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
-    const tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+    const positionals = try JSC.JSValue.createEmptyArray(globalThis, 0);
+    const tokens = if (return_tokens) try JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
 
     var state = ParseArgsState{
         .globalThis = globalThis,

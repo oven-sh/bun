@@ -1,8 +1,8 @@
-import { describe, it, expect } from "bun:test";
 import { pathToFileURL } from "bun";
+import { describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { join, sep, resolve } from "path";
-import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDirWithFiles } from "harness";
+import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 

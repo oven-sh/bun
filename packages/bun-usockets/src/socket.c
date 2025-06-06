@@ -284,7 +284,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
         return 0;
     }
 
-    return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+    return us_socket_from_fd(ctx, socket_ext_size, fds[0], 0);
 #endif
 }
 
@@ -302,7 +302,7 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
+struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
 #else
@@ -321,6 +321,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
+    s->flags.is_ipc = 0;
+    s->flags.is_ipc = ipc;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -373,6 +375,44 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     return written < 0 ? 0 : written;
 }
+
+#if !defined(_WIN32)
+/* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
+    number is less than the length, the file descriptor was not sent. */
+int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
+    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
+        return 0;
+    }
+
+    struct msghdr msg = {0};
+    struct iovec iov = {0};
+    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    
+    iov.iov_base = (void*)data;
+    iov.iov_len = length;
+    
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = CMSG_SPACE(sizeof(int));
+    
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    
+    *(int *)CMSG_DATA(cmsg) = fd;
+    
+    int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
+    
+    if (sent != length) {
+        s->context->loop->data.last_write_failed = 1;
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+    
+    return sent < 0 ? 0 : sent;
+}
+#endif
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
 #ifndef LIBUS_NO_SSL

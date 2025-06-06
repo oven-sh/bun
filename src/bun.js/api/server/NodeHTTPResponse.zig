@@ -45,7 +45,7 @@ pub const Flags = packed struct(u8) {
 };
 
 pub const UpgradeCTX = struct {
-    context: ?*uws.uws_socket_context_t = null,
+    context: ?*uws.SocketContext = null,
     // request will be detached when go async
     request: ?*uws.Request = null,
 
@@ -252,7 +252,7 @@ pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
 }
 
 pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
-    if (this.buffered_request_body_data_during_pause.len > 0) {
+    if (this.buffered_request_body_data_during_pause.cap > 0) {
         this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
     }
     if (!this.flags.request_has_completed) {
@@ -1128,18 +1128,13 @@ pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void 
 }
 
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const bun = @import("bun");
 const string = []const u8;
-const Bun = JSC.API.Bun;
-const max_addressable_memory = bun.max_addressable_memory;
 const Environment = bun.Environment;
 const std = @import("std");
-const assert = bun.assert;
 const ZigString = JSC.ZigString;
-const WebSocketServer = @import("../server.zig").WebSocketServer;
 const uws = bun.uws;
 const Output = bun.Output;
 const AnyServer = JSC.API.AnyServer;

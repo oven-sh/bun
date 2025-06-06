@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const JSAst = bun.JSAst;
-const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;

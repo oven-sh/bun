@@ -1,6 +1,8 @@
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -290,4 +292,198 @@ test("eval does not leak source code", async () => {
   const errors = await new Response(proc.stderr).text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
+});
+
+describe("worker event", () => {
+  test("is emitted on the next tick with the right value", () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let worker: Worker | undefined = undefined;
+    let called = false;
+    process.once("worker", eventWorker => {
+      called = true;
+      expect(eventWorker as any).toBe(worker);
+      resolve();
+    });
+    worker = new Worker(new URL("data:text/javascript,"));
+    expect(called).toBeFalse();
+    return promise;
+  });
+
+  test("uses an overridden process.emit function", async () => {
+    const previousEmit = process.emit;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let worker: Worker | undefined;
+      // should not actually emit the event
+      process.on("worker", expect.unreachable);
+      worker = new Worker("", { eval: true });
+      // should look up process.emit on the next tick, not synchronously during the Worker constructor
+      (process as any).emit = (event, value) => {
+        try {
+          expect(event).toBe("worker");
+          expect(value).toBe(worker);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      await promise;
+    } finally {
+      process.emit = previousEmit;
+      process.off("worker", expect.unreachable);
+    }
+  });
+
+  test("throws if process.emit is not a function", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "emit-non-function-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("environmentData", () => {
+  test("can pass a value to a child", async () => {
+    setEnvironmentData("foo", new Map([["hello", "world"]]));
+    const worker = new Worker(
+      /* js */ `
+      const { getEnvironmentData, parentPort } = require("worker_threads");
+      parentPort.postMessage(getEnvironmentData("foo"));
+    `,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toEqual(new Map([["hello", "world"]]));
+  });
+
+  test("child modifications do not affect parent", async () => {
+    const worker = new Worker('require("worker_threads").setEnvironmentData("does_not_exist", "foo")', { eval: true });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    expect(getEnvironmentData("does_not_exist")).toBeUndefined();
+  });
+
+  test("is deeply inherited", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+    const out = await new Response(proc.stdout).text();
+    expect(out).toBe("foo\n".repeat(5));
+  });
+
+  test("can be used if parent thread had not imported worker_threads", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-empty-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("error event", () => {
+  test("is fired with a copy of the error value", async () => {
+    const worker = new Worker("throw new TypeError('oh no')", { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("oh no");
+  });
+
+  test("falls back to string when the error cannot be serialized", async () => {
+    const worker = new Worker(
+      /* js */ `
+      import { MessageChannel } from "node:worker_threads";
+      const { port1 } = new MessageChannel();
+      throw port1;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
+});
+
+describe("getHeapSnapshot", () => {
+  test("throws if the wrong options are passed", () => {
+    const worker = new Worker("", { eval: true });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot(0)).toThrow({
+      name: "TypeError",
+      message: 'The "options" argument must be of type object. Received type number (0)',
+    });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
+      name: "TypeError",
+      message: 'The "options.exposeInternals" property must be of type boolean. Received type number (0)',
+    });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
+      name: "TypeError",
+      message: 'The "options.exposeNumericValues" property must be of type boolean. Received type number (0)',
+    });
+  });
+
+  test("returns a rejected promise if the worker is not running", () => {
+    const worker = new Worker("", { eval: true });
+    expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_NOT_RUNNING",
+      message: "Worker instance not running",
+    });
+  });
+
+  test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", () => process.exit(0));
+      `,
+      { eval: true },
+    );
+    await once(worker, "online");
+    const stream = await worker.getHeapSnapshot();
+    expect(stream).toBeInstanceOf(Readable);
+    expect(stream.constructor.name).toBe("HeapSnapshotStream");
+    const json = await new Promise<string>(resolve => {
+      let json = "";
+      stream.on("data", chunk => {
+        json += chunk;
+      });
+      stream.on("end", () => {
+        resolve(json);
+      });
+    });
+    const object = JSON.parse(json);
+    expect(Object.keys(object).toSorted()).toEqual([
+      "edges",
+      "locations",
+      "nodes",
+      "samples",
+      "snapshot",
+      "strings",
+      "trace_function_infos",
+      "trace_tree",
+    ]);
+    worker.postMessage(0);
+  });
 });

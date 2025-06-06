@@ -11,6 +11,7 @@
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
     // making this opaque crashes Zig 0.14.0 when built in Debug or ReleaseSafe
+    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
     return struct {
         const Response = @This();
         const ssl = ssl_flag == 1;
@@ -44,7 +45,7 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
 
         pub fn prepareForSendfile(res: *Response) void {
-            return c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
+            c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
         }
 
         pub fn uncork(_: *Response) void {
@@ -348,9 +349,9 @@ pub const AnyResponse = union(enum) {
         };
     }
     pub fn flushHeaders(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.flushHeaders(),
-        };
+        }
     }
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
@@ -365,9 +366,9 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn writeContinue(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeContinue(),
-        };
+        }
     }
 
     pub fn state(this: AnyResponse) State {
@@ -391,25 +392,25 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, optional_data: UserDataType) void {
-        return switch (this) {
+        switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
                     @call(.always_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
-        };
+        }
     }
 
     pub fn writeStatus(this: AnyResponse, status: []const u8) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeStatus(status),
-        };
+        }
     }
 
     pub fn writeHeader(this: AnyResponse, key: []const u8, value: []const u8) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeHeader(key, value),
-        };
+        }
     }
 
     pub fn write(this: AnyResponse, data: []const u8) WriteResult {
@@ -419,9 +420,9 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.end(data, close_connection),
-        };
+        }
     }
 
     pub fn shouldCloseConnection(this: AnyResponse) bool {
@@ -437,27 +438,27 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn pause(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.pause(),
-        };
+        }
     }
 
     pub fn @"resume"(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.@"resume"(),
-        };
+        }
     }
 
     pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeHeaderInt(key, value),
-        };
+        }
     }
 
     pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.endWithoutBody(close_connection),
-        };
+        }
     }
 
     pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
@@ -470,10 +471,10 @@ pub const AnyResponse = union(enum) {
                 return handler(user_data, offset, .{ .TCP = resp });
             }
         };
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
@@ -486,10 +487,10 @@ pub const AnyResponse = union(enum) {
             }
         };
 
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
@@ -501,51 +502,51 @@ pub const AnyResponse = union(enum) {
                 handler(user_data, .{ .TCP = resp });
             }
         };
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn clearAborted(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearAborted(),
-        };
+        }
     }
     pub fn clearTimeout(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearTimeout(),
-        };
+        }
     }
 
     pub fn clearOnWritable(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearOnWritable(),
-        };
+        }
     }
 
     pub fn clearOnData(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearOnData(),
-        };
+        }
     }
 
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.endStream(close_connection),
-        };
+        }
     }
 
     pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.corked(handler, args_tuple),
-        };
+        }
     }
 
     pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, optional_data: UserDataType) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.runCorkedWithType(UserDataType, handler, optional_data),
-        };
+        }
     }
 
     pub fn upgrade(

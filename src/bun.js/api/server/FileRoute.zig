@@ -297,7 +297,8 @@ const StreamTransfer = struct {
         waiting_for_readable: bool = false,
         waiting_for_writable: bool = false,
         has_ended_response: bool = false,
-        _: u5 = 0,
+        has_reader_closed: bool = false,
+        _: u4 = 0,
     } = .{},
     const log = Output.scoped(.StreamTransfer, true);
 
@@ -401,7 +402,6 @@ const StreamTransfer = struct {
 
         if (state == .eof and !this.state.waiting_for_writable) {
             this.state.waiting_for_readable = false;
-            this.state.waiting_for_writable = false;
             this.state.has_ended_response = true;
             const resp = this.resp;
             const route = this.route;
@@ -444,6 +444,7 @@ const StreamTransfer = struct {
     pub fn onReaderDone(this: *StreamTransfer) void {
         log("onReaderDone", .{});
         this.state.waiting_for_readable = false;
+        this.state.has_reader_closed = true;
 
         var scope: DeinitScope = undefined;
         scope.enter(this);
@@ -498,13 +499,14 @@ const StreamTransfer = struct {
         log("finish", .{});
         if (!this.state.has_ended_response) {
             this.state.has_ended_response = true;
+            this.state.waiting_for_writable = false;
             const resp = this.resp;
             const route = this.route;
-            resp.endWithoutBody(resp.shouldCloseConnection());
             route.onResponseComplete(resp);
+            resp.endWithoutBody(resp.shouldCloseConnection());
         }
 
-        if (!this.reader.isDone()) {
+        if (!this.state.has_reader_closed) {
             this.reader.close();
             return;
         }

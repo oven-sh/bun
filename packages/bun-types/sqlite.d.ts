@@ -766,6 +766,7 @@ declare module "bun:sqlite" {
 
     /**
      * The actual SQLite column types from the first row of the result set.
+     * Useful for expressions and computed columns, which are not covered by `declaredTypes`
      * 
      * Returns an array of SQLite type constants as uppercase strings:
      * - `"INTEGER"` for integer values
@@ -782,7 +783,6 @@ declare module "bun:sqlite" {
      * 
      * **Behavior:**
      * - Uses `sqlite3_column_type()` to get actual data types from the first row
-     * - Provides accurate type information for expressions and computed columns
      * - Returns `null` for columns with unknown SQLite type constants
      * 
      * @example
@@ -820,7 +820,6 @@ declare module "bun:sqlite" {
      * **Behavior:**
      * - Uses `sqlite3_column_decltype()` to get schema-declared types
      * - Returns the exact type string from the table definition
-     * - More consistent but less accurate for dynamic content than `columnTypes`
      * 
      * @example
      * ```ts

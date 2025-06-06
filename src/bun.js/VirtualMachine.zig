@@ -701,6 +701,12 @@ pub fn onExit(this: *VirtualMachine) void {
 
     const rare_data = this.rare_data orelse return;
     defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    // Emit RunCleanup trace event if we have cleanup hooks
+    if (rare_data.cleanup_hooks.items.len > 0) {
+        trace_events.TraceEventManager.emit(.RunCleanup);
+    }
+
     // Make sure we run new cleanup hooks introduced by running cleanup hooks
     while (rare_data.cleanup_hooks.items.len > 0) {
         var hooks = rare_data.cleanup_hooks;
@@ -710,6 +716,9 @@ pub fn onExit(this: *VirtualMachine) void {
             hook.execute();
         }
     }
+
+    // Write out trace events before we shut down
+    trace_events.TraceEventManager.deinit();
 }
 
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
@@ -908,6 +917,7 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
+
     return vm;
 }
 
@@ -1095,97 +1105,25 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.CLI.Command.Debugger) 
 }
 
 pub fn initWorker(
-    worker: *webcore.WebWorker,
+    worker: ?*webcore.WebWorker,
     opts: Options,
-) anyerror!*VirtualMachine {
+) !*VirtualMachine {
     JSC.markBinding(@src());
-    var log: *logger.Log = undefined;
-    const allocator = opts.allocator;
-    if (opts.log) |__log| {
-        log = __log;
-    } else {
-        log = try allocator.create(logger.Log);
-        log.* = logger.Log.init(allocator);
+
+    var vm = try VirtualMachine.init(opts);
+    vm.worker = worker;
+    vm.allocator = opts.allocator;
+    // Workers don't have command line arguments
+    vm.argv = &[_][]const u8{};
+    // Use the origin from the transpiler options if available
+    if (opts.args.origin) |origin| {
+        vm.origin = URL.parse(origin);
     }
 
-    VMHolder.vm = try allocator.create(VirtualMachine);
-    const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
-    const transpiler = try Transpiler.init(
-        allocator,
-        log,
-        try Config.configureTransformOptionsForBunVM(allocator, opts.args),
-        opts.env_loader,
-    );
-    var vm = VMHolder.vm.?;
-
-    vm.* = VirtualMachine{
-        .global = undefined,
-        .allocator = allocator,
-        .transpiler_store = RuntimeTranspilerStore.init(),
-        .entry_point = ServerEntryPoint{},
-        .transpiler = transpiler,
-        .console = console,
-        .log = log,
-
-        .timer = bun.api.Timer.All.init(),
-        .origin = transpiler.options.origin,
-
-        .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
-        .source_mappings = undefined,
-        .macros = MacroMap.init(allocator),
-        .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
-        .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
-        .origin_timestamp = getOriginTimestamp(),
-        .ref_strings = JSC.RefString.Map.init(allocator),
-        .ref_strings_mutex = .{},
-        .standalone_module_graph = worker.parent.standalone_module_graph,
-        .worker = worker,
-        .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        // This option is irrelevant for Workers
-        .destruct_main_thread_on_exit = false,
-    };
-    vm.source_mappings.init(&vm.saved_source_map_table);
-    vm.regular_event_loop.tasks = EventLoop.Queue.init(
-        default_allocator,
-    );
-
-    vm.regular_event_loop.virtual_machine = vm;
-    vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-    vm.regular_event_loop.concurrent_tasks = .{};
-    vm.event_loop = &vm.regular_event_loop;
-    vm.hot_reload = worker.parent.hot_reload;
-    vm.transpiler.macro_context = null;
-    vm.transpiler.resolver.store_fd = opts.store_fd;
-    vm.transpiler.resolver.prefer_module_field = false;
-    vm.transpiler.resolver.onWakePackageManager = .{
-        .context = &vm.modules,
-        .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
-        .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
-    };
-    vm.transpiler.resolver.standalone_module_graph = opts.graph;
-
-    if (opts.graph == null) {
-        vm.transpiler.configureLinker();
-    } else {
-        vm.transpiler.configureLinkerWithAutoJSX(false);
-    }
-
-    vm.smol = opts.smol;
-    vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
-
-    vm.global = JSGlobalObject.create(
-        vm,
-        vm.console,
-        @as(i32, @intCast(worker.execution_context_id)),
-        worker.mini,
-        opts.eval,
-        worker.cpp_worker,
-    );
     vm.regular_event_loop.global = vm.global;
     vm.jsc = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
-    vm.transpiler.setAllocator(allocator);
+    vm.transpiler.setAllocator(opts.allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
     return vm;
@@ -3491,6 +3429,10 @@ pub const ExitHandler = struct {
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
+
+        // Emit AtExit trace event
+        trace_events.TraceEventManager.emit(.AtExit);
+
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -3500,6 +3442,10 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
+
+        // Emit BeforeExit trace event
+        trace_events.TraceEventManager.emit(.BeforeExit);
+
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };
@@ -3507,7 +3453,7 @@ pub const ExitHandler = struct {
 const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.jsc;
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Async = bun.Async;
 const Transpiler = bun.Transpiler;
@@ -3566,3 +3512,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const trace_events = @import("./trace_events.zig");

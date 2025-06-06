@@ -69,6 +69,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        // Initialize trace events if categories are specified
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            @import("bun.js/trace_events.zig").TraceEventManager.init(vm, ctx.runtime_options.trace_event_categories) catch {};
+
+            // Emit Environment trace event to indicate the environment is set up
+            @import("bun.js/trace_events.zig").TraceEventManager.emit(.Environment);
+        }
+
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -207,6 +215,14 @@ pub const Run = struct {
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
+
+        // Initialize trace events if categories are specified
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            @import("bun.js/trace_events.zig").TraceEventManager.init(vm, ctx.runtime_options.trace_event_categories) catch {};
+
+            // Emit Environment trace event to indicate the environment is set up
+            @import("bun.js/trace_events.zig").TraceEventManager.emit(.Environment);
+        }
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

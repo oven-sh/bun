@@ -40,7 +40,7 @@ static StringView extractCookieName(const StringView& cookie)
 {
     auto nameEnd = cookie.find('=');
     if (nameEnd == notFound)
-        return String();
+        return {};
     return cookie.substring(0, nameEnd);
 }
 
@@ -240,7 +240,7 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
         unsigned count = m_setCookieHeaders.size();
         switch (count) {
         case 0:
-            return String();
+            return { };
         case 1:
             return m_setCookieHeaders[0];
         default: {

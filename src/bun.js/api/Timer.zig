@@ -281,6 +281,9 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Emit RunTimers trace event
+        @import("../trace_events.zig").TraceEventManager.emit(.RunTimers);
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.

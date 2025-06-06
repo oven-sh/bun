@@ -39,6 +39,7 @@ const OOM = bun.OOM;
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+export var Bun__Node__NoAddons = false;
 
 pub var Bun__Node__ProcessTitle: ?string = null;
 
@@ -234,9 +235,10 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Comma-separated list of trace event categories to enable") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -672,6 +674,11 @@ pub const Arguments = struct {
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
+            // Check trace event categories first
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
+            }
+
             var preloads = args.options("--preload");
             if (preloads.len == 0) {
                 if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
@@ -707,9 +714,7 @@ pub const Arguments = struct {
             }
 
             if (args.flag("--no-addons")) {
-                // used for disabling process.dlopen and
-                // for disabling export condition "node-addons"
-                opts.allow_addons = false;
+                Bun__Node__NoAddons = true;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1547,6 +1552,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        trace_event_categories: []const u8 = "",
     };
 
     var global_cli_ctx: Context = undefined;

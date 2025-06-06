@@ -110,6 +110,9 @@ extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
     JSC.markBinding(@src());
 
+    // Emit RunAndClearNativeImmediates trace event
+    @import("./trace_events.zig").TraceEventManager.emit(.RunAndClearNativeImmediates);
+
     jsc_vm.releaseWeakRefs();
     JSC__JSGlobalObject__drainMicrotasks(globalObject);
 
@@ -195,6 +198,11 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
 
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
+
+    // Emit CheckImmediate trace event if there are tasks to run
+    if (to_run_now.items.len > 0) {
+        @import("./trace_events.zig").TraceEventManager.emit(.CheckImmediate);
+    }
 
     var exception_thrown = false;
     for (to_run_now.items) |task| {

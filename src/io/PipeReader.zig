@@ -442,7 +442,8 @@ const PosixBufferedReader = struct {
                         if (bytes_read == 0) {
                             // EOF - finished and closed pipe
                             parent.closeWithoutReporting();
-                            parent.done();
+                            if (!parent.flags.is_done)
+                                parent.done();
                             return;
                         }
 
@@ -473,7 +474,8 @@ const PosixBufferedReader = struct {
 
                         if (bytes_read == 0) {
                             parent.closeWithoutReporting();
-                            parent.done();
+                            if (!parent.flags.is_done)
+                                parent.done();
                             return;
                         }
 
@@ -530,7 +532,8 @@ const PosixBufferedReader = struct {
                                 parent.closeWithoutReporting();
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
-                                parent.done();
+                                if (!parent.flags.is_done)
+                                    parent.done();
                                 return;
                             }
 
@@ -589,7 +592,8 @@ const PosixBufferedReader = struct {
                     if (bytes_read == 0) {
                         parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
-                        parent.done();
+                        if (!parent.flags.is_done)
+                            parent.done();
                         return;
                     }
                 },
@@ -624,7 +628,8 @@ const PosixBufferedReader = struct {
                     if (bytes_read == 0) {
                         parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
-                        parent.done();
+                        if (!parent.flags.is_done)
+                            parent.done();
                         return;
                     }
 

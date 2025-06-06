@@ -470,7 +470,7 @@ const PosixBufferedReader = struct {
                     .result => |bytes_read| {
                         if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                         parent._offset += bytes_read;
-                        resizable_buffer.appendSlice(buf[0..bytes_read]) catch bun.outOfMemory();
+                        resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
                             parent.closeWithoutReporting();

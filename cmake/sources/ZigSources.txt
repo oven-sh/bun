@@ -139,7 +139,6 @@ src/bun.js/config.zig
 src/bun.js/ConsoleObject.zig
 src/bun.js/Counters.zig
 src/bun.js/Debugger.zig
-src/bun.js/event_loop.zig
 src/bun.js/event_loop/AnyEventLoop.zig
 src/bun.js/event_loop/AnyTask.zig
 src/bun.js/event_loop/AnyTaskWithExtraContext.zig

@@ -329,7 +329,7 @@ function configureSecureContext(context, options) {
     ticketKeys,
   } = options;
 
-  if (ciphers !== undefined && ciphers !== null) {
+  if (ciphers !== undefined && ciphers !== null && !ArrayIsArray(ciphers)) {
     validateString(ciphers, "options.ciphers");
   }
 
@@ -532,7 +532,9 @@ function setKey(context, key, passphrase, name) {
 }
 
 function processCiphers(ciphers, name) {
-  ciphers = StringPrototypeSplit.$call(ciphers || require("internal/tls").DEFAULT_CIPHERS_LIST, ":");
+  if (typeof ciphers === "string" || !ciphers) {
+    ciphers = StringPrototypeSplit.$call(ciphers || require("internal/tls").DEFAULT_CIPHERS, ":");
+  }
 
   const cipherList = ArrayPrototypeJoin.$call(
     ArrayPrototypeFilter.$call(ciphers, cipher => {
@@ -818,6 +820,7 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
   this._SNICallback = SNICallback;
+  this.server = this;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 

@@ -1,6 +1,6 @@
 #include "config.h"
 #include "ZigGlobalObject.h"
-#include "openssl/ssl.h"
+#include "ncrypto.h"
 
 namespace Bun {
 
@@ -94,7 +94,7 @@ public:
 
     static void destroy(JSC::JSCell* cell)
     {
-        jsCast<NodeTLSSecureContext*>(cell)->NodeTLSSecureContext::~NodeTLSSecureContext();
+        static_cast<NodeTLSSecureContext*>(cell)->NodeTLSSecureContext::~NodeTLSSecureContext();
     }
 
     DECLARE_EXPORT_INFO;
@@ -102,6 +102,8 @@ public:
 
     SSL_CTX* context() { return m_context.get(); }
     void context(SSL_CTX* ctx) { m_context = { ctx, SSL_CTX_free }; }
+
+    void setCACert(const ncrypto::BIOPointer& bio);
 
 private:
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> m_context { nullptr, nullptr };

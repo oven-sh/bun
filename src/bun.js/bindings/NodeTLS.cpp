@@ -16,7 +16,6 @@
 
 #include "libusockets.h"
 #include "wtf/Scope.h"
-#include "ncrypto.h"
 
 namespace Bun {
 
@@ -133,6 +132,18 @@ NodeTLSSecureContext::NodeTLSSecureContext(JSC::VM& vm, JSC::Structure* structur
 }
 
 NodeTLSSecureContext::~NodeTLSSecureContext() = default;
+
+void NodeTLSSecureContext::setCACert(const ncrypto::BIOPointer& bio)
+{
+    if (!bio) {
+        return;
+    }
+
+    while (ncrypto::X509Pointer x509 = ncrypto::X509Pointer(PEM_read_bio_X509_AUX(bio.get(), nullptr, ncrypto::NoPasswordCallback, nullptr))) {
+        RELEASE_ASSERT(X509_STORE_add_cert(getCertStore(), x509.get()) == 1);
+        RELEASE_ASSERT(SSL_CTX_add_client_CA(context(), x509.get()) == 1);
+    }
+}
 
 void NodeTLSSecureContext::setX509StoreFlag(unsigned long flags)
 {
@@ -294,8 +305,101 @@ JSC_DEFINE_HOST_FUNCTION(secureContextInit, (JSGlobalObject * globalObject, Call
     return JSC::encodedJSUndefined();
 }
 
+JSC_DEFINE_HOST_FUNCTION(secureContextSetCiphers, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ArgList args(callFrame);
+
+    JSValue ciphersValue = args.at(0);
+
+    if (!ciphersValue.isString()) {
+        return throwArgumentTypeError(*globalObject, scope, 0, "ciphers"_s, "SecureContext"_s, "setCiphers"_s, "string"_s);
+    }
+
+    CString ciphers = ciphersValue.toWTFString(globalObject).utf8();
+
+    if (!SSL_CTX_set_cipher_list(thisObject->context(), ciphers.data())) {
+        unsigned long err = ERR_get_error();
+
+        if (ciphers.length() == 0 && ERR_GET_REASON(err) == SSL_R_NO_CIPHER_MATCH) {
+            return JSC::encodedJSUndefined();
+        }
+
+        return throwCryptoError(globalObject, scope, err, "Failed to set ciphers");
+    }
+
+    return JSC::encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(secureContextAddCACert, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ArgList args(callFrame);
+
+    JSValue certValue = args.at(0);
+
+    auto* arrayBufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(certValue);
+
+    CString cert;
+
+    if (certValue.isString()) {
+        cert = certValue.toWTFString(globalObject).utf8();
+    } else if (arrayBufferView != nullptr && !arrayBufferView->isDetached()) {
+        cert = arrayBufferView->span();
+    } else {
+        return throwArgumentTypeError(*globalObject, scope, 0, "cert"_s, "SecureContext"_s, "addCACert"_s, "string or ArrayBuffer"_s);
+    }
+
+    if (cert.length() > INT_MAX) {
+        return JSC::encodedJSUndefined();
+    }
+
+    ncrypto::BIOPointer bio = ncrypto::BIOPointer::NewSecMem();
+
+    if (!bio) {
+        return JSC::encodedJSUndefined();
+    }
+
+    int written = ncrypto::BIOPointer::Write(&bio, cert.span());
+    if (written < 0 || static_cast<size_t>(written) != cert.length()) {
+        return JSC::encodedJSUndefined();
+    }
+
+    thisObject->setCACert(bio);
+    return JSC::encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(secureContextSetECDHCurve, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ArgList args(callFrame);
+
+    JSValue curveValue = args.at(0);
+
+    if (!curveValue.isString()) {
+        return throwArgumentTypeError(*globalObject, scope, 0, "curve"_s, "SecureContext"_s, "setECDHCurve"_s, "string"_s);
+    }
+
+    String curve = curveValue.toWTFString(globalObject);
+
+    if (curve != "auto" && !SSL_CTX_set1_curves_list(thisObject->context(), curve.utf8().data())) {
+        return throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set ECDH curve");
+    }
+
+    return JSC::encodedJSUndefined();
+}
+
 static const HashTableValue NodeTLSSecureContextPrototypeTableValues[] = {
     { "init"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextInit, 3 } },
+    { "setCiphers"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCiphers, 1 } },
+    { "addCACert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddCACert, 1 } },
+    { "setECDHCurve"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetECDHCurve, 1 } },
 };
 
 static EncodedJSValue constructSecureContext(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = {})

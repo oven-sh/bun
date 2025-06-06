@@ -7,8 +7,6 @@ pub const DeferredBatchTask = @This();
 
 running: if (Environment.isDebug) bool else u0 = if (Environment.isDebug) false else 0,
 
-const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
-
 pub fn init(this: *DeferredBatchTask) void {
     if (comptime Environment.isDebug) bun.debugAssert(!this.running);
     this.* = .{

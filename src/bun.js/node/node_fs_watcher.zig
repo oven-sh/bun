@@ -43,6 +43,12 @@ pub const FSWatcher = struct {
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     current_task: FSWatchTask = undefined,
 
+    // NOTE: this may equal `.current_task`. do not free it!
+    // if we create multiple on the same tick we use this buffer.
+    last_task: ?*FSWatchTask = null,
+
+    js_thread: std.Thread.Id,
+
     pub fn eventLoop(this: FSWatcher) *EventLoop {
         return this.ctx.eventLoop();
     }
@@ -59,20 +65,24 @@ pub const FSWatcher = struct {
 
     pub const finalize = deinit;
 
-    pub const FSWatchTask = if (Environment.isWindows) FSWatchTaskWindows else FSWatchTaskPosix;
-    pub const FSWatchTaskPosix = struct {
-        pub const new = bun.TrivialNew(@This());
+    pub const FSWatchTask = FSWatchTaskPosix;
 
+    const FSWatchTaskPosix = struct {
+        concurrent_task: JSC.EventLoopTask,
         ctx: *FSWatcher,
-        count: u8 = 0,
+        count: u8,
+        entries: [BATCH_SIZE]Entry = undefined,
+        // Track if we need to perform ref operation on main thread
+        needs_ref: bool = false,
 
-        entries: [8]Entry = undefined,
-        concurrent_task: JSC.ConcurrentTask = undefined,
-
-        pub const Entry = struct {
+        const Entry = struct {
             event: Event,
             needs_free: bool,
         };
+
+        const BATCH_SIZE = 10;
+
+        pub const new = bun.TrivialNew(@This());
 
         pub fn deinit(this: *FSWatchTask) void {
             this.cleanEntries();
@@ -82,13 +92,15 @@ pub const FSWatcher = struct {
             bun.destroy(this);
         }
 
-        pub fn append(this: *FSWatchTask, event: Event, needs_free: bool) void {
-            if (this.count == 8) {
+        pub fn append(this: *FSWatchTaskPosix, event: Event, needs_free: bool) void {
+            if (this.count >= this.entries.len) {
                 this.enqueue();
                 const ctx = this.ctx;
                 this.* = .{
                     .ctx = ctx,
                     .count = 0,
+                    .concurrent_task = undefined,
+                    .needs_ref = false,
                 };
             }
 
@@ -101,25 +113,31 @@ pub const FSWatcher = struct {
 
         pub fn run(this: *FSWatchTask) void {
             // this runs on JS Context Thread
+            const ctx = this.ctx;
+
+            // Perform ref operation on main thread if needed
+            if (this.needs_ref and ctx.persistent) {
+                ctx.poll_ref.ref(ctx.ctx);
+            }
 
             for (this.entries[0..this.count]) |entry| {
                 switch (entry.event) {
                     inline .rename, .change => |file_path, t| {
-                        this.ctx.emit(file_path, t);
+                        ctx.emit(file_path, t);
                     },
                     .@"error" => |err| {
-                        this.ctx.emitError(err);
+                        ctx.emitError(err);
                     },
                     .abort => {
-                        this.ctx.emitIfAborted();
+                        ctx.emitIfAborted();
                     },
                     .close => {
-                        this.ctx.emit("", .close);
+                        ctx.emit("", .close);
                     },
                 }
             }
 
-            this.ctx.unrefTask();
+            ctx.unrefTaskMainThread();
         }
 
         pub fn appendAbort(this: *FSWatchTask) void {
@@ -131,20 +149,32 @@ pub const FSWatcher = struct {
             if (this.count == 0)
                 return;
 
-            // if false is closed or detached (can still contain valid refs but will not create a new one)
-            if (this.ctx.refTask()) {
-                var that = FSWatchTask.new(this.*);
-                // Clear the count before enqueueing to avoid double processing
-                const saved_count = this.count;
-                this.count = 0;
-                that.count = saved_count;
-                that.concurrent_task.task = JSC.Task.init(that);
-                this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+            // Check if we can proceed from watcher thread
+            const ctx = this.ctx;
+            ctx.mutex.lock();
+            defer ctx.mutex.unlock();
+
+            if (ctx.closed) {
+                this.cleanEntries();
                 return;
             }
-            // closed or detached so just cleanEntries
-            this.cleanEntries();
+
+            // Track pending activity
+            const current = ctx.pending_activity_count.fetchAdd(1, .monotonic);
+
+            var that = FSWatchTask.new(this.*);
+            // Clear the count before enqueueing to avoid double processing
+            const saved_count = this.count;
+            this.count = 0;
+            that.count = saved_count;
+
+            // If we went from 0 to 1, we need to ref on the main thread
+            that.needs_ref = (current == 0);
+
+            that.concurrent_task.task = JSC.Task.init(that);
+            ctx.enqueueTaskConcurrent(&that.concurrent_task);
         }
+
         pub fn cleanEntries(this: *FSWatchTask) void {
             for (this.entries[0..this.count]) |*entry| {
                 if (entry.needs_free) {
@@ -437,7 +467,7 @@ pub const FSWatcher = struct {
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
-        // The initial activity count is already 1 from init()
+        // We're on main thread during init
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
         }
@@ -559,6 +589,7 @@ pub const FSWatcher = struct {
     pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
+            // We're on main thread here
             this.poll_ref.ref(this.ctx);
         }
         return .undefined;
@@ -567,6 +598,7 @@ pub const FSWatcher = struct {
     pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
+            // We're on main thread here
             this.poll_ref.unref(this.ctx);
         }
         return .undefined;
@@ -576,16 +608,31 @@ pub const FSWatcher = struct {
         return JSC.JSValue.jsBoolean(this.persistent);
     }
 
-    // this can be called from Watcher Thread or JS Context Thread
+    // Only call from main thread
+    pub fn refTaskMainThread(this: *FSWatcher) void {
+        if (this.persistent) {
+            this.poll_ref.ref(this.ctx);
+        }
+    }
+
+    // Only call from main thread
+    pub fn unrefTaskMainThread(this: *FSWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        const current = this.pending_activity_count.fetchSub(1, .monotonic);
+        // If we went from 1 to 0, we need to unref the poll
+        if (current == 1 and this.persistent) {
+            this.poll_ref.unref(this.ctx);
+        }
+    }
+
+    // Can be called from any thread - delegates to main thread version when on JS thread
     pub fn refTask(this: *FSWatcher) bool {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
-        const current = this.pending_activity_count.fetchAdd(1, .monotonic);
-        // If we went from 0 to 1, we need to ref the poll
-        if (current == 0 and this.persistent) {
-            this.poll_ref.ref(this.ctx);
-        }
+        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         return true;
     }
 
@@ -593,14 +640,14 @@ pub const FSWatcher = struct {
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
+    // Can be called from any thread - delegates to main thread version when on JS thread
     pub fn unrefTask(this: *FSWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        // JSC eventually will free it
-        const current = this.pending_activity_count.fetchSub(1, .monotonic);
-        // If we went from 1 to 0, we need to unref the poll
-        if (current == 1 and this.persistent) {
-            this.poll_ref.unref(this.ctx);
+        // If we're on the JS thread (where we have access to the VM), use the main thread version
+        // Otherwise just decrement the count
+        if (this.js_thread == std.Thread.getCurrentId()) {
+            this.unrefTaskMainThread();
+        } else {
+            _ = this.pending_activity_count.fetchSub(1, .monotonic);
         }
     }
 
@@ -614,14 +661,18 @@ pub const FSWatcher = struct {
 
             if (js_this != .zero) {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
-                    _ = this.refTask();
+                    // We're on main thread during close
+                    const current = this.pending_activity_count.fetchAdd(1, .monotonic);
+                    if (current == 0 and this.persistent) {
+                        this.poll_ref.ref(this.ctx);
+                    }
                     log("emit('close')", .{});
                     emitJS(listener, this.globalThis, .undefined, .close);
-                    this.unrefTask();
+                    this.unrefTaskMainThread();
                 }
             }
 
-            this.unrefTask();
+            this.unrefTaskMainThread();
         } else {
             this.mutex.unlock();
         }
@@ -698,9 +749,9 @@ pub const FSWatcher = struct {
             .path_watcher = null,
             .globalThis = args.global_this,
             .js_this = .zero,
-            .encoding = args.encoding,
-            .closed = false,
             .verbose = args.verbose,
+            .encoding = args.encoding,
+            .js_thread = std.Thread.getCurrentId(),
         });
         ctx.current_task.ctx = ctx;
 

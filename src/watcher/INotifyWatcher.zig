@@ -32,6 +32,11 @@ watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 /// nanoseconds
 coalesce_interval: isize = 100_000,
 
+/// Waker to signal the watcher thread
+waker: bun.Async.Waker = undefined,
+/// Whether the watcher is still running
+running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+
 pub const EventListIndex = c_int;
 pub const Event = extern struct {
     watch_descriptor: EventListIndex,
@@ -64,7 +69,7 @@ pub const Event = extern struct {
 pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
-    defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
+    defer if (old_count == 0) this.waker.wake();
     const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
@@ -75,7 +80,7 @@ pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(Ev
 pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
-    defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
+    defer if (old_count == 0) this.waker.wake();
     const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
     log("inotify_add_watch({}) = {}", .{ this.fd, rc });
@@ -100,6 +105,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
     this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
+    this.waker = try bun.Async.Waker.init();
     log("{} init", .{this.fd});
 }
 
@@ -116,72 +122,128 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
     // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
     var i: u32 = 0;
     const read_eventlist_bytes = if (this.read_ptr) |ptr| brk: {
-        Futex.waitForever(&this.watch_count, 0);
         i = ptr.i;
         break :brk this.eventlist_bytes[0..ptr.len];
     } else outer: while (true) {
-        Futex.waitForever(&this.watch_count, 0);
+        // Check if we should stop
+        if (!this.running.load(.acquire)) return .{ .result = &.{} };
 
-        const rc = std.posix.system.read(
-            this.fd.cast(),
-            this.eventlist_bytes,
-            this.eventlist_bytes.len,
-        );
-        const errno = std.posix.errno(rc);
-        switch (errno) {
-            .SUCCESS => {
-                var read_eventlist_bytes = this.eventlist_bytes[0..@intCast(rc)];
-                log("{} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
-                if (read_eventlist_bytes.len == 0) return .{ .result = &.{} };
+        // Check if watch_count is 0, if so wait for waker
+        const count = this.watch_count.load(.acquire);
+        if (count == 0) {
+            // Wait on just the waker fd since there are no watches
+            var fds = [_]std.posix.pollfd{.{
+                .fd = this.waker.getFd().cast(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
 
-                // IN_MODIFY is very noisy
-                // we do a 0.1ms sleep to try to coalesce events better
-                const double_read_threshold = Event.largest_size * (max_count / 2);
-                if (read_eventlist_bytes.len < double_read_threshold) {
-                    var fds = [_]std.posix.pollfd{.{
-                        .fd = this.fd.cast(),
-                        .events = std.posix.POLL.IN | std.posix.POLL.ERR,
-                        .revents = 0,
-                    }};
-                    var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
-                    if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
-                        inner: while (true) {
-                            const rest = this.eventlist_bytes[read_eventlist_bytes.len..];
-                            bun.assert(rest.len > 0);
-                            const new_rc = std.posix.system.read(this.fd.cast(), rest.ptr, rest.len);
-                            // Output.warn("wapa {} {} = {}", .{ this.fd, rest.len, new_rc });
-                            const e = std.posix.errno(new_rc);
-                            switch (e) {
-                                .SUCCESS => {
-                                    read_eventlist_bytes.len += @intCast(new_rc);
-                                    break :outer read_eventlist_bytes;
-                                },
-                                .AGAIN, .INTR => continue :inner,
-                                else => return .{ .err = .{
-                                    .errno = @truncate(@intFromEnum(e)),
-                                    .syscall = .read,
-                                } },
+            const poll_rc = std.posix.poll(&fds, -1) catch |err| {
+                return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(err)),
+                    .syscall = .poll,
+                } };
+            };
+
+            if (poll_rc > 0 and (fds[0].revents & std.posix.POLL.IN) != 0) {
+                // Consume the waker
+                this.waker.wait();
+            }
+
+            // Check again if we should stop or if watches were added
+            if (!this.running.load(.acquire)) return .{ .result = &.{} };
+            continue :outer;
+        }
+
+        // Wait on both inotify fd and waker fd
+        var fds = [_]std.posix.pollfd{
+            .{
+                .fd = this.fd.cast(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = this.waker.getFd().cast(),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+        };
+
+        const poll_rc = std.posix.poll(&fds, -1) catch |err| {
+            return .{ .err = .{
+                .errno = @truncate(@intFromEnum(err)),
+                .syscall = .poll,
+            } };
+        };
+
+        if (poll_rc > 0) {
+            // Check if waker was signaled
+            if ((fds[1].revents & std.posix.POLL.IN) != 0) {
+                // Consume the waker
+                this.waker.wait();
+                // Check if we should stop
+                if (!this.running.load(.acquire)) return .{ .result = &.{} };
+            }
+
+            // Check if inotify has events
+            if ((fds[0].revents & std.posix.POLL.IN) != 0) {
+                const rc = std.posix.system.read(
+                    this.fd.cast(),
+                    this.eventlist_bytes,
+                    this.eventlist_bytes.len,
+                );
+                const errno = std.posix.errno(rc);
+                switch (errno) {
+                    .SUCCESS => {
+                        var read_eventlist_bytes = this.eventlist_bytes[0..@intCast(rc)];
+                        log("{} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
+                        if (read_eventlist_bytes.len == 0) return .{ .result = &.{} };
+
+                        // IN_MODIFY is very noisy
+                        // we do a 0.1ms sleep to try to coalesce events better
+                        const double_read_threshold = Event.largest_size * (max_count / 2);
+                        if (read_eventlist_bytes.len < double_read_threshold) {
+                            var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
+                            if ((std.posix.ppoll(&fds[0..1], &timespec, null) catch 0) > 0) {
+                                inner: while (true) {
+                                    const rest = this.eventlist_bytes[read_eventlist_bytes.len..];
+                                    bun.assert(rest.len > 0);
+                                    const new_rc = std.posix.system.read(this.fd.cast(), rest.ptr, rest.len);
+                                    // Output.warn("wapa {} {} = {}", .{ this.fd, rest.len, new_rc });
+                                    const e = std.posix.errno(new_rc);
+                                    switch (e) {
+                                        .SUCCESS => {
+                                            read_eventlist_bytes.len += @intCast(new_rc);
+                                            break :outer read_eventlist_bytes;
+                                        },
+                                        .AGAIN, .INTR => continue :inner,
+                                        else => return .{ .err = .{
+                                            .errno = @truncate(@intFromEnum(e)),
+                                            .syscall = .read,
+                                        } },
+                                    }
+                                }
                             }
                         }
-                    }
-                }
 
-                break :outer read_eventlist_bytes;
-            },
-            .AGAIN, .INTR => continue :outer,
-            .INVAL => {
-                if (Environment.isDebug) {
-                    bun.Output.err("EINVAL", "inotify read({}, {d})", .{ this.fd, this.eventlist_bytes.len });
+                        break :outer read_eventlist_bytes;
+                    },
+                    .AGAIN, .INTR => continue :outer,
+                    .INVAL => {
+                        if (Environment.isDebug) {
+                            bun.Output.err("EINVAL", "inotify read({}, {d})", .{ this.fd, this.eventlist_bytes.len });
+                        }
+                        return .{ .err = .{
+                            .errno = @truncate(@intFromEnum(errno)),
+                            .syscall = .read,
+                        } };
+                    },
+                    else => return .{ .err = .{
+                        .errno = @truncate(@intFromEnum(errno)),
+                        .syscall = .read,
+                    } },
                 }
-                return .{ .err = .{
-                    .errno = @truncate(@intFromEnum(errno)),
-                    .syscall = .read,
-                } };
-            },
-            else => return .{ .err = .{
-                .errno = @truncate(@intFromEnum(errno)),
-                .syscall = .read,
-            } },
+            }
         }
     };
 
@@ -213,11 +275,17 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         }
     }
 
+    // Clear read_ptr if we've processed all buffered events
+    this.read_ptr = null;
+
     return .{ .result = this.eventlist_ptrs[0..count] };
 }
 
 pub fn stop(this: *INotifyWatcher) void {
     log("{} stop", .{this.fd});
+    this.running.store(false, .release);
+    // Wake up any threads waiting in read()
+    this.waker.wake();
     if (this.fd != bun.invalid_fd) {
         this.fd.close();
         this.fd = bun.invalid_fd;
@@ -236,6 +304,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
 
     // TODO: is this thread safe?
     var remaining_events = events.len;
+    var event_offset: usize = 0;
 
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
@@ -244,7 +313,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         var temp_name_list: [128]?[:0]u8 = undefined;
         var temp_name_off: u8 = 0;
 
-        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
+        const slice = events[event_offset..][0..@min(128, remaining_events, this.watch_events.len)];
         var watchevents = this.watch_events[0..slice.len];
         var watch_event_id: u32 = 0;
         for (slice) |event| {
@@ -297,6 +366,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         } else {
             break;
         }
+        event_offset += slice.len;
         remaining_events -= slice.len;
     }
 

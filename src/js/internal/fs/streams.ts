@@ -559,18 +559,40 @@ function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        })
-        .catch(cb);
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
+    try {
+      const maybePromise = fileSink.write(data);
+      if ($isPromise(maybePromise)) {
+        // Check if it's a rejected promise (synchronous error)
+        const state = $getPromiseInternalField(maybePromise, $promiseFieldFlags);
+        if ((state & $promiseStateFulfilled) === $promiseStateRejected) {
+          // Synchronous error - get the rejection reason
+          const err = $getPromiseInternalField(maybePromise, $promiseFieldReactionsOrResult);
+          // Emit error event on next tick for consistency with Node.js
+          process.nextTick(() => {
+            this.emit("error", err);
+          });
+          cb(err);
+          return false;
+        }
+        // Normal async promise
+        maybePromise
+          .then(() => {
+            this.emit("drain"); // Emit drain event
+            cb(null);
+          })
+          .catch(cb);
+        return false; // Indicate backpressure
+      } else {
+        cb(null);
+        return true; // No backpressure
+      }
+    } catch (err) {
+      // Emit error event on next tick for consistency with Node.js
+      process.nextTick(() => {
+        this.emit("error", err);
+      });
+      cb(err);
+      return false;
     }
   } else {
     writeAll.$call(this, data, data.length, this.pos, er => {
@@ -603,16 +625,38 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      maybePromise.then(() => {
-        cb(null);
-        this.emit("drain");
-      }, cb);
+      // Check if it's a rejected promise (synchronous error)
+      const state = $getPromiseInternalField(maybePromise, $promiseFieldFlags);
+      if ((state & $promiseStateFulfilled) === $promiseStateRejected) {
+        // Synchronous error - get the rejection reason
+        const err = $getPromiseInternalField(maybePromise, $promiseFieldReactionsOrResult);
+        // Emit error event on next tick for consistency with Node.js
+        process.nextTick(() => {
+          this.emit("error", err);
+        });
+        if (cb) cb(err);
+        return false;
+      }
+      // Normal async promise
+      maybePromise.then(
+        () => {
+          cb(null);
+          this.emit("drain");
+        },
+        err => {
+          if (cb) cb(err);
+        },
+      );
       return false;
     } else {
       if (cb) process.nextTick(cb, null);
       return true;
     }
   } catch (e) {
+    // Emit error event on next tick for consistency with Node.js
+    process.nextTick(() => {
+      this.emit("error", e);
+    });
     if (cb) process.nextTick(cb, e);
     return false;
   }
@@ -634,18 +678,40 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        })
-        .catch(cb);
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
+    try {
+      const maybePromise = fileSink.write(data);
+      if ($isPromise(maybePromise)) {
+        // Check if it's a rejected promise (synchronous error)
+        const state = $getPromiseInternalField(maybePromise, $promiseFieldFlags);
+        if ((state & $promiseStateFulfilled) === $promiseStateRejected) {
+          // Synchronous error - get the rejection reason
+          const err = $getPromiseInternalField(maybePromise, $promiseFieldReactionsOrResult);
+          // Emit error event on next tick for consistency with Node.js
+          process.nextTick(() => {
+            this.emit("error", err);
+          });
+          cb(err);
+          return false;
+        }
+        // Normal async promise
+        maybePromise
+          .then(() => {
+            this.emit("drain"); // Emit drain event
+            cb(null);
+          })
+          .catch(cb);
+        return false; // Indicate backpressure
+      } else {
+        cb(null);
+        return true; // No backpressure
+      }
+    } catch (err) {
+      // Emit error event on next tick for consistency with Node.js
+      process.nextTick(() => {
+        this.emit("error", err);
+      });
+      cb(err);
+      return false;
     }
   } else {
     const result: any = this._write(data, encoding, cb);

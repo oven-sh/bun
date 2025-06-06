@@ -53,10 +53,8 @@ pub fn PosixPipeWriter(
                             return .{ .pending = offset };
                         }
 
-                        if (err.getErrno() == .PIPE) {
-                            return .{ .done = offset };
-                        }
-
+                        // Don't treat EPIPE as done - return it as an error
+                        // so it can be properly handled by the stream
                         return .{ .err = err };
                     },
 
@@ -326,7 +324,7 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        pub fn updateRef(this: *const PosixWriter, event_loop: anytype, value: bool) void {
+        pub fn updateRef(this: *PosixWriter, event_loop: anytype, value: bool) void {
             const poll = this.getPoll() orelse return;
             poll.setKeepingProcessAlive(event_loop, value);
         }

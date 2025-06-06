@@ -484,6 +484,10 @@ pub fn construct(this: *FileSink, _: std.mem.Allocator) void {
 
 pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
+        // Check if we have a pending PIPE error from onAttachedProcessExit
+        if (this.pending.result == .err and this.pending.result.err.getErrno() == .PIPE) {
+            return .{ .err = this.pending.result.err };
+        }
         return .{ .done = {} };
     }
 
@@ -492,6 +496,10 @@ pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
 pub const writeBytes = write;
 pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
+        // Check if we have a pending PIPE error from onAttachedProcessExit
+        if (this.pending.result == .err and this.pending.result.err.getErrno() == .PIPE) {
+            return .{ .err = this.pending.result.err };
+        }
         return .{ .done = {} };
     }
 
@@ -499,6 +507,10 @@ pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable
 }
 pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
+        // Check if we have a pending PIPE error from onAttachedProcessExit
+        if (this.pending.result == .err and this.pending.result.err.getErrno() == .PIPE) {
+            return .{ .err = this.pending.result.err };
+        }
         return .{ .done = {} };
     }
 

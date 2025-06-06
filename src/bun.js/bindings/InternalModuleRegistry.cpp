@@ -167,9 +167,12 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
     }
     return value;

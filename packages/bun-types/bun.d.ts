@@ -4923,7 +4923,7 @@ declare module "bun" {
    *
    * @param force Synchronously run the garbage collector
    */
-  function gc(force: boolean): void;
+  function gc(force?: boolean): void;
 
   /**
    * JavaScriptCore engine's internal heap snapshot

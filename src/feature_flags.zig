@@ -96,7 +96,7 @@ pub const inline_properties_in_transpiler = true;
 
 pub const same_target_becomes_destructuring = true;
 
-pub const help_catch_memory_issues = bun.Environment.allow_assert;
+pub const help_catch_memory_issues = bun.Environment.enable_asan or bun.Environment.isDebug;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
 ///

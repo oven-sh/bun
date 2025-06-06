@@ -107,7 +107,7 @@ pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
         done.* = true; // Signal that we're done since we can't tick
         return;
     };
-    
+
     while (!done.*) {
         handle.tick();
     }

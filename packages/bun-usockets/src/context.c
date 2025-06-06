@@ -504,7 +504,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     }
 
     struct addrinfo_request* ai_req;
-    if (Bun__addrinfo_get(loop, host, &ai_req) == 0) {
+    if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         // fast path for cached results
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
         // fast failure path

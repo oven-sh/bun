@@ -434,9 +434,9 @@ pub const FSWatcher = struct {
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
+        // The initial activity count is already 1 from init()
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = this.toJS(this.globalThis);
@@ -578,8 +578,11 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
-        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
-
+        const current = this.pending_activity_count.fetchAdd(1, .monotonic);
+        // If we went from 0 to 1, we need to ref the poll
+        if (current == 0 and this.persistent) {
+            this.poll_ref.ref(this.ctx);
+        }
         return true;
     }
 
@@ -591,7 +594,11 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .monotonic);
+        const current = this.pending_activity_count.fetchSub(1, .monotonic);
+        // If we went from 1 to 0, we need to unref the poll
+        if (current == 1 and this.persistent) {
+            this.poll_ref.unref(this.ctx);
+        }
     }
 
     pub fn close(this: *FSWatcher) void {

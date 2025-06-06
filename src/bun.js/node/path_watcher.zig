@@ -693,7 +693,8 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
+        // Stop the watcher thread and wait for it to finish
+        this.main_watcher.deinit(true);
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {
@@ -855,9 +856,13 @@ pub const PathWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
-        if (this.isClosed() and this.pending_directories == 0) {
+        if (this.pending_directories == 0) {
             this.has_pending_directories.store(false, .release);
-            this.deinit();
+            if (this.closed.load(.acquire)) {
+                this.mutex.unlock();
+                this.deinit();
+                return;
+            }
         }
     }
 

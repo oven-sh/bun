@@ -2422,7 +2422,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
                 typeValue = JSC::jsAtomString(vm, makeAtomString("TEXT"_s));
                 break;
             case SQLITE_BLOB:
-                typeValue = JSC::jsNontrivialString(vm, "BLOB"_s);
+                typeValue = JSC::jsAtomString(vm, makeAtomString("BLOB"_s));
                 break;
             case SQLITE_NULL:
                 typeValue = JSC::jsNontrivialString(vm, "NULL"_s);

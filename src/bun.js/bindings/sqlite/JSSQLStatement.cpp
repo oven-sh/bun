@@ -2439,7 +2439,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     // Reset the statement back to its original state
     sqlite3_reset(castedThis->stmt);
 
-    return JSC::JSValue::encode(array);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
@@ -2475,7 +2475,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
         array->putDirectIndex(lexicalGlobalObject, i, typeValue);
     }
     
-    return JSC::JSValue::encode(array);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

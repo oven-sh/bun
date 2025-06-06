@@ -434,7 +434,8 @@ const StreamTransfer = struct {
                     return false;
                 }
 
-                this.reader.unpause();
+                if (bun.Environment.isWindows)
+                    this.reader.unpause();
 
                 return true;
             },

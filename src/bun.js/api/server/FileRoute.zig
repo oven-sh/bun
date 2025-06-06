@@ -333,7 +333,6 @@ const StreamTransfer = struct {
         scope.enter(this);
         defer scope.exit();
 
-        this.resp.onAborted(*StreamTransfer, onAborted, this);
         this.state.waiting_for_readable = true;
         this.state.waiting_for_writable = true;
         this.max_size = size;
@@ -348,6 +347,8 @@ const StreamTransfer = struct {
             },
             .result => {},
         }
+
+        this.reader.updateRef(true);
 
         if (bun.Environment.isPosix) {
             if (this.reader.handle.getPoll()) |poll| {
@@ -364,6 +365,11 @@ const StreamTransfer = struct {
         }
 
         this.reader.read();
+
+        if (!scope.deinit_called) {
+            // This clones some data so we could avoid that if we're already done.
+            this.resp.onAborted(*StreamTransfer, onAborted, this);
+        }
     }
 
     pub fn onReadChunk(this: *StreamTransfer, chunk_: []const u8, state_: bun.io.ReadState) bool {

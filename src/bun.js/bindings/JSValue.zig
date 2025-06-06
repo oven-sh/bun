@@ -1401,7 +1401,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
-
+    extern fn JSC__JSValue__getPropertyValue(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
         return JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
@@ -1469,6 +1469,9 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
+    ///
+    /// Cannot handle property names that are numeric indexes. (For this use `getPropertyValue` instead.)
+    ///
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
@@ -1488,6 +1491,26 @@ pub const JSValue = enum(i64) {
             // since there are false positives, the better path is to make them
             // negatives, as the number of places that desire throwing on
             // existing undefined is extremely small, but non-zero.
+            .undefined => null,
+            else => |val| val,
+        };
+    }
+
+    /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// and JavaScript null can exist as a property and is different than zig
+    /// `null` (property does not exist).
+    ///
+    /// Can handle numeric index property names.
+    ///
+    /// If you know that the property name is not an integer index, use `get` instead.
+    ///
+    pub inline fn getPropertyValue(target: JSValue, global: *JSGlobalObject, property_name: []const u8) bun.JSError!?JSValue {
+        if (bun.Environment.isDebug) bun.assert(target.isObject());
+
+        return switch (JSC__JSValue__getPropertyValue(target, global, property_name.ptr, @intCast(property_name.len))) {
+            .zero => error.JSError,
+            .property_does_not_exist_on_object => null,
             .undefined => null,
             else => |val| val,
         };
@@ -1569,6 +1592,7 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
+    /// This Cannot handle numeric index property names safely. Please use `getTruthyPropertyValue` instead.
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
         if (try get(this, global, property)) |prop| {
             return truthyPropertyValue(prop);
@@ -1577,6 +1601,14 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
+    /// Get a property value handling numeric index property names safely.
+    pub fn getTruthyPropertyValue(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try getPropertyValue(this, global, property)) |prop| {
+            return truthyPropertyValue(prop);
+        }
+
+        return null;
+    }
     /// Get a value that can be coerced to a string.
     ///
     /// Returns null when the value is:

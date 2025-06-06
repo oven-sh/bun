@@ -45,7 +45,7 @@ function unfqdn(host) {
 // String#toLowerCase() is locale-sensitive so we use
 // a conservative version that only lowercases A-Z.
 function toLowerCase(c) {
-  return StringFromCharCode.$call(32 + StringPrototypeCharCodeAt.$call(c, 0));
+  return StringFromCharCode(32 + StringPrototypeCharCodeAt.$call(c, 0));
 }
 
 function splitHost(host) {

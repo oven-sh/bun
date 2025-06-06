@@ -300,6 +300,14 @@ pub const JsVM = struct {
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+        if (comptime Environment.isWindows) {
+            if (this.vm.event_loop_handle) |handle| {
+                return handle;
+            }
+            // During shutdown on Windows, event_loop_handle can be null.
+            // Return a no-op event loop to prevent crashes during cleanup.
+            return getNoOpEventLoop();
+        }
         return this.vm.event_loop_handle.?;
     }
 
@@ -371,6 +379,24 @@ pub const EventLoopKind = enum {
         };
     }
 };
+
+fn getNoOpEventLoop() *JSC.PlatformEventLoop {
+    const static = struct {
+        var no_op_loop: bun.windows.libuv.Loop = undefined;
+        var initialized = false;
+        
+        pub fn get() *bun.windows.libuv.Loop {
+            if (!initialized) {
+                no_op_loop = std.mem.zeroes(bun.windows.libuv.Loop);
+                no_op_loop.active_handles = 0;
+                initialized = true;
+            }
+            return &no_op_loop;
+        }
+    };
+    
+    return static.get();
+}
 
 pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
     *VirtualMachine => JsVM,

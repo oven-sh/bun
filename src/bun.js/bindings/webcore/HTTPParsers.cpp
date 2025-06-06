@@ -996,7 +996,6 @@ extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestam
     time_t timestamp = timestampMs / 1000;
     struct tm tstruct = {};
 #ifdef _WIN32
-    /* Micro, fucking soft never follows spec. */
     gmtime_s(&tstruct, &timestamp);
 #else
     gmtime_r(&timestamp, &tstruct);

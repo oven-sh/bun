@@ -19,9 +19,10 @@ pub fn hash(this: *@This(), stat: bun.Stat, path: []const u8) void {
 
     if (prev != this.value and bun.S.ISREG(@intCast(stat.mode))) {
         const mtime_timespec = stat.mtime();
+        // Clamp negative values to 0 to avoid timestamp overflow issues on Windows
         const mtime = bun.timespec{
-            .nsec = @intCast(mtime_timespec.nsec),
-            .sec = @intCast(mtime_timespec.sec),
+            .nsec = @intCast(@max(mtime_timespec.nsec, 0)),
+            .sec = @intCast(@max(mtime_timespec.sec, 0)),
         };
         if (mtime.ms() > 0) {
             this.last_modified_buffer_len = @intCast(bun.JSC.wtf.writeHTTPDate(&this.last_modified_buffer, mtime.msUnsigned()).len);

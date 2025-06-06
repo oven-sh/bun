@@ -1491,9 +1491,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            // This exit code is what Node.js uses when it calls
-            // abort. This is relied on by their Node-API tests.
-            bun.c.quick_exit(134);
+            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it includes a
+            // breakpoint which makes crashes easier to debug.
+            std.posix.abort();
         },
         else => {
             // Install default handler so that the tkill below will terminate.
@@ -1826,7 +1826,7 @@ pub const js_bindings = struct {
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
-        const array = JSValue.createEmptyArray(global, list.len);
+        const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }

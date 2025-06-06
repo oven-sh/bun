@@ -1126,6 +1126,7 @@ declare module "bun" {
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
+     * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
      *
      * @example
      * ```js
@@ -1135,7 +1136,7 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    function prefetch(hostname: string): void;
+    function prefetch(hostname: string, port?: number): void;
 
     /**
      * **Experimental API**
@@ -1865,6 +1866,7 @@ declare module "bun" {
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    rapidhash: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
   }
 
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -4922,7 +4924,7 @@ declare module "bun" {
    *
    * @param force Synchronously run the garbage collector
    */
-  function gc(force: boolean): void;
+  function gc(force?: boolean): void;
 
   /**
    * JavaScriptCore engine's internal heap snapshot
@@ -6849,7 +6851,7 @@ declare module "bun" {
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
        * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
        * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
        *
        * Currently, this is only compatible with processes that are other `bun` instances.

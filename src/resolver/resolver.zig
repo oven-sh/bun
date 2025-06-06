@@ -3491,7 +3491,7 @@ pub const Resolver = struct {
             .{root_path},
         ) catch bun.outOfMemory()) catch bun.outOfMemory();
 
-        return bun.String.toJSArray(globalObject, list.items);
+        return bun.String.toJSArray(globalObject, list.items) catch .zero;
     }
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {

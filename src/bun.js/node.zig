@@ -73,13 +73,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
-        /// experienced a bug with a Maybe(void, void)
-        /// creating the `err` variant of this type
-        /// resulted in Zig incorrectly setting the tag, leading to a switch
-        /// statement to just not work.
-        /// we (Zack, Dylan, Chloe, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
-        pub const Tag = enum(u8) { err, result };
+        pub const Tag = enum { err, result };
 
         pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };
         pub const success: @This() = .{

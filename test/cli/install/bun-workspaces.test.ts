@@ -2,6 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { readlink } from "fs/promises";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -13,6 +14,7 @@ import {
   VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -1680,4 +1682,134 @@ test("can override npm package with workspace package under a different name", a
     name: "pkg1",
     version: "2.2.2",
   });
+});
+
+test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+  // Create bunfig.toml with linkWorkspacePackages set to false
+  await write(
+    join(packageDir, "bunfig.toml"),
+    `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+  );
+
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+
+    write(
+      join(packageDir, "packages", "mono", "package.json"),
+      JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+      }),
+    ),
+
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({
+        name: "bar",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "latest",
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // Verify that the registry version was installed, not the workspace version
+  const installedNoDeps = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+  expect(installedNoDeps).toEqual({
+    name: "no-deps",
+    version: "2.0.0", // Should be registry version (latest that matches ^1.0.0), not workspace version (3.0.0)
+  });
+
+  // Check the lockfile to ensure it shows registry resolution
+  const lockfile = parseLockfile(packageDir);
+  console.log(JSON.stringify(lockfile, null, 2));
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+});
+
+test("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+  // Create bunfig.toml with linkWorkspacePackages set to false
+  await write(
+    join(packageDir, "bunfig.toml"),
+    `
+[install]
+linkWorkspacePackages = false
+`,
+  );
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({
+        name: "no-deps",
+        version: "2.0.0",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "consumer", "package.json"),
+      JSON.stringify({
+        name: "consumer",
+        dependencies: {
+          "no-deps": "workspace:*", // Explicit workspace: prefix should still link
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  const out = await Bun.readableStreamToText(stdout);
+
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // Verify that the workspace was linked despite linkWorkspacePackages = false
+  const installedNoDeps = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+  expect(installedNoDeps).toEqual({
+    name: "no-deps",
+    version: "2.0.0", // Should be workspace version because of explicit workspace: prefix
+  });
+
+  // Verify it's actually a symlink/workspace link
+  expect(await readlink(join(packageDir, "node_modules", "no-deps"))).toContain("packages/no-deps");
 });

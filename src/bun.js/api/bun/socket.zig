@@ -1432,7 +1432,8 @@ fn NewSocket(comptime ssl: bool) type {
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
-            _: u7 = 0,
+            is_stdio_fd: bool = false,
+            _: u6 = 0,
         };
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
@@ -1492,6 +1493,15 @@ fn NewSocket(comptime ssl: bool) type {
                 },
                 .fd => |f| {
                     const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
+
+                    // For stdout/stderr file descriptors, ensure synchronous writes
+                    const fd_int = f.cast();
+                    if (fd_int == 1 or fd_int == 2) {
+                        this.flags.is_stdio_fd = true;
+                        // Mark the underlying file descriptor as blocking for synchronous writes
+                        _ = bun.sys.updateNonblocking(f, false);
+                    }
+
                     this.onOpen(socket);
                 },
             }
@@ -2209,6 +2219,20 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
+            }
+
+            // For stdio file descriptors, always write with flush
+            if (this.flags.is_stdio_fd) {
+                // Write with force flush for immediate output
+                const res = this.socket.write(buffer, true);
+                const uwrote: usize = @intCast(@max(res, 0));
+                this.bytes_written += uwrote;
+                log("write({d}) = {d} (stdio fd)", .{ buffer.len, res });
+
+                // Also explicitly flush the socket
+                this.socket.flush();
+
+                return res;
             }
 
             // we don't cork yet but we might later

@@ -487,7 +487,14 @@ pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
         return .{ .done = {} };
     }
 
-    return this.toResult(this.writer.write(data.slice()));
+    const result = this.toResult(this.writer.write(data.slice()));
+
+    // For synchronous file descriptors (like stderr), ensure data is fully written
+    if (this.force_sync and this.writer.hasPendingData()) {
+        _ = this.writer.flush();
+    }
+
+    return result;
 }
 pub const writeBytes = write;
 pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
@@ -495,14 +502,28 @@ pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable
         return .{ .done = {} };
     }
 
-    return this.toResult(this.writer.writeLatin1(data.slice()));
+    const result = this.toResult(this.writer.writeLatin1(data.slice()));
+
+    // For synchronous file descriptors (like stderr), ensure data is fully written
+    if (this.force_sync and this.writer.hasPendingData()) {
+        _ = this.writer.flush();
+    }
+
+    return result;
 }
 pub fn writeUTF16(this: *@This(), data: streams.Result) streams.Result.Writable {
     if (this.done) {
         return .{ .done = {} };
     }
 
-    return this.toResult(this.writer.writeUTF16(data.slice16()));
+    const result = this.toResult(this.writer.writeUTF16(data.slice16()));
+
+    // For synchronous file descriptors (like stderr), ensure data is fully written
+    if (this.force_sync and this.writer.hasPendingData()) {
+        _ = this.writer.flush();
+    }
+
+    return result;
 }
 
 pub fn end(this: *FileSink, _: ?bun.sys.Error) JSC.Maybe(void) {

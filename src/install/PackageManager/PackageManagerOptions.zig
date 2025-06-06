@@ -26,6 +26,7 @@ local_package_features: Features = .{
     .optional_dependencies = true,
     .dev_dependencies = true,
     .workspaces = true,
+    .link_workspace_packages = true,
 },
 patch_features: union(enum) {
     nothing: struct {},

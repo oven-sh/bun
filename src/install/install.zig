@@ -558,6 +558,7 @@ pub const Features = struct {
     peer_dependencies: bool = true,
     trusted_dependencies: bool = false,
     workspaces: bool = false,
+    link_workspace_packages: bool = true,
     patched_dependencies: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
@@ -569,6 +570,7 @@ pub const Features = struct {
         out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
         out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
         out |= @as(u8, @intFromBool(this.workspaces)) << 5;
+        out |= @as(u8, @intFromBool(this.link_workspace_packages)) << 6;
         return @as(Behavior, @enumFromInt(out));
     }
 
@@ -580,6 +582,7 @@ pub const Features = struct {
         .trusted_dependencies = true,
         .patched_dependencies = true,
         .workspaces = true,
+        .link_workspace_packages = true,
     };
 
     pub const folder = Features{
@@ -591,6 +594,7 @@ pub const Features = struct {
         .dev_dependencies = true,
         .optional_dependencies = true,
         .trusted_dependencies = true,
+        .link_workspace_packages = true,
     };
 
     pub const link = Features{
@@ -600,12 +604,14 @@ pub const Features = struct {
 
     pub const npm = Features{
         .optional_dependencies = true,
+        .link_workspace_packages = true,
     };
 
     pub const tarball = npm;
 
     pub const npm_manifest = Features{
         .optional_dependencies = true,
+        .link_workspace_packages = true,
     };
 };
 

@@ -1089,19 +1089,28 @@ pub const Package = extern struct {
                 const npm = dependency_version.value.npm;
                 if (workspace_version != null) {
                     if (npm.version.satisfies(workspace_version.?, buf, buf)) {
-                        const path = workspace_path.?.sliced(buf);
-                        if (Dependency.parseWithTag(
-                            allocator,
-                            external_alias.value,
-                            external_alias.hash,
-                            path.slice,
-                            .workspace,
-                            &path,
-                            log,
-                            pm,
-                        )) |dep| {
-                            dependency_version.tag = dep.tag;
-                            dependency_version.value = dep.value;
+                        const should_link_workspace = brk: {
+                            if (!pm.options.local_package_features.link_workspace_packages) {
+                                const is_explicit_workspace = strings.hasPrefixComptime(sliced.slice, "workspace:");
+                                break :brk is_explicit_workspace;
+                            }
+                            break :brk true;
+                        };
+                        if (should_link_workspace) {
+                            const path = workspace_path.?.sliced(buf);
+                            if (Dependency.parseWithTag(
+                                allocator,
+                                external_alias.value,
+                                external_alias.hash,
+                                path.slice,
+                                .workspace,
+                                &path,
+                                log,
+                                pm,
+                            )) |dep| {
+                                dependency_version.tag = dep.tag;
+                                dependency_version.value = dep.value;
+                            }
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency

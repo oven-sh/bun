@@ -1708,7 +1708,7 @@ registry = "${verdaccio.registryUrl()}"
       join(packageDir, "packages", "mono", "package.json"),
       JSON.stringify({
         name: "no-deps",
-        version: "1.0.0",
+        version: "3.0.0",
       }),
     ),
 
@@ -1738,17 +1738,19 @@ registry = "${verdaccio.registryUrl()}"
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
   expect(await exited).toBe(0);
+  const lockfile = parseLockfile(packageDir);
+
+  // Check the resolution tag to ensure it's not a workspace link
+  expect(lockfile.packages.find(p => p.name === "no-deps")?.resolution.tag).toEqual("npm");
 
   // Verify that the registry version was installed, not the workspace version
   const installedNoDeps = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
   expect(installedNoDeps).toEqual({
     name: "no-deps",
-    version: "2.0.0", // Should be registry version (latest that matches ^1.0.0), not workspace version (3.0.0)
+    version: "2.0.0", // Should be registry version, not workspace version (3.0.0)
   });
 
   // Check the lockfile to ensure it shows registry resolution
-  const lockfile = parseLockfile(packageDir);
-  console.log(JSON.stringify(lockfile, null, 2));
   expect(lockfile).toMatchNodeModulesAt(packageDir);
 });
 

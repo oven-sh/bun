@@ -32,9 +32,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);
 JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, JSValue parameters, const SourceOrigin& sourceOrigin);
-bool isContext(JSGlobalObject* globalObject, JSValue);
-bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg);
-bool isUseMainContextDefaultLoaderConstant(JSValue value);
+bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
+bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
+bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 
 } // namespace NodeVM
 

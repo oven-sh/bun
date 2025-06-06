@@ -68,7 +68,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         RETURN_IF_EXCEPTION(scope, {});
 
         if (importModuleDynamicallyValue) {
-            if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+            if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(globalObject, importModuleDynamicallyValue))) {
                 if (importer) {
                     *importer = importModuleDynamicallyValue;
                 }

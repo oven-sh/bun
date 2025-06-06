@@ -70,7 +70,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
 
 namespace NodeVM {
 
-static JSInternalPromise* importModuleInner(JSGlobalObject* jsGlobalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner);
+static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner);
 
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData)
 {
@@ -213,20 +213,20 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     return function;
 }
 
-JSInternalPromise* importModule(JSGlobalObject* jsGlobalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin)
+JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin)
 {
     if (auto* fetcher = sourceOrigin.fetcher(); !fetcher || fetcher->fetcherType() != ScriptFetcher::Type::NodeVM) {
         if (!sourceOrigin.url().isEmpty()) {
-            if (auto* globalObject = jsDynamicCast<NodeVMGlobalObject*>(jsGlobalObject)) {
-                if (globalObject->dynamicImportCallback()) {
-                    return moduleLoaderImportModuleInner(globalObject, jsGlobalObject->moduleLoader(), moduleName, parameters, sourceOrigin);
+            if (auto* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(globalObject)) {
+                if (nodeVmGlobalObject->dynamicImportCallback()) {
+                    return moduleLoaderImportModuleInner(nodeVmGlobalObject, globalObject->moduleLoader(), moduleName, parameters, sourceOrigin);
                 }
             }
         }
         return nullptr;
     }
 
-    VM& vm = jsGlobalObject->vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* fetcher = static_cast<NodeVMScriptFetcher*>(sourceOrigin.fetcher());
@@ -237,25 +237,25 @@ JSInternalPromise* importModule(JSGlobalObject* jsGlobalObject, JSString* module
 
     JSValue dynamicImportCallback = fetcher->dynamicImportCallback();
 
-    if (isUseMainContextDefaultLoaderConstant(dynamicImportCallback)) {
+    if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(jsGlobalObject);
+        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
         return zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, parameters, sourceOrigin);
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
-        throwException(jsGlobalObject, scope, createError(jsGlobalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
     }
 
-    return importModuleInner(jsGlobalObject, moduleName, parameters, sourceOrigin, dynamicImportCallback, fetcher->owner());
+    return importModuleInner(globalObject, moduleName, parameters, sourceOrigin, dynamicImportCallback, fetcher->owner());
 }
 
-static JSInternalPromise* importModuleInner(JSGlobalObject* jsGlobalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
+static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
 {
-    VM& vm = jsGlobalObject->vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (parameters.isObject()) {
-        if (JSValue with = asObject(parameters)->getIfPropertyExists(jsGlobalObject, vm.propertyNames->with)) {
+        if (JSValue with = asObject(parameters)->getIfPropertyExists(globalObject, vm.propertyNames->with)) {
             parameters = with;
         }
     }
@@ -264,23 +264,23 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* jsGlobalObject, JSSt
     args.append(moduleName);
     if (owner) {
         args.append(owner);
-    } else if (auto* globalObject = jsDynamicCast<NodeVMGlobalObject*>(jsGlobalObject)) {
-        if (globalObject->isNotContextified()) {
-            args.append(globalObject->specialSandbox());
+    } else if (auto* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(globalObject)) {
+        if (nodeVmGlobalObject->isNotContextified()) {
+            args.append(nodeVmGlobalObject->specialSandbox());
         } else {
-            args.append(globalObject->contextifiedObject());
+            args.append(nodeVmGlobalObject->contextifiedObject());
         }
     } else {
         args.append(jsUndefined());
     }
     args.append(parameters);
 
-    JSValue result = AsyncContextFrame::call(jsGlobalObject, dynamicImportCallback, jsUndefined(), args);
+    JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (result.isUndefinedOrNull()) {
-        throwException(jsGlobalObject, scope, createError(jsGlobalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
         return nullptr;
     }
 
@@ -288,11 +288,11 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* jsGlobalObject, JSSt
         return promise;
     }
 
-    auto* promise = JSInternalPromise::create(vm, jsGlobalObject->internalPromiseStructure());
+    auto* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* transformer = JSNativeStdFunction::create(vm, jsGlobalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -311,10 +311,10 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* jsGlobalObject, JSSt
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise->fulfill(jsGlobalObject, result);
+    promise->fulfill(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise = promise->then(jsGlobalObject, transformer, nullptr);
+    promise = promise->then(globalObject, transformer, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return promise;
@@ -495,7 +495,7 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
     if (JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s))) {
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (importer && importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+        if (importer && importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(globalObject, importModuleDynamicallyValue))) {
             *importer = importModuleDynamicallyValue;
         }
     }
@@ -620,18 +620,27 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
 {
     if (contextArg.isUndefined()) {
         contextArg = JSC::constructEmptyObject(globalObject);
-    } else if (contextArg.isUInt32() && contextArg.asUInt32() == 64) { // vm.constants.DONT_CONTEXTIFY
-        contextArg = JSC::constructEmptyObject(globalObject);
-        return true;
+    } else if (contextArg.isSymbol()) {
+        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        if (contextArg == zigGlobalObject->m_nodeVMDontContextify.get(zigGlobalObject)) {
+            contextArg = JSC::constructEmptyObject(globalObject);
+            return true;
+        }
     }
 
     return false;
 }
 
-bool isUseMainContextDefaultLoaderConstant(JSValue value)
+bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue value)
 {
-    // vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
-    return value.isUInt32() && value.asUInt32() == 42;
+    if (value.isSymbol()) {
+        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        if (value == zigGlobalObject->m_nodeVMUseMainContextDefaultLoader.get(zigGlobalObject)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace NodeVM
@@ -1355,15 +1364,15 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
     return promise;
 }
 
-JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
+JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
 {
-    auto* globalObject = static_cast<NodeVMGlobalObject*>(jsGlobalObject);
+    auto* nodeVmGlobalObject = static_cast<NodeVMGlobalObject*>(globalObject);
 
-    if (JSInternalPromise* result = NodeVM::importModule(globalObject, moduleName, parameters, sourceOrigin)) {
+    if (JSInternalPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin)) {
         return result;
     }
 
-    return moduleLoaderImportModuleInner(globalObject, moduleLoader, moduleName, parameters, sourceOrigin);
+    return moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, parameters, sourceOrigin);
 }
 
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
@@ -1438,11 +1447,24 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSynthetic"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::Synthetic)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "DONT_CONTEXTIFY"_s)),
+        globalObject->m_nodeVMDontContextify.get(globalObject), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "USE_MAIN_CONTEXT_DEFAULT_LOADER"_s)),
+        globalObject->m_nodeVMUseMainContextDefaultLoader.get(globalObject), 0);
     return obj;
 }
 
 void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    globalObject->m_nodeVMDontContextify.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
+        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_dont_contextify"_s));
+    });
+    globalObject->m_nodeVMUseMainContextDefaultLoader.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
+        init.set(JSC::Symbol::createWithDescription(init.vm, "vm_use_main_context_default_loader"_s));
+    });
+
     globalObject->m_NodeVMScriptClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto prototype = NodeVMScript::createPrototype(init.vm, init.global);
@@ -1698,7 +1720,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+        if (importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(globalObject, importModuleDynamicallyValue))) {
             if (importer) {
                 *importer = importModuleDynamicallyValue;
             }

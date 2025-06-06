@@ -43,14 +43,14 @@ const {
   Module: ModuleNative,
   createContext,
   isContext,
-  // runInNewContext: moduleRunInNewContext,
-  // runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
   kUnlinked,
   kLinked,
   kEvaluated,
   kErrored,
+  DONT_CONTEXTIFY,
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
 function runInContext(code, context, options) {
@@ -430,8 +430,8 @@ class SyntheticModule extends Module {
 
 const constants = {
   __proto__: null,
-  USE_MAIN_CONTEXT_DEFAULT_LOADER: 42,
-  DONT_CONTEXTIFY: 64,
+  USE_MAIN_CONTEXT_DEFAULT_LOADER,
+  DONT_CONTEXTIFY,
 };
 
 function isModule(object) {

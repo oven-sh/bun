@@ -1,5 +1,6 @@
 pub fn NewWebSocket(comptime ssl_flag: c_int) type {
-    return opaque {
+    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
+    return struct {
         const WebSocket = @This();
 
         pub fn raw(this: *WebSocket) *RawWebSocket {

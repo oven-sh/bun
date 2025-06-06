@@ -1193,12 +1193,12 @@ pub const InternalDNS = struct {
         pub const new = bun.TrivialNew(@This());
         const Key = struct {
             host: ?[:0]const u8,
-            port: u16 = 0,
-            hash: u64,
+            port: u16 = 0, // Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
+            hash: u64, // Hash of hostname only - DNS results are port-agnostic
 
             pub fn init(name: ?[:0]const u8, port: u16) @This() {
                 const hash = if (name) |n| brk: {
-                    break :brk generateHash(n, port);
+                    break :brk generateHash(n); // Don't include port
                 } else 0;
                 return .{
                     .host = name,
@@ -1207,11 +1207,8 @@ pub const InternalDNS = struct {
                 };
             }
 
-            fn generateHash(name: [:0]const u8, port: u16) u64 {
-                var hasher = std.hash.Wyhash.init(0);
-                hasher.update(name);
-                hasher.update(std.mem.asBytes(&port));
-                return hasher.final();
+            fn generateHash(name: [:0]const u8) u64 {
+                return bun.hash(name);
             }
 
             pub fn toOwned(this: @This()) @This() {

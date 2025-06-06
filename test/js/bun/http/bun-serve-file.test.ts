@@ -4,6 +4,19 @@ import { isWindows, rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+const files = {
+  "hello.txt": "Hello, World!",
+  "empty.txt": "",
+  "binary.bin": Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]),
+  "large.txt": Buffer.alloc(1024 * 1024 * 8, "bun").toString(), // 8MB file
+  "unicode.txt": "Hello 世界 🌍 émojis",
+  "json.json": JSON.stringify({ message: "test", number: 42 }),
+  "nested/file.txt": "nested content",
+  "special chars & symbols.txt": "special file content",
+  "will-be-deleted.txt": "will be deleted",
+  "partial.txt": "0123456789ABCDEF",
+};
+
 describe("Bun.file in serve routes", () => {
   let server: Server;
   let tempDir: string;
@@ -16,18 +29,7 @@ describe("Bun.file in serve routes", () => {
   });
 
   beforeAll(async () => {
-    tempDir = tempDirWithFiles("bun-serve-file-test-", {
-      "hello.txt": "Hello, World!",
-      "empty.txt": "",
-      "binary.bin": Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]),
-      "large.txt": Buffer.alloc(1024 * 1024 * 8, "bun").toString(), // 8MB file
-      "unicode.txt": "Hello 世界 🌍 émojis",
-      "json.json": JSON.stringify({ message: "test", number: 42 }),
-      "nested/file.txt": "nested content",
-      "special chars & symbols.txt": "special file content",
-      "will-be-deleted.txt": "will be deleted",
-      "partial.txt": "0123456789ABCDEF",
-    });
+    tempDir = tempDirWithFiles("bun-serve-file-test-", files);
 
     const routes = {
       "/hello.txt": {
@@ -150,8 +152,30 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/large.txt`, server.url));
       expect(res.status).toBe(200);
       const text = await res.text();
-      expect(text.length).toBe(1024 * 1024 * 8);
-      expect(text).toBe(Buffer.alloc(1024 * 1024 * 8, "bun").toString());
+      expect(text).toHaveLength(1024 * 1024 * 8);
+
+      if (files["large.txt"] !== text) {
+        console.log("Expected length:", files["large.txt"].length);
+        console.log("Actual length:", text.length);
+        console.log("First 100 chars expected:", files["large.txt"].slice(0, 100));
+        console.log("First 100 chars actual:", text.slice(0, 100));
+        console.log("Last 100 chars expected:", files["large.txt"].slice(-100));
+        console.log("Last 100 chars actual:", text.slice(-100));
+
+        // Find first difference
+        for (let i = 0; i < Math.min(files["large.txt"].length, text.length); i++) {
+          if (files["large.txt"][i] !== text[i]) {
+            console.log(`First difference at index ${i}:`);
+            console.log(`Expected: "${files["large.txt"][i]}" (code: ${files["large.txt"].charCodeAt(i)})`);
+            console.log(`Actual: "${text[i]}" (code: ${text.charCodeAt(i)})`);
+            console.log(`Context around difference: "${files["large.txt"].slice(Math.max(0, i - 10), i + 10)}"`);
+            console.log(`Actual context: "${text.slice(Math.max(0, i - 10), i + 10)}"`);
+            break;
+          }
+        }
+        throw new Error("large.txt is not the same");
+      }
+
       expect(res.headers.get("Content-Length")).toBe((1024 * 1024 * 8).toString());
 
       const headers = res.headers.toJSON();

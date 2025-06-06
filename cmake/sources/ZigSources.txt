@@ -92,8 +92,6 @@ src/bun.js/bindings/Exception.zig
 src/bun.js/bindings/FetchHeaders.zig
 src/bun.js/bindings/FFI.zig
 src/bun.js/bindings/generated_classes_list.zig
-src/bun.js/bindings/GeneratedBindings.zig
-src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GetterSetter.zig
 src/bun.js/bindings/HTTPServerAgent.zig
 src/bun.js/bindings/JSArray.zig
@@ -255,10 +253,10 @@ src/bun.zig
 src/bundler/AstBuilder.zig
 src/bundler/bundle_v2.zig
 src/bundler/BundleThread.zig
-src/bundler/Chunk.zig
+src/bundler/chunk.zig
 src/bundler/DeferredBatchTask.zig
 src/bundler/entry_points.zig
-src/bundler/Graph.zig
+src/bundler/graph.zig
 src/bundler/linker_context/computeChunks.zig
 src/bundler/linker_context/computeCrossChunkDependencies.zig
 src/bundler/linker_context/convertStmtsForChunk.zig

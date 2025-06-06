@@ -101,8 +101,15 @@ pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 const log = bun.Output.scoped(.EventLoop, false);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
+    // During shutdown on Windows, event_loop_handle might be null
+    // In this case, we should just return as there's nothing to tick
+    const handle = this.virtual_machine.event_loop_handle orelse {
+        done.* = true; // Signal that we're done since we can't tick
+        return;
+    };
+    
     while (!done.*) {
-        this.virtual_machine.event_loop_handle.?.tick();
+        handle.tick();
     }
 }
 

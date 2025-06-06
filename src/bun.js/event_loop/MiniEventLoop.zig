@@ -384,7 +384,7 @@ fn getNoOpEventLoop() *JSC.PlatformEventLoop {
     const static = struct {
         var no_op_loop: bun.windows.libuv.Loop = undefined;
         var initialized = false;
-        
+
         pub fn get() *bun.windows.libuv.Loop {
             if (!initialized) {
                 no_op_loop = std.mem.zeroes(bun.windows.libuv.Loop);
@@ -394,7 +394,7 @@ fn getNoOpEventLoop() *JSC.PlatformEventLoop {
             return &no_op_loop;
         }
     };
-    
+
     return static.get();
 }
 

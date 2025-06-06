@@ -206,6 +206,9 @@ pub fn load(
         if (config.default_registry) |registry| {
             base = registry;
         }
+        if (config.link_workspace_packages) |link_workspace_packages| {
+            this.local_package_features.link_workspace_packages = link_workspace_packages;
+        }
     }
 
     if (base.url.len == 0) base.url = Npm.Registry.default_url;

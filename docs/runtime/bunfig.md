@@ -382,6 +382,17 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
+### `install.linkWorkspacePackages`
+
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` section.
+
+Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
+
+```toml
+[install]
+linkWorkspacePackages = true
+```
+
 ### `install.scopes`
 
 To configure a registry for a particular scope (e.g. `@myorg/<package>`) use `install.scopes`. You can reference environment variables with `$variable` notation.

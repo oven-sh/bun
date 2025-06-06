@@ -145,6 +145,14 @@ void NodeTLSSecureContext::setCACert(const ncrypto::BIOPointer& bio)
     }
 }
 
+void NodeTLSSecureContext::setRootCerts()
+{
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    X509_STORE* store = getCertStore();
+    X509_STORE_up_ref(store);
+    SSL_CTX_set_cert_store(context(), store);
+}
+
 void NodeTLSSecureContext::setX509StoreFlag(unsigned long flags)
 {
     RELEASE_ASSERT(X509_STORE_set_flags(getCertStore(), flags) == 1);
@@ -395,11 +403,19 @@ JSC_DEFINE_HOST_FUNCTION(secureContextSetECDHCurve, (JSGlobalObject * globalObje
     return JSC::encodedJSUndefined();
 }
 
+JSC_DEFINE_HOST_FUNCTION(secureContextAddRootCerts, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+    thisObject->setRootCerts();
+    return JSC::encodedJSUndefined();
+}
+
 static const HashTableValue NodeTLSSecureContextPrototypeTableValues[] = {
     { "init"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextInit, 3 } },
     { "setCiphers"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCiphers, 1 } },
     { "addCACert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddCACert, 1 } },
     { "setECDHCurve"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetECDHCurve, 1 } },
+    { "addRootCerts"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddRootCerts, 0 } },
 };
 
 static EncodedJSValue constructSecureContext(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = {})

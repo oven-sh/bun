@@ -104,6 +104,7 @@ public:
     void context(SSL_CTX* ctx) { m_context = { ctx, SSL_CTX_free }; }
 
     void setCACert(const ncrypto::BIOPointer& bio);
+    void setRootCerts();
 
 private:
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> m_context { nullptr, nullptr };

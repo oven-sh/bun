@@ -2381,7 +2381,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     }
 
     int count = sqlite3_column_count(castedThis->stmt);
-    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
     
     // We need to reset and step the statement to get fresh types,
     // but only do this for read-only statements to avoid side effects
@@ -2399,6 +2398,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
         return { };
     }
+
+    MarkedArgumentBuffer args;
 
     // Step once to get to the first row (safe for read-only statements)
     int stepStatus = sqlite3_step(castedThis->stmt);
@@ -2432,13 +2433,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
                 break;
             }
 
-            array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+            args.append(typeValue);
         }
     } else if (stepStatus == SQLITE_DONE) {
         // No data rows to read, return 'NULL' for all columns
+        JSC::JSValue typeValue = JSC::jsAtomString(vm, makeAtomString("NULL"_s));
         for (int i = 0; i < count; i++) {
-            JSC::JSValue typeValue = JSC::jsAtomString(vm, makeAtomString("NULL"_s));
-            array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+            args.append(typeValue);
         }
     } else {
         // If there was an error stepping, throw it
@@ -2449,6 +2450,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
     // Reset the statement back to its original state
     sqlite3_reset(castedThis->stmt);
+
+    JSC::JSArray* array = constructArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(array));
 }

@@ -2437,7 +2437,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     } else if (stepStatus == SQLITE_DONE) {
         // No data rows to read, return 'NULL' for all columns
         for (int i = 0; i < count; i++) {
-            JSC::JSValue typeValue = JSC::jsNontrivialString(vm, "NULL"_s);
+            JSC::JSValue typeValue = JSC::jsAtomString(vm, makeAtomString("NULL"_s));
             array->putDirectIndex(lexicalGlobalObject, i, typeValue);
         }
     } else {

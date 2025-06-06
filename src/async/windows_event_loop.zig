@@ -59,7 +59,15 @@ pub const KeepAlive = struct {
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        event_loop_ctx.platformEventLoop().subActive(1);
+        
+        // During shutdown on Windows, event_loop_handle may be null
+        if (comptime @TypeOf(event_loop_ctx) == JSC.JsVM) {
+            if (event_loop_ctx.vm.event_loop_handle) |handle| {
+                handle.subActive(1);
+            }
+        } else {
+            event_loop_ctx.platformEventLoop().subActive(1);
+        }
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -76,7 +84,9 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.event_loop_handle.?.dec();
+        if (vm.event_loop_handle) |handle| {
+            handle.dec();
+        }
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
@@ -85,7 +95,9 @@ pub const KeepAlive = struct {
             return;
         this.status = .inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.event_loop_handle.?.dec();
+        if (vm.event_loop_handle) |handle| {
+            handle.dec();
+        }
     }
 
     /// Allow a poll to keep the process alive.
@@ -99,7 +111,15 @@ pub const KeepAlive = struct {
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        event_loop_ctx.platformEventLoop().ref();
+        
+        // During shutdown on Windows, event_loop_handle may be null
+        if (comptime @TypeOf(event_loop_ctx) == JSC.JsVM) {
+            if (event_loop_ctx.vm.event_loop_handle) |handle| {
+                handle.ref();
+            }
+        } else {
+            event_loop_ctx.platformEventLoop().ref();
+        }
     }
 
     /// Allow a poll to keep the process alive.
@@ -156,8 +176,14 @@ pub const FilePoll = struct {
             return;
         this.flags.insert(.closed);
 
-        vm.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
-        // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        // During shutdown on Windows, event_loop_handle may be null
+        if (comptime @TypeOf(vm) == JSC.JsVM) {
+            if (vm.vm.event_loop_handle) |handle| {
+                handle.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
+            }
+        } else {
+            vm.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
+        }
     }
 
     pub fn init(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
@@ -234,8 +260,9 @@ pub const FilePoll = struct {
     }
 
     pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
-        const loop = vm.event_loop_handle.?;
-        this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
+        if (vm.event_loop_handle) |loop| {
+            this.deinitPossiblyDefer(vm, loop, vm.rareData().filePolls(vm));
+        }
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, abstract_vm: anytype) void {
@@ -244,8 +271,14 @@ pub const FilePoll = struct {
             return;
         this.flags.remove(.closed);
 
-        // vm.event_loop_handle.?.active_handles += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
-        vm.platformEventLoop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
+        // During shutdown on Windows, event_loop_handle may be null
+        if (comptime @TypeOf(vm) == JSC.JsVM) {
+            if (vm.vm.event_loop_handle) |handle| {
+                handle.addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
+            }
+        } else {
+            vm.platformEventLoop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
+        }
     }
 
     pub fn canActivate(this: *const FilePoll) bool {
@@ -282,8 +315,16 @@ pub const FilePoll = struct {
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.insert(.closed);
-        // this.deactivate(vm.event_loop_handle.?);
-        this.deactivate(event_loop_ctx.platformEventLoop());
+        
+        // During shutdown on Windows, event_loop_handle may be null
+        // In that case, we don't need to deactivate since the process is exiting
+        if (comptime @TypeOf(event_loop_ctx) == JSC.JsVM) {
+            if (event_loop_ctx.vm.event_loop_handle) |handle| {
+                this.deactivate(handle);
+            }
+        } else {
+            this.deactivate(event_loop_ctx.platformEventLoop());
+        }
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -292,19 +333,34 @@ pub const FilePoll = struct {
         if (!this.canUnref())
             return;
         log("unref", .{});
-        // this.deactivate(vm.event_loop_handle.?);
-        this.deactivate(vm.platformEventLoop());
+        
+        // During shutdown on Windows, event_loop_handle may be null
+        // In that case, we don't need to deactivate since the process is exiting
+        if (comptime @TypeOf(vm) == JSC.JsVM) {
+            if (vm.vm.event_loop_handle) |handle| {
+                this.deactivate(handle);
+            }
+        } else {
+            this.deactivate(vm.platformEventLoop());
+        }
     }
 
     /// Allow a poll to keep the process alive.
     // pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
     pub fn ref(this: *FilePoll, event_loop_ctx_: anytype) void {
-        if (this.canRef())
+        if (!this.canRef())
             return;
         log("ref", .{});
-        // this.activate(vm.event_loop_handle.?);
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        this.activate(event_loop_ctx.platformEventLoop());
+        
+        // During shutdown on Windows, event_loop_handle may be null
+        if (comptime @TypeOf(event_loop_ctx) == JSC.JsVM) {
+            if (event_loop_ctx.vm.event_loop_handle) |handle| {
+                this.activate(handle);
+            }
+        } else {
+            this.activate(event_loop_ctx.platformEventLoop());
+        }
     }
 
     const HiveArray = bun.HiveArray(FilePoll, 128).Fallback;

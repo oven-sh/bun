@@ -39,6 +39,10 @@ pub threadlocal var global: *MiniEventLoop = undefined;
 
 pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 
+pub fn isEventLoopThread(this: *const MiniEventLoop) bool {
+    return this == global;
+}
+
 pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
     if (globalInitialized) return global;
     const loop = MiniEventLoop.init(bun.default_allocator);
@@ -282,6 +286,20 @@ pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
     };
 }
 
+const shared = struct {
+    pub fn assertEventLoopThread(this: anytype) void {
+        if (!this.isEventLoopThread()) {
+            var buf: [128]u8 = undefined;
+            const rc: c_int = if (Environment.isPosix) std.c.pthread_getname_np(std.c.pthread_self(), @ptrCast(&buf), buf.len) else 0;
+            if (rc == 0) {
+                bun.Output.panic("ref or unref called from non-event-loop thread: {s}. Call it from the event loop thread.", .{bun.sliceTo(&buf, 0)});
+            } else {
+                @panic("ref or unref called from non-event-loop thread. Call it from the event loop thread.");
+            }
+        }
+    }
+};
+
 pub const JsVM = struct {
     vm: *VirtualMachine,
 
@@ -291,9 +309,15 @@ pub const JsVM = struct {
         };
     }
 
+    pub inline fn isEventLoopThread(this: @This()) bool {
+        return this.vm.isJavaScriptThread();
+    }
+
     pub inline fn loop(this: @This()) *JSC.EventLoop {
         return this.vm.event_loop;
     }
+
+    pub const assertEventLoopThread = shared.assertEventLoopThread;
 
     pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
         return this.vm.rareData().filePolls(this.vm).get();
@@ -328,6 +352,12 @@ pub const MiniVM = struct {
     pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
         return this.mini.filePolls().get();
     }
+
+    pub inline fn isEventLoopThread(this: @This()) bool {
+        return this.mini.isEventLoopThread();
+    }
+
+    pub const assertEventLoopThread = shared.assertEventLoopThread;
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
         if (comptime Environment.isWindows) {

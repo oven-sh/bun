@@ -2413,7 +2413,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
             switch (columnType) {
             case SQLITE_INTEGER:
-                typeValue = JSC::jsNontrivialString(vm, "INTEGER"_s);
+                typeValue = JSC::jsAtomString(vm, makeAtomString("INTEGER"_s));
                 break;
             case SQLITE_FLOAT:
                 typeValue = JSC::jsNontrivialString(vm, "FLOAT"_s);

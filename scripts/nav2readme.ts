@@ -5,9 +5,9 @@
 //   bun ./scripts/nav2readme.ts
 //
 //
-import nav from "../docs/nav";
 import { readdirSync } from "fs";
 import path from "path";
+import nav from "../docs/nav";
 function getQuickLinks() {
   let md = "";
 

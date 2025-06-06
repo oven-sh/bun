@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
-import { randomUUID } from "crypto";
+import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import child_process from "child_process";
+import { randomUUID } from "crypto";
+import { getSecret, tempDirWithFiles } from "harness";
+import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
-import child_process from "child_process";
-import type { S3File, S3Options } from "bun";
-import path from "path";
 
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {

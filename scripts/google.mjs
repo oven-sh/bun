@@ -1,4 +1,4 @@
-import { $, spawnSafe, which, getUsernameForDistro } from "./utils.mjs";
+import { $, getUsernameForDistro, spawnSafe, which } from "./utils.mjs";
 
 export const google = {
   get cloud() {

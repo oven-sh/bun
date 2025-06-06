@@ -615,11 +615,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto buffer = callFrame->argument(0);
     auto name = callFrame->argument(1);
 
-    if (!buffer.isCell()) return JSValue::encode(jsUndefined());
-    auto ty = buffer.asCell()->type();
+    if (!buffer.isUndefined()) {
+        if (!buffer.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
 
-    if (JSC::typedArrayType(ty) == NotTypedArray) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        auto ty = buffer.asCell()->type();
+
+        if (JSC::typedArrayType(ty) == NotTypedArray) {
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        }
     }
     return JSValue::encode(jsUndefined());
 }
@@ -697,11 +700,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
     auto value = callFrame->argument(0);
 
-    if (value.isNull() || JSC::isArray(globalObject, value)) {
+    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
@@ -710,11 +713,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
-    if (value.isNull() || JSC::isArray(globalObject, value)) {
+    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
-    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+    if (!value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 

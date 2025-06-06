@@ -157,7 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
 
     // Get the JSVerify object from thisValue and verify it's valid
     JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "init"_s);
         return {};
     }
@@ -211,7 +211,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
     // Get the JSVerify object from thisValue and verify it's valid
     JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "update"_s);
         return JSValue::encode({});
     }
@@ -314,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Get the JSVerify object from thisValue and verify it's valid
     JSVerify* thisObject = jsDynamicCast<JSVerify*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Verify"_s, "verify"_s);
         return JSValue::encode({});
     }

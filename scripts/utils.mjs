@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, tmpdir as nodeTmpdir, homedir as nodeHomedir, userInfo, release } from "node:os";
+import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -290,7 +290,7 @@ export async function spawn(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -386,7 +386,7 @@ export function spawnSync(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -442,9 +442,37 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
-  const nthStatus = readFile(ntStatusPath, { cache: true });
+  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
+  if (!existsSync(windowsKitPath)) {
+    return;
+  }
 
+  const windowsKitPaths = readdirSync(windowsKitPath)
+    .filter(filename => isFinite(parseInt(filename)))
+    .sort((a, b) => parseInt(b) - parseInt(a));
+
+  let ntStatusPath;
+  for (const windowsKitPath of windowsKitPaths) {
+    const includePath = `${windowsKitPath}\\Include`;
+    if (!existsSync(includePath)) {
+      continue;
+    }
+
+    const windowsSdkPaths = readdirSync(includePath).sort();
+    for (const windowsSdkPath of windowsSdkPaths) {
+      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
+      if (existsSync(statusPath)) {
+        ntStatusPath = statusPath;
+        break;
+      }
+    }
+  }
+
+  if (!ntStatusPath) {
+    return;
+  }
+
+  const nthStatus = readFile(ntStatusPath, { cache: true });
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
   if (match) {
     const [, exitReason] = match;
@@ -2332,10 +2360,11 @@ function parseLevel(level) {
  * @returns {Annotation}
  */
 export function parseAnnotation(options, context) {
+  const cwd = (context?.["cwd"] || process.cwd()).replace(/\\/g, "/");
   const source = options["source"];
   const level = parseLevel(options["level"]);
   const title = options["title"] || (source ? `${source} ${level}` : level);
-  const filename = options["filename"];
+  const path = options["filename"]?.replace(/\\/g, "/");
   const line = parseInt(options["line"]) || undefined;
   const column = parseInt(options["column"]) || undefined;
   const content = options["content"];
@@ -2352,6 +2381,13 @@ export function parseAnnotation(options, context) {
     }
     lastLine = line.trim();
     relevantLines.push(line);
+  }
+
+  let filename;
+  if (path?.startsWith(cwd)) {
+    filename = path.slice(cwd.length + 1);
+  } else {
+    filename = path;
   }
 
   return {
@@ -2894,6 +2930,7 @@ const emojiMap = {
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
   debug: ["🐞", "bug"],
+  asan: ["🐛", "bug"],
   assert: ["🔍", "mag"],
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],

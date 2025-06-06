@@ -89,7 +89,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
     ClearErrorOnReturn clearError;
     auto context = EVPMDCtxPointer::New();
-    if (UNLIKELY(!context)) {
+    if (!context) [[unlikely]] {
         m_opensslError = ERR_get_error();
         return;
     }

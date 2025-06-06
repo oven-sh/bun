@@ -1034,10 +1034,9 @@ pub fn setData(
     this: *ServerWebSocket,
     globalObject: *JSC.JSGlobalObject,
     value: JSC.JSValue,
-) callconv(.C) bool {
+) void {
     log("setData()", .{});
     js.dataSetCached(this.this_value, globalObject, value);
-    return true;
 }
 
 pub fn getReadyState(
@@ -1132,20 +1131,19 @@ pub fn getBinaryType(
     };
 }
 
-pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+pub fn setBinaryType(this: *ServerWebSocket, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
     log("setBinaryType()", .{});
 
-    const btype = JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value) catch return false;
+    const btype = try JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value);
     switch (btype orelse
         // some other value which we don't support
         .Float64Array) {
         .ArrayBuffer, .Buffer, .Uint8Array => |val| {
             this.flags.binary_type = val;
-            return true;
+            return;
         },
         else => {
-            globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{}) catch {};
-            return false;
+            return globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\" or \"nodebuffer\"", .{});
         },
     }
 }
@@ -1285,17 +1283,12 @@ extern "c" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;
 const ServerWebSocket = @This();
 
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const bun = @import("bun");
 const string = []const u8;
-const Bun = JSC.API.Bun;
-const max_addressable_memory = bun.max_addressable_memory;
-const Environment = bun.Environment;
 const std = @import("std");
-const assert = bun.assert;
 const ZigString = JSC.ZigString;
-const WebSocketServer = @import("../server.zig").WebSocketServer;
+const WebSocketServer = @import("../server.zig").WebSocketServerContext;
 const uws = bun.uws;
 const Output = bun.Output;

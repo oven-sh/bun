@@ -416,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif
@@ -479,7 +480,7 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (UNLIKELY(err != 0)) {
+        if (err != 0) [[unlikely]] {
             abort();
         }
     };
@@ -487,7 +488,7 @@ extern "C" void bun_initialize_process()
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
-            if (UNLIKELY(errno == EBADF)) {
+            if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
             }
@@ -499,7 +500,7 @@ extern "C" void bun_initialize_process()
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
 
-            if (LIKELY(err == 0)) {
+            if (err == 0) [[likely]] {
                 anyTTYs = true;
             }
         }

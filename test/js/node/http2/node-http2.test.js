@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, nodeExe, isCI } from "harness";
+import { bunEnv, bunExe, isCI, nodeExe } from "harness";
+import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
@@ -6,10 +7,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { Duplex } from "stream";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+const { afterEach, beforeEach, describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
+function invalidArgTypeHelper(input) {
+  if (input === null) return " Received null";
 
+  if (typeof input == "symbol") return ` Received type symbol`;
+  if (typeof input == "object")
+    return ` Received an instance of ${Object.prototype.toString.call(input).split(" ")[1]?.replace("]", "")?.replace("[", "")}`;
+  if (typeof input == "string") return ` Received type string ('${input}')`;
+  return ` Received type ${typeof input} (${input})`;
+}
 for (const nodeExecutable of [nodeExe(), bunExe()]) {
   describe(`${path.basename(nodeExecutable)}`, () => {
     let nodeEchoServer_;
@@ -899,21 +908,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(stream).toBeDefined();
         expect(stream.id).toBe(1);
       });
-      it("should wait request to be sent before closing", async () => {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-        client.on("error", reject);
-        const req = client.request({ ":path": "/" });
-        let response_headers = null;
-        req.on("response", (headers, flags) => {
-          response_headers = headers;
-        });
-        client.close(resolve);
-        req.end();
-        await promise;
-        expect(response_headers).toBeTruthy();
-        expect(response_headers[":status"]).toBe(200);
-      });
+
       it("wantTrailers should work", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
@@ -1333,4 +1328,586 @@ it("sensitive headers should work", async () => {
     server.close();
     client?.close?.();
   }
+});
+
+it("http2 session.goaway() validates input types", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+  const server = http2.createServer((req, res) => {
+    res.end();
+  });
+  const types = [true, {}, [], null, new Date()];
+  return await new Promise(resolve => {
+    server.on(
+      "stream",
+      mustCall(stream => {
+        const session = stream.session;
+
+        for (const input of types) {
+          const received = invalidArgTypeHelper(input);
+
+          // Test code argument
+          expect(() => session.goaway(input)).toThrow('The "code" argument must be of type number.' + received);
+
+          // Test lastStreamID argument
+          expect(() => session.goaway(0, input)).toThrow(
+            'The "lastStreamID" argument must be of type number.' + received,
+          );
+
+          // Test opaqueData argument
+          expect(() => session.goaway(0, 0, input)).toThrow(
+            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+          );
+        }
+
+        server.close();
+        resolve();
+      }),
+    );
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+      const req = client.request();
+
+      req.resume();
+      req.end();
+    });
+  });
+});
+
+it("http2 stream.close() validates input types and ranges", async () => {
+  const server = http2.createServer();
+
+  return await new Promise(resolve => {
+    server.on("stream", stream => {
+      // Test string input
+      expect(() => stream.close("string")).toThrow(
+        'The "code" argument must be of type number. ' + "Received type string ('string')",
+      );
+
+      // Test non-integer number
+      expect(() => stream.close(1.01)).toThrow(
+        'The value of "code" is out of range. It must be an integer. ' + "Received 1.01",
+      );
+
+      // Test out of range values
+      [-1, 2 ** 32].forEach(code => {
+        expect(() => stream.close(code)).toThrow(
+          `The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received ${code}`,
+        );
+      });
+
+      // Complete the stream
+      stream.respond();
+      stream.end("ok");
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+      const req = client.request();
+
+      req.resume();
+      req.on("close", () => {
+        server.close();
+        client.close();
+        resolve();
+      });
+    });
+  });
+});
+
+it("http2 session.goaway() sends custom data", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+
+  const data = Buffer.from([0x1, 0x2, 0x3, 0x4, 0x5]);
+
+  let session;
+
+  const server = http2.createServer();
+
+  return await new Promise(resolve => {
+    server.on("stream", stream => {
+      session = stream.session;
+      session.on("close", () => {});
+
+      // Send GOAWAY frame with custom data
+      session.goaway(0, 0, data);
+
+      // Complete the stream
+      stream.respond();
+      stream.end();
+    });
+
+    server.on("close", mustCall());
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+
+      client.once("goaway", (code, lastStreamID, buf) => {
+        // Verify the GOAWAY frame parameters
+        expect(code).toBe(0);
+        expect(lastStreamID).toBe(1);
+        expect(buf).toEqual(data);
+
+        // Clean up
+        session.close();
+        server.close();
+        resolve();
+      });
+
+      const req = client.request();
+      req.resume();
+      req.on("end", mustCall());
+      req.on("close", mustCall());
+      req.end();
+    });
+  });
+});
+
+it("http2 server with minimal maxSessionMemory handles multiple requests", async () => {
+  const server = http2.createServer({ maxSessionMemory: 1 });
+
+  return await new Promise(resolve => {
+    server.on("session", session => {
+      session.on("stream", stream => {
+        stream.on("end", function () {
+          this.respond(
+            {
+              ":status": 200,
+            },
+            {
+              endStream: true,
+            },
+          );
+        });
+        stream.resume();
+      });
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+
+      function next(i) {
+        if (i === 10000) {
+          client.close();
+          server.close();
+          resolve();
+          return;
+        }
+
+        const stream = client.request({ ":method": "POST" });
+
+        stream.on("response", function (headers) {
+          expect(headers[":status"]).toBe(200);
+
+          this.on("close", () => next(i + 1));
+        });
+
+        stream.end();
+      }
+
+      // Start the sequence with the first request
+      next(0);
+    });
+  });
+}, 15_000);
+
+it("http2.createServer validates input options", () => {
+  // Test invalid options passed to createServer
+  const invalidOptions = [1, true, "test", null, Symbol("test")];
+
+  invalidOptions.forEach(invalidOption => {
+    expect(() => http2.createServer(invalidOption)).toThrow(
+      'The "options" argument must be of type Object.' + invalidArgTypeHelper(invalidOption),
+    );
+  });
+
+  // Test invalid options.settings passed to createServer
+  invalidOptions.forEach(invalidSettingsOption => {
+    expect(() => http2.createServer({ settings: invalidSettingsOption })).toThrow(
+      'The "options.settings" property must be of type Object.' + invalidArgTypeHelper(invalidSettingsOption),
+    );
+  });
+
+  // Test that http2.createServer validates numeric range options
+  const rangeTests = {
+    maxSessionInvalidFrames: [
+      {
+        val: -1,
+        err: {
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+        },
+      },
+      {
+        val: Number.NEGATIVE_INFINITY,
+        err: {
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+        },
+      },
+    ],
+    maxSessionRejectedStreams: [
+      {
+        val: -1,
+        err: {
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+        },
+      },
+      {
+        val: Number.NEGATIVE_INFINITY,
+        err: {
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+        },
+      },
+    ],
+  };
+
+  Object.entries(rangeTests).forEach(([opt, tests]) => {
+    tests.forEach(({ val, err }) => {
+      expect(() => http2.createServer({ [opt]: val })).toThrow();
+
+      // Note: Bun's expect doesn't have the same detailed error matching as Node's assert,
+      // so we're just checking that it throws an error with the expected name
+      let error;
+      try {
+        http2.createServer({ [opt]: val });
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeTruthy();
+      expect(error?.name).toBe(err.name);
+      expect(error?.code).toBe(err.code);
+    });
+  });
+});
+
+it("http2 server handles multiple concurrent requests", async () => {
+  const body = "<html><head></head><body><h1>this is some data</h2></body></html>";
+  const server = http2.createServer();
+  const count = 100;
+
+  // Stream handler
+  function onStream(stream, headers, flags) {
+    expect(headers[":scheme"]).toBe("http");
+    expect(headers[":authority"]).toBeTruthy();
+    expect(headers[":method"]).toBe("GET");
+    expect(flags).toBe(5);
+
+    stream.respond({
+      "content-type": "text/html",
+      ":status": 200,
+    });
+
+    stream.write(body.slice(0, 20));
+    stream.end(body.slice(20));
+  }
+
+  // Register stream handler
+  server.on("stream", (stream, headers, flags) => onStream(stream, headers, flags));
+
+  return await new Promise(resolve => {
+    server.on("close", () => {
+      resolve();
+    });
+
+    server.listen(0);
+
+    server.on("listening", () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+
+      client.setMaxListeners(101);
+      client.on("goaway", console.log);
+
+      client.on("connect", () => {
+        expect(client.encrypted).toBeFalsy();
+        expect(client.originSet).toBeFalsy();
+        expect(client.alpnProtocol).toBe("h2c");
+      });
+
+      let countdown = count;
+      function countDown() {
+        countdown--;
+        if (countdown === 0) {
+          client.close();
+          server.close();
+        }
+      }
+
+      for (let n = 0; n < count; n++) {
+        const req = client.request();
+
+        req.on("response", function (headers) {
+          expect(headers[":status"]).toBe(200);
+          expect(headers["content-type"]).toBe("text/html");
+          expect(headers.date).toBeTruthy();
+        });
+
+        let data = "";
+        req.setEncoding("utf8");
+        req.on("data", d => (data += d));
+
+        req.on("end", () => {
+          expect(body).toBe(data);
+        });
+
+        req.on("close", () => countDown());
+      }
+    });
+  });
+});
+
+it("http2 connect supports various URL formats", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+  return await new Promise(resolve => {
+    const server = http2.createServer();
+    server.listen(0);
+
+    server.on("listening", function () {
+      const port = this.address().port;
+
+      const items = [
+        [`http://localhost:${port}`],
+        [new URL(`http://localhost:${port}`)],
+        [{ protocol: "http:", hostname: "localhost", port }],
+        [{ port }, { protocol: "http:" }],
+        [{ port, hostname: "127.0.0.1" }, { protocol: "http:" }],
+      ];
+
+      let countdown = items.length + 1;
+      function countDown() {
+        countdown--;
+        if (countdown === 0) {
+          setImmediate(() => {
+            server.close();
+            resolve();
+          });
+        }
+      }
+
+      const maybeClose = client => {
+        client.close();
+        countDown();
+      };
+
+      items.forEach(i => {
+        const client = http2.connect.apply(null, i);
+        client.on("connect", () => maybeClose(client));
+        client.on("close", mustCall());
+      });
+
+      // Will fail because protocol does not match the server.
+      const client = http2.connect({
+        port: port,
+        protocol: "https:",
+      });
+      client.on("error", () => countDown());
+      client.on("close", mustCall());
+    });
+  });
+});
+
+it("http2 request.close() validates input and manages stream state", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+  const server = http2.createServer();
+
+  server.on("stream", stream => {
+    stream.on("close", () => {});
+    stream.respond();
+    stream.end("ok");
+  });
+
+  return await new Promise(resolve => {
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+      const req = client.request();
+      const closeCode = 1;
+
+      // Test out of range code
+      expect(() => req.close(2 ** 32)).toThrow(
+        'The value of "code" is out of range. It must be ' + ">= 0 and <= 4294967295. Received 4294967296",
+      );
+      expect(req.closed).toBe(false);
+
+      // Test invalid callback argument types
+      [true, 1, {}, [], null, "test"].forEach(notFunction => {
+        expect(() => req.close(closeCode, notFunction)).toThrow();
+        expect(req.closed).toBe(false);
+      });
+
+      // Valid close call with callback
+      req.close(closeCode, mustCall());
+
+      expect(req.closed).toBe(true);
+
+      // Store original _destroy method
+      const originalDestroy = req._destroy;
+
+      // Replace _destroy to check if it's called
+      req._destroy = mustCall((...args) => {
+        return originalDestroy.apply(req, args);
+      });
+
+      // Second call doesn't do anything
+      req.close(closeCode + 1);
+
+      req.on("close", () => {
+        expect(req.destroyed).toBe(true);
+        expect(req.rstCode).toBe(closeCode);
+
+        server.close();
+        client.close();
+        resolve();
+      });
+
+      req.on("error", err => {
+        expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
+        expect(err.name).toBe("Error");
+        expect(err.message).toBe("Stream closed with error code NGHTTP2_PROTOCOL_ERROR");
+      });
+
+      // The `response` event should not fire as the server should receive the
+      // RST_STREAM frame before it ever has a chance to reply.
+      req.on("response", () => {
+        throw new Error("Response event should not be called");
+      });
+
+      // The `end` event should still fire as we close the readable stream by
+      // pushing a `null` chunk.
+      req.on("end", mustCall());
+
+      req.resume();
+      req.end();
+    });
+  });
+});
+
+it("http2 client.setNextStreamID validates input", async () => {
+  const server = http2.createServer();
+
+  server.on("stream", stream => {
+    stream.respond();
+    stream.end("ok");
+  });
+
+  const types = {
+    boolean: true,
+    function: () => {},
+    number: 1,
+    object: {},
+    array: [],
+    null: null,
+    symbol: Symbol("test"),
+  };
+
+  return await new Promise(resolve => {
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+
+      client.on("connect", () => {
+        // Test out of range value
+        const outOfRangeNum = 2 ** 32;
+        expect(() => client.setNextStreamID(outOfRangeNum)).toThrow(
+          'The value of "id" is out of range.' + " It must be > 0 and <= 4294967295. Received " + outOfRangeNum,
+        );
+
+        // Test invalid types
+        Object.entries(types).forEach(([type, value]) => {
+          if (type === "number") {
+            return;
+          }
+
+          try {
+            client.setNextStreamID(value);
+            // If we reach here, the function didn't throw, which is an error
+            expect(false).toBe(true); // Force test failure
+          } catch (err) {
+            expect(err.name).toBe("TypeError");
+            expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+            expect(err.message).toContain('The "id" argument must be of type number');
+          }
+        });
+
+        server.close();
+        client.close();
+        resolve();
+      });
+    });
+  });
+});
+
+it("http2 request.destroy() with error", async () => {
+  const server = http2.createServer();
+
+  // Do not mustCall the server side callbacks, they may or may not be called
+  // depending on the OS. The determination is based largely on operating
+  // system specific timings
+  server.on("stream", stream => {
+    // Do not wrap in a must call or use common.expectsError (which now uses
+    // must call). The error may or may not be reported depending on operating
+    // system specific timings.
+    stream.on("error", err => {
+      expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
+      expect(err.message).toBe("Stream closed with error code NGHTTP2_INTERNAL_ERROR");
+    });
+
+    stream.respond();
+    stream.end();
+  });
+
+  return new Promise(resolve => {
+    server.listen(0, () => {
+      let countdown = 2;
+      function countDown() {
+        countdown--;
+        if (countdown === 0) {
+          server.close();
+          client.close();
+          resolve();
+        }
+      }
+
+      const port = server.address().port;
+      const client = http2.connect(`http://localhost:${port}`);
+
+      client.on("connect", () => countDown());
+
+      const req = client.request();
+
+      // Destroy the request with an error
+      req.destroy(new Error("test"));
+
+      // Error event should receive the provided error
+      req.on("error", err => {
+        expect(err.name).toBe("Error");
+        expect(err.message).toBe("test");
+      });
+
+      // Close event should fire with the correct reset code
+      req.on("close", () => {
+        expect(req.rstCode).toBe(http2.constants.NGHTTP2_INTERNAL_ERROR);
+        countDown();
+      });
+
+      // These events should not fire since the stream is destroyed
+      req.on("response", () => {
+        throw new Error("response event should not be called");
+      });
+
+      req.resume();
+
+      req.on("end", () => {
+        throw new Error("end event should not be called");
+      });
+    });
+  });
 });

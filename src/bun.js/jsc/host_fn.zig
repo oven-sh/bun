@@ -35,18 +35,14 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, Function);
-                return value;
-            }
-            return @call(.always_inline, Function, .{ ctx, globalThis, callframe }) catch |err| switch (err) {
+            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(globalThis, value, Function);
+            }
+            return value;
         }
     }.function;
 }
@@ -74,19 +70,31 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
     bun.assert((value == .zero) == globalThis.hasException());
 }
 
+pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
+    value catch |err| switch (err) {
+        error.JSError => return false,
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+            return false;
+        },
+    };
+    return true;
+}
+
 pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    if (Environment.allow_assert and Environment.is_canary) {
-        const normal = value catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-        };
-        bun.assert((normal == .zero) == globalThis.hasException());
-        return normal;
-    }
-    return value catch |err| switch (err) {
+    const normal = value catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
     };
+    if (Environment.allow_assert and Environment.is_canary) {
+        debugExceptionAssertion(globalThis, normal, toJSHostValue);
+    }
+    return normal;
+}
+
+pub fn fromJSHostValue(value: JSValue) bun.JSError!JSValue {
+    if (value == .zero) return error.JSError;
+    return value;
 }
 
 const ParsedHostFunctionErrorSet = struct {
@@ -107,8 +115,6 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
     };
 }
 
-const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
-
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);
     break :@"return" fn (p[0].type.?) callconv(.c) JSValue;
@@ -116,18 +122,14 @@ pub fn wrap1(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{arg0}) catch |err| switch (err) {
+            const value = func(arg0) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => arg0.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(arg0, value, func);
+            }
+            return value;
         }
     }.wrapped;
 }
@@ -139,18 +141,14 @@ pub fn wrap2(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1 }) catch |err| switch (err) {
+            const value = func(arg0, arg1) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => arg0.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(arg0, value, func);
+            }
+            return value;
         }
     }.wrapped;
 }
@@ -162,18 +160,14 @@ pub fn wrap3(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2 }) catch |err| switch (err) {
+            const value = func(arg0, arg1, arg2) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => arg0.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(arg0, value, func);
+            }
+            return value;
         }
     }.wrapped;
 }
@@ -185,18 +179,14 @@ pub fn wrap4(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2, arg3) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2, arg3 }) catch |err| switch (err) {
+            const value = func(arg0, arg1, arg2, arg3) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => arg0.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(arg0, value, func);
+            }
+            return value;
         }
     }.wrapped;
 }
@@ -208,18 +198,14 @@ pub fn wrap5(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?, arg4: p[4].type.?) callconv(.c) JSValue {
-            if (Environment.allow_assert and Environment.isDebug) {
-                const value = func(arg0, arg1, arg2, arg3, arg4) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(arg0, value, func);
-                return value;
-            }
-            return @call(.always_inline, func, .{ arg0, arg1, arg2, arg3, arg4 }) catch |err| switch (err) {
+            const value = func(arg0, arg1, arg2, arg3, arg4) catch |err| switch (err) {
                 error.JSError => .zero,
                 error.OutOfMemory => arg0.throwOutOfMemoryValue(),
             };
+            if (Environment.allow_assert and Environment.is_canary) {
+                debugExceptionAssertion(arg0, value, func);
+            }
+            return value;
         }
     }.wrapped;
 }

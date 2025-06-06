@@ -1,9 +1,9 @@
-import { spawn, spawnSync } from "bun";
+import { spawn } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows, isMusl, isBroken, nodeExe } from "harness";
+import { bunEnv, bunExe, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
-import { join, basename } from "path";
+import { basename, join } from "path";
 
 enum Runtime {
   node,
@@ -78,7 +78,8 @@ async function build(
   if (exitCode !== 0) {
     console.error(err);
     console.log(out);
-    throw new Error(`build failed: ${exitCode}`);
+    console.error(`build failed: ${exitCode}, bailing out`);
+    process.exit(1);
   }
 
   return {

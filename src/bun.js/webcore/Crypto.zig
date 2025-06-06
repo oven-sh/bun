@@ -49,14 +49,15 @@ pub fn getRandomValues(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
+        return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
     }
 
     var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-        return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
+        return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
     };
+
     const slice = array_buffer.byteSlice();
 
     randomData(globalThis, slice.ptr, slice.len);

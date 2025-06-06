@@ -5,6 +5,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
 const String = bun.String;
+const JSError = bun.JSError;
 
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
@@ -110,8 +111,8 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
-        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().reject(globalThis, val);
+        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSError!JSC.JSValue) void {
+            this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
@@ -140,7 +141,7 @@ pub const JSPromise = opaque {
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
                 .strong = .create(
-                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                    JSC.JSPromise.create(globalThis).toJS(),
                     globalThis,
                 ),
             };
@@ -173,7 +174,7 @@ pub const JSPromise = opaque {
         }
     };
 
-    pub fn toJS(this: *JSPromise) JSValue {
+    pub inline fn toJS(this: *JSPromise) JSValue {
         return JSValue.fromCell(this);
     }
 
@@ -267,7 +268,7 @@ pub const JSPromise = opaque {
         JSC__JSPromise__resolve(this, globalThis, value);
     }
 
-    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -276,7 +277,9 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__reject(this, globalThis, value);
+        const err = value catch |err| globalThis.takeException(err);
+
+        JSC__JSPromise__reject(this, globalThis, err);
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {

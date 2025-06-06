@@ -30,7 +30,7 @@ has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true)
 this_jsvalue: JSC.JSValue = .zero,
 
 /// `null` indicates all of the IPC data is uninitialized.
-ipc_data: ?IPC.IPCData,
+ipc_data: ?IPC.SendQueue,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -486,7 +486,7 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
             },
-            .buffer => |buf| {
+            .buffer => |*buf| {
                 buf.deinit(bun.default_allocator);
             },
             else => {},
@@ -517,8 +517,7 @@ const Readable = union(enum) {
                 const own = buffer.takeSlice(bun.default_allocator) catch {
                     globalThis.throwOutOfMemory() catch return .zero;
                 };
-                const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
-                return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -751,66 +750,12 @@ pub fn onStdinDestroyed(this: *Subprocess) void {
 
 pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     IPClog("Subprocess#doSend", .{});
-    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
-    if (handle.isFunction()) {
-        callback = handle;
-        handle = .undefined;
-        options_ = .undefined;
-    } else if (options_.isFunction()) {
-        callback = options_;
-        options_ = .undefined;
-    } else if (!options_.isUndefined()) {
-        try global.validateObject("options", options_, .{});
-    }
-
-    const S = struct {
-        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            const arguments_ = callframe.arguments_old(1).slice();
-            const ex = arguments_[0];
-            JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-            return .undefined;
-        }
-    };
-
-    const ipc_data = &(this.ipc_data orelse {
-        if (this.hasExited()) {
-            return global.ERR(.IPC_CHANNEL_CLOSED, "Subprocess.send() cannot be used after the process has exited.", .{}).throw();
-        } else {
-            return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
-        }
-    });
-
-    if (message.isUndefined()) {
-        return global.throwMissingArgumentsValue(&.{"message"});
-    }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
-        return global.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
-    }
-
-    const good = ipc_data.serializeAndSend(global, message);
-
-    if (good) {
-        if (callback.isFunction()) {
-            callback.callNextTick(global, .{JSValue.null});
-            // we need to wait until the send is actually completed to trigger the callback
-        }
-    } else {
-        const ex = global.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
-        if (callback.isFunction()) {
-            callback.callNextTick(global, .{ex});
-        } else {
-            const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
-            fnvalue.callNextTick(global, .{ex});
-        }
-    }
-
-    return .false;
+    return IPC.doSend(if (this.ipc_data) |*data| data else null, global, callFrame, if (this.hasExited()) .subprocess_exited else .subprocess);
 }
 pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
     const ipc_data = this.ipc() orelse return;
-    ipc_data.close(nextTick);
+    ipc_data.closeSocketNextTick(nextTick);
 }
 pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     _ = globalThis;
@@ -822,32 +767,23 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     const ipc_data = this.ipc();
-    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.disconnected == false);
+    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.isConnected());
 }
 
 pub fn pid(this: *const Subprocess) i32 {
     return @intCast(this.process.pid);
 }
 
-pub fn getPid(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getPid(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.pid());
 }
 
-pub fn getKilled(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.hasKilled());
 }
 
-pub fn getStdio(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-) JSValue {
-    const array = JSValue.createEmptyArray(global, 0);
+pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
+    const array = try JSValue.createEmptyArray(global, 0);
     array.push(global, .null);
     array.push(global, .null); // TODO: align this with options
     array.push(global, .null); // TODO: align this with options
@@ -1150,6 +1086,12 @@ pub const PipeReader = struct {
         const out = this.reader._buffer;
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
+
+        if (out.capacity > 0 and out.items.len == 0) {
+            out.deinit();
+            return &.{};
+        }
+
         return out.items;
     }
 
@@ -1172,9 +1114,8 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
                 _ = err; // autofix
@@ -1771,6 +1712,10 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     MaxBuf.removeFromSubprocess(&this.stdout_maxbuf);
     MaxBuf.removeFromSubprocess(&this.stderr_maxbuf);
 
+    if (this.ipc_data != null) {
+        this.disconnectIPC(false);
+    }
+
     this.flags.finalized = true;
     this.deref();
 }
@@ -1795,7 +1740,7 @@ pub fn getExited(
             return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
         },
         else => {
-            const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+            const promise = JSC.JSPromise.create(globalThis).toJS();
             JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
             return promise;
         },
@@ -2156,9 +2101,15 @@ pub fn spawnMaybeSync(
                 }
             }
 
-            if (try args.get(globalThis, "timeout")) |val| {
-                if (val.isNumber() and val.isFinite()) {
-                    timeout = @max(val.coerce(i32, globalThis), 1);
+            if (try args.get(globalThis, "timeout")) |timeout_value| brk: {
+                if (timeout_value != .null) {
+                    if (timeout_value.isNumber() and std.math.isPositiveInf(timeout_value.asNumber())) {
+                        break :brk;
+                    }
+
+                    const timeout_int = try globalThis.validateIntegerRange(timeout_value, u64, 0, .{ .min = 0, .field_name = "timeout" });
+                    if (timeout_int > 0)
+                        timeout = @intCast(@as(u31, @truncate(timeout_int)));
                 }
             }
 
@@ -2168,7 +2119,10 @@ pub fn spawnMaybeSync(
 
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
-                    maxBuffer = val.coerce(i64, globalThis);
+                    const value = val.coerce(i64, globalThis);
+                    if (value > 0) {
+                        maxBuffer = value;
+                    }
                 }
             }
         } else {
@@ -2185,7 +2139,9 @@ pub fn spawnMaybeSync(
 
     inline for (0..stdio.len) |fd_index| {
         if (stdio[fd_index].canUseMemfd(is_sync, fd_index > 0 and maxBuffer != null)) {
-            stdio[fd_index].useMemfd(fd_index);
+            if (stdio[fd_index].useMemfd(fd_index)) {
+                jsc_vm.counters.mark(.spawn_memfd);
+            }
         }
     }
     var should_close_memfd = Environment.isLinux;
@@ -2257,6 +2213,32 @@ pub fn spawnMaybeSync(
         }
     }
 
+    // If the whole thread is supposed to do absolutely nothing while waiting,
+    // we can block the thread which reduces CPU usage.
+    //
+    // That means:
+    // - No maximum buffer
+    // - No timeout
+    // - No abort signal
+    // - No stdin, stdout, stderr pipes
+    // - No extra fds
+    // - No auto killer (for tests)
+    // - No execution time limit (for tests)
+    // - No IPC
+    // - No inspector (since they might want to press pause or step)
+    const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix and is_sync) and
+        abort_signal == null and
+        timeout == null and
+        maxBuffer == null and
+        !stdio[0].isPiped() and
+        !stdio[1].isPiped() and
+        !stdio[2].isPiped() and
+        extra_fds.items.len == 0 and
+        !jsc_vm.auto_killer.enabled and
+        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !jsc_vm.isInspectorEnabled() and
+        !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
+
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -2274,6 +2256,7 @@ pub fn spawnMaybeSync(
         },
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
+        .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -2286,9 +2269,21 @@ pub fn spawnMaybeSync(
         &spawn_options,
         @ptrCast(argv.items.ptr),
         @ptrCast(env_array.items.ptr),
-    ) catch |err| {
-        spawn_options.deinit();
-        return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
+    ) catch |err| switch (err) {
+        error.EMFILE, error.ENFILE => {
+            spawn_options.deinit();
+            const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
+                std.mem.sliceTo(argv.items[0].?, 0)
+            else
+                "";
+            var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
+            systemerror.errno = if (err == error.EMFILE) -bun.sys.UV_E.MFILE else -bun.sys.UV_E.NFILE;
+            return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+        },
+        else => {
+            spawn_options.deinit();
+            return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
+        },
     }) {
         .err => |err| {
             spawn_options.deinit();
@@ -2377,9 +2372,9 @@ pub fn spawnMaybeSync(
         .ref_count = .initExactRefs(2),
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
         .ipc_data = if (!is_sync and comptime Environment.isWindows)
-            if (maybe_ipc_mode) |ipc_mode| .{
-                .mode = ipc_mode,
-            } else null
+            if (maybe_ipc_mode) |ipc_mode| ( //
+                .init(ipc_mode, .{ .subprocess = subprocess }, .uninitialized) //
+            ) else null
         else
             null,
 
@@ -2396,32 +2391,26 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_from_fd(
+            if (uws.us_socket_t.fromFd(
                 jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                @sizeOf(*Subprocess),
+                @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
+                1,
             )) |socket| {
+                subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);
-                subprocess.ipc_data = .{
-                    .socket = posix_ipc_info,
-                    .mode = mode,
-                };
             }
         }
     }
 
     if (subprocess.ipc_data) |*ipc_data| {
         if (Environment.isPosix) {
-            if (posix_ipc_info.ext(*Subprocess)) |ctx| {
-                ctx.* = subprocess;
-                subprocess.ref(); // + one ref for the IPC
+            if (posix_ipc_info.ext(*IPC.SendQueue)) |ctx| {
+                ctx.* = &subprocess.ipc_data.?;
+                subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
         } else {
-            subprocess.ref(); // + one ref for the IPC
-
-            if (ipc_data.configureServer(
-                Subprocess,
-                subprocess,
+            if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
@@ -2521,22 +2510,31 @@ pub fn spawnMaybeSync(
         return out;
     }
 
-    if (comptime is_sync) {
-        switch (subprocess.process.watchOrReap()) {
-            .result => {
-                // Once everything is set up, we can add the abort listener
-                // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-                // Therefore, we must do this at the very end.
-                if (abort_signal) |signal| {
-                    signal.pendingActivityRef();
-                    subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
-                    abort_signal = null;
-                }
-            },
-            .err => {
-                subprocess.process.wait(true);
-            },
-        }
+    comptime bun.assert(is_sync);
+
+    if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
+        jsc_vm.counters.mark(.spawnSync_blocking);
+        const debug_timer = Output.DebugTimer.start();
+        subprocess.process.wait(true);
+        log("spawnSync fast path took {}", .{debug_timer});
+
+        // watchOrReap will handle the already exited case for us.
+    }
+
+    switch (subprocess.process.watchOrReap()) {
+        .result => {
+            // Once everything is set up, we can add the abort listener
+            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+            // Therefore, we must do this at the very end.
+            if (abort_signal) |signal| {
+                signal.pendingActivityRef();
+                subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                abort_signal = null;
+            }
+        },
+        .err => {
+            subprocess.process.wait(true);
+        },
     }
 
     if (!subprocess.process.hasExited()) {
@@ -2616,6 +2614,7 @@ const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");
 pub fn handleIPCMessage(
     this: *Subprocess,
     message: IPC.DecodedIPCMessage,
+    handle: JSC.JSValue,
 ) void {
     IPClog("Subprocess#handleIPCMessage", .{});
     switch (message) {
@@ -2635,7 +2634,7 @@ pub fn handleIPCMessage(
                         cb,
                         globalThis,
                         this_jsvalue,
-                        &[_]JSValue{ data, this_jsvalue },
+                        &[_]JSValue{ data, this_jsvalue, handle },
                     );
                 }
             }
@@ -2654,44 +2653,32 @@ pub fn handleIPCClose(this: *Subprocess) void {
     const globalThis = this.globalThis;
     this.updateHasPendingActivity();
 
-    defer this.deref();
-    var ok = false;
-    if (this.ipc()) |ipc_data| {
-        ok = true;
-        ipc_data.internal_msg_queue.deinit();
-    }
-    this.ipc_data = null;
-
     if (this_jsvalue != .zero) {
         // Avoid keeping the callback alive longer than necessary
         JSC.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
         if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
-            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
+            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(true)});
         }
     }
 }
 
-pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
+pub fn ipc(this: *Subprocess) ?*IPC.SendQueue {
     return &(this.ipc_data orelse return null);
 }
 pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {
     return this.globalThis;
 }
 
-pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
-
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const CowString = bun.ptr.CowString;
-const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
@@ -2704,14 +2691,11 @@ const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
 const windows = bun.windows;
 const uv = windows.libuv;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const Body = JSC.WebCore.Body;
 const IPClog = Output.scoped(.IPC, false);
 
 const PosixSpawn = bun.spawn;
 const Rusage = bun.spawn.Rusage;
 const Process = bun.spawn.Process;
-const WaiterThread = bun.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

@@ -547,10 +547,9 @@ pub const String = extern struct {
     ) JSC.JSValue;
 
     /// calls toJS on all elements of `array`.
-    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
+    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
-        return BunString__createArray(globalObject, array.ptr, array.len);
+        return bun.jsc.fromJSHostValue(BunString__createArray(globalObject, array.ptr, array.len));
     }
 
     pub fn toZigString(this: String) ZigString {
@@ -847,6 +846,14 @@ pub const String = extern struct {
     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) JSC.JSValue {
         JSC.markBinding(@src());
         return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
+    }
+
+    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSC.JSValue {
+        JSC.markBinding(@src());
+        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        defer builder.deinit();
+        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        return BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
     }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {

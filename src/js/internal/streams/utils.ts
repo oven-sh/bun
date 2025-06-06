@@ -158,7 +158,7 @@ function isWritable(stream) {
   return isWritableNodeStream(stream) && stream.writable && !isWritableEnded(stream);
 }
 
-function isFinished(stream, opts) {
+function isFinished(stream, opts?) {
   if (!isNodeStream(stream)) {
     return null;
   }

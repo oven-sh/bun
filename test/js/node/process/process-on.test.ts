@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, tempDirWithFiles } from "harness";
-import { bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 
 describe("process.on", () => {

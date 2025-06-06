@@ -292,18 +292,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -394,17 +391,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -671,18 +666,15 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const globalObject = this.evtloop.globalObject() orelse {
                 @panic("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
             };
-            var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            const success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            var promise_value = this.promise.value();
+            var promise = this.promise.get();
             const result = switch (this.result) {
                 .err => |err| err.toJSC(globalObject),
                 .result => |*res| brk: {
-                    const out = globalObject.toJS(res, .temporary);
-                    success = out != .zero;
-
-                    break :brk out;
+                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
             };
-            var promise_value = this.promise.value();
-            var promise = this.promise.get();
             promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
@@ -1225,22 +1217,17 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
         const globalObject = this.globalObject;
-        var success = this.pending_err == null;
+        const success = this.pending_err == null;
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
         const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            const out = res.toJS(globalObject);
-            if (out == .zero) {
-                success = false;
-            }
-
-            break :brk out;
+            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
         const tracker = this.tracker;
@@ -1986,7 +1973,7 @@ pub const Arguments = struct {
     };
 
     fn getEncoding(object: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!Encoding {
-        if (object.fastGet(globalObject, .encoding)) |value| {
+        if (try object.fastGet(globalObject, .encoding)) |value| {
             return Encoding.assert(value, globalObject, default);
         }
 
@@ -3289,11 +3276,11 @@ const Return = struct {
             files,
         };
 
-        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
-                    var array = JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
                         const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
@@ -3308,11 +3295,11 @@ const Return = struct {
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
+                    return JSC.toJS(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return JSC.toJS(globalObject, []const bun.String, this.files, .temporary);
+                    return JSC.toJS(globalObject, []const bun.String, this.files);
                 },
             }
         }
@@ -4007,7 +3994,7 @@ pub const NodeFS = struct {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
-                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, path)) },
+                    .result = .{ .string = bun.String.createFromOSPath(path) },
                 };
             },
         }
@@ -4029,6 +4016,20 @@ pub const NodeFS = struct {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
                             .EXIST => {
+                                // On Windows, this may happen if trying to mkdir replacing a file
+                                if (bun.Environment.isWindows) {
+                                    switch (bun.sys.directoryExistsAt(bun.invalid_fd, parent)) {
+                                        .err => {},
+                                        .result => |res| {
+                                            // is a directory. break.
+                                            if (!res) return .{ .err = .{
+                                                .errno = @intFromEnum(bun.sys.E.NOTDIR),
+                                                .syscall = .mkdir,
+                                                .path = this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path[0..len])),
+                                            } };
+                                        },
+                                    }
+                                }
                                 // Handle race condition
                                 break;
                             },
@@ -4106,7 +4107,7 @@ pub const NodeFS = struct {
             return .{ .result = .{ .none = {} } };
         }
         return .{
-            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, working_mem[0..first_match])) },
+            .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },
         };
     }
 
@@ -5906,9 +5907,6 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
-
         return switch (Syscall.utimens(
             args.path.sliceZ(&this.sync_error_buf),
             args.atime,
@@ -6926,7 +6924,6 @@ const Environment = bun.Environment;
 const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FD = bun.FD;
@@ -6935,14 +6932,11 @@ const AbortSignal = bun.webcore.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const builtin = @import("builtin");
 const posix = std.posix;
-const darwin = std.os.darwin;
 const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
-const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
@@ -6953,6 +6947,5 @@ const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
-const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
 const SystemErrno = bun.sys.SystemErrno;

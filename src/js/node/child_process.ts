@@ -206,6 +206,7 @@ function execFile(file, args, options, callback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
+    __proto__: null,
     encoding: "utf8",
     timeout: 0,
     maxBuffer: MAX_BUFFER,
@@ -845,7 +846,7 @@ function normalizeExecArgs(command, options, callback) {
   }
 
   // Make a shallow copy so we don't clobber the user's options object.
-  options = { ...options };
+  options = { __proto__: null, ...options };
   options.shell = typeof options.shell === "string" ? options.shell : true;
 
   return {
@@ -878,6 +879,7 @@ function normalizeSpawnArguments(file, args, options) {
   if (options === undefined) options = {};
   else validateObject(options, "options");
 
+  options = { __proto__: null, ...options };
   let cwd = options.cwd;
 
   // Validate the cwd, if present.
@@ -1128,12 +1130,16 @@ class ChildProcess extends EventEmitter {
             if (!stdin)
               // This can happen if the process was already killed.
               return new ShimmedStdin();
-            return require("internal/fs/streams").writableFromFileSink(stdin);
+            const result = require("internal/fs/streams").writableFromFileSink(stdin);
+            result.readable = false;
+            return result;
           }
           case "inherit":
             return null;
           case "destroyed":
             return new ShimmedStdin();
+          case "undefined":
+            return undefined;
           default:
             return null;
         }
@@ -1154,6 +1160,8 @@ class ChildProcess extends EventEmitter {
           }
           case "destroyed":
             return new ShimmedStdioOutStream();
+          case "undefined":
+            return undefined;
           default:
             return null;
         }
@@ -1164,7 +1172,7 @@ class ChildProcess extends EventEmitter {
             if (!NetModule) NetModule = require("node:net");
             const fd = handle && handle.stdio[i];
             if (!fd) return null;
-            return new NetModule.connect({ fd });
+            return NetModule.connect({ fd });
         }
         return null;
     }
@@ -1184,6 +1192,9 @@ class ChildProcess extends EventEmitter {
     for (let i = 0; i < length; i++) {
       const element = opts[i];
 
+      if (element === "undefined") {
+        return undefined;
+      }
       if (element !== "pipe") {
         result[i] = null;
         continue;
@@ -1337,19 +1348,38 @@ class ChildProcess extends EventEmitter {
         }
       }
     } catch (ex) {
-      if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
-      this.#handle = null;
-      ex.syscall = "spawn " + this.spawnfile;
-      ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
-      process.nextTick(() => {
-        this.emit("error", ex);
-        this.emit("close", (ex as SystemError).errno ?? -1);
-      });
+      if (
+        ex != null &&
+        typeof ex === "object" &&
+        Object.hasOwn(ex, "code") &&
+        // node sends these errors on the next tick rather than throwing
+        (ex.code === "EACCES" ||
+          ex.code === "EAGAIN" ||
+          ex.code === "EMFILE" ||
+          ex.code === "ENFILE" ||
+          ex.code === "ENOENT")
+      ) {
+        this.#handle = null;
+        ex.syscall = "spawn " + this.spawnfile;
+        ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        process.nextTick(() => {
+          this.emit("error", ex);
+          this.emit("close", (ex as SystemError).errno ?? -1);
+        });
+        if (ex.code === "EMFILE" || ex.code === "ENFILE") {
+          // emfile/enfile error; in this case node does not initialize stdio streams.
+          this.#stdioOptions[0] = "undefined";
+          this.#stdioOptions[1] = "undefined";
+          this.#stdioOptions[2] = "undefined";
+        }
+      } else {
+        throw ex;
+      }
     }
   }
 
-  #emitIpcMessage(message) {
-    this.emit("message", message);
+  #emitIpcMessage(message, _, handle) {
+    this.emit("message", message, handle);
   }
 
   #send(message, handle, options, callback) {
@@ -1375,19 +1405,16 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    // Bun does not handle handles yet
-    try {
-      this.#handle.send(message);
-      if (callback) process.nextTick(callback, null);
-      return true;
-    } catch (error) {
+    // We still need this send function because
+    return this.#handle.send(message, handle, options, err => {
+      // node does process.nextTick() to emit or call the callback
+      // we don't need to because the send callback is called on nextTick by ipc.zig
       if (callback) {
-        process.nextTick(callback, error);
-      } else {
-        this.emit("error", error);
+        callback(err);
+      } else if (err) {
+        this.emit("error", err);
       }
-      return false;
-    }
+    });
   }
 
   #onDisconnect(firstTime: boolean) {
@@ -1471,10 +1498,12 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   }
   if (isNodeStreamReadable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];

@@ -1,16 +1,11 @@
-const Allocator = std.mem.Allocator;
-const uws = bun.uws;
 const std = @import("std");
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Async = bun.Async;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const posix = std.posix;
 const Output = bun.Output;
-const os = std.os;
 
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
@@ -100,9 +95,9 @@ pub const Stdio = union(enum) {
         };
     }
 
-    pub fn useMemfd(this: *@This(), index: u32) void {
+    pub fn useMemfd(this: *@This(), index: u32) bool {
         if (comptime !Environment.isLinux) {
-            return;
+            return false;
         }
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
@@ -111,7 +106,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return;
+        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return false;
 
         var remain = this.byteSlice();
 
@@ -130,13 +125,13 @@ pub const Stdio = union(enum) {
 
                     Output.debugWarn("Failed to write to memfd: {s}", .{@tagName(err.getErrno())});
                     fd.close();
-                    return;
+                    return false;
                 },
                 .result => |result| {
                     if (result == 0) {
                         Output.debugWarn("Failed to write to memfd: EOF", .{});
                         fd.close();
-                        return;
+                        return false;
                     }
                     written += @intCast(result);
                     remain = remain[result..];
@@ -151,6 +146,7 @@ pub const Stdio = union(enum) {
         }
 
         this.* = .{ .memfd = fd };
+        return true;
     }
 
     fn toPosix(

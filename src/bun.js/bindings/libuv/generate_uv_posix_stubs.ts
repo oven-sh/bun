@@ -1,4 +1,4 @@
-import path, { join } from "path";
+import { join } from "path";
 import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
 
 import Parser from "tree-sitter";

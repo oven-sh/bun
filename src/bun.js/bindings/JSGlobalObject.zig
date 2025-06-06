@@ -64,8 +64,8 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
-    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.JSValue.FromAnyLifetime) JSC.JSValue {
-        return .fromAny(this, @TypeOf(value), value, lifetime);
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype) bun.JSError!JSC.JSValue {
+        return .fromAny(this, @TypeOf(value), value);
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -87,6 +87,17 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    pub fn throwInvalidArgumentValueCustom(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+        message: []const u8,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
     }
 
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
@@ -296,6 +307,20 @@ pub const JSGlobalObject = opaque {
         }
     }
 
+    pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSError!JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = try bun.MutableString.init2048(stack_fallback.get());
+            defer buf.deinit();
+            var writer = buf.writer();
+            try writer.print(fmt, args);
+            var str = ZigString.fromUTF8(buf.slice());
+            return str.toDOMExceptionInstance(this, code);
+        } else {
+            return ZigString.static(fmt).toDOMExceptionInstance(this, code);
+        }
+    }
+
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
@@ -348,7 +373,7 @@ pub const JSGlobalObject = opaque {
         const err = createErrorInstance(this, message, args);
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try JSC.toJS(this, i32, errno));
         return this.throwValue(err);
     }
 
@@ -410,6 +435,11 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
+    }
+
+    pub fn throwDOMException(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = try this.createDOMExceptionInstance(code, fmt, args);
         return this.throwValue(instance);
     }
 
@@ -522,7 +552,10 @@ pub const JSGlobalObject = opaque {
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
+        const exception = this.takeException(err);
+        if (!exception.isTerminationException(this.vm())) {
+            _ = this.bunVM().uncaughtException(this, exception, false);
+        }
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -843,6 +876,12 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
     }
 
+    extern fn ScriptExecutionContextIdentifier__forGlobalObject(global: *JSC.JSGlobalObject) u32;
+
+    pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
+        return @enumFromInt(ScriptExecutionContextIdentifier__forGlobalObject(global));
+    }
+
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
@@ -858,7 +897,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const C_API = bun.JSC.C;
 const JSC = bun.JSC;
 
 const MutableString = bun.MutableString;
@@ -871,4 +909,3 @@ const napi = @import("../../napi/napi.zig");
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const VM = JSC.VM;
-const JSPromise = JSC.JSPromise;

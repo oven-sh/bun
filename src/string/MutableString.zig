@@ -5,8 +5,6 @@ const Allocator = std.mem.Allocator;
 const strings = bun.strings;
 const js_lexer = bun.js_lexer;
 const string = bun.string;
-const stringZ = bun.stringZ;
-const CodePoint = bun.CodePoint;
 
 const MutableString = @This();
 
@@ -278,7 +276,7 @@ pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
 }
 
 pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
-    self.list.shrinkAndFree(self.allocator, length);
+    self.list.items.len = length;
     return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
 }
 

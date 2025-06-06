@@ -1,6 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
@@ -247,11 +246,10 @@ pub fn CompressionStream(comptime T: type) type {
             this.stream.close();
         }
 
-        pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+        pub fn setOnError(_: *T, this_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             if (value.isFunction()) {
                 T.js.errorCallbackSetCached(this_value, globalObject, value);
             }
-            return true;
         }
 
         pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {

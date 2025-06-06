@@ -676,11 +676,11 @@ export function isReadableStreamDefaultController(controller) {
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
   // underlyingSource is obtained in ReadableStream constructor: if undefined, it is set
   // to an empty object. Therefore, following test is ok.
-  return $isObject(controller) && !!$getByIdDirectPrivate(controller, "underlyingSource");
+  return $isObject(controller) && $getByIdDirectPrivate(controller, "underlyingSource") !== undefined;
 }
 
 export function readDirectStream(stream, sink, underlyingSource) {
-  $putByIdDirectPrivate(stream, "underlyingSource", undefined);
+  $putByIdDirectPrivate(stream, "underlyingSource", null); // doing this causes isReadableStreamDefaultController to return false
   $putByIdDirectPrivate(stream, "start", undefined);
   function close(stream, reason) {
     const cancelFn = underlyingSource?.cancel;
@@ -849,13 +849,12 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
       if (readableStreamController) {
         if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
-          $putByIdDirectPrivate(readableStreamController, "underlyingSource", undefined);
+          $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
         if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
-          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", undefined);
+          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
 
         $putByIdDirectPrivate(stream, "readableStreamController", null);
-        if ($getByIdDirectPrivate(stream, "underlyingSource"))
-          $putByIdDirectPrivate(stream, "underlyingSource", undefined);
+        if ($getByIdDirectPrivate(stream, "underlyingSource")) $putByIdDirectPrivate(stream, "underlyingSource", null);
         readableStreamController = undefined;
       }
 
@@ -1264,7 +1263,7 @@ export function initializeTextStream(underlyingSource, highWaterMark: number) {
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", null);
   $putByIdDirectPrivate(this, "start", undefined);
   return closingPromise;
 }
@@ -1324,7 +1323,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark: number) 
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", null);
   $putByIdDirectPrivate(this, "start", undefined);
   return closingPromise;
 }
@@ -1360,7 +1359,7 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark: num
   };
 
   $putByIdDirectPrivate(this, "readableStreamController", controller);
-  $putByIdDirectPrivate(this, "underlyingSource", undefined);
+  $putByIdDirectPrivate(this, "underlyingSource", null);
   $putByIdDirectPrivate(this, "start", undefined);
 }
 
@@ -2118,7 +2117,7 @@ export function readableStreamToArrayBufferDirect(
   asUint8Array: boolean,
 ) {
   var sink = new Bun.ArrayBufferSink();
-  $putByIdDirectPrivate(stream, "underlyingSource", undefined);
+  $putByIdDirectPrivate(stream, "underlyingSource", null);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
   sink.start({ highWaterMark, asUint8Array });
   var capability = $newPromiseCapability(Promise);

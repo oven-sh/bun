@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.setRawMode expects a TTYWrapObject as this"_s);
         return {};
     }
@@ -275,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.getWindowSize expects a TTYWrapObject as this"_s);
         return {};
     }

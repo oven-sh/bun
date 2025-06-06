@@ -1,8 +1,9 @@
+include(PathUtils)
+
 if(DEBUG)
   set(bun bun-debug)
-# elseif(ENABLE_SMOL)
-#   set(bun bun-smol-profile)
-#   set(bunStrip bun-smol)
+elseif(ENABLE_ASAN)
+  set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -45,13 +46,7 @@ endif()
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
-file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_ERROR_SOURCE}/*.json
-  ${BUN_ERROR_SOURCE}/*.ts
-  ${BUN_ERROR_SOURCE}/*.tsx
-  ${BUN_ERROR_SOURCE}/*.css
-  ${BUN_ERROR_SOURCE}/img/*
-)
+absolute_sources(BUN_ERROR_SOURCES ${CWD}/cmake/sources/BunErrorSources.txt)
 
 set(BUN_ERROR_OUTPUT ${CODEGEN_PATH}/bun-error)
 set(BUN_ERROR_OUTPUTS
@@ -140,9 +135,7 @@ register_command(
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
 
-file(GLOB BUN_NODE_FALLBACKS_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_NODE_FALLBACKS_SOURCE}/*.js
-)
+absolute_sources(BUN_NODE_FALLBACKS_SOURCES ${CWD}/cmake/sources/NodeFallbacksSources.txt)
 
 set(BUN_NODE_FALLBACKS_OUTPUT ${CODEGEN_PATH}/node-fallbacks)
 set(BUN_NODE_FALLBACKS_OUTPUTS)
@@ -168,14 +161,9 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} x
-      esbuild ${ESBUILD_ARGS}
+    ${BUN_EXECUTABLE} run build-fallbacks
+      ${BUN_NODE_FALLBACKS_OUTPUT}
       ${BUN_NODE_FALLBACKS_SOURCES}
-      --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
-      --format=esm
-      --minify
-      --bundle
-      --platform=browser
   SOURCES
     ${BUN_NODE_FALLBACKS_SOURCES}
     ${BUN_NODE_FALLBACKS_NODE_MODULES}
@@ -242,13 +230,7 @@ register_command(
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
-file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/bun.js/*.classes.ts
-  ${CWD}/src/bun.js/api/*.classes.ts
-  ${CWD}/src/bun.js/node/*.classes.ts
-  ${CWD}/src/bun.js/test/*.classes.ts
-  ${CWD}/src/bun.js/webcore/*.classes.ts
-)
+absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/sources/ZigGeneratedClassesSources.txt)
 
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
@@ -281,14 +263,8 @@ register_command(
 
 set(BUN_JAVASCRIPT_CODEGEN_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
-file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/js/*.js
-  ${CWD}/src/js/*.ts
-)
-
-file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/codegen/*.ts
-)
+absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/sources/JavaScriptSources.txt)
+absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/sources/JavaScriptCodegenSources.txt)
 
 list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -330,11 +306,7 @@ register_command(
 
 set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
-file(GLOB_RECURSE BUN_BAKE_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/bake/*.ts
-  ${CWD}/src/bake/*/*.ts
-  ${CWD}/src/bake/*/*.css
-)
+absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/sources/BakeRuntimeSources.txt)
 
 list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -367,9 +339,7 @@ register_command(
 
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
-file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/**/*.bind.ts
-)
+absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/sources/BindgenSources.txt)
 
 set(BUN_BINDGEN_CPP_OUTPUTS
   ${CODEGEN_PATH}/GeneratedBindings.cpp
@@ -438,6 +408,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
@@ -451,6 +422,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
+  ${CODEGEN_PATH}/ProcessBindingHTTPParser.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
 )
@@ -526,9 +498,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/*.zig
-)
+absolute_sources(BUN_ZIG_SOURCES ${CWD}/cmake/sources/ZigSources.txt)
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
@@ -599,6 +569,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -624,31 +595,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 # hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/io/*.cpp
-  ${CWD}/src/bun.js/modules/*.cpp
-  ${CWD}/src/bun.js/bindings/*.cpp
-  ${CWD}/src/bun.js/bindings/webcore/*.cpp
-  ${CWD}/src/bun.js/bindings/sqlite/*.cpp
-  ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
-  ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
-  ${CWD}/src/bun.js/bindings/node/*.cpp
-  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
-  ${CWD}/src/bun.js/bindings/v8/*.cpp
-  ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
-  ${CWD}/src/bake/*.cpp
-  ${CWD}/src/deps/*.cpp
-  ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
-)
-
-file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_USOCKETS_SOURCE}/src/*.c
-  ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
-  ${BUN_USOCKETS_SOURCE}/src/internal/*.c
-  ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
-  ${CWD}/src/bun.js/bindings/uv-posix-polyfills.c
-  ${CWD}/src/bun.js/bindings/uv-posix-stubs.c
-)
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
@@ -786,6 +734,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
   ${CWD}/src/bun.js/bindings/node/crypto
+  ${CWD}/src/bun.js/bindings/node/http
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
@@ -798,7 +747,7 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
-if(NOT WIN32) 
+if(NOT WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
 endif()
 
@@ -888,7 +837,7 @@ if(NOT WIN32)
       )
     endif()
 
-    if (ENABLE_ASAN)
+    if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
       )
@@ -931,6 +880,15 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
+
+    if(ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
   endif()
 else()
   target_compile_options(${bun} PUBLIC
@@ -980,6 +938,7 @@ if(LINUX)
   if(NOT ABI STREQUAL "musl")
   target_link_options(${bun} PUBLIC
     -Wl,--wrap=exp
+    -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
     -Wl,--wrap=log
@@ -1059,6 +1018,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1067,6 +1027,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib
@@ -1102,6 +1063,7 @@ set(BUN_DEPENDENCIES
   TinyCC
   Zlib
   LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
   Zstd
 )
 
@@ -1201,6 +1163,27 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
+  # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run
+  # when spawned by cmake (they run fine from a shell!)
+  # otherwise they crash with:
+  # ==856230==Shadow memory range interleaves with an existing memory mapping. ASan cannot proceed correctly. ABORTING.
+  # ==856230==ASan shadow was supposed to be located in the [0x00007fff7000-0x10007fff7fff] range.
+  # ==856230==This might be related to ELF_ET_DYN_BASE change in Linux 4.12.
+  # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
+  # the linked issue refers to very old kernels but this still happens to us on modern ones.
+  # disabling ASLR to run the binary works around it
+  set(TEST_BUN_COMMAND_BASE ${BUILD_PATH}/${bunExe} --revision)
+  set(TEST_BUN_COMMAND_ENV_WRAP
+    ${CMAKE_COMMAND} -E env BUN_DEBUG_QUIET_LOGS=1)
+  if (LINUX AND ENABLE_ASAN)
+    set(TEST_BUN_COMMAND
+      ${TEST_BUN_COMMAND_ENV_WRAP} setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${TEST_BUN_COMMAND_BASE}
+      || ${TEST_BUN_COMMAND_ENV_WRAP} ${TEST_BUN_COMMAND_BASE})
+  else()
+    set(TEST_BUN_COMMAND
+      ${TEST_BUN_COMMAND_ENV_WRAP} ${TEST_BUN_COMMAND_BASE})
+  endif()
+
   register_command(
     TARGET
       ${bun}
@@ -1209,10 +1192,7 @@ if(NOT BUN_CPP_ONLY)
     COMMENT
       "Testing ${bun}"
     COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bunExe}
-        --revision
+      ${TEST_BUN_COMMAND}
     CWD
       ${BUILD_PATH}
   )
@@ -1272,7 +1252,12 @@ if(NOT BUN_CPP_ONLY)
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
-    string(REPLACE bun ${bunTriplet} bunPath ${bun})
+    if(ENABLE_ASAN)
+      set(bunTriplet ${bunTriplet}-asan)
+      set(bunPath ${bunTriplet})
+    else()
+      string(REPLACE bun ${bunTriplet} bunPath ${bun})
+    endif()
     set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)

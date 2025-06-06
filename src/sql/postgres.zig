@@ -1394,12 +1394,12 @@ pub const PostgresSQLConnection = struct {
         this.globalObject.bunVM().timer.insert(&this.timer);
     }
 
-    pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         if (js.queriesGetCached(thisValue)) |value| {
             return value;
         }
 
-        const array = JSC.JSValue.createEmptyArray(globalObject, 0);
+        const array = try JSC.JSValue.createEmptyArray(globalObject, 0);
         js.queriesSetCached(thisValue, globalObject, array);
 
         return array;
@@ -1413,9 +1413,8 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+    pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         js.onconnectSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1426,14 +1425,13 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+    pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         js.oncloseSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     pub fn setupTLS(this: *PostgresSQLConnection) void {
         debug("setupTLS", .{});
-        const new_socket = uws.us_socket_upgrade_to_tls(this.socket.SocketTCP.socket.connected, this.tls_ctx.?, this.tls_config.server_name) orelse {
+        const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
             this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
             return;
         };
@@ -1845,7 +1843,7 @@ pub const PostgresSQLConnection = struct {
             // We create it right here so we can throw errors early.
             const context_options = tls_config.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
-            tls_ctx = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
+            tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
                 if (err != .none) {
                     return globalObject.throw("failed to create TLS context", .{});
                 } else {
@@ -1953,8 +1951,7 @@ pub const PostgresSQLConnection = struct {
             defer hostname.deinit();
 
             const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                var err: uws.create_bun_socket_error_t = .none;
-                const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}, &err).?;
+                const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
                 uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                 vm.rareData().postgresql_context.tcp = ctx_;
                 break :brk ctx_;

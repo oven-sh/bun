@@ -290,7 +290,13 @@ pub fn fromNative(globalThis: *JSGlobalObject, native: JSC.JSValue) JSC.JSValue 
     return ZigGlobalObject__createNativeReadableStream(globalThis, native);
 }
 
-pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+    var blob = Blob.init(bytes, bun.default_allocator, globalThis);
+    defer blob.deinit();
+    return fromBlobCopyRef(globalThis, &blob, recommended_chunk_size);
+}
+
+pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
     JSC.markBinding(@src());
     var store = blob.store orelse {
         return ReadableStream.empty(globalThis);
@@ -676,41 +682,37 @@ pub fn NewSource(
                 return .undefined;
             }
 
-            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
                     this.close_jsvalue.deinit();
-                    return true;
+                    return;
                 }
 
                 if (!value.isCallable()) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
-                    return false;
+                    return globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function");
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
                 this.close_jsvalue.set(globalObject, cb);
-                return true;
             }
 
-            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
                 JSC.markBinding(@src());
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
                     js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
-                    return true;
+                    return;
                 }
 
                 if (!value.isCallable()) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
-                    return false;
+                    return globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function");
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
                 js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
-                return true;
             }
 
             pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

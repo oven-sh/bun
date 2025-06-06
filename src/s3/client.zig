@@ -447,7 +447,7 @@ pub fn uploadStream(
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
         },
         else => {},

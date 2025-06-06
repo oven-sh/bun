@@ -1,16 +1,1 @@
-# Tell LLDB what to do when the debugged process receives SIGPWR: pass it through to the process
-# (-p), but do not stop the process (-s) or notify the user (-n).
-#
-# JSC's garbage collector sends this signal (as configured by Bun WebKit in
-# Thread::initializePlatformThreading() in ThreadingPOSIX.cpp) to the JS thread to suspend or resume
-# it. So stopping the process would just create noise when debugging any long-running script.
-process handle -p true -s false -n false SIGPWR
-
-command script import misctools/lldb/lldb_pretty_printers.py
-type category enable zig.lang
-type category enable zig.std
-
-command script import misctools/lldb/lldb_webkit.py
-
-command script delete btjs
-command alias btjs p {printf("gathering btjs trace...\n");printf("%s\n", (char*)dumpBtjsTrace())}
+command source -C -s true -e true misctools/lldb/init.lldb

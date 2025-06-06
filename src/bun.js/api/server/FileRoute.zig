@@ -399,10 +399,10 @@ const StreamTransfer = struct {
             break :brk .{ chunk_, state_ };
         };
 
-        if (state == .eof) {
+        if (state == .eof and !this.state.waiting_for_writable) {
             this.state.waiting_for_readable = false;
-            this.state.has_ended_response = true;
             this.state.waiting_for_writable = false;
+            this.state.has_ended_response = true;
             const resp = this.resp;
             const route = this.route;
             route.onResponseComplete(resp);
@@ -427,6 +427,15 @@ const StreamTransfer = struct {
             .want_more => {
                 this.state.waiting_for_readable = true;
                 this.state.waiting_for_writable = false;
+
+                if (state_ == .eof) {
+                    this.state.waiting_for_readable = false;
+                    this.finish();
+                    return false;
+                }
+
+                this.reader.unpause();
+
                 return true;
             },
         }

@@ -411,6 +411,10 @@ const StreamTransfer = struct {
             return false;
         }
 
+        if (this.route.server) |server| {
+            this.resp.timeout(server.config().idleTimeout);
+        }
+
         switch (this.resp.write(chunk)) {
             .backpressure => {
                 this.resp.onWritable(*StreamTransfer, onWritable, this);

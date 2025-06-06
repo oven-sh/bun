@@ -765,6 +765,84 @@ declare module "bun:sqlite" {
     readonly paramsCount: number;
 
     /**
+     * The actual SQLite column types from the first row of the result set.
+     * 
+     * Returns an array of SQLite type constants as uppercase strings:
+     * - `"INTEGER"` for integer values
+     * - `"FLOAT"` for floating-point values  
+     * - `"TEXT"` for text values
+     * - `"BLOB"` for binary data
+     * - `"NULL"` for null values
+     * - `null` for unknown/unsupported types
+     * 
+     * **Requirements:**
+     * - Statement must be executed at least once before accessing this property
+     * - Only available for read-only statements (SELECT queries)
+     * - For non-read-only statements, throws an error
+     * 
+     * **Behavior:**
+     * - Uses `sqlite3_column_type()` to get actual data types from the first row
+     * - Provides accurate type information for expressions and computed columns
+     * - Returns `null` for columns with unknown SQLite type constants
+     * 
+     * @example
+     * ```ts
+     * const stmt = db.prepare("SELECT id, name, age FROM users WHERE id = 1");
+     * const row = stmt.get(); // Execute the statement
+     * 
+     * console.log(stmt.columnTypes);
+     * // => ["INTEGER", "TEXT", "INTEGER"]
+     * 
+     * // For expressions:
+     * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
+     * exprStmt.get();
+     * console.log(exprStmt.columnTypes);
+     * // => ["INTEGER"]
+     * ```
+     * 
+     * @throws Error if statement hasn't been executed
+     * @throws Error if statement is not read-only (INSERT, UPDATE, DELETE, etc.)
+     * @since Bun v1.2.13
+     */
+    readonly columnTypes: Array<"INTEGER" | "FLOAT" | "TEXT" | "BLOB" | "NULL" | null>;
+
+    /**
+     * The declared column types from the table schema.
+     * 
+     * Returns an array of declared type strings from `sqlite3_column_decltype()`:
+     * - Raw type strings as declared in the CREATE TABLE statement
+     * - `null` for columns without declared types (e.g., expressions, computed columns)
+     * 
+     * **Requirements:**
+     * - Statement must be executed at least once before accessing this property
+     * - Available for both read-only and read-write statements
+     * 
+     * **Behavior:**
+     * - Uses `sqlite3_column_decltype()` to get schema-declared types
+     * - Returns the exact type string from the table definition
+     * - More consistent but less accurate for dynamic content than `columnTypes`
+     * 
+     * @example
+     * ```ts
+     * // For table columns:
+     * const stmt = db.prepare("SELECT id, name, weight FROM products");
+     * stmt.get();
+     * console.log(stmt.declaredTypes);
+     * // => ["INTEGER", "TEXT", "REAL"]
+     * 
+     * // For expressions (no declared types):
+     * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
+     * exprStmt.get();
+     * console.log(exprStmt.declaredTypes);
+     * // => [null]
+     * ```
+     * 
+     * @throws Error if statement hasn't been executed
+     * @since Bun v1.2.13
+     */
+    readonly declaredTypes: Array<string | null>;
+
+    /**
      * Finalize the prepared statement, freeing the resources used by the
      * statement and preventing it from being executed again.
      *
@@ -840,6 +918,12 @@ declare module "bun:sqlite" {
      * Native object representing the underlying `sqlite3_stmt`
      *
      * This is left untyped because the ABI of the native bindings may change at any time.
+     * 
+     * For stable, typed access to statement metadata, use the typed properties on the Statement class:
+     * - {@link columnNames} for column names
+     * - {@link paramsCount} for parameter count  
+     * - {@link columnTypes} for actual data types from the first row
+     * - {@link declaredTypes} for schema-declared column types
      */
     readonly native: any;
   }

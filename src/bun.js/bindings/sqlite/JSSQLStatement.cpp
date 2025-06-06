@@ -548,7 +548,7 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnCount, 0 } },
     { "paramsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetParamCount, 0 } },
     { "columnTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnTypes, 0 } },
-    { "columnDeclaredTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnDeclaredTypes, 0 } },
+    { "declaredTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnDeclaredTypes, 0 } },
     { "safeIntegers"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetSafeIntegers, jsSqlStatementSetSafeIntegers } },
 
 };
@@ -2402,31 +2402,31 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
             switch (columnType) {
             case SQLITE_INTEGER:
-                typeValue = JSC::jsNontrivialString(vm, "integer"_s);
+                typeValue = JSC::jsNontrivialString(vm, "INTEGER"_s);
                 break;
             case SQLITE_FLOAT:
-                typeValue = JSC::jsNontrivialString(vm, "float"_s);
+                typeValue = JSC::jsNontrivialString(vm, "FLOAT"_s);
                 break;
             case SQLITE3_TEXT:
-                typeValue = JSC::jsNontrivialString(vm, "text"_s);
+                typeValue = JSC::jsNontrivialString(vm, "TEXT"_s);
                 break;
             case SQLITE_BLOB:
-                typeValue = JSC::jsNontrivialString(vm, "blob"_s);
+                typeValue = JSC::jsNontrivialString(vm, "BLOB"_s);
                 break;
             case SQLITE_NULL:
-                typeValue = JSC::jsNontrivialString(vm, "null"_s);
+                typeValue = JSC::jsNontrivialString(vm, "NULL"_s);
                 break;
             default:
-                typeValue = JSC::jsNontrivialString(vm, "any"_s);
+                typeValue = JSC::jsNull();
                 break;
             }
 
             array->putDirectIndex(lexicalGlobalObject, i, typeValue);
         }
     } else if (stepStatus == SQLITE_DONE) {
-        // No data rows to read, return 'any' for all columns
+        // No data rows to read, return 'NULL' for all columns
         for (int i = 0; i < count; i++) {
-            JSC::JSValue typeValue = JSC::jsNontrivialString(vm, "any"_s);
+            JSC::JSValue typeValue = JSC::jsNontrivialString(vm, "NULL"_s);
             array->putDirectIndex(lexicalGlobalObject, i, typeValue);
         }
     } else {
@@ -2452,40 +2452,26 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
 
     // Ensure the statement has been executed at least once
     if (!castedThis->hasExecuted) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing columnDeclaredTypes"_s));
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing declaredTypes"_s));
         return { };
     }
 
     int count = sqlite3_column_count(castedThis->stmt);
     JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
 
-    // Helper function to process declared type and create normalized type string
-    auto processDeclaredType = [&vm](const char* declType) -> JSC::JSValue {
-        if (declType != nullptr) {
-            String typeStr = String::fromUTF8(declType);
-            String typeStrUpper = typeStr.convertToASCIIUppercase();
-
-            if (typeStrUpper.contains("INT")) {
-                return JSC::jsNontrivialString(vm, "integer"_s);
-            } else if (typeStrUpper.contains("CHAR") || typeStrUpper.contains("CLOB") || typeStrUpper.contains("TEXT")) {
-                return JSC::jsNontrivialString(vm, "text"_s);
-            } else if (typeStrUpper.contains("REAL") || typeStrUpper.contains("FLOA") || typeStrUpper.contains("DOUB")) {
-                return JSC::jsNontrivialString(vm, "float"_s);
-            } else if (typeStrUpper.contains("BLOB")) {
-                return JSC::jsNontrivialString(vm, "blob"_s);
-            } else {
-                return JSC::jsNontrivialString(vm, typeStr.convertToASCIILowercase());
-            }
-        } else {
-            // If no declared type (e.g., for expressions or results of functions)
-            return JSC::jsNontrivialString(vm, "any"_s);
-        }
-    };
-
-    // Use declared types only - this is the main difference from columnTypes
+    // Use declared types only - return raw strings as-is, null when no declared type
     for (int i = 0; i < count; i++) {
         const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
-        JSC::JSValue typeValue = processDeclaredType(declType);
+        JSC::JSValue typeValue;
+        
+        if (declType != nullptr) {
+            String typeStr = String::fromUTF8(declType);
+            typeValue = JSC::jsNontrivialString(vm, typeStr);
+        } else {
+            // If no declared type (e.g., for expressions or results of functions)
+            typeValue = JSC::jsNull();
+        }
+        
         array->putDirectIndex(lexicalGlobalObject, i, typeValue);
     }
     

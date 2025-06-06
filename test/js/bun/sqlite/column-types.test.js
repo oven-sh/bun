@@ -34,16 +34,16 @@ describe("SQLite Statement column types", () => {
     expect(stmt.native.columnsCount).toBe(5);
     
     // Test the columnTypes property (uses actual data types from sqlite3_column_type)
-    expect(stmt.native.columnTypes).toBeDefined();
-    expect(Array.isArray(stmt.native.columnTypes)).toBe(true);
-    expect(stmt.native.columnTypes.length).toBe(5);
-    expect(stmt.native.columnTypes).toEqual(['integer', 'text', 'float', 'blob', 'integer']);
+    expect(stmt.columnTypes).toBeDefined();
+    expect(Array.isArray(stmt.columnTypes)).toBe(true);
+    expect(stmt.columnTypes.length).toBe(5);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT', 'FLOAT', 'BLOB', 'INTEGER']);
     
-    // Test the columnDeclaredTypes property (uses declared types from sqlite3_column_decltype)
-    expect(stmt.native.columnDeclaredTypes).toBeDefined();
-    expect(Array.isArray(stmt.native.columnDeclaredTypes)).toBe(true);
-    expect(stmt.native.columnDeclaredTypes.length).toBe(5);
-    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'text', 'float', 'blob', 'integer']);
+    // Test the declaredTypes property (uses declared types from sqlite3_column_decltype)
+    expect(stmt.declaredTypes).toBeDefined();
+    expect(Array.isArray(stmt.declaredTypes)).toBe(true);
+    expect(stmt.declaredTypes.length).toBe(5);
+    expect(stmt.declaredTypes).toEqual(['INTEGER', 'TEXT', 'REAL', 'BLOB', 'INTEGER']);
   });
 
   it("handles NULL values correctly", () => {
@@ -63,11 +63,11 @@ describe("SQLite Statement column types", () => {
     // Execute the statement to get column types
     const row = stmt.get();
 
-    // columnTypes now returns actual data types - NULL values are reported as 'null'
-    expect(stmt.native.columnTypes).toEqual(['integer', 'null']);
+    // columnTypes now returns actual data types - NULL values are reported as 'NULL'
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'NULL']);
     
-    // columnDeclaredTypes still shows the declared table schema
-    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'text']);
+    // declaredTypes still shows the declared table schema
+    expect(stmt.declaredTypes).toEqual(['INTEGER', 'TEXT']);
   });
 
   it("reports actual column types based on data values", () => {
@@ -89,7 +89,7 @@ describe("SQLite Statement column types", () => {
     let row = stmt.get();
     
     // We should get the actual type of the value (integer)
-    expect(stmt.native.columnTypes).toEqual(['integer', 'integer']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER']);
     
     // Update to a text value
     db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
@@ -99,7 +99,7 @@ describe("SQLite Statement column types", () => {
     row = stmt.get();
     
     // We should get the actual type of the value (text)
-    expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT']);
 
     // Update to a float value
     db.run(`UPDATE dynamic_types SET value = 3.14 WHERE id = 1`);
@@ -109,7 +109,7 @@ describe("SQLite Statement column types", () => {
     row = stmt.get();
 
     // We should get the actual type of the value (float)
-    expect(stmt.native.columnTypes).toEqual(['integer', 'float']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'FLOAT']);
   });
 
   it("reports actual types for columns from expressions", () => {
@@ -131,7 +131,7 @@ describe("SQLite Statement column types", () => {
     expect(stmt.native.columns).toEqual(['str_length', 'magic_number', 'greeting']);
     
     // For expressions, expect the actual data types
-    expect(stmt.native.columnTypes).toEqual(['integer', 'integer', 'text']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER', 'TEXT']);
   });
 
   it("handles multiple different expressions and functions", () => {
@@ -163,8 +163,8 @@ describe("SQLite Statement column types", () => {
     ]);
 
     // Expression columns should be reported with their actual types
-    expect(stmt.native.columnTypes).toEqual([
-      'integer', 'float', 'text', 'blob', 'null', 'integer', 'text'
+    expect(stmt.columnTypes).toEqual([
+      'INTEGER', 'FLOAT', 'TEXT', 'BLOB', 'NULL', 'INTEGER', 'TEXT'
     ]);
 
     // Verify data types were correctly identified at runtime
@@ -177,7 +177,7 @@ describe("SQLite Statement column types", () => {
     expect(typeof row.timestamp).toBe('string');
   });
 
-  it("shows difference between columnTypes and columnDeclaredTypes for expressions", () => {
+  it("shows difference between columnTypes and declaredTypes for expressions", () => {
     const db = new Database(":memory:");
 
     // Test with expressions where declared types differ from actual types
@@ -185,10 +185,10 @@ describe("SQLite Statement column types", () => {
     const row = stmt.get();
 
     // columnTypes shows actual data types based on the values
-    expect(stmt.native.columnTypes).toEqual(['integer', 'integer', 'text']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER', 'TEXT']);
     
-    // columnDeclaredTypes shows declared types (which are 'any' for expressions without explicit declarations)
-    expect(stmt.native.columnDeclaredTypes).toEqual(['any', 'any', 'any']);
+    // declaredTypes shows declared types (which are null for expressions without explicit declarations)
+    expect(stmt.declaredTypes).toEqual([null, null, null]);
   });
 
   it("shows difference for dynamic column types", () => {
@@ -208,10 +208,10 @@ describe("SQLite Statement column types", () => {
     let row = stmt.get();
     
     // columnTypes shows actual type (integer) for the current value
-    expect(stmt.native.columnTypes).toEqual(['integer', 'integer']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER']);
     
-    // columnDeclaredTypes shows the declared table schema
-    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'any']);
+    // declaredTypes shows the declared table schema
+    expect(stmt.declaredTypes).toEqual(['INTEGER', 'ANY']);
     
     // Update to a text value
     db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
@@ -220,10 +220,10 @@ describe("SQLite Statement column types", () => {
     row = stmt.get();
     
     // columnTypes now shows text for the current value
-    expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
+    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT']);
     
-    // columnDeclaredTypes still shows the declared table schema
-    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'any']);
+    // declaredTypes still shows the declared table schema
+    expect(stmt.declaredTypes).toEqual(['INTEGER', 'ANY']);
   });
 
   it("throws an error when accessing columnTypes before statement execution", () => {
@@ -235,13 +235,13 @@ describe("SQLite Statement column types", () => {
 
     // Accessing columnTypes before executing should throw
     expect(() => {
-      stmt.native.columnTypes;
+      stmt.columnTypes;
     }).toThrow("Statement must be executed before accessing columnTypes");
     
-    // Accessing columnDeclaredTypes before executing should also throw
+    // Accessing declaredTypes before executing should also throw
     expect(() => {
-      stmt.native.columnDeclaredTypes;
-    }).toThrow("Statement must be executed before accessing columnDeclaredTypes");
+      stmt.declaredTypes;
+    }).toThrow("Statement must be executed before accessing declaredTypes");
   });
 
   it("throws an error when accessing columnTypes on non-read-only statements", () => {
@@ -253,7 +253,7 @@ describe("SQLite Statement column types", () => {
     insertStmt.run(1, "test");
 
     expect(() => {
-      insertStmt.native.columnTypes;
+      insertStmt.columnTypes;
     }).toThrow("columnTypes is not available for non-read-only statements");
 
     // Test UPDATE statement
@@ -261,7 +261,7 @@ describe("SQLite Statement column types", () => {
     updateStmt.run("updated", 1);
 
     expect(() => {
-      updateStmt.native.columnTypes;
+      updateStmt.columnTypes;
     }).toThrow("columnTypes is not available for non-read-only statements");
 
     // Test DELETE statement
@@ -269,12 +269,12 @@ describe("SQLite Statement column types", () => {
     deleteStmt.run(1);
 
     expect(() => {
-      deleteStmt.native.columnTypes;
+      deleteStmt.columnTypes;
     }).toThrow("columnTypes is not available for non-read-only statements");
 
-    // columnDeclaredTypes should still work for these statements
+    // declaredTypes should still work for these statements
     expect(() => {
-      insertStmt.native.columnDeclaredTypes;
+      insertStmt.declaredTypes;
     }).not.toThrow();
   });
 });

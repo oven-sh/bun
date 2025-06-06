@@ -553,39 +553,19 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
 }
 
 const bun = @import("bun");
-const string = bun.string;
 const strings = bun.strings;
 const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
 const Part = bun.bundle_v2.Part;
 const Loader = bun.Loader;
 const std = @import("std");
 const debug = LinkerContext.debug;
-const EntryPoint = bun.bundle_v2.EntryPoint;
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
 const Environment = bun.Environment;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const ExportData = bun.bundle_v2.ExportData;
-const FeatureFlags = bun.FeatureFlags;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
-const ImportData = bun.bundle_v2.ImportData;
-const Dependency = js_ast.Dependency;
 const options = bun.options;
-const Symbol = bun.bundle_v2.Symbol;
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
 const Loc = Logger.Loc;
 const Chunk = bun.bundle_v2.Chunk;
 
@@ -600,7 +580,6 @@ const debugPartRanges = Output.scoped(.PartRanges, true);
 const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJSChunk;
 const generateCompileResultForCssChunk = LinkerContext.generateCompileResultForCssChunk;
 const generateCompileResultForHtmlChunk = LinkerContext.generateCompileResultForHtmlChunk;
-const generateCompileResultForChunk = LinkerContext.generateCompileResultForChunk;
 const generateChunk = LinkerContext.generateChunk;
 
 const AutoBitSet = bun.bit_set.AutoBitSet;

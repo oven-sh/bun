@@ -210,7 +210,6 @@ const BabyList = bun.BabyList;
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const ImportRecord = bun.ImportRecord;
 const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
 const std = @import("std");
 const Chunk = bun.bundle_v2.Chunk;
 const PartRange = bun.bundle_v2.PartRange;

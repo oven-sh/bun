@@ -12,6 +12,12 @@ const api = bun.api;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
+const SystemTimer = bun.Timer;
+const timespec = bun.timespec;
+const log = bun.Output.scoped(.timer, false);
+const min_timer_id = 1;
+const Strong = JSC.Strong;
+const TraceEvents = @import("../node/node_trace_events.zig").TraceEvents;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -281,6 +287,14 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Emit RunTimers trace event
+        if (TraceEvents.instance != null) {
+            TraceEvents.emitInstant("RunTimers");
+        }
+
+        this.lock.lock();
+        defer this.lock.unlock();
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.
@@ -1504,8 +1518,6 @@ pub const EventLoopTimer = struct {
 
     pub fn deinit(_: *EventLoopTimer) void {}
 };
-
-const timespec = bun.timespec;
 
 /// A timer created by WTF code and invoked by Bun's event loop
 pub const WTFTimer = @import("../WTFTimer.zig");

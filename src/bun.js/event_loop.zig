@@ -191,6 +191,11 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    // Emit CheckImmediate trace event
+    if (TraceEvents.instance != null) {
+        TraceEvents.emitInstant("CheckImmediate");
+    }
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
@@ -199,6 +204,11 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     var exception_thrown = false;
     for (to_run_now.items) |task| {
         exception_thrown = task.runImmediateTask(virtual_machine);
+    }
+
+    // Emit RunAndClearNativeImmediates trace event after running all immediate tasks
+    if (to_run_now.items.len > 0 and TraceEvents.instance != null) {
+        TraceEvents.emitInstant("RunAndClearNativeImmediates");
     }
 
     // make sure microtasks are drained if the last task had an exception
@@ -644,3 +654,6 @@ const Environment = bun.Environment;
 const Waker = bun.Async.Waker;
 const uws = bun.uws;
 const Async = bun.Async;
+const ManagedChannelMap = JSC.ManagedChannelMap;
+const getAllocator = bun.getAllocator;
+const TraceEvents = @import("./node/node_trace_events.zig").TraceEvents;

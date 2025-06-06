@@ -21,6 +21,7 @@ const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
+const TraceEvents = @import("./bun.js/node/node_trace_events.zig").TraceEvents;
 
 var run: Run = undefined;
 pub const Run = struct {
@@ -111,6 +112,13 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if enabled
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            TraceEvents.init(vm.allocator, ctx.runtime_options.trace_event_categories, ctx.args.absolute_working_dir orelse ".") catch |err| {
+                Output.prettyErrorln("Failed to initialize trace events: {s}", .{@errorName(err)});
+            };
+        }
 
         doPreconnect(ctx.runtime_options.preconnect);
 
@@ -256,6 +264,13 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if enabled
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            TraceEvents.init(vm.allocator, ctx.runtime_options.trace_event_categories, ctx.args.absolute_working_dir orelse ".") catch |err| {
+                Output.prettyErrorln("Failed to initialize trace events: {s}", .{@errorName(err)});
+            };
+        }
 
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {

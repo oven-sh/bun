@@ -638,6 +638,11 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    // Emit BeforeExit trace event
+    if (TraceEvents.instance != null) {
+        TraceEvents.emitInstant("BeforeExit");
+    }
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,6 +701,16 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Emit RunCleanup trace event
+    if (TraceEvents.instance != null) {
+        TraceEvents.emitInstant("RunCleanup");
+    }
+
+    // Emit AtExit trace event
+    if (TraceEvents.instance != null) {
+        TraceEvents.emitInstant("AtExit");
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -709,6 +724,11 @@ pub fn onExit(this: *VirtualMachine) void {
         for (hooks.items) |hook| {
             hook.execute();
         }
+    }
+
+    // Finalize trace events to close the JSON file properly
+    if (TraceEvents.instance != null) {
+        TraceEvents.deinit();
     }
 }
 
@@ -907,6 +927,11 @@ pub fn initWithModuleGraph(
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+    // Emit the Environment trace event for Node.js compatibility
+    if (TraceEvents.instance != null) {
+        TraceEvents.emitInstant("Environment");
+    }
 
     return vm;
 }
@@ -3566,3 +3591,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const TraceEvents = @import("./node/node_trace_events.zig").TraceEvents;

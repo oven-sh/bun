@@ -272,41 +272,43 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
     const loader = all_loaders[source_index];
 
     if (loader == .html and exports_kind == .cjs) {
-        // Generate asset manifest for server-side HTML imports
+        // The HTML file itself will be an additional file, so it will have a unique key
+        // in the format {unique_key}A{source_index:0>8}
+        const html_placeholder = try std.fmt.allocPrint(
+            this.allocator,
+            "{}A{d:0>8}",
+            .{ this.unique_key_prefix, source_index },
+        );
+
+        // The client entry point is the HTML source itself
+        // When processed as an entry point, it will get a chunk with unique key
+        // We use the 'S' prefix (like server component boundaries) which will
+        // be resolved to the actual chunk via entry_point_chunk_index mapping
+        const client_chunk_placeholder = try std.fmt.allocPrint(
+            this.allocator,
+            "{}S{d:0>8}",
+            .{ this.unique_key_prefix, source_index },
+        );
+
+        // Build the manifest object
         var manifest = E.Object{};
 
-        // Find the HTML chunk in the client build
-        // The HTML file should have been enqueued as a browser entry point
-        // We need to find its chunk to get the unique_key
+        // HTML file path
+        try manifest.put(
+            this.allocator,
+            "html",
+            Expr.init(E.String, E.String.init(html_placeholder), stmt.loc),
+        );
 
-        // TODO: This requires access to the chunks array. For now, create a placeholder
-        // In the actual implementation, we would:
-        // 1. Find the HTML chunk with matching source_index in the browser chunks
-        // 2. Get its unique_key
-        // 3. Use chunk.getJSChunkForHTML() and chunk.getCSSChunkForHTML() to find associated assets
+        // Client entry chunk path (will contain the bundled JS/CSS)
+        try manifest.put(
+            this.allocator,
+            "entryChunk",
+            Expr.init(E.String, E.String.init(client_chunk_placeholder), stmt.loc),
+        );
 
-        // For now, generate a placeholder unique_key based on source index
-        // This will be replaced with actual chunk lookup logic
-        const placeholder_key = std.fmt.allocPrint(this.allocator, "HTML_PLACEHOLDER_{d}", .{source_index}) catch bun.outOfMemory();
-
-        try manifest.put(this.allocator, "index", Expr.init(
-            E.String,
-            E.String.init(placeholder_key),
-            stmt.loc,
-        ));
-
-        // Files array will contain the associated JS/CSS chunks
-        // These would also use unique_key placeholders
-        const files_array = E.Array{};
-
-        // TODO: Populate with actual associated chunks using unique_keys
-        // For now, just create an empty array
-
-        try manifest.put(this.allocator, "files", Expr.init(
-            E.Array,
-            files_array,
-            stmt.loc,
-        ));
+        // TODO: Add CSS chunks and other assets when they're linked
+        // These would use similar placeholder patterns
 
         // Replace the lazy export with the manifest object
         part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;

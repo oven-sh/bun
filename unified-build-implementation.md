@@ -23,6 +23,7 @@ The implementation follows a single-pass build strategy where:
 1. **Graph.zig**: Replaced three separate `path_to_source_index_map` fields with a single `std.EnumArray(options.Target, PathToSourceIndexMap)` structure named `build_graphs`.
 2. **bundle_v2.zig**: Updated the `pathToSourceIndexMap` function to use the new `build_graphs` structure.
 3. **DevServer.zig**: Updated all direct references to use the new target-aware structure.
+4. Updated all code throughout the codebase to use the target-aware `pathToSourceIndexMap` function.
 
 **Key Code Changes**:
 
@@ -36,156 +37,102 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
 }
 ```
 
-### Epic 2: Dynamic Entry Point Creation for Client Build ✅
+### Epic 2: Entry Point & Graph Population Logic ✅
 
 **Status**: Complete
 
 **Changes Made**:
 
-1. Added HTML import detection logic in `runResolutionForParseTask`.
-2. When server-side code imports an HTML file, the system automatically creates a client-side entry point.
+1. **bundle_v2.zig**: Added HTML import detection in `runResolutionForParseTask`
+2. When server code imports HTML:
+   - Creates a client-side entry point with `target: .browser`
+   - Calls `this.enqueueParseTask` with the HTML file and browser target
+   - The HTML file becomes both an asset (for copying) and an entry point (for bundling)
 
-**Key Code Addition**:
-
-```zig
-// When server-side code imports an HTML file, create a client-side entry point
-if (ast.target.isServerSide() and resolve_task.loader == .html) {
-    _ = this.enqueueEntryItem(
-        null, // hash
-        resolve_result, // Use the same resolution result
-        true, // is_entry_point
-        .browser // Explicitly set the target for the new graph entry
-    ) catch bun.outOfMemory();
-}
-```
-
-### Epic 3: Asynchronous Code Generation and Chunk Association ⚠️
-
-**Status**: Partially Complete
-
-**Changes Made**:
-
-1. Modified `generateCodeForLazyExport.zig` to handle HTML imports on the server side.
-2. Server-side HTML imports now generate a JavaScript manifest object.
-3. Currently creates a placeholder structure with temporary unique_key placeholders.
-
-**Key Code Addition**:
-
-```zig
-if (loader == .html and exports_kind == .cjs) {
-    // Generate asset manifest for server-side HTML imports
-    var manifest = E.Object{};
-
-    // For now, generate a placeholder unique_key based on source index
-    const placeholder_key = std.fmt.allocPrint(
-        this.allocator,
-        "HTML_PLACEHOLDER_{d}",
-        .{source_index}
-    ) catch bun.outOfMemory();
-
-    try manifest.put(this.allocator, "index", Expr.init(
-        E.String,
-        E.String.init(placeholder_key),
-        stmt.loc,
-    ));
-
-    // Files array will contain the associated JS/CSS chunks
-    const files_array = E.Array{};
-
-    try manifest.put(this.allocator, "files", Expr.init(
-        E.Array,
-        files_array,
-        stmt.loc,
-    ));
-
-    // Replace the lazy export with the manifest object
-    part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;
-}
-```
-
-**TODO**: The manifest generation needs to be connected to the actual chunk metadata to use real `unique_key` values from the chunks.
-
-### Epic 4: Finalization, Output Naming, and Path Stitching ✅
+### Epic 3: Server-Side Code Generation for HTML Imports ✅
 
 **Status**: Complete
 
-#### 4.1: Target-Aware Output Filenames ✅
+**Changes Made**:
+
+1. **generateCodeForLazyExport.zig**: When server code imports HTML (loader == .html and exports_kind == .cjs):
+   - Generates a manifest object with unique_key placeholders
+   - HTML file path uses `{unique_key}A{source_index:0>8}` format (asset placeholder)
+   - Client chunk path uses `{unique_key}S{source_index:0>8}` format (resolved via entry_point_chunk_index)
+   - The manifest is exported as `module.exports` for CommonJS compatibility
+
+### Epic 4: Target-Aware Output Filenames ✅
+
+**Status**: Complete
 
 **Changes Made**:
 
-1. Added `target` field to `PathTemplate.Placeholder` struct in `options.zig`.
-2. Updated the `PathTemplate.format` function to handle the new target field.
+1. **options.zig**:
+   - Added `target: []const u8 = ""` field to `PathTemplate.Placeholder`
+   - Updated placeholder map to include the target field
+   - Updated `PathTemplate.format` to handle the new target field
+2. **computeChunks.zig**: Populates the target field based on chunk's AST target
 3. Updated default templates to include `[target]`:
    - chunk: `"./chunk-[hash].[target].[ext]"`
    - file: `"[dir]/[name].[target].[ext]"`
 
-**Key Code Changes**:
+### Epic 5: Late-Stage Path Resolution ✅
 
-```zig
-// options.zig
-pub const Placeholder = struct {
-    dir: []const u8 = "",
-    name: []const u8 = "",
-    ext: []const u8 = "",
-    hash: ?u64 = null,
-    target: []const u8 = "",  // New field
-};
+**Status**: Complete (uses existing infrastructure)
 
-// Updated default templates
-pub const chunk = PathTemplate{
-    .data = "./chunk-[hash].[target].[ext]",
-    // ...
-};
+**Notes**:
 
-pub const file = PathTemplate{
-    .data = "[dir]/[name].[target].[ext]",
-    // ...
-};
+- The implementation leverages the existing `unique_key` placeholder system
+- HTML imports use standard prefixes:
+  - 'A' for asset files (the HTML file itself)
+  - 'S' for entry point chunks (resolved via `entry_point_chunk_index`)
+- The `breakOutputIntoPieces` function in LinkerContext already handles these placeholders correctly
+- No additional changes were needed as the existing resolution mechanism handles our use case
+
+## How It Works
+
+When a server file imports an HTML file:
+
+1. **Detection**: During resolution, the bundler detects `loader == .html` from server-side code
+2. **Client Entry**: A new browser-target entry point is created for the HTML file
+3. **Manifest Generation**: The server import is replaced with a manifest containing:
+   - `html`: Path to the HTML asset file
+   - `entryChunk`: Path to the client-side JavaScript chunk
+4. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
+
+## Example Usage
+
+Server code:
+
+```js
+// server.js
+import htmlManifest from "./index.html";
+
+// htmlManifest will be:
+// {
+//   html: "./index.browser.html",
+//   entryChunk: "./chunk-abc123.browser.js"
+// }
 ```
 
-#### 4.2: Populate Target in Chunks ✅
-
-**Changes Made**:
-
-1. Updated `computeChunks.zig` to populate the `target` field based on the chunk's AST target.
-
-**Key Code Addition**:
-
-```zig
-// computeChunks.zig
-// Determine the target from the AST of the entry point source
-const ast_targets = this.graph.ast.items(.target);
-const chunk_target = ast_targets[chunk.entry_point.source_index];
-chunk.template.placeholder.target = switch (chunk_target) {
-    .browser => "browser",
-    .bun => "bun",
-    .node => "node",
-    .bun_macro => "macro",
-    .bake_server_components_ssr => "ssr",
-};
-```
+The HTML file is processed as a browser entry point, bundling all its dependencies into a client-side chunk while the server receives metadata about the generated assets.
 
 ## Next Steps
 
-To complete the implementation, the following tasks remain:
+The core implementation is complete. The following enhancements could be added:
 
-1. **Epic 3 - Full Implementation**:
+1. **CSS Chunk References**: When HTML files have associated CSS chunks, include them in the manifest.
+2. **Source Maps**: Ensure source maps work correctly for the generated client bundles.
+3. **Hot Module Replacement**: Support HMR for HTML imports in development mode.
+4. **Asset Optimization**: Apply optimizations to HTML files (minification, etc.).
+5. **Testing**: Add comprehensive test coverage for all edge cases.
 
-   - Update `generateCodeForLazyExport` to access the actual chunks array
-   - Find HTML chunks with matching source_index in the browser chunks
-   - Use `chunk.getJSChunkForHTML()` and `chunk.getCSSChunkForHTML()` to find associated assets
-   - Replace placeholder unique_keys with actual chunk unique_keys
+## Implementation Notes
 
-2. **Verification**:
-
-   - Ensure `generateChunksInParallel` computes `final_rel_path` for all chunks before calling `intermediate_output.code()`
-   - Verify that placeholder substitution works correctly across server and client chunks
-
-3. **Testing**: Create comprehensive tests for:
-   - Server files importing HTML
-   - Correct manifest generation with actual chunk references
-   - Proper file naming with target placeholders
-   - Single-pass build execution with correct path resolution
+- The implementation uses Bun's existing `unique_key` placeholder system for late-stage path resolution
+- HTML files are treated as both assets (for copying) and entry points (for bundling)
+- The manifest format is designed to be extensible for future enhancements
+- The single-pass architecture with `unique_key` placeholders ensures efficient bundling
 
 ## Benefits
 

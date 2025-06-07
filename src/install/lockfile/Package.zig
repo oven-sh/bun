@@ -1088,22 +1088,20 @@ pub const Package = extern struct {
             .npm => {
                 const npm = dependency_version.value.npm;
                 if (workspace_version != null) {
-                    if (npm.version.satisfies(workspace_version.?, buf, buf)) {
-                        if (pm.options.link_workspace_packages) {
-                            const path = workspace_path.?.sliced(buf);
-                            if (Dependency.parseWithTag(
-                                allocator,
-                                external_alias.value,
-                                external_alias.hash,
-                                path.slice,
-                                .workspace,
-                                &path,
-                                log,
-                                pm,
-                            )) |dep| {
-                                dependency_version.tag = dep.tag;
-                                dependency_version.value = dep.value;
-                            }
+                    if (npm.version.satisfies(workspace_version.?, buf, buf) and pm.options.link_workspace_packages) {
+                        const path = workspace_path.?.sliced(buf);
+                        if (Dependency.parseWithTag(
+                            allocator,
+                            external_alias.value,
+                            external_alias.hash,
+                            path.slice,
+                            .workspace,
+                            &path,
+                            log,
+                            pm,
+                        )) |dep| {
+                            dependency_version.tag = dep.tag;
+                            dependency_version.value = dep.value;
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency

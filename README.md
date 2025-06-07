@@ -245,6 +245,7 @@ bun upgrade --canary
   - [Use Prisma with Bun](https://bun.sh/guides/ecosystem/prisma)
   - [Add Sentry to a Bun app](https://bun.sh/guides/ecosystem/sentry)
   - [Create a Discord bot](https://bun.sh/guides/ecosystem/discordjs)
+  - [Create a Telegram bot using GramIO and Bun](https://bun.sh/guides/ecosystem/gramio)
   - [Run Bun as a daemon with PM2](https://bun.sh/guides/ecosystem/pm2)
   - [Use Drizzle ORM with Bun](https://bun.sh/guides/ecosystem/drizzle)
   - [Build an app with Nuxt and Bun](https://bun.sh/guides/ecosystem/nuxt)

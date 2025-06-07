@@ -1,3 +1,22 @@
+```js
+doc = (top list)
+doc2 = (electron list)
+{
+
+[...document.querySelectorAll(".test-link")].forEach(t => {
+const name = t.lastChild.nodeValue.trim().slice(0, -3);
+
+if(doc2.includes(name)) {
+t.style.color = "red";
+}else if(doc.includes(name)) {
+t.style.color = "black";
+}
+
+})
+
+}
+```
+
 [ES] = skipped by electron
 [RM] = removed
 

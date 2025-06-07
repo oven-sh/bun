@@ -1,3 +1,4 @@
+#include "NodeVMScriptFetcher.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
@@ -77,10 +78,19 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
+    JSValue dynamicImportCallback = args.at(8);
+    if (!dynamicImportCallback.isUndefined() && !dynamicImportCallback.isCallable()) {
+        throwArgumentTypeError(*globalObject, scope, 8, "dynamicImportCallback"_s, "Module"_s, "Module"_s, "function"_s);
+        return nullptr;
+    }
+
     uint32_t lineOffset = lineOffsetValue.toUInt32(globalObject);
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(sourceTextValue.toWTFString(globalObject), SourceOrigin {}, String {}, SourceTaintedOrigin::Untainted,
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
+    SourceOrigin sourceOrigin { {}, *fetcher };
+
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(sourceTextValue.toWTFString(globalObject), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
         TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
 
     SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);

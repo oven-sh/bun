@@ -582,6 +582,12 @@ pub const Bunfig = struct {
                             }
                         }
                     }
+
+                    if (install_obj.get("linkWorkspacePackages")) |link_workspace| {
+                        if (link_workspace.asBool()) |value| {
+                            install.link_workspace_packages = value;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {

@@ -559,6 +559,7 @@ pub const Features = struct {
     trusted_dependencies: bool = false,
     workspaces: bool = false,
     patched_dependencies: bool = false,
+    link_workspace_packages: bool = true,
 
     check_for_duplicate_dependencies: bool = false,
 
@@ -569,6 +570,7 @@ pub const Features = struct {
         out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
         out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
         out |= @as(u8, @intFromBool(this.workspaces)) << 5;
+        out |= @as(u8, @intFromBool(this.link_workspace_packages)) << 6;
         return @as(Behavior, @enumFromInt(out));
     }
 
@@ -580,6 +582,7 @@ pub const Features = struct {
         .trusted_dependencies = true,
         .patched_dependencies = true,
         .workspaces = true,
+        .link_workspace_packages = true,
     };
 
     pub const folder = Features{
@@ -591,6 +594,7 @@ pub const Features = struct {
         .dev_dependencies = true,
         .optional_dependencies = true,
         .trusted_dependencies = true,
+        .link_workspace_packages = true,
     };
 
     pub const link = Features{
@@ -600,12 +604,14 @@ pub const Features = struct {
 
     pub const npm = Features{
         .optional_dependencies = true,
+        .link_workspace_packages = true,
     };
 
     pub const tarball = npm;
 
     pub const npm_manifest = Features{
         .optional_dependencies = true,
+        .link_workspace_packages = true,
     };
 };
 
@@ -4690,12 +4696,12 @@ pub const PackageManager = struct {
                         const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
                         const workspace_version = this.lockfile.workspace_versions.get(name_hash);
                         const buf = this.lockfile.buffers.string_bytes.items;
-                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
-
+                        if (((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
                             // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
                             // if the workspace doesn't have a version, it can still be used if
                             // dependency version is wildcard
-                            (workspace_path != null and version.value.npm.version.@"is *"()))
+                            (workspace_path != null and version.value.npm.version.@"is *"())) and
+                            this.options.link_workspace_packages)
                         {
                             const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                             const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);

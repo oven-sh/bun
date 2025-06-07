@@ -1088,7 +1088,7 @@ pub const Package = extern struct {
             .npm => {
                 const npm = dependency_version.value.npm;
                 if (workspace_version != null) {
-                    if (npm.version.satisfies(workspace_version.?, buf, buf)) {
+                    if (npm.version.satisfies(workspace_version.?, buf, buf) and pm.options.link_workspace_packages) {
                         const path = workspace_path.?.sliced(buf);
                         if (Dependency.parseWithTag(
                             allocator,

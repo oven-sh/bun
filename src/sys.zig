@@ -271,6 +271,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    ppoll,
     watch,
     scandir,
 

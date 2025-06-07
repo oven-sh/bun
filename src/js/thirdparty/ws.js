@@ -3,12 +3,10 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
-const ReadyState = {
-  CONNECTING: 0,
-  OPEN: 1,
-  CLOSING: 2,
-  CLOSED: 3,
-};
+const ReadyState_CONNECTING = 0;
+const ReadyState_OPEN = 1;
+const ReadyState_CLOSING = 2;
+const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
 const http = require("node:http");
@@ -59,10 +57,10 @@ let WebSocket;
  */
 class BunWebSocket extends EventEmitter {
   static [Symbol.toStringTag] = "WebSocket";
-  static CONNECTING = ReadyState.CONNECTING;
-  static OPEN = ReadyState.OPEN;
-  static CLOSING = ReadyState.CLOSING;
-  static CLOSED = ReadyState.CLOSED;
+  static CONNECTING = ReadyState_CONNECTING;
+  static OPEN = ReadyState_OPEN;
+  static CLOSING = ReadyState_CLOSING;
+  static CLOSED = ReadyState_CLOSED;
 
   #ws;
   #paused = false;
@@ -429,8 +427,8 @@ class BunWebSocket extends EventEmitter {
 
   pause() {
     switch (this.readyState) {
-      case ReadyState.CONNECTING:
-      case ReadyState.CLOSED:
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
         return;
     }
 
@@ -442,8 +440,8 @@ class BunWebSocket extends EventEmitter {
 
   resume() {
     switch (this.readyState) {
-      case ReadyState.CONNECTING:
-      case ReadyState.CLOSED:
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
         return;
     }
 
@@ -700,7 +698,7 @@ class BunWebSocketMocked extends EventEmitter {
   constructor(url, protocol, extensions, binaryType) {
     super();
     this.#ws = null;
-    this.#state = ReadyState.CONNECTING;
+    this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
     binaryType = binaryType || "arraybuffer";
@@ -768,14 +766,14 @@ class BunWebSocketMocked extends EventEmitter {
 
   #open(ws) {
     this.#ws = ws;
-    this.#state = ReadyState.OPEN;
+    this.#state = ReadyState_OPEN;
     this.emit("open", this);
     // first drain event
     this.#drain(ws);
   }
 
   #close(ws, code, reason) {
-    this.#state = ReadyState.CLOSED;
+    this.#state = ReadyState_CLOSED;
     this.#ws = null;
 
     this.emit("close", code, reason);
@@ -799,7 +797,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === ReadyState.CONNECTING) {
+    if (this.#state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -824,7 +822,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#state === ReadyState.CONNECTING) {
+    if (this.#state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -854,7 +852,7 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === ReadyState.OPEN) {
+    if (this.#state === ReadyState_OPEN) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
       // send returns:
@@ -871,7 +869,7 @@ class BunWebSocketMocked extends EventEmitter {
       }
 
       typeof cb === "function" && process.nextTick(cb);
-    } else if (this.#state === ReadyState.CONNECTING) {
+    } else if (this.#state === ReadyState_CONNECTING) {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
@@ -879,24 +877,25 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   close(code, reason) {
-    if (this.#state === ReadyState.OPEN) {
-      this.#state = ReadyState.CLOSING;
+    if (this.#state === ReadyState_OPEN) {
+      this.#state = ReadyState_CLOSING;
       this.#ws.close(code, reason);
     }
   }
 
   terminate() {
-    // Temporary workaround for CTRL + C error appearing in next dev with turobpack
-    //
-    // > ⨯ unhandledRejection:  TypeError: undefined is not an object (evaluating 'this.#state')
-    // > at terminate (ws:611:30)
-    // > at Promise (null)
-    //
-    if (!this) return;
+    // Handle cases where terminate is called with undefined/null context
+    // This can happen when the method is detached from the instance
+    // e.g., const { terminate } = ws; terminate();
+    if (this === undefined || this === null) {
+      // Silently return to avoid breaking Next.js/Turbopack
+      // which may call terminate during CTRL+C shutdown
+      return;
+    }
 
     let state = this.#state;
-    if (state === ReadyState.CLOSED) return;
-    if (state === ReadyState.CONNECTING) {
+    if (state === ReadyState_CLOSED) return;
+    if (state === ReadyState_CONNECTING) {
       const msg = "WebSocket was closed before the connection was established";
       abortHandshake(this, this._req, msg);
       return;
@@ -904,7 +903,7 @@ class BunWebSocketMocked extends EventEmitter {
 
     let ws = this.#ws;
     if (ws) {
-      this.#state = ReadyState.CLOSING;
+      this.#state = ReadyState_CLOSING;
       ws.terminate();
     }
   }

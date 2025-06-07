@@ -95,6 +95,7 @@ src/js/internal/util/inspect.js
 src/js/internal/util/mime.ts
 src/js/internal/validators.ts
 src/js/internal/webstreams_adapters.ts
+src/js/internal/worker_threads.ts
 src/js/node/_http_agent.ts
 src/js/node/_http_client.ts
 src/js/node/_http_common.ts

@@ -21,16 +21,14 @@ const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
 const {
-  0: _workerData,
-  1: _threadId,
-  2: _receiveMessageOnPort,
-  3: environmentData,
-} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
-  unknown,
-  number,
-  (port: unknown) => unknown,
-  Map<unknown, unknown>,
-];
+  _workerData,
+  _threadId,
+  _receiveMessageOnPort,
+  environmentData,
+  webWorkerToStdio,
+  ReadableWorkerStdio,
+  WritableWorkerStdio,
+} = require("internal/worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -223,11 +221,14 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
+const unsupportedOptions = ["trackedUnmanagedFds", "resourceLimits"];
 
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
+  #stdin: InstanceType<typeof WritableWorkerStdio> | null;
+  #stdout: InstanceType<typeof ReadableWorkerStdio>;
+  #stderr: InstanceType<typeof ReadableWorkerStdio>;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -277,6 +278,23 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
+
+    this.#stdout = new ReadableWorkerStdio(this.#worker);
+    this.#stderr = new ReadableWorkerStdio(this.#worker);
+    // TODO maybe bump max listeners?
+    if (!options.stdout) {
+      this.#stdout.pipe(process.stdout);
+    }
+    if (!options.stderr) {
+      this.#stderr.pipe(process.stderr);
+    }
+
+    if (options.stdin) {
+      this.#stdin = new WritableWorkerStdio(0, this.#worker);
+    } else {
+      this.#stdin = null;
+    }
+    webWorkerToStdio.set(this.#worker, { stdout: this.#stdout, stderr: this.#stderr });
   }
 
   get threadId() {
@@ -292,18 +310,15 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
-    return null;
+    return this.#stdin;
   }
 
   get stdout() {
-    // TODO:
-    return null;
+    return this.#stdout;
   }
 
   get stderr() {
-    // TODO:
-    return null;
+    return this.#stderr;
   }
 
   get performance() {

@@ -24,7 +24,7 @@ preloads: [][]const u8 = &.{},
 store_fd: bool = false,
 arena: ?bun.MimallocArena = null,
 name: [:0]const u8 = "Worker",
-cpp_worker: *anyopaque,
+cpp_worker: *CppWorker,
 mini: bool,
 // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
 // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
@@ -44,6 +44,18 @@ execArgv: ?[]const WTFStringImpl,
 
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
+kind: Kind,
+
+/// class WebCore::Worker
+const CppWorker = opaque {};
+
+/// enum class Kind in WorkerOptions.h
+pub const Kind = enum(u8) {
+    /// Created by the global Worker constructor
+    web,
+    /// Created by the `require("node:worker_threads").Worker` constructor
+    node,
+};
 
 pub const Status = enum(u8) {
     start,
@@ -52,15 +64,10 @@ pub const Status = enum(u8) {
     terminated,
 };
 
-extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
-extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
-
-export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
-    const worker = vm.worker orelse return null;
-    return worker.cpp_worker;
-}
+extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *CppWorker, i32) void;
+extern fn WebWorker__dispatchOnline(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
+extern fn WebWorker__fireEarlyMessages(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
+extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *CppWorker, bun.String, JSValue) void;
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
     return this.requested_terminate.load(.monotonic);
@@ -70,7 +77,7 @@ pub fn setRequestedTerminate(this: *WebWorker) bool {
     return this.requested_terminate.swap(true, .release);
 }
 
-export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
+export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *CppWorker) bool {
     worker.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
@@ -177,7 +184,7 @@ fn resolveEntryPointSpecifier(
 }
 
 pub fn create(
-    cpp_worker: *void,
+    cpp_worker: *CppWorker,
     parent: *jsc.VirtualMachine,
     name_str: bun.String,
     specifier_str: bun.String,
@@ -194,6 +201,7 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    kind: Kind,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -245,6 +253,7 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .kind = kind,
     };
 
     worker.parent_poll_ref.ref(parent);
@@ -391,7 +400,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     jsc.ConsoleObject.format2(
@@ -399,8 +407,8 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         globalObject,
         &[_]jsc.JSValue{error_instance},
         1,
-        Writer,
-        Writer,
+        @TypeOf(writer),
+        @TypeOf(writer),
         writer,
         .{
             .enable_colors = false,

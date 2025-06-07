@@ -35,47 +35,52 @@ export function getStdioWriteStream(
   fd: number,
   isTTY: boolean,
   _fdType: BunProcessStdinFdType,
+  isNodeWorkerThread: boolean,
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
   let stream;
-  if (isTTY) {
-    const tty = require("node:tty");
-    stream = new tty.WriteStream(fd);
-    // TODO: this is the wrong place for this property.
-    // but the TTY is technically duplex
-    // see test-fs-syncwritestream.js
-    stream.readable = true;
-    process.on("SIGWINCH", () => {
-      stream._refreshSize();
-    });
-    stream._type = "tty";
+  // workers do not handle stdin yet
+  if (!isNodeWorkerThread) {
+    if (isTTY) {
+      const tty = require("node:tty");
+      stream = new tty.WriteStream(fd);
+      // TODO: this is the wrong place for this property.
+      // but the TTY is technically duplex
+      // see test-fs-syncwritestream.js
+      stream.readable = true;
+      process.on("SIGWINCH", () => {
+        stream._refreshSize();
+      });
+      stream._type = "tty";
+    } else {
+      const fs = require("node:fs");
+      stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+      stream.readable = false;
+      stream._type = "fs";
+    }
+
+    if (fd === 1 || fd === 2) {
+      stream.destroySoon = stream.destroy;
+      stream._destroy = function (err, cb) {
+        cb(err);
+        this._undestroy();
+
+        if (!this._writableState.emitClose) {
+          process.nextTick(() => {
+            this.emit("close");
+          });
+        }
+      };
+    }
+
+    stream._isStdio = true;
+    stream.fd = fd;
   } else {
-    const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
-    stream.readable = false;
-    stream._type = "fs";
+    stream = new (require("internal/worker_threads").WritableWorkerStdio)(fd);
   }
-
-  if (fd === 1 || fd === 2) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
-
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
-  }
-
-  stream._isStdio = true;
-  stream.fd = fd;
 
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
@@ -84,6 +89,7 @@ export function getStdinStream(
   fd: number,
   isTTY: boolean,
   fdType: BunProcessStdinFdType,
+  isNodeWorkerThread: boolean,
 ) {
   $assert(fd === 0);
   const native = Bun.stdin.stream();
@@ -126,6 +132,8 @@ export function getStdinStream(
     }
   }
 
+  if (isNodeWorkerThread) return new (require("internal/worker_threads").ReadableWorkerStdio)();
+
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
@@ -149,7 +157,7 @@ export function getStdinStream(
     return originalOn.$call(this, event, listener);
   };
 
-  stream.fd = fd;
+  if (!isNodeWorkerThread) stream.fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
@@ -450,4 +458,18 @@ export function getChannel() {
       setRef(false);
     }
   })();
+}
+
+export function emitWorkerStdioInParent(worker: Worker, fd: number, data: Buffer) {
+  $assert(fd === 1 || fd === 2);
+  const { webWorkerToStdio } = require("internal/worker_threads");
+  const streams = webWorkerToStdio.get(worker);
+  switch (fd) {
+    case 1:
+      streams?.stdout.push(data);
+      break;
+    case 2:
+      streams?.stderr.push(data);
+      break;
+  }
 }

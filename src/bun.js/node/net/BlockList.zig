@@ -1,11 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
-const C = bun.c;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const validators = @import("./../util/validators.zig");
 const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
 const sockaddr = SocketAddress.sockaddr;
@@ -166,7 +161,7 @@ pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return .jsBoolean(false);
 }
 
-pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     var list = std.ArrayList(JSC.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();

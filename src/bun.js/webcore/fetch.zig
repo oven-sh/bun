@@ -1,6 +1,3 @@
-const headers_string = "headers";
-const method_string = "method";
-
 const JSType = JSC.C.JSType;
 
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
@@ -2388,7 +2385,7 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };
@@ -2737,7 +2734,6 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const string = bun.string;
-const strings = bun.strings;
 const MutableString = bun.MutableString;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;

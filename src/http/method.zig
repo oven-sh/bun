@@ -1,12 +1,4 @@
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 
@@ -49,16 +41,17 @@ pub const Method = enum(u8) {
     UNSUBSCRIBE = 34,
 
     pub const fromJS = Map.fromJS;
+    pub const Set = std.enums.EnumSet(Method);
 
-    const with_body: std.enums.EnumSet(Method) = brk: {
-        var values = std.enums.EnumSet(Method).initFull();
+    const with_body: Set = brk: {
+        var values = Set.initFull();
         values.remove(.HEAD);
         values.remove(.TRACE);
         break :brk values;
     };
 
-    const with_request_body: std.enums.EnumSet(Method) = brk: {
-        var values = std.enums.EnumSet(Method).initFull();
+    const with_request_body: Set = brk: {
+        var values = Set.initFull();
         values.remove(.GET);
         values.remove(.HEAD);
         values.remove(.OPTIONS);
@@ -161,6 +154,34 @@ pub const Method = enum(u8) {
     pub const toJS = Bun__HTTPMethod__toJS;
 
     const JSC = bun.JSC;
+
+    pub const Optional = union(enum) {
+        any: void,
+        method: Set,
+
+        pub fn contains(this: Optional, other: Optional) bool {
+            if (this == .any) {
+                return true;
+            }
+            if (other == .any) {
+                return true;
+            }
+
+            return this.method.intersectWith(other.method).count() > 0;
+        }
+
+        pub fn insert(this: *Optional, method: Method) void {
+            switch (this.*) {
+                .any => {},
+                .method => |*set| {
+                    set.insert(method);
+                    if (set.eql(Set.initFull())) {
+                        this.* = .any;
+                    }
+                },
+            }
+        }
+    };
 };
 
 export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {

@@ -206,7 +206,7 @@ $ iex "& {$(irm https://bun.sh/install.ps1)} -Version $BUN_LATEST_VERSION"
 
 ## Downloading Bun binaries directly
 
-To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) page on GitHub.
+To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) on GitHub.
 
 For convenience, here are download links for the latest version:
 
@@ -223,7 +223,16 @@ For convenience, here are download links for the latest version:
 
 The `musl` binaries are built for distributions that do not ship with the glibc libraries by default, instead relying on musl. The two most popular distros are Void Linux and Alpine Linux, with the latter is used heavily in Docker containers. If you encounter an error like the following: `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29' not found (required by bun)`, try using the musl binary. Bun's install script automatically chooses the correct binary for your system.
 
-Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+### CPU requirements and `baseline` builds
+
+Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install script automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+
+| Build        | Intel requirement                                                  | AMD requirement    |
+| ------------ | ------------------------------------------------------------------ | ------------------ |
+| x64          | Haswell (4th generation Core) or newer, except some low-end models | Excavator or newer |
+| x64-baseline | Nehalem (1st generation Core) or newer                             | Bulldozer or newer |
+
+Bun does not currently support any CPUs older than the `baseline` target, which mandates the SSE4.2 extension.
 
 Bun also publishes `darwin-x64-baseline` binaries, but these are just a copy of the `darwin-x64` ones so they still have the same CPU requirement. We only maintain these since some tools expect them to exist. Bun requires macOS 13.0 or later, which does not support any CPUs that don't meet our requirement.
 

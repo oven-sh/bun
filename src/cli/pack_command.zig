@@ -4,12 +4,8 @@ const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
-const Bin = Install.Bin;
 const PackageManager = Install.PackageManager;
 const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
@@ -24,13 +20,11 @@ const PathBuffer = bun.PathBuffer;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const RunCommand = bun.RunCommand;
-const FileSystem = bun.fs.FileSystem;
 const OOM = bun.OOM;
 const js_printer = bun.js_printer;
 const E = bun.js_parser.E;
 const Progress = bun.Progress;
 const JSON = bun.JSON;
-const BoringSSL = bun.BoringSSL;
 const sha = bun.sha;
 const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
@@ -2035,7 +2029,7 @@ pub const PackCommand = struct {
         return entry.clear();
     }
 
-    /// Strip workspace protocols from dependency versions then
+    /// Strips workspace and catalog protocols from dependency versions then
     /// returns the printed json
     fn editRootPackageJSON(
         allocator: std.mem.Allocator,
@@ -2123,6 +2117,48 @@ pub const PackCommand = struct {
                                     E.String,
                                     .{
                                         .data = try allocator.dupe(u8, without_workspace_protocol),
+                                    },
+                                    .{},
+                                );
+                            } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog_name_str| {
+                                const dep_name_str = dependency.key.?.asString(allocator).?;
+
+                                const lockfile = maybe_lockfile orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (catalogs require a lockfile).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                const catalog_name = Semver.String.init(catalog_name_str, catalog_name_str);
+
+                                const catalog = lockfile.catalogs.getGroup(lockfile.buffers.string_bytes.items, catalog_name, catalog_name_str) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                const dep_name = Semver.String.init(dep_name_str, dep_name_str);
+
+                                const dep = catalog.getContext(dep_name, Semver.String.ArrayHashContext{
+                                    .arg_buf = dep_name_str,
+                                    .existing_buf = lockfile.buffers.string_bytes.items,
+                                }) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog dependency).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                dependency.value = Expr.allocate(
+                                    allocator,
+                                    E.String,
+                                    .{
+                                        .data = try allocator.dupe(u8, dep.version.literal.slice(lockfile.buffers.string_bytes.items)),
                                     },
                                     .{},
                                 );
@@ -2375,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
@@ -2628,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);

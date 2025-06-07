@@ -150,7 +150,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalG
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -177,7 +177,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -203,7 +203,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, urlValue);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -377,7 +377,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWebSocketPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWebSocket::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -916,12 +916,12 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     auto* jsWebSocket = jsCast<JSWebSocket*>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
     if (wrapped.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }
     if (jsWebSocket->wrapped().isFiringEventListeners()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
         return true;
     }

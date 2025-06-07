@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "init"_s);
         return {};
     }
@@ -231,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "update"_s);
         return JSValue::encode({});
     }
@@ -394,7 +394,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*lexicalGlobalObject, scope, "Sign"_s, "sign"_s);
         return {};
     }
@@ -484,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     JSC::Structure* structure = zigGlobalObject->m_JSSignClassStructure.get(zigGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Sign cannot be invoked without 'new'"_s);
             return {};

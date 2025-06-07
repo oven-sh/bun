@@ -55,7 +55,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
@@ -167,9 +167,12 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
     }
     return value;

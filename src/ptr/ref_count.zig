@@ -428,7 +428,7 @@ pub fn DebugData(thread_safe: bool) type {
         const Debug = @This();
         const Count = if (thread_safe) std.atomic.Value(u32) else u32;
 
-        magic: enum(u128) { valid = 0x2f84e51d } align(@alignOf(u32)),
+        magic: enum(u128) { valid = 0x2f84e51d, _ } align(@alignOf(u32)),
         lock: if (thread_safe) std.debug.SafetyLock else bun.Mutex,
         next_id: u32,
         map: std.AutoHashMapUnmanaged(TrackedRef.Id, TrackedRef),

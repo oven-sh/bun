@@ -572,7 +572,7 @@ _bun_outdated_completion() {
         '--no-progress[Disable the progress bar]' \
         '--help[Print this help menu]' &&
         ret=0
-    
+
     case $state in
     config)
         _bun_list_bunfig_toml

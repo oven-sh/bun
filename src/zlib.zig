@@ -26,14 +26,8 @@ const Byte = u8;
 const uInt = u32;
 const uLong = u64;
 const Bytef = Byte;
-const charf = u8;
-const intf = c_int;
-const uIntf = uInt;
 const uLongf = uLong;
-const voidpc = ?*const anyopaque;
 const voidpf = ?*anyopaque;
-const voidp = ?*anyopaque;
-const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));

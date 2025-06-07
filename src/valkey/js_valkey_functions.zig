@@ -546,6 +546,38 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     return promise.toJS();
 }
 
+// Implement ping (send a PING command with an optional message)
+pub fn ping(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    var message_buf: [1]JSArgument = undefined;
+    var args_slice: []JSArgument = &.{};
+
+    if (!callframe.argument(0).isUndefinedOrNull()) {
+        // Only use the first argument if provided, ignore any additional arguments
+        const message = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("ping", "message", "string or buffer");
+        };
+        message_buf[0] = message;
+        args_slice = message_buf[0..1];
+    }
+    defer {
+        for (args_slice) |*item| {
+            item.deinit();
+        }
+    }
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "PING",
+            .args = .{ .args = args_slice },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send PING command", err);
+    };
+    return promise.toJS();
+}
+
 pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call;
 pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key").call;
 pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call;
@@ -569,7 +601,6 @@ pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call;
 pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call;
 pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call;
 pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call;
-pub const ping = compile.@"(key: RedisKey)"("ping", "PING", "message").call;
 
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
@@ -611,7 +642,6 @@ pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;
 // zscore(key: RedisKey, member: RedisValue)
 
 // cluster(subcommand: "KEYSLOT", key: RedisKey)
-const JSFunction = fn (*JSValkeyClient, *JSC.JSGlobalObject, *JSC.CallFrame) bun.JSError!JSValue;
 
 const compile = struct {
     pub fn @"(key: RedisKey)"(

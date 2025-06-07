@@ -42,7 +42,7 @@ fs.readFile(loc, common.mustSucceed((data) => {
   }));
 
   server.listen(0, common.mustCall(() => {
-    client = http2.connect(`http://localhost:${server.address().port}`);
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
 
     const req = client.request({ ':method': 'POST' });
     req.on('response', common.mustCall());

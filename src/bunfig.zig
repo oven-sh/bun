@@ -341,6 +341,11 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
+
+                    if (test_.get("coverageIncludeNodeModules")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.include_node_modules = expr.data.e_boolean.value;
+                    }
                 }
             }
 

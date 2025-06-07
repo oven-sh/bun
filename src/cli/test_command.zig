@@ -650,10 +650,19 @@ pub const CommandLineReporter = struct {
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
-        if (this.jest.bail == this.summary.fail) {
+        if (this.jest.bail > 0 and this.jest.bail == this.summary.fail) {
             this.printSummary();
             Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
-            Global.exit(1);
+
+            // If in watch mode, set a flag to stop the current run instead of exiting.
+            // Otherwise, exit as before.
+            // This assumes 'is_watch_mode' and 'should_abort' fields are added to TestRunner struct.
+            if (this.jest.is_watch_mode) {
+                Output.prettyError("--bail active in --watch mode: Stopping current test run. Waiting for file changes...\n", .{});
+                this.jest.should_abort = true;
+            } else {
+                Global.exit(1);
+            }
         }
     }
 
@@ -1219,6 +1228,8 @@ pub const TestCommand = struct {
                 else => {},
             }
 
+            // Set is_watch_mode on the TestRunner instance
+            reporter.jest.is_watch_mode = (vm.hot_reload == .watch);
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
@@ -1451,15 +1462,23 @@ pub const TestCommand = struct {
                 const allocator = this.allocator;
                 bun.assert(files.len > 0);
 
+                // Reset should_abort flag at the beginning of each full test suite execution
+                reporter.jest.should_abort = false;
+
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
+                        if (reporter.jest.should_abort) {
+                            break;
+                        }
                         TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                if (!reporter.jest.should_abort) {
+                    TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                }
             }
         };
 
@@ -1515,6 +1534,10 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
+            if (reporter.jest.should_abort) {
+                break;
+            }
+
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
             } else {
@@ -1556,6 +1579,9 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             for (file_start..file_end) |module_id| {
+                if (reporter.jest.should_abort) {
+                    break;
+                }
                 const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
@@ -1595,6 +1621,14 @@ pub const TestCommand = struct {
                         _ = vm.global.vm().runGC(false);
                     },
                 }
+
+                if (reporter.jest.should_abort) { // Check again in case it was set during module.runTests
+                    break;
+                }
+            }
+
+            if (reporter.jest.should_abort) { // Check after processing all modules in a file
+                break;
             }
 
             vm.global.handleRejectedPromises();

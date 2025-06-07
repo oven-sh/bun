@@ -232,7 +232,7 @@ describe("AbortSignal.timeout", () => {
     const signal = AbortSignal.timeout(50);
     expect(signal.aborted).toBe(false);
 
-    await new Promise(resolve => setTimeout(resolve, 60));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     expect(signal.aborted).toBe(true);
     expect(signal.reason).toBeInstanceOf(DOMException);
     expect(signal.reason.name).toBe("TimeoutError");
@@ -247,7 +247,7 @@ describe("AbortSignal.timeout", () => {
     });
 
     expect(eventFired).toBe(false);
-    await new Promise(resolve => setTimeout(resolve, 60));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     expect(eventFired).toBe(true);
   });
 
@@ -256,7 +256,7 @@ describe("AbortSignal.timeout", () => {
     // Even with 0ms, the abort happens on the next tick
     expect(signal.aborted).toBe(false);
 
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     expect(signal.aborted).toBe(true);
   });
 

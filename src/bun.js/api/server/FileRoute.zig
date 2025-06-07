@@ -483,7 +483,7 @@ const StreamTransfer = struct {
         if (this.reader.isDone()) {
             @branchHint(.unlikely);
             this.finish();
-            return false;
+            return true;
         }
 
         if (this.route.server) |server| {
@@ -493,7 +493,7 @@ const StreamTransfer = struct {
         this.state.waiting_for_writable = false;
         this.state.waiting_for_readable = true;
         this.reader.read();
-        return false;
+        return true;
     }
 
     fn finish(this: *StreamTransfer) void {

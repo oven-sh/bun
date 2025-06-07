@@ -1685,9 +1685,11 @@ test("can override npm package with workspace package under a different name", a
 });
 
 test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+  const bunfigPath = join(packageDir, "bunfig.toml");
+
   // Create bunfig.toml with linkWorkspacePackages set to false
   await write(
-    join(packageDir, "bunfig.toml"),
+    bunfigPath,
     `
 [install]
 linkWorkspacePackages = false
@@ -1708,7 +1710,7 @@ registry = "${verdaccio.registryUrl()}"
       join(packageDir, "packages", "mono", "package.json"),
       JSON.stringify({
         name: "no-deps",
-        version: "3.0.0",
+        version: "2.0.0",
       }),
     ),
 
@@ -1718,14 +1720,14 @@ registry = "${verdaccio.registryUrl()}"
         name: "bar",
         version: "1.0.0",
         dependencies: {
-          "no-deps": "latest",
+          "no-deps": "2.0.0", // Use Same version as workspace package and it shouldn't link
         },
       }),
     ),
   ]);
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
     cwd: packageDir,
     stdout: "pipe",
     stderr: "pipe",
@@ -1741,9 +1743,14 @@ registry = "${verdaccio.registryUrl()}"
   const lockfile = parseLockfile(packageDir);
 
   // Check the resolution tag to ensure it's not a workspace link
-  expect(lockfile.packages.find(p => p.name === "no-deps")?.resolution.tag).toEqual("npm");
+  const barPackage = lockfile.packages.find(p => p.name === "bar");
+  expect(barPackage.dependencies.length).toEqual(1);
+  const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
+  expect(barDependency).toBeDefined();
 
-  // Verify that the registry version was installed, not the workspace version
+  // Verify that the dependency linked to the bar package is the npm version, not the workspace version
+  expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
+
   const installedNoDeps = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
   expect(installedNoDeps).toEqual({
     name: "no-deps",

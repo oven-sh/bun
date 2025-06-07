@@ -19,6 +19,7 @@ do: Do = .{},
 positionals: []const string = &[_]string{},
 update: Update = .{},
 dry_run: bool = false,
+link_workspace_packages: bool = true,
 remote_package_features: Features = .{
     .optional_dependencies = true,
 },
@@ -26,7 +27,6 @@ local_package_features: Features = .{
     .optional_dependencies = true,
     .dev_dependencies = true,
     .workspaces = true,
-    .link_workspace_packages = true,
 },
 patch_features: union(enum) {
     nothing: struct {},
@@ -207,7 +207,7 @@ pub fn load(
             base = registry;
         }
         if (config.link_workspace_packages) |link_workspace_packages| {
-            this.local_package_features.link_workspace_packages = link_workspace_packages;
+            this.link_workspace_packages = link_workspace_packages;
         }
     }
 
@@ -320,6 +320,7 @@ pub fn load(
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
+        Output.prettyErrorln("DEBUG: Rendered LinkWorkspacePackages: {any}", .{this.link_workspace_packages});
     }
 
     const default_disable_progress_bar: bool = brk: {

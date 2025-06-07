@@ -299,7 +299,7 @@ pub const FilePoll = struct {
     /// Allow a poll to keep the process alive.
     // pub fn ref(this: *FilePoll, vm: *JSC.VirtualMachine) void {
     pub fn ref(this: *FilePoll, event_loop_ctx_: anytype) void {
-        if (this.canRef())
+        if (!this.canRef())
             return;
         log("ref", .{});
         // this.activate(vm.event_loop_handle.?);

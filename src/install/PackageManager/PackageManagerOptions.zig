@@ -320,7 +320,6 @@ pub fn load(
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
-        Output.prettyErrorln("DEBUG: Rendered LinkWorkspacePackages: {any}", .{this.link_workspace_packages});
     }
 
     const default_disable_progress_bar: bool = brk: {

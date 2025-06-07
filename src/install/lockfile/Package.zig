@@ -1087,7 +1087,6 @@ pub const Package = extern struct {
             },
             .npm => {
                 const npm = dependency_version.value.npm;
-                Output.prettyErrorln("DEBUG: parseDependency - link_workspace_packages = {any}", .{pm.options.link_workspace_packages});
                 if (workspace_version != null) {
                     if (npm.version.satisfies(workspace_version.?, buf, buf)) {
                         if (pm.options.link_workspace_packages) {

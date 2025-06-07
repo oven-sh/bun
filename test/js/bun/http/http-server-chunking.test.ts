@@ -68,7 +68,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                   setSocketOptions(socket, 1, 1); // 1 = send buffer, 1 = size
 
                   const input = `GET /test-${i} HTTP/1.1\r\nHost: ${server.hostname}:${port}\r\nUser-Agent: Bun-Test\r\nAccept: */*\r\n\r\n`;
-                  const repeated = Buffer.alloc(input.length * 20, input);
+                  const repeated = Buffer.alloc(input.length * remainingRequests, input);
 
                   buffer = repeated;
                   actuallyWrite(socket);
@@ -89,6 +89,10 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                   }
                 },
                 close() {
+                  if (remainingRequests > 0) {
+                    throw new Error(`Expected 20 responses, got ${20 - remainingRequests}`);
+                  }
+
                   resolveClose();
                 },
                 drain(socket: Socket) {

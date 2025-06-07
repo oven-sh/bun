@@ -271,6 +271,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    ppoll,
     watch,
     scandir,
 
@@ -2212,6 +2213,36 @@ const socket_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return recv(fd, buf, socket_flags_nonblock);
+}
+
+pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
+            .linux => linux.poll(fds.ptr, fds.len, timeout),
+            else => @compileError("poll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .poll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+}
+
+pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
+            .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
+            else => @compileError("ppoll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
 }
 
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {

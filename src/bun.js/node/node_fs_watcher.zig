@@ -41,7 +41,7 @@ pub const FSWatcher = struct {
 
     /// While it's not closed, the pending activity
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
-    current_task: FSWatchTask = undefined,
+    current_task: FSWatchTask = .empty,
 
     // NOTE: this may equal `.current_task`. do not free it!
     // if we create multiple on the same tick we use this buffer.
@@ -65,15 +65,23 @@ pub const FSWatcher = struct {
 
     pub const finalize = deinit;
 
-    pub const FSWatchTask = FSWatchTaskPosix;
+    pub const FSWatchTask = if (Environment.isWindows) FSWatchTaskWindows else FSWatchTaskPosix;
 
     const FSWatchTaskPosix = struct {
-        concurrent_task: JSC.EventLoopTask,
+        concurrent_task: JSC.EventLoopTask = .{ .mini = .{ .callback = undefined } },
         ctx: *FSWatcher,
         count: u8,
         entries: [BATCH_SIZE]Entry = undefined,
         // Track if we need to perform ref operation on main thread
         needs_ref: bool = false,
+
+        pub const empty = FSWatchTask{
+            .concurrent_task = .{ .mini = .{ .callback = undefined } },
+            .ctx = undefined,
+            .count = 0,
+            .entries = undefined,
+            .needs_ref = false,
+        };
 
         const Entry = struct {
             event: Event,
@@ -123,7 +131,11 @@ pub const FSWatcher = struct {
             for (this.entries[0..this.count]) |entry| {
                 switch (entry.event) {
                     inline .rename, .change => |file_path, t| {
-                        ctx.emit(file_path, t);
+                        if (comptime Environment.isWindows) {
+                            unreachable; // Windows uses FSWatchTaskWindows
+                        } else {
+                            ctx.emit(file_path, t);
+                        }
                     },
                     .@"error" => |err| {
                         ctx.emitError(err);
@@ -171,8 +183,9 @@ pub const FSWatcher = struct {
             // If we went from 0 to 1, we need to ref on the main thread
             that.needs_ref = (current == 0);
 
-            that.concurrent_task.task = JSC.Task.init(that);
-            ctx.enqueueTaskConcurrent(&that.concurrent_task);
+            that.concurrent_task = JSC.EventLoopTask.init(.js);
+            that.concurrent_task.js.task = JSC.Task.init(that);
+            ctx.enqueueTaskConcurrent(&that.concurrent_task.js);
         }
 
         pub fn cleanEntries(this: *FSWatchTask) void {
@@ -240,6 +253,10 @@ pub const FSWatcher = struct {
 
         /// Unused: To match the API of the posix version
         count: u0 = 0,
+
+        pub const empty = FSWatchTaskWindows{
+            .ctx = undefined,
+        };
 
         pub const StringOrBytesToDecode = union(enum) {
             string: bun.String,
@@ -481,9 +498,8 @@ pub const FSWatcher = struct {
             // already aborted?
             if (s.aborted()) {
                 // safely abort next tick
-                this.current_task = .{
-                    .ctx = this,
-                };
+                this.current_task = .empty;
+                this.current_task.ctx = this;
                 this.current_task.appendAbort();
             } else {
                 // watch for abortion
@@ -739,13 +755,10 @@ pub const FSWatcher = struct {
 
         const ctx = bun.new(FSWatcher, .{
             .ctx = vm,
-            .current_task = .{
-                .ctx = undefined,
-                .count = 0,
-            },
             .mutex = .{},
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
+            .closed = false,
             .path_watcher = null,
             .globalThis = args.global_this,
             .js_this = .zero,

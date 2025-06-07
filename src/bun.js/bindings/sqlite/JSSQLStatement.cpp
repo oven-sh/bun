@@ -2414,19 +2414,19 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
             switch (columnType) {
             case SQLITE_INTEGER:
-                typeValue = JSC::jsAtomString(vm, makeAtomString("INTEGER"_s));
+                typeValue = JSC::jsString(vm, makeAtomString("INTEGER"_s));
                 break;
             case SQLITE_FLOAT:
-                typeValue = JSC::jsAtomString(vm, makeAtomString("FLOAT"_s));
+                typeValue = JSC::jsString(vm, makeAtomString("FLOAT"_s));
                 break;
             case SQLITE3_TEXT:
-                typeValue = JSC::jsAtomString(vm, makeAtomString("TEXT"_s));
+                typeValue = JSC::jsString(vm, makeAtomString("TEXT"_s));
                 break;
             case SQLITE_BLOB:
-                typeValue = JSC::jsAtomString(vm, makeAtomString("BLOB"_s));
+                typeValue = JSC::jsString(vm, makeAtomString("BLOB"_s));
                 break;
             case SQLITE_NULL:
-                typeValue = JSC::jsAtomString(vm, makeAtomString("NULL"_s));
+                typeValue = JSC::jsString(vm, makeAtomString("NULL"_s));
                 break;
             default:
                 typeValue = JSC::jsNull();
@@ -2437,7 +2437,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
         }
     } else if (stepStatus == SQLITE_DONE) {
         // No data rows to read, return 'NULL' for all columns
-        JSC::JSValue typeValue = JSC::jsAtomString(vm, makeAtomString("NULL"_s));
+        JSC::JSValue typeValue = JSC::jsString(vm, makeAtomString("NULL"_s));
         for (int i = 0; i < count; i++) {
             args.append(typeValue);
         }

@@ -516,6 +516,11 @@ pub const Arguments = struct {
                         Global.exit(1);
                     };
                 }
+            } else if (bun.getenvZ("BUN_CONFIG_ELIDE_LINES")) |env_value| {
+                ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, bun.asByteSlice(env_value), 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid BUN_CONFIG_ELIDE_LINES: \"{s}\"", .{env_value});
+                    Global.exit(1);
+                };
             }
         }
 
@@ -1177,6 +1182,11 @@ pub const Arguments = struct {
                         Global.exit(1);
                     };
                 }
+            } else if (bun.getenvZ("BUN_CONFIG_ELIDE_LINES")) |env_value| {
+                ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, bun.asByteSlice(env_value), 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid BUN_CONFIG_ELIDE_LINES: \"{s}\"", .{env_value});
+                    Global.exit(1);
+                };
             }
 
             if (opts.define) |define| {

@@ -41,6 +41,15 @@ build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap) = .{},
 /// files. This happens for all files with a "use <side>" directive.
 server_component_boundaries: ServerComponentBoundary.List = .{},
 
+/// Track HTML imports from server-side code
+/// Each entry represents a server file importing an HTML file that needs a client build
+html_imports: struct {
+    /// Source index of the server file doing the import
+    server_source_indices: BabyList(Index.Int) = .{},
+    /// Source index of the HTML file being imported
+    html_source_indices: BabyList(Index.Int) = .{},
+} = .{},
+
 estimated_file_loader_count: usize = 0,
 
 /// For Bake, a count of the CSS asts is used to make precise

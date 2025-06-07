@@ -266,52 +266,53 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
         @panic("Internal error: expected top-level lazy export statement");
     }
 
-    // Epic 3.1: Implement Custom Codegen for Server-Side HTML
-    // When server code imports HTML, generate a manifest of client assets
-    const all_loaders = this.parse_graph.input_files.items(.loader);
-    const loader = all_loaders[source_index];
+    // Check if this is an HTML import from server-side code
+    // We need to check if this source_index is in the html_imports tracking
+    const html_imports = &this.graph.html_imports;
+    const server_indices = html_imports.server_source_indices.slice();
+    const html_indices = html_imports.html_source_indices.slice();
 
-    if (loader == .html and exports_kind == .cjs) {
-        // The HTML file itself will be an additional file, so it will have a unique key
-        // in the format {unique_key}A{source_index:0>8}
-        const html_placeholder = try std.fmt.allocPrint(
-            this.allocator,
-            "{}A{d:0>8}",
-            .{ this.unique_key_prefix, source_index },
-        );
+    // Find if this source_index is a server file that imports HTML
+    for (server_indices, html_indices) |server_idx, html_idx| {
+        if (server_idx == source_index and exports_kind == .cjs) {
+            // This is a server file importing HTML - generate the manifest
 
-        // The client entry point is the HTML source itself
-        // When processed as an entry point, it will get a chunk with unique key
-        // We use the 'S' prefix (like server component boundaries) which will
-        // be resolved to the actual chunk via entry_point_chunk_index mapping
-        const client_chunk_placeholder = try std.fmt.allocPrint(
-            this.allocator,
-            "{}S{d:0>8}",
-            .{ this.unique_key_prefix, source_index },
-        );
+            // The HTML file itself will be an additional file with unique key A{html_idx}
+            const html_placeholder = try std.fmt.allocPrint(
+                this.allocator,
+                "{}A{d:0>8}",
+                .{ this.unique_key_prefix, html_idx },
+            );
 
-        // Build the manifest object
-        var manifest = E.Object{};
+            // The HTML entry point chunk will be resolved via entry_point_chunk_index
+            // using the S prefix (like server component boundaries)
+            const chunk_placeholder = try std.fmt.allocPrint(
+                this.allocator,
+                "{}S{d:0>8}",
+                .{ this.unique_key_prefix, html_idx },
+            );
 
-        // HTML file path
-        try manifest.put(
-            this.allocator,
-            "html",
-            Expr.init(E.String, E.String.init(html_placeholder), stmt.loc),
-        );
+            // Build the manifest object
+            var manifest = E.Object{};
 
-        // Client entry chunk path (will contain the bundled JS/CSS)
-        try manifest.put(
-            this.allocator,
-            "entryChunk",
-            Expr.init(E.String, E.String.init(client_chunk_placeholder), stmt.loc),
-        );
+            // HTML file path
+            try manifest.put(
+                this.allocator,
+                "html",
+                Expr.init(E.String, E.String.init(html_placeholder), stmt.loc),
+            );
 
-        // TODO: Add CSS chunks and other assets when they're linked
-        // These would use similar placeholder patterns
+            // Client entry chunk path
+            try manifest.put(
+                this.allocator,
+                "entryChunk",
+                Expr.init(E.String, E.String.init(chunk_placeholder), stmt.loc),
+            );
 
-        // Replace the lazy export with the manifest object
-        part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;
+            // Replace the lazy export with the manifest object
+            part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;
+            break;
+        }
     }
 
     const expr = Expr{

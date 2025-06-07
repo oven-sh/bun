@@ -47,7 +47,8 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
 2. When server code imports HTML:
    - Creates a client-side entry point with `target: .browser`
    - Calls `this.enqueueParseTask` with the HTML file and browser target
-   - The HTML file becomes both an asset (for copying) and an entry point (for bundling)
+   - Tracks the import in `graph.html_imports` for manifest generation
+3. **Graph.zig**: Added `html_imports` structure to track server->HTML imports
 
 ### Epic 3: Server-Side Code Generation for HTML Imports ✅
 
@@ -56,9 +57,10 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
 **Changes Made**:
 
 1. **generateCodeForLazyExport.zig**: When server code imports HTML (loader == .html and exports_kind == .cjs):
-   - Generates a manifest object with unique_key placeholders
-   - HTML file path uses `{unique_key}A{source_index:0>8}` format (asset placeholder)
-   - Client chunk path uses `{unique_key}S{source_index:0>8}` format (resolved via entry_point_chunk_index)
+   - Checks if the source is in the `html_imports` tracking
+   - When found, generates a manifest object with unique_key placeholders:
+     - HTML file path uses `{unique_key}A{html_idx:0>8}` format (asset placeholder)
+     - Client chunk path uses `{unique_key}S{html_idx:0>8}` format (resolved via entry_point_chunk_index)
    - The manifest is exported as `module.exports` for CommonJS compatibility
 
 ### Epic 4: Target-Aware Output Filenames ✅
@@ -76,29 +78,39 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
    - chunk: `"./chunk-[hash].[target].[ext]"`
    - file: `"[dir]/[name].[target].[ext]"`
 
-### Epic 5: Late-Stage Path Resolution ✅
+### Epic 5: HTML Imports as Entry Points ✅
 
-**Status**: Complete (uses existing infrastructure)
+**Status**: Complete
 
-**Notes**:
+**Changes Made**:
 
-- The implementation leverages the existing `unique_key` placeholder system
-- HTML imports use standard prefixes:
-  - 'A' for asset files (the HTML file itself)
-  - 'S' for entry point chunks (resolved via `entry_point_chunk_index`)
-- The `breakOutputIntoPieces` function in LinkerContext already handles these placeholders correctly
-- No additional changes were needed as the existing resolution mechanism handles our use case
+1. **bundle_v2.zig**: Added `addHTMLImportsAsEntryPoints()` function
+   - Similar to `addServerComponentBoundariesAsExtraEntryPoints()`
+   - Adds HTML files from `html_imports` tracking as entry points
+   - Called after `processFilesToCopy` and before `cloneAST`
+2. This ensures HTML files get chunks assigned and can be referenced via the 'S' prefix
 
 ## How It Works
 
 When a server file imports an HTML file:
 
 1. **Detection**: During resolution, the bundler detects `loader == .html` from server-side code
-2. **Client Entry**: A new browser-target entry point is created for the HTML file
-3. **Manifest Generation**: The server import is replaced with a manifest containing:
-   - `html`: Path to the HTML asset file
-   - `entryChunk`: Path to the client-side JavaScript chunk
-4. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
+2. **Tracking**: The import is tracked in `graph.html_imports` with server and HTML source indices
+3. **Client Entry**: A new browser-target entry point is created for the HTML file
+4. **Entry Point Addition**: HTML files are added as entry points to ensure chunk assignment
+5. **Manifest Generation**: During lazy export generation, the server import is replaced with:
+   - `html`: Path to the HTML asset file (using 'A' prefix)
+   - `entryChunk`: Path to the client-side JavaScript chunk (using 'S' prefix)
+6. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
+
+## Implementation Pattern
+
+The implementation follows the same pattern as Server Components:
+
+- HTML imports are tracked during parsing
+- Entry points are added before linking
+- Manifest generation happens during code generation
+- Unique key placeholders are resolved at the final stage
 
 ## Example Usage
 

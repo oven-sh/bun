@@ -1344,6 +1344,7 @@ pub const BundleV2 = struct {
         try this.processFilesToCopy(reachable_files);
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
+        try this.addHTMLImportsAsEntryPoints();
 
         try this.cloneAST();
 
@@ -1405,6 +1406,8 @@ pub const BundleV2 = struct {
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
 
+        try this.addHTMLImportsAsEntryPoints();
+
         try this.cloneAST();
 
         const chunks = try this.linker.link(
@@ -1431,6 +1434,18 @@ pub const BundleV2 = struct {
                 inline for (.{ original_index, ssr_index }) |idx| {
                     this.graph.entry_points.appendAssumeCapacity(Index.init(idx));
                 }
+            }
+        }
+    }
+
+    pub fn addHTMLImportsAsEntryPoints(this: *BundleV2) !void {
+        // Add HTML files that were imported from server code as entry points
+        // This ensures they get chunks assigned and can be referenced via S prefix
+        const html_imports = &this.graph.html_imports;
+        if (html_imports.html_source_indices.len > 0) {
+            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, html_imports.html_source_indices.len);
+            for (html_imports.html_source_indices.slice()) |html_idx| {
+                this.graph.entry_points.appendAssumeCapacity(Index.init(html_idx));
             }
         }
     }
@@ -3026,10 +3041,22 @@ pub const BundleV2 = struct {
             // Epic 2.1: Implement HTML Import as a Client Entry Point Trigger
             // When server-side code imports an HTML file, create a client-side entry point
             if (ast.target.isServerSide() and resolve_task.loader == .html) {
-                _ = this.enqueueEntryItem(null, // hash
-                    resolve_result, // Use the same resolution result
-                    true, // is_entry_point
-                    .browser // Explicitly set the target for the new graph entry
+                // Create a client-side entry point for this HTML file
+                _ = this.enqueueParseTask(
+                    resolve_result,
+                    source,
+                    .html,
+                    .browser, // Force browser target for the HTML entry point
+                ) catch bun.outOfMemory();
+
+                // Track this HTML import for manifest generation
+                this.graph.html_imports.server_source_indices.append(
+                    this.graph.allocator,
+                    ast.source.index.get(),
+                ) catch bun.outOfMemory();
+                this.graph.html_imports.html_source_indices.append(
+                    this.graph.allocator,
+                    resolve_task.source_index.get(),
                 ) catch bun.outOfMemory();
             }
 

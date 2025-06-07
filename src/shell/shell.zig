@@ -7,7 +7,6 @@ const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const Syscall = @import("../sys.zig");
-const Glob = @import("../glob.zig");
 const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 
@@ -25,7 +24,7 @@ pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";

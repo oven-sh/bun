@@ -5,7 +5,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const strings = bun.strings;
 const JSON = bun.JSON;
-const Glob = @import("../glob.zig");
+const glob = bun.glob;
 
 const SKIP_LIST = .{
     // skip hidden directories
@@ -31,7 +31,7 @@ fn globIgnoreFn(val: []const u8) bool {
     return false;
 }
 
-const GlobWalker = Glob.GlobWalker(globIgnoreFn, Glob.walk.DirEntryAccessor, false);
+const GlobWalker = glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false);
 
 pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logger.Log, out_patterns: *std.ArrayList([]u8), workdir_: []const u8, root_buf: *bun.PathBuffer) ![]const u8 {
     bun.JSAst.Expr.Data.Store.create();
@@ -186,7 +186,7 @@ pub const FilterSet = struct {
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.walk.matchImpl(self.allocator, filter.pattern, path).matches()) {
+            if (glob.match(filter.pattern, path).matches()) {
                 return true;
             }
         }
@@ -199,7 +199,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.walk.matchImpl(self.allocator, filter.pattern, target).matches()) {
+            if (glob.match(filter.pattern, target).matches()) {
                 return true;
             }
         }

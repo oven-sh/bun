@@ -52,7 +52,7 @@ pub const HoistDependencyResult = union(enum) {
     hoisted,
     placement: struct {
         id: Id,
-        bundled: bool = false,
+        is_new_hoist_root: bool = false,
     },
     // replace: struct {
     //     dest_id: Id,
@@ -246,6 +246,10 @@ pub fn Builder(comptime method: BuilderMethod) type {
         install_root_dependencies: if (method == .filter) bool else void,
         path_buf: []u8,
 
+        pub fn hasNohoistPatterns(this: *const @This()) bool {
+            return this.lockfile.nohoist_patterns.items.len != 0;
+        }
+
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
         }
@@ -316,10 +320,21 @@ pub fn Builder(comptime method: BuilderMethod) type {
     };
 }
 
+const SubtreeKind = enum(u8) {
+    root,
+    root_direct_dependency,
+    root_transitive,
+    workspace,
+    workspace_direct_dependency,
+    workspace_transitive,
+};
+
 pub fn processSubtree(
     this: *const Tree,
+    subtree_kind: SubtreeKind,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
+    subpath: std.ArrayListUnmanaged(u8),
     comptime method: BuilderMethod,
     builder: *Builder(method),
     log_level: if (method == .filter) PackageManager.Options.LogLevel else void,
@@ -332,9 +347,11 @@ pub fn processSubtree(
 
     if (resolution_list.len == 0) return;
 
+    const parent_tree_id = this.id;
+
     try builder.list.append(builder.allocator, .{
         .tree = .{
-            .parent = this.id,
+            .parent = parent_tree_id,
             .id = @as(Id, @truncate(builder.list.len)),
             .dependency_id = dependency_id,
         },
@@ -387,7 +404,7 @@ pub fn processSubtree(
         DepSorter.isLessThan,
     );
 
-    for (builder.sort_buf.items) |dep_id| {
+    next_dep: for (builder.sort_buf.items) |dep_id| {
         const pkg_id = builder.resolutions[dep_id];
         // Skip unresolved packages, e.g. "peerDependencies"
         if (pkg_id >= max_package_id) continue;
@@ -469,7 +486,7 @@ pub fn processSubtree(
                             },
                         };
 
-                        switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
+                        switch (bun.glob.match(pattern, path_or_name)) {
                             .match, .negate_match => match = true,
 
                             .negate_no_match => {
@@ -491,16 +508,51 @@ pub fn processSubtree(
             }
         }
 
+        const dependency = builder.dependencies[dep_id];
+        var dep_subpath: std.ArrayListUnmanaged(u8) = .{};
+        if (builder.hasNohoistPatterns()) {
+            try dep_subpath.ensureTotalCapacity(
+                builder.allocator,
+                subpath.items.len + dependency.name.len() + @intFromBool(subpath.items.len != 0),
+            );
+            if (subpath.items.len != 0) {
+                dep_subpath.appendSliceAssumeCapacity(subpath.items);
+                dep_subpath.appendAssumeCapacity('/');
+            }
+            dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(builder.buf()));
+        }
+
         const hoisted: HoistDependencyResult = hoisted: {
-            const dependency = builder.dependencies[dep_id];
 
             // don't hoist if it's a folder dependency or a bundled dependency.
             if (dependency.behavior.isBundled()) {
-                break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+                break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = true } };
             }
 
             if (pkg_resolutions[pkg_id].tag == .folder) {
                 break :hoisted .{ .placement = .{ .id = next.id } };
+            }
+
+            const is_new_hoist_root = switch (builder.lockfile.hoisting_limits) {
+                .none => false,
+                .workspaces => subtree_kind == .root or subtree_kind == .workspace,
+
+                // not only does this keep transitive dependencies within direct dependencies,
+                // it also keeps workspace dependencies within the workspace.
+                .dependencies => subtree_kind != .root_transitive and subtree_kind != .workspace_transitive,
+            };
+
+            for (builder.lockfile.nohoist_patterns.items) |pattern| {
+                if (bun.glob.match(pattern.slice(builder.buf()), dep_subpath.items).matches()) {
+                    // prevent hoisting this package. it's dependencies
+                    // are allowed to hoist beyond it unless "hoistingLimits"
+                    // sets this tree as a new hoist root.
+                    break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = is_new_hoist_root } };
+                }
+            }
+
+            if (is_new_hoist_root) {
+                break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = true } };
             }
 
             break :hoisted try next.hoistDependency(
@@ -518,15 +570,48 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
+                if (builder.hasNohoistPatterns() or builder.lockfile.hoisting_limits != .none) {
+                    // Look for cycles. Only done when nohoist patterns or hoisting limits
+                    // are used because they can cause cyclic dependencies to not
+                    // deduplicate, resulting in infinite loops (e.g. can happen easily
+                    // if all hoisting is disabled with '**')
+
+                    const skip_root_pkgs = switch (subtree_kind) {
+                        .root, .root_direct_dependency, .root_transitive => false,
+                        .workspace, .workspace_direct_dependency, .workspace_transitive => true,
+                    };
+
+                    // TODO: this isn't totally correct. this handles cycles, but it's
+                    // only looking for the same package higher in the tree
+                    var curr = parent_tree_id;
+                    while (curr != invalid_id and (!skip_root_pkgs or curr != 0)) {
+                        for (dependency_lists[curr].items) |placed_parent_dep_id| {
+                            const placed_parent_pkg_id = builder.resolutions[placed_parent_dep_id];
+                            if (placed_parent_pkg_id == pkg_id) {
+                                continue :next_dep;
+                            }
+                        }
+
+                        curr = trees[curr].parent;
+                    }
+                }
                 dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {
+                    const next_subtree_kind: SubtreeKind = switch (subtree_kind) {
+                        .root => if (dependency.behavior.isWorkspaceOnly()) .workspace else .root_direct_dependency,
+                        .root_direct_dependency => .root_transitive,
+                        .root_transitive => .root_transitive,
+                        .workspace => .workspace_direct_dependency,
+                        .workspace_direct_dependency => .workspace_transitive,
+                        .workspace_transitive => .workspace_transitive,
+                    };
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
+                        .subtree_kind = next_subtree_kind,
                         .dependency_id = dep_id,
-
-                        // if it's bundled, start a new hoist root
-                        .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
+                        .subpath = dep_subpath,
+                        .hoist_root_id = if (dest.is_new_hoist_root) dest.id else hoist_root_id,
                     });
                 }
             },
@@ -631,6 +716,9 @@ fn hoistDependency(
 pub const FillItem = struct {
     tree_id: Tree.Id,
     dependency_id: DependencyID,
+    subpath: std.ArrayListUnmanaged(u8),
+
+    subtree_kind: SubtreeKind,
 
     /// If valid, dependencies will not hoist
     /// beyond this tree if they're in a subtree

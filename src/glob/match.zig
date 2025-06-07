@@ -25,8 +25,6 @@
 const std = @import("std");
 const bun = @import("bun");
 
-const Allocator = std.mem.Allocator;
-
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces
 /// One such stack buffer is created recursively for each pair of braces
@@ -38,7 +36,7 @@ const Brace = struct {
 };
 const BraceStack = std.BoundedArray(Brace, 10);
 
-pub const MatchResult = enum {
+const MatchResult = enum {
     no_match,
     match,
 
@@ -121,7 +119,7 @@ const Wildcard = struct {
 ///     Used to escape any of the special characters above.
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.allocator()
-pub fn match(_: Allocator, glob: []const u8, path: []const u8) MatchResult {
+pub fn match(glob: []const u8, path: []const u8) MatchResult {
     var state = State{};
 
     var negated = false;
@@ -489,39 +487,6 @@ inline fn skipGlobstars(glob: []const u8, glob_index: *u32) void {
     }
 
     glob_index.* -= 2;
-}
-
-/// Returns true if the given string contains glob syntax,
-/// excluding those escaped with backslashes
-/// TODO: this doesn't play nicely with Windows directory separator and
-/// backslashing, should we just require the user to supply posix filepaths?
-pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
-    // Negation only allowed in the beginning of the pattern
-    if (potential_pattern.len > 0 and potential_pattern[0] == '!') return true;
-
-    // In descending order of how popular the token is
-    const SPECIAL_SYNTAX: [4]u8 = comptime [_]u8{ '*', '{', '[', '?' };
-
-    inline for (SPECIAL_SYNTAX) |token| {
-        var slice = potential_pattern[0..];
-        while (slice.len > 0) {
-            if (std.mem.indexOfScalar(u8, slice, token)) |idx| {
-                // Check for even number of backslashes preceding the
-                // token to know that it's not escaped
-                var i = idx;
-                var backslash_count: u16 = 0;
-
-                while (i > 0 and potential_pattern[i - 1] == '\\') : (i -= 1) {
-                    backslash_count += 1;
-                }
-
-                if (backslash_count % 2 == 0) return true;
-                slice = slice[idx + 1 ..];
-            } else break;
-        }
-    }
-
-    return false;
 }
 
 const BraceIndex = struct {

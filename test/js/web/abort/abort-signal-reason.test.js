@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("AbortSignal reason", () => {
   // https://bugs.webkit.org/show_bug.cgi?id=293319

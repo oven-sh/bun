@@ -34,14 +34,13 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 241, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1852 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
-  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 285 },
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 284 },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
 };
 const words_keys = [...Object.keys(words)];

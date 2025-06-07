@@ -2423,7 +2423,11 @@ pub const Expect = struct {
             var expected_class = ZigString.Empty;
             var received_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
-            result.getClassName(globalThis, &received_class);
+            if (result.isCell()) {
+                result.getClassName(globalThis, &received_class);
+            } else {
+                received_class = ZigString.init("primitive value");
+            }
             const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
             const fmt = signature ++ "\n\nExpected constructor: <green>{s}<r>\nReceived constructor: <red>{s}<r>\n\n";
 

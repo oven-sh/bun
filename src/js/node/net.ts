@@ -1708,12 +1708,12 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   if (localAddress || localPort) {
     if (addressType === 4) {
-      localAddress ||= '0.0.0.0';
+      localAddress ||= "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress ||= '::';
+      localAddress ||= "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }

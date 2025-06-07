@@ -56,6 +56,7 @@ src/bun.js/api/JSBundler.zig
 src/bun.js/api/JSTranspiler.zig
 src/bun.js/api/server.zig
 src/bun.js/api/server/AnyRequestContext.zig
+src/bun.js/api/server/FileRoute.zig
 src/bun.js/api/server/HTMLBundle.zig
 src/bun.js/api/server/HTTPStatusText.zig
 src/bun.js/api/server/InspectorBunFrontendDevServerAgent.zig
@@ -473,6 +474,7 @@ src/fd.zig
 src/feature_flags.zig
 src/fmt.zig
 src/fs.zig
+src/fs/stat_hash.zig
 src/futex.zig
 src/generated_perf_trace_events.zig
 src/generated_versions_list.zig

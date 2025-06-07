@@ -7,9 +7,10 @@ Start a simple WebSocket server using [`Bun.serve`](https://bun.sh/docs/api/http
 Inside `fetch`, we attempt to upgrade incoming `ws:` or `wss:` requests to WebSocket connections.
 
 ```ts
-const server = Bun.serve<{ authToken: string }>({
+const server = Bun.serve({
   fetch(req, server) {
     const success = server.upgrade(req);
+
     if (success) {
       // Bun automatically returns a 101 Switching Protocols
       // if the upgrade succeeds

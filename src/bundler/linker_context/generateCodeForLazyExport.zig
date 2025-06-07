@@ -266,55 +266,6 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
         @panic("Internal error: expected top-level lazy export statement");
     }
 
-    // Check if this is an HTML import from server-side code
-    // We need to check if this source_index is in the html_imports tracking
-    const html_imports = &this.graph.html_imports;
-    const server_indices = html_imports.server_source_indices.slice();
-    const html_indices = html_imports.html_source_indices.slice();
-
-    // Find if this source_index is a server file that imports HTML
-    for (server_indices, html_indices) |server_idx, html_idx| {
-        if (server_idx == source_index and exports_kind == .cjs) {
-            // This is a server file importing HTML - generate the manifest
-
-            // The HTML file itself will be an additional file with unique key A{html_idx}
-            const html_placeholder = try std.fmt.allocPrint(
-                this.allocator,
-                "{}A{d:0>8}",
-                .{ this.unique_key_prefix, html_idx },
-            );
-
-            // The HTML entry point chunk will be resolved via entry_point_chunk_index
-            // using the S prefix (like server component boundaries)
-            const chunk_placeholder = try std.fmt.allocPrint(
-                this.allocator,
-                "{}S{d:0>8}",
-                .{ this.unique_key_prefix, html_idx },
-            );
-
-            // Build the manifest object
-            var manifest = E.Object{};
-
-            // HTML file path
-            try manifest.put(
-                this.allocator,
-                "html",
-                Expr.init(E.String, E.String.init(html_placeholder), stmt.loc),
-            );
-
-            // Client entry chunk path
-            try manifest.put(
-                this.allocator,
-                "entryChunk",
-                Expr.init(E.String, E.String.init(chunk_placeholder), stmt.loc),
-            );
-
-            // Replace the lazy export with the manifest object
-            part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;
-            break;
-        }
-    }
-
     const expr = Expr{
         .data = stmt.data.s_lazy_export.*,
         .loc = stmt.loc,

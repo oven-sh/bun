@@ -23,7 +23,7 @@ parent_context_id: u32 = 0,
 parent: *jsc.VirtualMachine,
 
 ref_count: RefCount,
-lifecycle_handle: ?*WebWorkerLifecycleHandle,
+lifecycle_handle: *WebWorkerLifecycleHandle,
 
 /// To be resolved on the Worker thread at startup, in spin().
 unresolved_specifier: []const u8,
@@ -201,6 +201,7 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    lifecycle_handle: *WebWorkerLifecycleHandle,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -232,7 +233,7 @@ pub fn create(
     }
 
     const worker = WebWorker.new(.{
-        .lifecycle_handle = null,
+        .lifecycle_handle = lifecycle_handle,
         .ref_count = .init(),
         .cpp_worker = cpp_worker,
         .parent = parent,
@@ -432,10 +433,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     };
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
-    if (vm.worker) |worker_| {
-        const handle = worker_.lifecycle_handle orelse @panic("Assertion failure: no lifecycle handle");
-        handle.requestTermination();
-    }
+    if (vm.worker) |worker_| worker_.lifecycle_handle.requestTermination();
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {
@@ -618,7 +616,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
-    this.lifecycle_handle.?.onTermination();
+    this.lifecycle_handle.onTermination();
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
@@ -678,12 +676,15 @@ const WebWorkerLifecycleHandle = struct {
         preload_modules_ptr: ?[*]bun.String,
         preload_modules_len: usize,
     ) callconv(.c) *WebWorkerLifecycleHandle {
-        const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len);
         const handle = WebWorkerLifecycleHandle.new(.{
-            .worker = worker,
+            .worker = null,
             .ref_count = .init(),
         });
-        worker.?.lifecycle_handle = handle;
+
+        const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len, handle);
+
+        handle.worker = worker;
+
         return handle;
     }
 

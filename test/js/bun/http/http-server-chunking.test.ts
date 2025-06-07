@@ -42,6 +42,22 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
 
             let buffer: Buffer;
 
+            function actuallyWrite(socket) {
+              while (buffer.length > 0) {
+                const written = socket.write(buffer.slice(0, 1));
+
+                if (written == 0) break;
+
+                if (written > 1) {
+                  throw new Error(`Written ${written} bytes, expected 1`);
+                }
+                socket.flush();
+                buffer = buffer.slice(written);
+              }
+            }
+
+            let remainingRequests = 20;
+
             const socket = await Bun.connect({
               hostname: server.hostname,
               port: server.port!,
@@ -55,32 +71,28 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
                   const repeated = Buffer.alloc(input.length * 20, input);
 
                   buffer = repeated;
-                  const written = socket.write(buffer);
-                  if (written > 20) {
-                    throw new Error(`Written ${written} bytes, expected 1`);
-                  }
-                  buffer = buffer.slice(written);
+                  actuallyWrite(socket);
                 },
                 data(socket: Socket, data: Buffer) {
-                  const response = data.toString();
-                  // Basic validation that we got a valid HTTP response
-                  if (!response.includes("HTTP/1.1 200 OK")) {
-                    rejectClose(new Error(`Invalid response: ${response}`));
+                  // Mini HTTP parser to count complete responses
+                  const dataStr = data.toString();
+                  const responses = dataStr.split("\r\n\r\n");
+
+                  // Count complete responses (those that have both headers and body)
+                  for (let k = 0; k < responses.length - 1; k++) {
+                    if (responses[k].includes("HTTP/1.1 200 OK")) {
+                      remainingRequests--;
+                    }
                   }
-                  socket.end();
+                  if (remainingRequests == 0) {
+                    socket.end();
+                  }
                 },
                 close() {
                   resolveClose();
                 },
                 drain(socket: Socket) {
-                  if (buffer.length > 0) {
-                    const written = socket.write(buffer);
-
-                    if (written > 20) {
-                      throw new Error(`Written ${written} bytes, expected 1`);
-                    }
-                    buffer = buffer.slice(written);
-                  }
+                  actuallyWrite(socket);
                 },
                 error(_socket: Socket, error: Error) {
                   rejectClose(error);

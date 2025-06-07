@@ -57,9 +57,13 @@ parallel/test-tls-get-ca-certificates-extra-empty.js
 parallel/test-tls-server-setkeycert.js
 - some kind of problem with getPeerX509Certificate?
 parallel/test-tls-enable-keylog-cli.js
+- support --tls-keylog cli flag
 parallel/test-tls-cert-chains-concat.js
+- issuerCertificate is not defined?
 parallel/test-tls-streamwrap-buffersize.js
+- bufferSize is wrong. also it is deprecated.
 parallel/test-tls-destroy-stream.js
+
 parallel/test-tls-pause.js
 parallel/test-tls-connect-memleak.js
 parallel/test-tls-get-ca-certificates-bundled.js

@@ -366,7 +366,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const Futex = bun.Futex;
 const system = std.posix.system;
 const IN = std.os.linux.IN;
 

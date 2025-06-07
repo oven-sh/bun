@@ -17,6 +17,65 @@ t.style.color = "black";
 }
 ```
 
+# TODO CHECK:
+
+parallel/test-tls-env-bad-extra-ca.js
+parallel/test-tls-connect-allow-half-open-option.js
+parallel/test-tls-client-reject-12.js
+parallel/test-tls-ticket-12.js
+parallel/test-tls-client-resume-12.js
+parallel/test-tls-server-parent-constructor-options.js
+parallel/test-tls-get-ca-certificates-system.js
+parallel/test-tls-get-ca-certificates-default.js
+parallel/test-tls-external-accessor.js
+parallel/test-tls-cert-chains-in-ca.js
+parallel/test-tls-get-ca-certificates-error.js
+parallel/test-tls-get-ca-certificates-extra-empty.js
+parallel/test-tls-basic-validations.js
+parallel/test-tls-server-setkeycert.js
+parallel/test-tls-error-servername.js
+parallel/test-tls-enable-keylog-cli.js
+parallel/test-tls-cert-chains-concat.js
+parallel/test-tls-streamwrap-buffersize.js
+parallel/test-tls-destroy-stream.js
+parallel/test-tls-pause.js
+parallel/test-tls-connect-memleak.js
+parallel/test-tls-get-ca-certificates-bundled.js
+parallel/test-tls-clientcertengine-invalid-arg-type.js
+parallel/test-tls-timeout-server.js
+parallel/test-tls-destroy-stream-12.js
+parallel/test-tls-net-socket-keepalive-12.js
+parallel/test-tls-socket-default-options.js
+parallel/test-tls-get-ca-certificates-extra-subset.js
+parallel/test-double-tls-client.js
+parallel/test-tls-retain-handle-no-abort.js
+parallel/test-tls-keylog-tlsv13.js
+parallel/test-tls-client-resume.js
+parallel/test-tls-no-sslv23.js
+parallel/test-tls-connect-timeout-option.js
+parallel/test-tls-client-allow-partial-trust-chain.js
+parallel/test-tls-cli-min-max-conflict.js
+parallel/test-tls-get-ca-certificates-system-without-flag.js
+parallel/test-tls-get-ca-certificates-bundled-subset.js
+parallel/test-tls-getcertificate-x509.js
+parallel/test-tls-get-ca-certificates-extra.js
+parallel/test-tls-env-extra-ca.js
+parallel/test-tls-socket-destroy.js
+parallel/test-tls-socket-close.js
+parallel/test-tls-connect-given-socket.js
+parallel/test-double-tls-server.js
+parallel/test-tls-writewrap-leak.js
+parallel/test-tls-exportkeyingmaterial.js
+parallel/test-tls-env-extra-ca-with-options.js
+parallel/test-tls-set-secure-context.js
+parallel/test-tls-server-capture-rejection.js
+parallel/test-tls-wrap-event-emmiter.js
+parallel/test-tls-client-default-ciphers.js
+parallel/test-tls-socket-constructor-alpn-options-parsing.js
+sequential/test-tls-session-timeout.js
+
+# Key
+
 [ES] = skipped by electron
 [RM] = removed
 

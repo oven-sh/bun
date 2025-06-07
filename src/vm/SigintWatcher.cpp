@@ -92,7 +92,7 @@ void SigintWatcher::uninstall()
 #else
         struct sigaction action;
         memset(&action, 0, sizeof(struct sigaction));
-        action.sa_handler = SIG_DFL;
+        action.sa_handler = Bun__onPosixSignal;
         sigemptyset(&action.sa_mask);
         sigaddset(&action.sa_mask, SIGINT);
         action.sa_flags = SA_RESTART;

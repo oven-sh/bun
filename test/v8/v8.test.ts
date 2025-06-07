@@ -78,7 +78,8 @@ async function build(
   if (exitCode !== 0) {
     console.error(err);
     console.log(out);
-    throw new Error(`build failed: ${exitCode}`);
+    console.error(`build failed: ${exitCode}, bailing out`);
+    process.exit(1);
   }
 
   return {

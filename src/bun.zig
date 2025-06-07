@@ -1820,6 +1820,8 @@ pub const StringMap = struct {
 
 pub const DotEnv = @import("./env_loader.zig");
 pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const js_ast = bun.bundle_v2.js_ast;
+pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 

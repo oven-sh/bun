@@ -423,6 +423,18 @@ pub const Error = struct {
         };
     }
 
+    /// Only call this after it's been .clone()'d
+    pub fn deinit(this: *Error) void {
+        if (this.path.len > 0) {
+            bun.default_allocator.free(this.path);
+            this.path = "";
+        }
+        if (this.dest.len > 0) {
+            bun.default_allocator.free(this.dest);
+            this.dest = "";
+        }
+    }
+
     pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
         if (std.meta.Child(@TypeOf(path)) == u16) {
             @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (path)");

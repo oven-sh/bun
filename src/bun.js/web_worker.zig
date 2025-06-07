@@ -400,7 +400,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
 
     var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
-    var worker = vm.worker orelse @panic("Assertion failure: no worker");
+    const worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
@@ -433,9 +433,8 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
     if (vm.worker) |worker_| {
-        _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
-        worker_.exitAndDeinit();
+        const handle = worker_.lifecycle_handle orelse @panic("Assertion failure: no lifecycle handle");
+        handle.requestTermination();
     }
 }
 

@@ -1139,6 +1139,14 @@ extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject*
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
+
+__attribute__((noinline)) static void forwardSignal(int signalNumber)
+{
+    // We want a function that's equivalent to Bun__onPosixSignal but whose address is different.
+    // This is so that we can be sure not to uninstall signal handlers that we didn't install here.
+    Bun__onPosixSignal(signalNumber);
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
@@ -1281,9 +1289,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         memset(&action, 0, sizeof(struct sigaction));
 
                         // Set the handler in the action struct
-                        action.sa_handler = [](int signalNumber) {
-                            Bun__onPosixSignal(signalNumber);
-                        };
+                        action.sa_handler = forwardSignal;
 
                         // Clear the sa_mask
                         sigemptyset(&action.sa_mask);
@@ -1307,7 +1313,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
 
 #if !OS(WINDOWS)
-                        signal(signalNumber, SIG_DFL);
+                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                            // Don't uninstall the old handler if it's not the one we installed.
+                            signal(signalNumber, oldHandler);
+                        }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);
@@ -3212,7 +3221,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
-    if (value != 0)
+    if (!value.isEmpty())
         args.append(value);
     this->queueNextTick(globalObject, args);
 }
@@ -3221,9 +3230,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JS
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
-    if (value != 0) {
+    if (!value.isEmpty()) {
         args.append(value);
-        if (arg1 != 0) {
+        if (!arg1.isEmpty()) {
             args.append(arg1);
         }
     }
@@ -3236,7 +3245,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, con
     ASSERT_WITH_MESSAGE(func.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.ensureCapacity(NumArgs + 1);
-    if (func != 0) {
+    if (!func.isEmpty()) {
         argsBuffer.append(func);
         for (size_t i = 0; i < NumArgs; i++) {
             argsBuffer.append(args[i]);

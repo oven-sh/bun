@@ -1,11 +1,14 @@
 #include "NodeVMSourceTextModule.h"
+#include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
 #include "wtf/Scope.h"
 
+#include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
@@ -13,7 +16,6 @@
 #include "JavaScriptCore/ModuleProgramCodeBlock.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 
@@ -63,6 +65,18 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
+    JSValue initializeImportMeta = args.at(6);
+    if (!initializeImportMeta.isUndefined() && !initializeImportMeta.isCallable()) {
+        throwArgumentTypeError(*globalObject, scope, 6, "options.initializeImportMeta"_s, "Module"_s, "Module"_s, "function"_s);
+        return nullptr;
+    }
+
+    JSValue moduleWrapper = args.at(7);
+    if (!moduleWrapper.isUndefined() && !moduleWrapper.isObject()) {
+        throwArgumentTypeError(*globalObject, scope, 7, "moduleWrapper"_s, "Module"_s, "Module"_s, "object"_s);
+        return nullptr;
+    }
+
     uint32_t lineOffset = lineOffsetValue.toUInt32(globalObject);
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
 
@@ -72,8 +86,12 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode));
+    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
+
+    if (!initializeImportMeta.isUndefined()) {
+        ptr->m_initializeImportMeta.set(vm, ptr, initializeImportMeta);
+    }
 
     if (cachedData.isEmpty()) {
         return ptr;
@@ -196,7 +214,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
     }
 
-    ASSERT_WITH_MESSAGE(attributesNodes.size() == requests.size(), "Attributes node count doesn't match request count (%zu != %zu)", attributesNodes.size(), requests.size());
+    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
@@ -317,90 +335,16 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SourceTextModule linking");
     }
 
     status(Status::Linked);
-    return JSC::jsUndefined();
+    return jsUndefined();
 }
 
-JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
+JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
-        return {};
-    }
-
-    JSModuleRecord* record = m_moduleRecord.get();
-    JSValue result {};
-
-    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
-
-    if (nodeVmGlobalObject) {
-        globalObject = nodeVmGlobalObject;
-    }
-
-    auto run = [&] {
-        status(Status::Evaluating);
-
-        for (const auto& request : record->requestedModules()) {
-            if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
-                if (auto* dependency = jsDynamicCast<NodeVMSourceTextModule*>(iter->value.get())) {
-                    if (dependency->status() == Status::Linked) {
-                        JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
-                        RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm SourceTextModule dependencies");
-                    }
-                }
-            }
-        }
-
-        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-    };
-
-    setSigintReceived(false);
-
-    if (timeout != 0) {
-        JSC::JSLockHolder locker(vm);
-        JSC::Watchdog& dog = vm.ensureWatchdog();
-        dog.enteredVM();
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
-    }
-
-    if (breakOnSigint) {
-        auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
-        run();
-    } else {
-        run();
-    }
-
-    if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
-    }
-
-    if (vm.hasPendingTerminationException()) {
-        scope.clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        }
-    } else {
-        setSigintReceived(false);
-    }
-
-    if (JSC::Exception* exception = scope.exception()) {
-        status(Status::Errored);
-        m_evaluationException.set(vm, this, exception);
-        return {};
-    }
-
-    status(Status::Evaluated);
-    return result;
+    return jsUndefined();
 }
 
 RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)
@@ -436,6 +380,28 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     return m_cachedBytecodeBuffer.get();
 }
 
+void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
+{
+    if (!m_initializeImportMeta) {
+        return;
+    }
+
+    JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
+    ASSERT(moduleEnvironment != nullptr);
+
+    JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
+    ASSERT(metaValue);
+    ASSERT(metaValue.isObject());
+
+    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
+
+    MarkedArgumentBuffer args;
+    args.append(metaValue);
+    args.append(m_moduleWrapper.get());
+
+    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+}
+
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     return NodeVMModulePrototype::create(vm, NodeVMModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
@@ -453,6 +419,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_evaluationException);
+    visitor.append(vmModule->m_initializeImportMeta);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

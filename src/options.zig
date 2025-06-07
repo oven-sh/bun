@@ -2541,6 +2541,7 @@ pub const PathTemplate = struct {
                         try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
+                .target => try writeReplacingSlashesOnWindows(writer, self.placeholder.target),
             }
             remain = remain[end_len + 1 ..];
         }
@@ -2553,12 +2554,14 @@ pub const PathTemplate = struct {
         name: []const u8 = "",
         ext: []const u8 = "",
         hash: ?u64 = null,
+        target: []const u8 = "",
 
         pub const map = bun.ComptimeStringMap(std.meta.FieldEnum(Placeholder), .{
             .{ "dir", .dir },
             .{ "name", .name },
             .{ "ext", .ext },
             .{ "hash", .hash },
+            .{ "target", .target },
         });
     };
 

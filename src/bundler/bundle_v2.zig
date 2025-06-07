@@ -194,13 +194,7 @@ pub const BundleV2 = struct {
 
     /// Same semantics as bundlerForTarget for `path_to_source_index_map`
     pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *PathToSourceIndexMap {
-        return if (!this.transpiler.options.server_components)
-            &this.graph.path_to_source_index_map
-        else switch (target) {
-            else => &this.graph.path_to_source_index_map,
-            .browser => &this.graph.client_path_to_source_index_map,
-            .bake_server_components_ssr => &this.graph.ssr_path_to_source_index_map,
-        };
+        return this.graph.build_graphs.getPtr(target);
     }
 
     const ReachableFileVisitor = struct {
@@ -340,7 +334,7 @@ pub const BundleV2 = struct {
             .all_import_records = this.graph.ast.items(.import_records),
             .all_loaders = this.graph.input_files.items(.loader),
             .all_urls_for_css = all_urls_for_css,
-            .redirect_map = this.graph.path_to_source_index_map,
+            .redirect_map = this.pathToSourceIndexMap(this.transpiler.options.target).*,
             .dynamic_import_entry_points = &this.dynamic_import_entry_points,
             .scb_bitset = scb_bitset,
             .scb_list = if (scb_bitset != null)
@@ -581,9 +575,9 @@ pub const BundleV2 = struct {
             // It makes sense to separate these for JS because the target affects DCE
             if (this.transpiler.options.server_components and !loader.isJavaScriptLike()) {
                 const a, const b = switch (target) {
-                    else => .{ &this.graph.client_path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
-                    .browser => .{ &this.graph.path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
-                    .bake_server_components_ssr => .{ &this.graph.path_to_source_index_map, &this.graph.client_path_to_source_index_map },
+                    else => .{ this.pathToSourceIndexMap(.browser), this.pathToSourceIndexMap(.bake_server_components_ssr) },
+                    .browser => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.bake_server_components_ssr) },
+                    .bake_server_components_ssr => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.browser) },
                 };
                 a.put(this.graph.allocator, entry.key_ptr.*, entry.value_ptr.*) catch bun.outOfMemory();
                 if (this.framework.?.server_components.?.separate_ssr_graph)
@@ -882,7 +876,7 @@ pub const BundleV2 = struct {
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
             try this.graph.ast.append(bun.default_allocator, JSAst.empty);
-            try this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
+            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -912,7 +906,6 @@ pub const BundleV2 = struct {
 
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, num_entry_points);
             try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, num_entry_points);
-            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @intCast(num_entry_points));
 
             switch (variant) {
                 .normal => {
@@ -3028,6 +3021,16 @@ pub const BundleV2 = struct {
                 if (resolve_task.loader) |*l| {
                     l.* = l.disableHTML();
                 }
+            }
+
+            // Epic 2.1: Implement HTML Import as a Client Entry Point Trigger
+            // When server-side code imports an HTML file, create a client-side entry point
+            if (ast.target.isServerSide() and resolve_task.loader == .html) {
+                _ = this.enqueueEntryItem(null, // hash
+                    resolve_result, // Use the same resolution result
+                    true, // is_entry_point
+                    .browser // Explicitly set the target for the new graph entry
+                ) catch bun.outOfMemory();
             }
 
             resolve_entry.value_ptr.* = resolve_task;

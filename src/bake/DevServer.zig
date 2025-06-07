@@ -358,6 +358,7 @@ pub const RouteBundle = struct {
                 }
                 if (html.cached_response) |cached_response| {
                     cached_response.deref();
+                    html.cached_response = null;
                 }
                 html.html_bundle.deref();
             },
@@ -685,7 +686,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     return dev;
 }
-
 pub fn deinit(dev: *DevServer) void {
     dev_server_deinit_count_for_testing +|= 1;
 
@@ -1447,7 +1447,6 @@ fn deferRequest(
     resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
     requests_array.prepend(deferred);
 }
-
 fn checkRouteFailures(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
@@ -2244,7 +2243,6 @@ pub const HotUpdateContext = struct {
         return @ptrCast(&subslice[i.get()]);
     }
 };
-
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
 pub fn finalizeBundle(
@@ -3043,7 +3041,6 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
         },
     }
 }
-
 fn appendOpaqueEntryPoint(
     dev: *DevServer,
     file_names: [][]const u8,
@@ -4177,7 +4174,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
         }
-
         fn processEdgeAttachment(
             g: *@This(),
             ctx: *HotUpdateContext,
@@ -4858,12 +4854,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
-                &bv2.graph.path_to_source_index_map,
-                &bv2.graph.client_path_to_source_index_map,
-                &bv2.graph.ssr_path_to_source_index_map,
-            }) |map| {
-                _ = map.remove(hash);
+            // Clear from all target build graphs
+            var graph_iter = bv2.graph.build_graphs.iterator();
+            while (graph_iter.next()) |entry| {
+                _ = entry.value.remove(hash);
             }
         }
 
@@ -4903,7 +4897,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 try entry_points.appendCss(alloc, path);
                             }
 
-                            var it = g.first_dep.items[index].unwrap();
+                            var it = g.first_dep.items[index.get()].unwrap();
                             while (it) |edge_index| {
                                 const entry = g.edges.items[edge_index.get()];
                                 const dep = entry.dependency;
@@ -4918,7 +4912,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             }
                         },
                         .asset => {
-                            var it = g.first_dep.items[index].unwrap();
+                            var it = g.first_dep.items[index.get()].unwrap();
                             while (it) |edge_index| {
                                 const entry = g.edges.items[edge_index.get()];
                                 const dep = entry.dependency;
@@ -4968,7 +4962,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g.current_chunk_parts.clearRetainingCapacity();
             if (side == .client) g.current_css_files.clearRetainingCapacity();
         }
-
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
@@ -4981,7 +4974,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 kind: ChunkKind,
             },
         };
-
         pub fn takeJSBundle(
             g: *@This(),
             options: *const TakeJSBundleOptions,
@@ -5618,7 +5610,6 @@ const ChunkKind = enum(u1) {
     initial_response,
     hmr_chunk,
 };
-
 /// Errors sent to the HMR client in the browser are serialized. The same format
 /// is used for thrown JavaScript exceptions as well as bundler errors.
 /// Serialized failures contain a handle on what file or route they came from,
@@ -5943,6 +5934,7 @@ fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     defer payload.deinit();
     payload.appendAssumeCapacity(MessageId.memory_visualizer.char());
     writeMemoryVisualizerMessage(dev, &payload) catch return; // drop packet
+
     dev.publish(.memory_visualizer, payload.items, .binary);
 }
 
@@ -6254,7 +6246,6 @@ const HmrTopic = enum(u8) {
         .layout = .@"packed",
     } });
 };
-
 const HmrSocket = struct {
     dev: *DevServer,
     underlying: ?AnyWebSocket = null,
@@ -7027,7 +7018,6 @@ const WatcherAtomics = struct {
         }
     }
 };
-
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
     assert(dev.magic == .valid);
@@ -7503,13 +7493,11 @@ pub const Assets = struct {
         return cost;
     }
 };
-
 /// Storage for source maps on `/_bun/client/{id}.js.map`
 ///
 /// All source maps are referenced counted, so that when a websocket disconnects
 /// or a bundle is replaced, the unreachable source map URLs are revoked. Source
 /// maps that aren't reachable from IncrementalGraph can still be reached by
-/// a browser tab if it has a callback to a previously loaded chunk; so DevServer
 /// should be aware of it.
 pub const SourceMapStore = struct {
     /// See `SourceId` for what the content of u64 is.
@@ -8025,7 +8013,6 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     dev.next_bundle.route_queue.clearRetainingCapacity();
     // TODO: allow recovery from this state
 }
-
 /// Fetched when a client-side error happens. This performs two actions
 /// - Logs the remapped stack trace to the console.
 /// - Replies with the remapped stack trace.

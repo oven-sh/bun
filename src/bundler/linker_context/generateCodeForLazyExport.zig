@@ -266,6 +266,43 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
         @panic("Internal error: expected top-level lazy export statement");
     }
 
+    // Epic 3.1: Implement Custom Codegen for Server-Side HTML
+    // When server code imports HTML, generate a manifest of client assets
+    const all_loaders = this.parse_graph.input_files.items(.loader);
+    const loader = all_loaders[source_index];
+
+    if (loader == .html and exports_kind == .cjs) {
+        // Generate asset manifest for server-side HTML imports
+        var manifest = E.Object{};
+
+        // TODO: This is a placeholder structure. In a complete implementation,
+        // we would need access to the client build chunks to populate this properly.
+        // For now, create a basic manifest structure:
+        // {
+        //   index: "path/to/html",
+        //   files: []
+        // }
+
+        // Add the index property with the HTML file path
+        const html_path = all_sources[source_index].path.pretty;
+        try manifest.put(this.allocator, "index", Expr.init(
+            E.String,
+            E.String.init(html_path),
+            stmt.loc,
+        ));
+
+        // Add an empty files array for now
+        // In the final implementation, this would be populated with client chunks
+        try manifest.put(this.allocator, "files", Expr.init(
+            E.Array,
+            E.Array{},
+            stmt.loc,
+        ));
+
+        // Replace the lazy export with the manifest object
+        part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, manifest, stmt.loc).data;
+    }
+
     const expr = Expr{
         .data = stmt.data.s_lazy_export.*,
         .loc = stmt.loc,

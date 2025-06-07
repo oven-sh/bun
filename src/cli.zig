@@ -39,6 +39,7 @@ const OOM = bun.OOM;
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+export var Bun__Node__ProcessNoWarnings = false;
 
 pub var Bun__Node__ProcessTitle: ?string = null;
 

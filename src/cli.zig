@@ -237,6 +237,7 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\", or \"bun\" (default)") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -710,6 +711,14 @@ pub const Arguments = struct {
                 // used for disabling process.dlopen and
                 // for disabling export condition "node-addons"
                 opts.allow_addons = false;
+            }
+
+            if (args.option("--unhandled-rejections")) |unhandled_rejections| {
+                const resolved = Api.UnhandledRejections.map.get(unhandled_rejections) orelse {
+                    Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\", or \"bun\"\n", .{unhandled_rejections});
+                    Global.exit(1);
+                };
+                opts.unhandled_rejections = resolved;
             }
 
             if (args.option("--port")) |port_str| {

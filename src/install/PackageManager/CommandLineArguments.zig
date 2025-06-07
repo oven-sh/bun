@@ -39,7 +39,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
     clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
     clap.parseParam("-g, --global                          Install globally") catch unreachable,
-    clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
+    clap.parseParam("-C, --cwd <STR>                       Set a specific cwd") catch unreachable,
     clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
     clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
     clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,

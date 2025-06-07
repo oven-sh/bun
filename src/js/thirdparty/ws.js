@@ -3,6 +3,13 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
+const ReadyState = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+};
+
 const EventEmitter = require("node:events");
 const http = require("node:http");
 const onceObject = { once: true };
@@ -51,17 +58,16 @@ let WebSocket;
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
  */
 class BunWebSocket extends EventEmitter {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
+  static [Symbol.toStringTag] = "WebSocket";
+  static CONNECTING = ReadyState.CONNECTING;
+  static OPEN = ReadyState.OPEN;
+  static CLOSING = ReadyState.CLOSING;
+  static CLOSED = ReadyState.CLOSED;
 
   #ws;
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
-  static [Symbol.toStringTag] = "WebSocket";
-
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -423,8 +429,8 @@ class BunWebSocket extends EventEmitter {
 
   pause() {
     switch (this.readyState) {
-      case WebSocket.CONNECTING:
-      case WebSocket.CLOSED:
+      case ReadyState.CONNECTING:
+      case ReadyState.CLOSED:
         return;
     }
 
@@ -436,8 +442,8 @@ class BunWebSocket extends EventEmitter {
 
   resume() {
     switch (this.readyState) {
-      case WebSocket.CONNECTING:
-      case WebSocket.CLOSED:
+      case ReadyState.CONNECTING:
+      case ReadyState.CLOSED:
         return;
     }
 
@@ -582,7 +588,8 @@ const wsTokenChars = [
 ];
 
 /**
- * Parses the `Sec-WebSocket-Protocol` header into a set of subprotocol names.
+ * Parses the `Sec-WebSocket-Protocol` header into a set of subprotocols
+ * names.
  *
  * @param {String} header The field value of the header
  * @return {Set} The subprotocol names
@@ -646,7 +653,7 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers) {
+function abortHandshake(response, code, message, headers = {}) {
   message = message || http.STATUS_CODES[code];
   headers = {
     Connection: "close",
@@ -693,7 +700,7 @@ class BunWebSocketMocked extends EventEmitter {
   constructor(url, protocol, extensions, binaryType) {
     super();
     this.#ws = null;
-    this.#state = 0;
+    this.#state = ReadyState.CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
     binaryType = binaryType || "arraybuffer";
@@ -761,14 +768,14 @@ class BunWebSocketMocked extends EventEmitter {
 
   #open(ws) {
     this.#ws = ws;
-    this.#state = 1;
+    this.#state = ReadyState.OPEN;
     this.emit("open", this);
     // first drain event
     this.#drain(ws);
   }
 
   #close(ws, code, reason) {
-    this.#state = 3;
+    this.#state = ReadyState.CLOSED;
     this.#ws = null;
 
     this.emit("close", code, reason);
@@ -792,7 +799,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === 0) {
+    if (this.#state === ReadyState.CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -817,7 +824,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#state === 0) {
+    if (this.#state === ReadyState.CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -847,7 +854,7 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === 1) {
+    if (this.#state === ReadyState.OPEN) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
       // send returns:
@@ -864,7 +871,7 @@ class BunWebSocketMocked extends EventEmitter {
       }
 
       typeof cb === "function" && process.nextTick(cb);
-    } else if (this.#state === 0) {
+    } else if (this.#state === ReadyState.CONNECTING) {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
@@ -872,8 +879,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   close(code, reason) {
-    if (this.#state === 1) {
-      this.#state = 2;
+    if (this.#state === ReadyState.OPEN) {
+      this.#state = ReadyState.CLOSING;
       this.#ws.close(code, reason);
     }
   }
@@ -888,8 +895,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (!this) return;
 
     let state = this.#state;
-    if (state === 3) return;
-    if (state === 0) {
+    if (state === ReadyState.CLOSED) return;
+    if (state === ReadyState.CONNECTING) {
       const msg = "WebSocket was closed before the connection was established";
       abortHandshake(this, this._req, msg);
       return;
@@ -897,7 +904,7 @@ class BunWebSocketMocked extends EventEmitter {
 
     let ws = this.#ws;
     if (ws) {
-      this.#state = WebSocket.CLOSING;
+      this.#state = ReadyState.CLOSING;
       ws.terminate();
     }
   }

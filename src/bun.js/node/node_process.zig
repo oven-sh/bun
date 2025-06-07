@@ -255,7 +255,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
 // TODO(@190n) this may need to be noreturn
 pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
-    vm.exit_handler.exit_code = code;
+    vm.exit_handler.exit_code = code; // TODO(@alii): https://github.com/oven-sh/bun/pull/20213
     if (vm.worker) |worker| {
         // TODO(@190n) we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner

@@ -275,27 +275,36 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
         // Generate asset manifest for server-side HTML imports
         var manifest = E.Object{};
 
-        // TODO: This is a placeholder structure. In a complete implementation,
-        // we would need access to the client build chunks to populate this properly.
-        // For now, create a basic manifest structure:
-        // {
-        //   index: "path/to/html",
-        //   files: []
-        // }
+        // Find the HTML chunk in the client build
+        // The HTML file should have been enqueued as a browser entry point
+        // We need to find its chunk to get the unique_key
 
-        // Add the index property with the HTML file path
-        const html_path = all_sources[source_index].path.pretty;
+        // TODO: This requires access to the chunks array. For now, create a placeholder
+        // In the actual implementation, we would:
+        // 1. Find the HTML chunk with matching source_index in the browser chunks
+        // 2. Get its unique_key
+        // 3. Use chunk.getJSChunkForHTML() and chunk.getCSSChunkForHTML() to find associated assets
+
+        // For now, generate a placeholder unique_key based on source index
+        // This will be replaced with actual chunk lookup logic
+        const placeholder_key = std.fmt.allocPrint(this.allocator, "HTML_PLACEHOLDER_{d}", .{source_index}) catch bun.outOfMemory();
+
         try manifest.put(this.allocator, "index", Expr.init(
             E.String,
-            E.String.init(html_path),
+            E.String.init(placeholder_key),
             stmt.loc,
         ));
 
-        // Add an empty files array for now
-        // In the final implementation, this would be populated with client chunks
+        // Files array will contain the associated JS/CSS chunks
+        // These would also use unique_key placeholders
+        const files_array = E.Array{};
+
+        // TODO: Populate with actual associated chunks using unique_keys
+        // For now, just create an empty array
+
         try manifest.put(this.allocator, "files", Expr.init(
             E.Array,
-            E.Array{},
+            files_array,
             stmt.loc,
         ));
 

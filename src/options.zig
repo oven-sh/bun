@@ -2566,7 +2566,7 @@ pub const PathTemplate = struct {
     };
 
     pub const chunk = PathTemplate{
-        .data = "./chunk-[hash].[ext]",
+        .data = "./chunk-[hash].[target].[ext]",
         .placeholder = .{
             .name = "chunk",
             .ext = "js",
@@ -2575,7 +2575,7 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
-        .data = "[dir]/[name].[ext]",
+        .data = "[dir]/[name].[target].[ext]",
         .placeholder = .{},
     };
 

@@ -2374,12 +2374,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_THIS
     CHECK_PREPARED
 
-    // Ensure the statement has been executed at least once
-    if (!castedThis->hasExecuted) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing columnTypes"_s));
-        return { };
-    }
-
     int count = sqlite3_column_count(castedThis->stmt);
     
     // We need to reset and step the statement to get fresh types,

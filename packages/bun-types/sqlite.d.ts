@@ -777,7 +777,6 @@ declare module "bun:sqlite" {
      * - `null` for unknown/unsupported types
      * 
      * **Requirements:**
-     * - Statement must be executed at least once before accessing this property
      * - Only available for read-only statements (SELECT queries)
      * - For non-read-only statements, throws an error
      * 
@@ -788,19 +787,16 @@ declare module "bun:sqlite" {
      * @example
      * ```ts
      * const stmt = db.prepare("SELECT id, name, age FROM users WHERE id = 1");
-     * const row = stmt.get(); // Execute the statement
      * 
      * console.log(stmt.columnTypes);
      * // => ["INTEGER", "TEXT", "INTEGER"]
      * 
      * // For expressions:
      * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
-     * exprStmt.get();
      * console.log(exprStmt.columnTypes);
      * // => ["INTEGER"]
      * ```
      * 
-     * @throws Error if statement hasn't been executed
      * @throws Error if statement is not read-only (INSERT, UPDATE, DELETE, etc.)
      * @since Bun v1.2.13
      */

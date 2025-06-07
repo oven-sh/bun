@@ -233,12 +233,10 @@ describe("SQLite Statement column types", () => {
     // Prepare statement but don't execute it
     const stmt = db.prepare("SELECT * FROM test");
 
-    // Accessing columnTypes before executing should throw
-    expect(() => {
-      stmt.columnTypes;
-    }).toThrow("Statement must be executed before accessing columnTypes");
+    // Accessing columnTypes before executing is fine (implicitly executes the statement)
+    expect(stmt.columnTypes).toBeArray();
     
-    // Accessing declaredTypes before executing should also throw
+    // Accessing declaredTypes before executing should throw
     expect(() => {
       stmt.declaredTypes;
     }).toThrow("Statement must be executed before accessing declaredTypes");

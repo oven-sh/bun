@@ -29,9 +29,9 @@ const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_handle_reply)(void*);
     // static void (*getaddrinfo_async_cancel)(mach_port_t);
     // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    const GetaddrinfoAsyncStart = fn (*std.c.mach_port_t, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
-    const GetaddrinfoAsyncHandleReply = fn (?*std.c.mach_port_t) callconv(.C) i32;
-    const GetaddrinfoAsyncCancel = fn (?*std.c.mach_port_t) callconv(.C) void;
+    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
+    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.C) i32;
+    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.C) void;
 
     var handle: ?*anyopaque = null;
     var loaded = false;
@@ -805,9 +805,9 @@ pub const GetAddrInfoRequest = struct {
 
         pub const LibInfo = struct {
             file_poll: ?*bun.Async.FilePoll = null,
-            machport: std.c.mach_port_t = 0,
+            machport: bun.mach_port = 0,
 
-            extern fn getaddrinfo_send_reply(std.c.mach_port_t, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(bun.mach_port, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *GetAddrInfoRequest) void {
                 if (comptime !Environment.isMac)
                     unreachable;
@@ -1232,9 +1232,9 @@ pub const InternalDNS = struct {
 
         pub const MacAsyncDNS = struct {
             file_poll: ?*bun.Async.FilePoll = null,
-            machport: std.c.mach_port_t = 0,
+            machport: bun.mach_port = 0,
 
-            extern fn getaddrinfo_send_reply(std.c.mach_port_t, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(bun.mach_port, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *Request) void {
                 if (!getaddrinfo_send_reply(this.libinfo.machport, LibInfo.getaddrinfo_async_handle_reply().?)) {
                     libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
@@ -1603,7 +1603,7 @@ pub const InternalDNS = struct {
     pub fn lookupLibinfo(req: *Request, loop: JSC.EventLoopHandle) bool {
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
 
-        var machport: std.c.mach_port_t = 0;
+        var machport: bun.mach_port = 0;
         var service_buf: [bun.fmt.fastDigitCount(std.math.maxInt(u16)) + 2]u8 = undefined;
         const service: ?[*:0]const u8 = if (req.key.port > 0)
             (std.fmt.bufPrintZ(&service_buf, "{d}", .{req.key.port}) catch unreachable).ptr
@@ -1656,7 +1656,7 @@ pub const InternalDNS = struct {
             else
                 null;
             const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return;
-            var machport: std.c.mach_port_t = 0;
+            var machport: bun.mach_port = 0;
             var hints = getHints();
             hints.flags.ADDRCONFIG = false;
 

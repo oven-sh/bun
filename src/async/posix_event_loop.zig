@@ -1132,7 +1132,7 @@ pub const LinuxWaker = struct {
 
 pub const KEventWaker = struct {
     kq: std.posix.fd_t,
-    machport: std.c.mach_port_t = undefined,
+    machport: bun.mach_port = undefined,
     machport_buf: []u8 = &.{},
     has_pending_wake: bool = false,
 
@@ -1173,15 +1173,15 @@ pub const KEventWaker = struct {
         );
     }
 
-    extern fn io_darwin_close_machport(std.c.mach_port_t) void;
+    extern fn io_darwin_close_machport(bun.mach_port) void;
 
     extern fn io_darwin_create_machport(
         std.posix.fd_t,
         *anyopaque,
         usize,
-    ) std.c.mach_port_t;
+    ) bun.mach_port;
 
-    extern fn io_darwin_schedule_wakeup(std.c.mach_port_t) bool;
+    extern fn io_darwin_schedule_wakeup(bun.mach_port) bool;
 
     pub fn init() !Waker {
         return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());

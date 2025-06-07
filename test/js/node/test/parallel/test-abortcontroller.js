@@ -208,7 +208,11 @@ test('AbortSignal.timeout() does not prevent the signal from being collected', a
   }
 
   await sleep(10);
-  globalThis.gc();
+  if(typeof Bun !== "undefined") {
+    Bun.gc(true);
+  }else{
+    globalThis.gc();
+  }
   strictEqual(ref.deref(), undefined);
 });
 

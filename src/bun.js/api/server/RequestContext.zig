@@ -1698,6 +1698,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.renderWithBlobFromBodyValue();
                     return;
                 },
+                .HTMLBundle => |route| {
+                    if (this.isAbortedOrEnded()) {
+                        return;
+                    }
+                    if (this.resp) |resp| {
+                        value.* = .{ .Used = {} };
+                        this.setAbortHandler();
+                        resp.timeout(this.server.?.config.idleTimeout);
+                        route.data.server = this.server.?;
+                        if (this.method == .HEAD) {
+                            route.data.onHEADRequest(this.req.?, resp);
+                        } else {
+                            route.data.onRequest(this.req.?, resp);
+                        }
+                    }
+                    return;
+                },
                 .Locked => |*lock| {
                     if (this.isAbortedOrEnded()) {
                         return;
@@ -2537,3 +2554,4 @@ const AnyRequestContext = JSC.API.AnyRequestContext;
 const VirtualMachine = JSC.VirtualMachine;
 const writeStatus = @import("../server.zig").writeStatus;
 const Fallback = @import("../../../runtime.zig").Fallback;
+const HTMLBundle = JSC.API.HTMLBundle;

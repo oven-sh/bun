@@ -115,7 +115,7 @@ pub const AnyRoute = union(enum) {
         if (argument.as(HTMLBundle)) |html_bundle| {
             const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
             if (!entry.found_existing) {
-                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
+                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle, true);
                 return .{ .html = entry.value_ptr.* };
             } else {
                 return .{ .html = entry.value_ptr.dupeRef() };

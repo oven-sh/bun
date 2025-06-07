@@ -19,16 +19,35 @@ t.style.color = "black";
 
 # TODO CHECK:
 
-parallel/test-tls-env-bad-extra-ca.js
-parallel/test-tls-connect-allow-half-open-option.js
+# max version env vars
+
 parallel/test-tls-client-reject-12.js
 parallel/test-tls-ticket-12.js
 parallel/test-tls-client-resume-12.js
-parallel/test-tls-server-parent-constructor-options.js
-parallel/test-tls-get-ca-certificates-system.js
-parallel/test-tls-get-ca-certificates-default.js
+
+# trivial
+
 parallel/test-tls-external-accessor.js
+- we don't support `_external`, but we pass the spirit of the test. trivial 'fix'
+
+# probably easy
+
 parallel/test-tls-cert-chains-in-ca.js
+- checkServerIdentity callback is not implemented
+
+# categorize
+
+parallel/test-tls-env-bad-extra-ca.js
+- emit a warning when the value in NODE_EXTRA_CA_CERTS is ignored because it fails to load
+- this is a little bit hard to do because currently we handle that in us_internal_init_root_certs with getenv,
+  but we can't emit a warning from there. we would have to have it call out to bun code to emit the warning
+parallel/test-tls-connect-allow-half-open-option.js
+- with allowHalfOpen, if the server ends its socket, it should still be able to receive a message
+parallel/test-tls-server-parent-constructor-options.js
+- with pauseOnConnect, the client is never connecting
+parallel/test-tls-get-ca-certificates-system.js,
+parallel/test-tls-get-ca-certificates-default.js
+- tls.getCACertificates is not implemented
 parallel/test-tls-get-ca-certificates-error.js
 parallel/test-tls-get-ca-certificates-extra-empty.js
 parallel/test-tls-basic-validations.js

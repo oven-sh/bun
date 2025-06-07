@@ -10,7 +10,7 @@ The implementation follows a single-pass build strategy where:
 
 1. Everything is built in parallel
 2. `unique_key` placeholders are used during code generation
-3. At the final stage, all placeholders are resolved to actual paths
+3. At the final stage, all placeholders are resolved to actual paths and manifests
 
 ## Implemented Epics
 
@@ -56,24 +56,25 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
 
 **Changes Made**:
 
-1. **bundle_v2.zig**: Added `processHTMLImportManifests()` function
-   - Creates virtual manifest files for each HTML import
-   - Generates manifest with structure:
-     ```js
-     {
-       index: "file-name.html",
-       files: [
-         { path: "file-name.html", loader: "html", hash: "..." },
-         { path: "chunk-abc.js", loader: "js", hash: "..." },
-         { path: "chunk-def.css", loader: "css", hash: "..." }
-       ]
-     }
-     ```
-   - Uses unique_key placeholders:
-     - `{unique_key}A{html_idx:0>8}` for HTML asset files
-     - `{unique_key}S{html_idx:0>8}` for entry point chunks
-   - Updates server imports to point to the manifest files
-2. Called after `processServerComponentManifestFiles()` in the build flow
+1. **generateCodeForLazyExport.zig**:
+
+   - Detects HTML imports from server-side code
+   - Replaces the lazy export with a placeholder: `{unique_key}H{html_idx:0>8}`
+   - This placeholder is resolved to the full manifest during output generation
+
+2. **Chunk.zig**: Added `html_import` to `OutputPiece.Query.Kind` enum
+
+   - Expanded Kind enum from 2 bits to 3 bits to accommodate the new type
+   - Added handling in `codeWithSourceMapShifts` to generate the manifest JSON
+
+3. **LinkerContext.zig**: Added 'H' prefix handling in `breakOutputIntoPieces`
+
+4. The manifest is generated with the complete structure including:
+   - `index`: Path to the HTML file
+   - `files`: Array of all associated assets with:
+     - `path`: Final output path
+     - `loader`: File type (html, js, css)
+     - `hash`: Content hash for cache busting
 
 ### Epic 4: Target-Aware Output Filenames ✅
 
@@ -100,7 +101,7 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
    - Similar to `addServerComponentBoundariesAsExtraEntryPoints()`
    - Adds HTML files from `html_imports` tracking as entry points
    - Called after `processFilesToCopy` and before `cloneAST`
-2. This ensures HTML files get chunks assigned and can be referenced via the 'S' prefix
+2. This ensures HTML files get chunks assigned and can be referenced
 
 ## How It Works
 
@@ -109,20 +110,28 @@ When a server file imports an HTML file:
 1. **Detection**: During resolution, the bundler detects `loader == .html` from server-side code
 2. **Tracking**: The import is tracked in `graph.html_imports` with server and HTML source indices
 3. **Client Entry**: A new browser-target entry point is created for the HTML file
-4. **Manifest Generation**: A virtual manifest file is created with asset metadata
-5. **Import Rewriting**: The server's HTML import is rewritten to import the manifest file
-6. **Entry Point Addition**: HTML files are added as entry points to ensure chunk assignment
-7. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
+4. **Lazy Export**: The server's HTML import is replaced with a `S.LazyExport` containing a placeholder
+5. **Entry Point Addition**: HTML files are added as entry points to ensure chunk assignment
+6. **Manifest Generation**: During output generation, the placeholder is replaced with a complete manifest:
+   ```js
+   {
+     index: "file-name.html",
+     files: [
+       { path: "file-name.html", loader: "html", hash: "abc123" },
+       { path: "chunk-def456.js", loader: "js", hash: "def456" },
+       { path: "chunk-ghi789.css", loader: "css", hash: "ghi789" }
+     ]
+   }
+   ```
 
 ## Implementation Pattern
 
-The implementation follows the same pattern as Server Components:
+The implementation follows a late-binding pattern:
 
 - HTML imports are tracked during parsing
-- Virtual manifest files are generated after parsing
-- Imports are rewritten to point to manifests
+- Placeholders are generated during code generation
 - Entry points are added before linking
-- Unique key placeholders are resolved at the final stage
+- Manifests are generated during final output when all paths and hashes are known
 
 ## Example Usage
 
@@ -143,16 +152,15 @@ import htmlManifest from "./index.html";
 // }
 ```
 
-The HTML file is processed as a browser entry point, bundling all its dependencies into client-side chunks while the server receives a manifest with metadata about all generated assets.
+The HTML file is processed as a browser entry point, bundling all its dependencies into client-side chunks while the server receives a manifest with complete metadata about all generated assets.
 
 ## Technical Details
 
 - **Tracking**: `graph.html_imports` stores server->HTML import relationships
-- **Virtual Files**: Manifest files are created as virtual sources in the graph
-- **Import Rewriting**: Server imports are updated to point to manifest files
-- **Entry Points**: HTML files are added as entry points via `addHTMLImportsAsEntryPoints()`
-- **Placeholders**: Uses existing unique_key system with 'A' (asset) and 'S' (entry point chunk) prefixes
-- **Resolution**: The existing `breakOutputIntoPieces` handles placeholder resolution
+- **Lazy Export**: Server imports become `S.LazyExport` statements with placeholders
+- **Output Piece**: New `html_import` kind added to handle manifest generation
+- **Placeholder Format**: `{unique_key}H{html_idx:0>8}` identifies HTML imports
+- **Manifest Generation**: Happens in `Chunk.codeWithSourceMapShifts` with access to final paths and hashes
 - **Target Isolation**: Each target maintains its own module graph via `build_graphs`
 
 ## Benefits
@@ -161,8 +169,8 @@ This implementation enables developers to:
 
 - Build full-stack applications with a single command
 - Automatically handle client-side entry points when importing HTML from server code
-- Get detailed asset manifests for server-side rendering
-- Access hash information for cache busting
+- Get detailed asset manifests with paths and hashes for server-side rendering
+- Implement cache busting strategies with content hashes
 - Maintain separate build graphs for different targets while sharing common resources
 - Avoid filename collisions through target-specific naming
 

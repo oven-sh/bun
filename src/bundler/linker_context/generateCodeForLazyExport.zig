@@ -266,6 +266,30 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
         @panic("Internal error: expected top-level lazy export statement");
     }
 
+    // Check if this is an HTML import from server-side code
+    const html_imports = &this.graph.html_imports;
+    const server_indices = html_imports.server_source_indices.slice();
+    const html_indices = html_imports.html_source_indices.slice();
+
+    // Find if this source_index is a server file that imports HTML
+    for (server_indices, html_indices) |server_idx, html_idx| {
+        if (server_idx == source_index and exports_kind == .cjs) {
+            // This is a server file importing HTML - generate the manifest
+            // Generate a placeholder that will be replaced with the actual manifest later
+            // We use the HTML import index to identify which manifest to generate
+            const placeholder = try std.fmt.allocPrint(
+                this.allocator,
+                "{}H{d:0>8}",
+                .{ this.unique_key_prefix, html_idx },
+            );
+
+            // Replace the lazy export with a string placeholder
+            // This will be replaced with the actual manifest during output generation
+            part.stmts[0].data.s_lazy_export.* = Expr.init(E.String, E.String.init(placeholder), stmt.loc).data;
+            break;
+        }
+    }
+
     const expr = Expr{
         .data = stmt.data.s_lazy_export.*,
         .loc = stmt.loc,

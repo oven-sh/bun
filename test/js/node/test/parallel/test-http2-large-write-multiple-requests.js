@@ -26,8 +26,8 @@ server.on('stream', (stream, headers) => {
   console.log('server sends content', ++streamCount);
 });
 
-server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`http://localhost:${server.address().port}/`);
+server.listen(0, '127.0.0.1', common.mustCall(() => {
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}/`);
 
   let endCount = 0;
   let finished = 0;

@@ -596,6 +596,19 @@ declare module "bun" {
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
     getex(key: string | ArrayBufferView | Blob): Promise<string | null>;
+
+    /**
+     *  Ping the server
+     *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(): Promise<"PONG">;
+
+    /**
+     *  Ping the server with a message
+     *  @param message The message to send to the server
+     *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(message: string | ArrayBufferView | Blob): Promise<string>;
   }
 
   /**

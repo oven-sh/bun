@@ -25,14 +25,11 @@ const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
-const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
-  "socket.zig",
-  "createNodeTLSBinding",
-);
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
-import type { ServerOpts } from "node:net";
+import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
+import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
@@ -52,6 +49,11 @@ const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
 const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+
+const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -88,7 +90,6 @@ function isIP(s): 0 | 4 | 6 {
 }
 
 const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
@@ -118,11 +119,7 @@ function endNT(socket, callback, err) {
   callback(err);
 }
 function emitCloseNT(self, hasError) {
-  if (hasError) {
-    self.emit("close", hasError);
-  } else {
-    self.emit("close");
-  }
+  self.emit("close", hasError);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -233,6 +230,7 @@ const SocketHandlers: SocketHandler = {
       self[kwriteCallback] = null;
       callback(error);
     }
+
     self.emit("error", error);
   },
   open(socket) {
@@ -314,7 +312,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketEmitEndNT = (self, _err?) => {
+function SocketEmitEndNT(self, _err?) {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -326,9 +324,9 @@ const SocketEmitEndNT = (self, _err?) => {
   // if (err) {
   //   self.destroy(err);
   // }
-};
+}
 
-const ServerHandlers: SocketHandler = {
+const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -339,10 +337,10 @@ const ServerHandlers: SocketHandler = {
     }
   },
   close(socket, err) {
+    $debug("Bun.Server close");
     const data = this.data;
     if (!data) return;
 
-    data.server[bunSocketServerConnections]--;
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
@@ -353,20 +351,18 @@ const ServerHandlers: SocketHandler = {
         socket[owner_symbol] = null;
       }
     }
-
-    data.server._emitCloseIfDrained();
   },
   end(socket) {
     SocketHandlers.end(socket);
   },
   open(socket) {
-    const self = this.data;
+    $debug("Bun.Server open");
+    const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({});
+    const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
-    _socket.server = self;
     _socket._requestCert = requestCert;
     _socket._rejectUnauthorized = rejectUnauthorized;
 
@@ -388,7 +384,7 @@ const ServerHandlers: SocketHandler = {
         return;
       }
     }
-    if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
       const data = {
         localAddress: _socket.localAddress,
         localPort: _socket.localPort || this.localPort,
@@ -399,7 +395,6 @@ const ServerHandlers: SocketHandler = {
       };
 
       socket.end();
-
       self.emit("drop", data);
       return;
     }
@@ -407,7 +402,12 @@ const ServerHandlers: SocketHandler = {
     const bunTLS = _socket[bunTlsSymbol];
     const isTLS = typeof bunTLS === "function";
 
-    self[bunSocketServerConnections]++;
+    self._connections++;
+    _socket.server = self;
+
+    if (pauseOnConnect) {
+      _socket.pause();
+    }
 
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
@@ -422,7 +422,7 @@ const ServerHandlers: SocketHandler = {
     }
   },
   handshake(socket, success, verifyError) {
-    const { data: self } = socket;
+    const self = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
@@ -436,7 +436,7 @@ const ServerHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
-    const server = self.server;
+    const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -463,7 +463,9 @@ const ServerHandlers: SocketHandler = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (!server.pauseOnConnect) {
+    if (server.pauseOnConnect) {
+      self.pause();
+    } else {
       self.resume();
     }
   },
@@ -507,9 +509,8 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-type SocketHandleData = NonNullable<import("node:net").Socket["_handle"]>["data"];
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: SocketHandler<SocketHandleData> = {
+const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -517,6 +518,9 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     $debug("self[kupgraded]", String(self[kupgraded]));
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
+    if (self.pauseOnConnect) {
+      self.pause();
+    }
     if (self[kupgraded]) {
       self.connecting = false;
       const options = self[bunTLSConnectOptions];
@@ -724,6 +728,8 @@ function Socket(options?) {
   this[kclosed] = false;
   this[kended] = false;
   this.connecting = false;
+  this._host = undefined;
+  this._port = undefined;
   this[bunTLSConnectOptions] = null;
   this.timeout = 0;
   this[kwriteCallback] = undefined;
@@ -839,7 +845,9 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
         else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
       }
     } else if (data) {
-      bytes += data.byteLength;
+      // Writes are either a string or a Buffer.
+      if (typeof data !== "string") bytes += data.length;
+      else bytes += Buffer.byteLength(data, this._pendingEncoding || "utf8");
     }
     return bytes;
   },
@@ -857,7 +865,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay]);
   }
 
   if (!this[kupgraded]) {
@@ -899,12 +907,14 @@ Socket.prototype.connect = function connect(...args) {
       }).catch(error => {
         if (!this.destroyed) {
           this.emit("error", error);
-          this.emit("close");
+          this.emit("close", true);
         }
       });
     }
     this.pauseOnConnect = pauseOnConnect;
-    if (!pauseOnConnect) {
+    if (pauseOnConnect) {
+      this.pause();
+    } else {
       process.nextTick(() => {
         this.resume();
       });
@@ -1151,7 +1161,15 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this);
+    process.nextTick(emitCloseNT, this, false);
+  }
+
+  if (this.server) {
+    $debug("has server");
+    this.server._connections--;
+    if (this.server._emitCloseIfDrained) {
+      this.server._emitCloseIfDrained();
+    }
   }
 };
 
@@ -1546,6 +1564,7 @@ function lookupAndConnect(self, options) {
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
   self._host = host;
+  self._port = port;
   const lookup = options.lookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
@@ -2062,7 +2081,6 @@ function Server(options?, connectionListener?) {
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
   const {
-    maxConnections, //
     allowHalfOpen = false,
     keepAlive = false,
     keepAliveInitialDelay = 0,
@@ -2079,7 +2097,6 @@ function Server(options?, connectionListener?) {
   this._unref = false;
   this.listeningId = 1;
 
-  this[bunSocketServerConnections] = 0;
   this[bunSocketServerOptions] = undefined;
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = keepAlive;
@@ -2087,7 +2104,6 @@ function Server(options?, connectionListener?) {
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
-  this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
 
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
@@ -2150,7 +2166,7 @@ Server.prototype[Symbol.asyncDispose] = function () {
 };
 
 Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
-  if (this._handle || this[bunSocketServerConnections] > 0) {
+  if (this._handle || this._connections > 0) {
     return;
   }
   process.nextTick(() => {
@@ -2179,12 +2195,13 @@ Server.prototype.getConnections = function getConnections(callback) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this[bunSocketServerConnections] : 0);
+    callback(null, this._handle ? this._connections : 0);
   }
   return this;
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  const argsLength = arguments.length;
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -2212,9 +2229,15 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = undefined;
     port = undefined;
   } else {
-    if (typeof hostname === "function") {
+    if (typeof hostname === "number") {
+      backlog = hostname;
+      hostname = undefined;
+    } else if (typeof hostname === "function") {
       onListen = hostname;
       hostname = undefined;
+    } else if (typeof hostname === "string" && typeof onListen === "number") {
+      backlog = onListen;
+      onListen = argsLength > 3 ? arguments[3] : undefined;
     }
 
     if (typeof port === "function") {
@@ -2231,6 +2254,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
+      backlog = options.backlog;
 
       if (typeof options.fd === "number" && options.fd >= 0) {
         fd = options.fd;
@@ -2360,6 +2384,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   } else if (fd != null) {
     this._handle = Bun.listen({
@@ -2371,6 +2396,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   } else {
     this._handle = Bun.listen({
@@ -2382,11 +2408,9 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   }
-
-  //make this instance available on handlers
-  this._handle.data = this;
 
   const addr = this.address();
   if (addr && typeof addr === "object") {
@@ -2424,7 +2448,7 @@ function emitErrorNextTick(self, error) {
 
 function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
-  self.emit("close");
+  self.emit("close", true);
 }
 
 function addServerAbortSignalOption(self, options) {

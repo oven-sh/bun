@@ -7,12 +7,10 @@ const Global = bun.Global;
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 
-
 const options = @import("../options.zig");
 
 const resolve_path = @import("../resolver/resolve_path.zig");
 const transpiler = bun.transpiler;
-
 
 const fs = @import("../fs.zig");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;

@@ -737,8 +737,6 @@ const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
-
-
 const InternalBlob = JSC.WebCore.Blob.Internal;
 const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;

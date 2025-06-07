@@ -2411,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
@@ -2664,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);

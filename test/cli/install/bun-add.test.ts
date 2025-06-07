@@ -112,7 +112,7 @@ it("should reject missing package", async () => {
   });
   const err = await new Response(stderr).text();
   expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
+  expect(err).toContain(`note: error occurred while resolving file:${add_path}`);
 
   const out = await new Response(stdout).text();
   expect(out).toEqual(expect.stringContaining("bun add v1."));

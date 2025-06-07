@@ -105,43 +105,44 @@ pub const PackageManagerCommand = struct {
         // use <bar> to emphasize 'bar'
 
         const intro_text =
+            \\
             \\<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\<command\>]<r>
-            \\  Run package manager utilities
+            \\
+            \\  Run package manager utilities.
         ;
         const outro_text =
-            \\<b>Examples:<r>
             \\
-            \\  <b><green>bun pm<r> <blue>pack<r>               create a tarball of the current workspace
-            \\  <d>├<r> <cyan>--dry-run<r>               do everything except for writing the tarball to disk
-            \\  <d>├<r> <cyan>--destination<r>           the directory the tarball will be saved in
-            \\  <d>├<r> <cyan>--filename<r>              the name of the tarball
-            \\  <d>├<r> <cyan>--ignore-scripts<r>        don't run pre/postpack and prepare scripts
-            \\  <d>└<r> <cyan>--gzip-level<r>            specify a custom compression level for gzip (0-9, default is 9)
-            \\  <b><green>bun pm<r> <blue>bin<r>                print the path to bin folder
-            \\  <d>└<r> <cyan>-g<r>                      print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                 list the dependency tree according to the current lockfile
-            \\  <d>└<r> <cyan>--all<r>                   list the entire dependency tree according to the current lockfile
-            \\  <b><green>bun pm<r> <blue>whoami<r>             print the current npm username
+            \\
+            \\<b>Commands:<r>
+            \\
+            \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
+            \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
+            \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
+            \\  <d>├<r> <cyan>--filename<r>                the name of the tarball
+            \\  <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts
+            \\  <d>└<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)
+            \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
+            \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
+            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry
-            \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
-            \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
-            \\  <b><green>bun pm<r> <blue>hash-print<r>         print the hash stored in the current lockfile
-            \\  <b><green>bun pm<r> <blue>audit<r>              check installed packages for vulnerabilities
-            \\  <b><green>bun pm<r> <blue>cache<r>              print the path to the cache folder
-            \\  <b><green>bun pm<r> <blue>cache rm<r>           clear the cache
-            \\  <b><green>bun pm<r> <blue>migrate<r>            migrate another package manager's lockfile without installing anything
-            \\  <b><green>bun pm<r> <blue>untrusted<r>          print current untrusted dependencies with scripts
-            \\  <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>    run scripts for untrusted dependencies and add to `trustedDependencies`
-            \\  <d>└<r>  <cyan>--all<r>                  trust all untrusted dependencies
-            \\  <b><green>bun pm<r> <blue>default-trusted<r>    print the default trusted dependencies list
+            \\  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile
+            \\  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile
+            \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
+            \\  <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder
+            \\  <b><green>bun pm<r> <blue>cache rm<r>             clear the cache
+            \\  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
+            \\  <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
+            \\  <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
+            \\  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
+            \\  <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>.
             \\
         ;
 
         Output.pretty(intro_text, .{});
-        Output.flush();
-        Output.pretty("\n\n", .{});
         Output.pretty(outro_text, .{});
         Output.flush();
     }

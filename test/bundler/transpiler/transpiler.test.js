@@ -3462,6 +3462,18 @@ describe("await can only be used inside an async function message", () => {
   });
 });
 
+describe("malformed function definition does not crash due to invalid scope initialization", () => {
+  it("fails with a parse error and exits cleanly", async () => {
+    const tests = ["function:", "function a() {function:}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow("Parse error");
+      }
+    }
+  });
+});
+
 it("does not crash with 9 comments and typescript type skipping", () => {
   const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
   const { stdout, stderr, exitCode } = Bun.spawnSync({

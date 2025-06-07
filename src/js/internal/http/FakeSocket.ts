@@ -110,11 +110,17 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    const socketData = this[kInternalSocketData];
-    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+    this.timeout = timeout;
+    if (!this.listeners("timeout").includes(this._onTimeout)) {
+      this.on("timeout", this._onTimeout);
+    }
 
-    const http_res = socketData[1];
-    http_res?.req?.setTimeout(timeout, callback);
+    const socketData = this[kInternalSocketData];
+    if (socketData) {
+      const http_res = socketData[1];
+      http_res?.req?.setTimeout(timeout, callback);
+    }
+
     return this;
   }
 

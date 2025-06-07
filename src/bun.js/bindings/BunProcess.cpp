@@ -1126,6 +1126,17 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, result);
 }
 
+extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue str)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto decodedReason = JSValue::decode(str);
+    if (decodedReason.isSymbol()) {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString())));
+    } else {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(decodedReason.toStringOrNull(globalObject)));
+    }
+}
+
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
 {
     auto& vm = globalObject->vm();
@@ -1144,14 +1155,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
-        auto decodedReason = JSValue::decode(reason);
-        if (decodedReason.isSymbol()) {
-            reasonStack = jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString());
-            if (scope.exception()) scope.clearException();
-        } else {
-            reasonStack = decodedReason.toStringOrNull(globalObject);
-            if (scope.exception()) scope.clearException();
-        }
+        reasonStack = JSValue::decode(Bun__noSideEffectsToString(globalObject, reason));
+        if (scope.exception()) scope.clearException();
     }
     if (!reasonStack) reasonStack = jsUndefined();
 

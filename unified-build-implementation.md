@@ -50,18 +50,30 @@ pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *Pat
    - Tracks the import in `graph.html_imports` for manifest generation
 3. **Graph.zig**: Added `html_imports` structure to track server->HTML imports
 
-### Epic 3: Server-Side Code Generation for HTML Imports ✅
+### Epic 3: HTML Import Manifest Generation ✅
 
 **Status**: Complete
 
 **Changes Made**:
 
-1. **generateCodeForLazyExport.zig**: When server code imports HTML (loader == .html and exports_kind == .cjs):
-   - Checks if the source is in the `html_imports` tracking
-   - When found, generates a manifest object with unique_key placeholders:
-     - HTML file path uses `{unique_key}A{html_idx:0>8}` format (asset placeholder)
-     - Client chunk path uses `{unique_key}S{html_idx:0>8}` format (resolved via entry_point_chunk_index)
-   - The manifest is exported as `module.exports` for CommonJS compatibility
+1. **bundle_v2.zig**: Added `processHTMLImportManifests()` function
+   - Creates virtual manifest files for each HTML import
+   - Generates manifest with structure:
+     ```js
+     {
+       index: "file-name.html",
+       files: [
+         { path: "file-name.html", loader: "html", hash: "..." },
+         { path: "chunk-abc.js", loader: "js", hash: "..." },
+         { path: "chunk-def.css", loader: "css", hash: "..." }
+       ]
+     }
+     ```
+   - Uses unique_key placeholders:
+     - `{unique_key}A{html_idx:0>8}` for HTML asset files
+     - `{unique_key}S{html_idx:0>8}` for entry point chunks
+   - Updates server imports to point to the manifest files
+2. Called after `processServerComponentManifestFiles()` in the build flow
 
 ### Epic 4: Target-Aware Output Filenames ✅
 
@@ -97,19 +109,19 @@ When a server file imports an HTML file:
 1. **Detection**: During resolution, the bundler detects `loader == .html` from server-side code
 2. **Tracking**: The import is tracked in `graph.html_imports` with server and HTML source indices
 3. **Client Entry**: A new browser-target entry point is created for the HTML file
-4. **Entry Point Addition**: HTML files are added as entry points to ensure chunk assignment
-5. **Manifest Generation**: During lazy export generation, the server import is replaced with:
-   - `html`: Path to the HTML asset file (using 'A' prefix)
-   - `entryChunk`: Path to the client-side JavaScript chunk (using 'S' prefix)
-6. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
+4. **Manifest Generation**: A virtual manifest file is created with asset metadata
+5. **Import Rewriting**: The server's HTML import is rewritten to import the manifest file
+6. **Entry Point Addition**: HTML files are added as entry points to ensure chunk assignment
+7. **Placeholder Resolution**: During final output generation, placeholders are resolved to actual paths
 
 ## Implementation Pattern
 
 The implementation follows the same pattern as Server Components:
 
 - HTML imports are tracked during parsing
+- Virtual manifest files are generated after parsing
+- Imports are rewritten to point to manifests
 - Entry points are added before linking
-- Manifest generation happens during code generation
 - Unique key placeholders are resolved at the final stage
 
 ## Example Usage
@@ -122,29 +134,26 @@ import htmlManifest from "./index.html";
 
 // htmlManifest will be:
 // {
-//   html: "./index.browser.html",
-//   entryChunk: "./chunk-abc123.browser.js"
+//   index: "./index.browser.html",
+//   files: [
+//     { path: "./index.browser.html", loader: "html", hash: "abc123" },
+//     { path: "./chunk-def456.browser.js", loader: "js", hash: "def456" },
+//     { path: "./chunk-ghi789.browser.css", loader: "css", hash: "ghi789" }
+//   ]
 // }
 ```
 
-The HTML file is processed as a browser entry point, bundling all its dependencies into a client-side chunk while the server receives metadata about the generated assets.
+The HTML file is processed as a browser entry point, bundling all its dependencies into client-side chunks while the server receives a manifest with metadata about all generated assets.
 
-## Next Steps
+## Technical Details
 
-The core implementation is complete. The following enhancements could be added:
-
-1. **CSS Chunk References**: When HTML files have associated CSS chunks, include them in the manifest.
-2. **Source Maps**: Ensure source maps work correctly for the generated client bundles.
-3. **Hot Module Replacement**: Support HMR for HTML imports in development mode.
-4. **Asset Optimization**: Apply optimizations to HTML files (minification, etc.).
-5. **Testing**: Add comprehensive test coverage for all edge cases.
-
-## Implementation Notes
-
-- The implementation uses Bun's existing `unique_key` placeholder system for late-stage path resolution
-- HTML files are treated as both assets (for copying) and entry points (for bundling)
-- The manifest format is designed to be extensible for future enhancements
-- The single-pass architecture with `unique_key` placeholders ensures efficient bundling
+- **Tracking**: `graph.html_imports` stores server->HTML import relationships
+- **Virtual Files**: Manifest files are created as virtual sources in the graph
+- **Import Rewriting**: Server imports are updated to point to manifest files
+- **Entry Points**: HTML files are added as entry points via `addHTMLImportsAsEntryPoints()`
+- **Placeholders**: Uses existing unique_key system with 'A' (asset) and 'S' (entry point chunk) prefixes
+- **Resolution**: The existing `breakOutputIntoPieces` handles placeholder resolution
+- **Target Isolation**: Each target maintains its own module graph via `build_graphs`
 
 ## Benefits
 
@@ -152,7 +161,8 @@ This implementation enables developers to:
 
 - Build full-stack applications with a single command
 - Automatically handle client-side entry points when importing HTML from server code
-- Get proper asset manifests for server-side rendering
+- Get detailed asset manifests for server-side rendering
+- Access hash information for cache busting
 - Maintain separate build graphs for different targets while sharing common resources
 - Avoid filename collisions through target-specific naming
 

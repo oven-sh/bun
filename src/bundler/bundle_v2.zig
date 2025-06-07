@@ -1118,6 +1118,132 @@ pub const BundleV2 = struct {
         this.graph.ast.set(Index.bake_client_data.get(), try client.toBundledAst(.browser));
     }
 
+    /// Process HTML imports from server-side code and generate manifest virtual files
+    pub fn processHTMLImportManifests(this: *BundleV2) OOM!void {
+        const html_imports = &this.graph.html_imports;
+
+        // If no HTML imports, nothing to do
+        if (html_imports.server_source_indices.len == 0) return;
+
+        const alloc = this.graph.allocator;
+
+        // For each HTML import, we need to create a virtual manifest file
+        // and update the import in the server code to point to it
+        for (html_imports.server_source_indices.slice(), html_imports.html_source_indices.slice()) |server_idx, html_idx| {
+            // Create a new source index for the manifest file
+            const manifest_source_index = this.graph.input_files.len;
+
+            // Create a virtual source for this HTML import manifest
+            var virtual_source = Logger.Source{
+                .path = Fs.Path.initForKitBuiltIn("bun", try std.fmt.allocPrint(alloc, "html-import-{d}", .{html_idx})),
+                .contents = "", // Virtual
+                .index = Index.init(manifest_source_index),
+            };
+
+            // Add the virtual source to input files
+            try this.graph.input_files.append(default_allocator, .{
+                .source = virtual_source,
+                .loader = .js,
+                .side_effects = .no_side_effects__pure_data,
+            });
+            try this.graph.ast.append(default_allocator, JSAst.empty);
+
+            // Create an AST builder for the manifest
+            var builder = try AstBuilder.init(alloc, &virtual_source, this.transpiler.options.hot_module_reloading);
+
+            // Generate the manifest structure
+            // {
+            //   index: "file-name.html",
+            //   files: [
+            //     { path: "file-name.html", loader: "html", hash: "..." },
+            //     { path: "chunk-abc.js", loader: "js", hash: "..." },
+            //     { path: "chunk-def.css", loader: "css", hash: "..." }
+            //   ]
+            // }
+
+            // Create string constants we'll reuse
+            const index_string = builder.newExpr(E.String{ .data = "index" });
+            const files_string = builder.newExpr(E.String{ .data = "files" });
+            const path_string = builder.newExpr(E.String{ .data = "path" });
+            const loader_string = builder.newExpr(E.String{ .data = "loader" });
+            const hash_string = builder.newExpr(E.String{ .data = "hash" });
+
+            // HTML file path placeholder
+            const html_placeholder = builder.newExpr(E.String{
+                .data = try std.fmt.allocPrint(alloc, "{}A{d:0>8}", .{
+                    bun.fmt.hexIntLower(this.unique_key),
+                    html_idx,
+                }),
+            });
+
+            // Create the HTML file entry
+            var files_array = std.ArrayList(Expr).init(alloc);
+
+            // Add HTML file itself
+            try files_array.append(builder.newExpr(E.Object{
+                .properties = try G.Property.List.fromSlice(alloc, &.{
+                    .{ .key = path_string, .value = html_placeholder },
+                    .{ .key = loader_string, .value = builder.newExpr(E.String{ .data = "html" }) },
+                    .{ .key = hash_string, .value = builder.newExpr(E.String{ .data = "TODO" }) }, // TODO: actual hash
+                }),
+            }));
+
+            // Add the main JS chunk
+            const js_chunk_placeholder = builder.newExpr(E.String{
+                .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                    bun.fmt.hexIntLower(this.unique_key),
+                    html_idx,
+                }),
+            });
+
+            try files_array.append(builder.newExpr(E.Object{
+                .properties = try G.Property.List.fromSlice(alloc, &.{
+                    .{ .key = path_string, .value = js_chunk_placeholder },
+                    .{ .key = loader_string, .value = builder.newExpr(E.String{ .data = "js" }) },
+                    .{ .key = hash_string, .value = builder.newExpr(E.String{ .data = "TODO" }) }, // TODO: actual hash
+                }),
+            }));
+
+            // TODO: Add CSS chunks when available
+
+            // Create the main manifest object
+            const manifest = builder.newExpr(E.Object{
+                .properties = try G.Property.List.fromSlice(alloc, &.{
+                    .{ .key = index_string, .value = html_placeholder },
+                    .{ .key = files_string, .value = builder.newExpr(E.Array{
+                        .items = try E.ExpressionList.fromList(files_array),
+                    }) },
+                }),
+            });
+
+            // Export the manifest as module.exports
+            try builder.appendStmt(S.ExportDefault{
+                .value = .{ .expr = manifest },
+            });
+
+            // Store the AST at the new manifest source index
+            this.graph.ast.set(manifest_source_index, try builder.toBundledAst(.bun));
+
+            // Update the import in the server file to point to the manifest
+            const server_ast = &this.graph.ast.items(.import_records)[server_idx];
+            const import_records = server_ast.slice();
+            for (import_records) |*record| {
+                if (record.source_index.isValid() and record.source_index.get() == html_idx) {
+                    // Update the import to point to the manifest file
+                    record.source_index = Index.init(manifest_source_index);
+                    break;
+                }
+            }
+
+            // Add the manifest to the path map so it can be resolved
+            try this.pathToSourceIndexMap(this.transpiler.options.target).put(
+                this.graph.allocator,
+                virtual_source.path.hashKey(),
+                manifest_source_index,
+            );
+        }
+    }
+
     pub fn enqueueParseTask(
         this: *BundleV2,
         resolve_result: *const _resolver.Result,
@@ -1337,6 +1463,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHTMLImportManifests();
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
@@ -1399,6 +1526,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHTMLImportManifests();
 
         const reachable_files = try this.findReachableFiles();
 
@@ -2185,6 +2313,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHTMLImportManifests();
 
         this.graph.heap.helpCatchMemoryIssues();
 

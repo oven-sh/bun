@@ -3770,3 +3770,5 @@ pub fn move(dest: []u8, src: []const u8) void {
     }
     _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
 }
+
+pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;

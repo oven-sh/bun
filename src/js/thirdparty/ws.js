@@ -884,14 +884,13 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   terminate() {
-    // Handle cases where terminate is called with undefined/null context
-    // This can happen when the method is detached from the instance
-    // e.g., const { terminate } = ws; terminate();
-    if (this === undefined || this === null) {
-      // Silently return to avoid breaking Next.js/Turbopack
-      // which may call terminate during CTRL+C shutdown
-      return;
-    }
+    // Temporary workaround for CTRL + C error appearing in next dev with turobpack
+    //
+    // > ⨯ unhandledRejection:  TypeError: undefined is not an object (evaluating 'this.#state')
+    // > at terminate (ws:611:30)
+    // > at Promise (null)
+    //
+    if (!this) return;
 
     let state = this.#state;
     if (state === ReadyState_CLOSED) return;

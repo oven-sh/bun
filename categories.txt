@@ -34,6 +34,10 @@ parallel/test-tls-external-accessor.js
 
 parallel/test-tls-cert-chains-in-ca.js
 - checkServerIdentity callback is not implemented
+parallel/test-tls-basic-validations.js
+- 12 mismatched errors
+parallel/test-tls-error-servername.js
+- 2 mismatched errors
 
 # categorize
 
@@ -45,14 +49,13 @@ parallel/test-tls-connect-allow-half-open-option.js
 - with allowHalfOpen, if the server ends its socket, it should still be able to receive a message
 parallel/test-tls-server-parent-constructor-options.js
 - with pauseOnConnect, the client is never connecting
-parallel/test-tls-get-ca-certificates-system.js,
+parallel/test-tls-get-ca-certificates-system.js
 parallel/test-tls-get-ca-certificates-default.js
-- tls.getCACertificates is not implemented
 parallel/test-tls-get-ca-certificates-error.js
 parallel/test-tls-get-ca-certificates-extra-empty.js
-parallel/test-tls-basic-validations.js
+- tls.getCACertificates is not implemented
 parallel/test-tls-server-setkeycert.js
-parallel/test-tls-error-servername.js
+- some kind of problem with getPeerX509Certificate?
 parallel/test-tls-enable-keylog-cli.js
 parallel/test-tls-cert-chains-concat.js
 parallel/test-tls-streamwrap-buffersize.js

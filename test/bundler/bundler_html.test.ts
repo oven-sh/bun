@@ -843,4 +843,454 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test server-side HTML imports with manifest generation
+  itBundled("html/server-import-basic", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import htmlManifest from './template.html';
+console.log('HTML manifest:', htmlManifest);
+export function getManifest() {
+  return htmlManifest;
+}`,
+      "/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Server Template</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./client.js"></script>
+  </head>
+  <body>
+    <h1>Server-Side Template</h1>
+    <img src="./logo.png" alt="Logo">
+  </body>
+</html>`,
+      "/styles.css": `
+body { 
+  background-color: #f0f0f0;
+  font-family: sans-serif;
+}`,
+      "/client.js": `
+console.log('Client-side JavaScript loaded');
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM ready');
+});`,
+      "/logo.png": "fake image content",
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      // Server bundle should be fully bundled
+      const serverBundle = api.readFile("out/server.js");
+
+      // Should not contain the original import statement
+      expect(serverBundle).not.toContain("import htmlManifest from");
+
+      // Should contain the manifest object
+      expect(serverBundle).toContain('{"files":[');
+
+      // Extract the manifest from the bundle
+      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
+      expect(manifestMatch).toBeTruthy();
+
+      const manifest = JSON.parse(manifestMatch![1]);
+      expect(manifest.files).toBeArray();
+      expect(manifest.files.length).toBeGreaterThan(0);
+
+      // Check that all asset types are included in the manifest
+      const paths = manifest.files.map((f: any) => f.path);
+      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
+      const hasCSS = paths.some((p: string) => p.endsWith(".css"));
+      const hasJS = paths.some((p: string) => p.endsWith(".js"));
+      const hasPNG = paths.some((p: string) => p.endsWith(".png"));
+
+      expect(hasHTML).toBe(true);
+      expect(hasCSS).toBe(true);
+      expect(hasJS).toBe(true);
+      expect(hasPNG).toBe(true);
+
+      // Verify all files in manifest actually exist
+      for (const file of manifest.files) {
+        api.assertFileExists(`out/${file.path}`);
+      }
+
+      // Check the HTML file was processed
+      const htmlFile = manifest.files.find((f: any) => f.path.includes(".html"));
+      expect(htmlFile).toBeDefined();
+      const htmlContent = api.readFile(`out/${htmlFile.path}`);
+      expect(htmlContent).toContain("Server-Side Template");
+
+      // Verify assets are hashed
+      expect(htmlContent).not.toContain('href="./styles.css"');
+      expect(htmlContent).not.toContain('src="./client.js"');
+      expect(htmlContent).not.toContain('src="./logo.png"');
+      expect(htmlContent).toMatch(/href="[^"]+\.css"/);
+      expect(htmlContent).toMatch(/src="[^"]+\.js"/);
+      expect(htmlContent).toMatch(/src="[^"]+\.png"/);
+    },
+  });
+
+  // Test multiple HTML imports
+  itBundled("html/server-import-multiple", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import homeManifest from './home.html';
+import aboutManifest from './about.html';
+
+export function getHome() {
+  return homeManifest;
+}
+
+export function getAbout() {
+  return aboutManifest;
+}`,
+      "/home.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home Page</title>
+    <link rel="stylesheet" href="./shared.css">
+    <link rel="stylesheet" href="./home.css">
+    <script src="./shared.js"></script>
+    <script src="./home.js"></script>
+  </head>
+  <body>
+    <h1>Welcome Home</h1>
+  </body>
+</html>`,
+      "/about.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>About Page</title>
+    <link rel="stylesheet" href="./shared.css">
+    <link rel="stylesheet" href="./about.css">
+    <script src="./shared.js"></script>
+    <script src="./about.js"></script>
+  </head>
+  <body>
+    <h1>About Us</h1>
+  </body>
+</html>`,
+      "/shared.css": `.shared { font-family: Arial; }`,
+      "/home.css": `.home { color: blue; }`,
+      "/about.css": `.about { color: green; }`,
+      "/shared.js": `console.log('Shared JS loaded');`,
+      "/home.js": `console.log('Home page JS');`,
+      "/about.js": `console.log('About page JS');`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.js");
+
+      // Should contain two separate manifests
+      const manifestMatches = serverBundle.matchAll(/({\"files\":\[[^\]]+\]})/g);
+      const manifests = Array.from(manifestMatches).map(m => JSON.parse(m[1]));
+      expect(manifests.length).toBe(2);
+
+      // Each manifest should have files
+      for (const manifest of manifests) {
+        expect(manifest.files.length).toBeGreaterThan(0);
+
+        // Verify all files exist
+        for (const file of manifest.files) {
+          api.assertFileExists(`out/${file.path}`);
+        }
+      }
+
+      // Check that shared assets are properly handled
+      const allFiles = new Set<string>();
+      manifests.forEach(m => m.files.forEach((f: any) => allFiles.add(f.path)));
+
+      // Should have both HTML files
+      const htmlFiles = Array.from(allFiles).filter(f => f.endsWith(".html"));
+      expect(htmlFiles.length).toBe(2);
+
+      // Verify HTML content
+      const homeHtml = api.readFile(`out/${htmlFiles.find(f => api.readFile(`out/${f}`).includes("Welcome Home"))!}`);
+      const aboutHtml = api.readFile(`out/${htmlFiles.find(f => api.readFile(`out/${f}`).includes("About Us"))!}`);
+
+      expect(homeHtml).toContain("Welcome Home");
+      expect(aboutHtml).toContain("About Us");
+    },
+  });
+
+  // Test with nested dependencies
+  itBundled("html/server-import-nested", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import pageManifest from './page.html';
+export default pageManifest;`,
+      "/page.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./main.css">
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <h1>Page with nested deps</h1>
+  </body>
+</html>`,
+      "/main.css": `
+@import './reset.css';
+@import './theme.css';
+.main { padding: 20px; }`,
+      "/reset.css": `
+* { margin: 0; padding: 0; }`,
+      "/theme.css": `
+@import './colors.css';
+body { font-size: 16px; }`,
+      "/main.js": `
+import { utils } from './utils.js';
+import { api } from './api.js';
+utils.init();
+api.setup();`,
+      "/utils.js": `
+import { config } from './config.js';
+export const utils = {
+  init() { console.log('Utils init', config); }
+};`,
+      "/api.js": `
+import { config } from './config.js';
+export const api = {
+  setup() { console.log('API setup', config); }
+};`,
+      "/config.js": `
+export const config = { version: '1.0' };`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.js");
+
+      // Extract manifest
+      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
+      expect(manifestMatch).toBeTruthy();
+      const manifest = JSON.parse(manifestMatch![1]);
+
+      // Should include all nested dependencies
+      const paths = manifest.files.map((f: any) => f.path);
+
+      // Check all file types are present
+      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
+      const hasCSS = paths.some((p: string) => p.endsWith(".css"));
+      const hasJS = paths.some((p: string) => p.endsWith(".js"));
+
+      expect(hasHTML).toBe(true);
+      expect(hasCSS).toBe(true);
+      expect(hasJS).toBe(true);
+
+      // Verify CSS was bundled (should have merged imports)
+      const cssFile = manifest.files.find((f: any) => f.path.endsWith(".css"));
+      const cssContent = api.readFile(`out/${cssFile.path}`);
+      expect(cssContent).toContain("margin: 0");
+      expect(cssContent).toContain("--primary: blue");
+      expect(cssContent).toContain("font-size: 16px");
+      expect(cssContent).toContain("padding: 20px");
+
+      // Verify JS was bundled (should have shared module)
+      const jsFile = manifest.files.find((f: any) => f.path.endsWith(".js") && !f.path.includes("chunk"));
+      const jsContent = api.readFile(`out/${jsFile.path}`);
+      expect(jsContent).toContain("Utils init");
+      expect(jsContent).toContain("API setup");
+      expect(jsContent).toContain("version:");
+    },
+  });
+
+  // Test with dynamic imports in HTML
+  itBundled("html/server-import-dynamic", {
+    outdir: "out/",
+    target: "bun",
+    splitting: true,
+    files: {
+      "/server.js": `
+import appManifest from './app.html';
+export function getApp() {
+  return appManifest;
+}`,
+      "/app.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div id="app">Loading...</div>
+  </body>
+</html>`,
+      "/app.js": `
+console.log('App starting');
+document.getElementById('app').addEventListener('click', async () => {
+  const { showModal } = await import('./modal.js');
+  showModal();
+});`,
+      "/modal.js": `
+export function showModal() {
+  console.log('Showing modal');
+  import('./modal-styles.js').then(m => m.applyStyles());
+}`,
+      "/modal-styles.js": `
+export function applyStyles() {
+  console.log('Applying modal styles');
+}`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.js");
+
+      // Extract manifest
+      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
+      expect(manifestMatch).toBeTruthy();
+      const manifest = JSON.parse(manifestMatch![1]);
+
+      // Should include the main entry files
+      const paths = manifest.files.map((f: any) => f.path);
+      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
+      const hasJS = paths.some((p: string) => p.endsWith(".js"));
+
+      expect(hasHTML).toBe(true);
+      expect(hasJS).toBe(true);
+
+      // Dynamic imports should create separate chunks
+      // Check that there are multiple JS files in the manifest
+      const jsFiles = manifest.files.filter((f: any) => f.path.endsWith(".js"));
+
+      // Should have at least the main entry JS
+      expect(jsFiles.length).toBeGreaterThan(0);
+
+      // Verify the HTML file references the correct entry
+      const htmlFile = manifest.files.find((f: any) => f.path.endsWith(".html"));
+      const htmlContent = api.readFile(`out/${htmlFile.path}`);
+      expect(htmlContent).toMatch(/src="[^"]+\.js"/);
+    },
+  });
+
+  // Test CLI usage with HTML imports
+  itBundled("html/server-import-cli", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/app.js": `
+import dashboardHTML from './dashboard.html';
+
+Bun.serve({
+  port: 3000,
+  fetch(req) {
+    return new Response(JSON.stringify(dashboardHTML), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+});`,
+      "/dashboard.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="./dashboard.css">
+    <script src="./dashboard.js" defer></script>
+    <link rel="icon" href="./favicon.ico">
+  </head>
+  <body>
+    <h1>Dashboard</h1>
+    <img src="./chart.svg" alt="Chart">
+  </body>
+</html>`,
+      "/dashboard.css": `
+body { background: #f5f5f5; }
+h1 { color: #333; }`,
+      "/dashboard.js": `
+console.log('Dashboard loaded');
+fetch('/api/data').then(r => r.json()).then(console.log);`,
+      "/favicon.ico": "fake favicon",
+      "/chart.svg": "<svg>fake chart</svg>",
+    },
+    entryPoints: ["/app.js"],
+    onAfterBundle(api) {
+      const appBundle = api.readFile("out/app.js");
+
+      // Should be a complete bundle ready to run
+      expect(appBundle).toContain("Bun.serve");
+
+      // Extract manifest
+      const manifestMatch = appBundle.match(/({\"files\":\[[^\]]+\]})/);
+      expect(manifestMatch).toBeTruthy();
+      const manifest = JSON.parse(manifestMatch![1]);
+
+      // Verify all asset types are included
+      const fileTypes = new Set(
+        manifest.files.map((f: any) => {
+          const ext = f.path.split(".").pop();
+          return ext;
+        }),
+      );
+
+      expect(fileTypes.has("html")).toBe(true);
+      expect(fileTypes.has("css")).toBe(true);
+      expect(fileTypes.has("js")).toBe(true);
+      expect(fileTypes.has("ico")).toBe(true);
+      expect(fileTypes.has("svg")).toBe(true);
+
+      // All files should exist and have proper loaders
+      for (const file of manifest.files) {
+        api.assertFileExists(`out/${file.path}`);
+        expect(file.loader).toBeTruthy();
+        expect(file.path).toBeTruthy();
+      }
+
+      // The manifest should be complete enough for serving
+      expect(manifest.files.every((f: any) => f.path && f.loader)).toBe(true);
+    },
+  });
+
+  // Test that the manifest contains proper metadata
+  itBundled("html/server-import-metadata", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import htmlData from './index.html';
+export { htmlData };`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./app.js"></script>
+    <link rel="stylesheet" href="./app.css">
+  </head>
+  <body>
+    <h1>Test</h1>
+  </body>
+</html>`,
+      "/app.js": `console.log('App');`,
+      "/app.css": `body { margin: 0; }`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.js");
+
+      // Extract manifest
+      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
+      expect(manifestMatch).toBeTruthy();
+      const manifest = JSON.parse(manifestMatch![1]);
+
+      // Each file should have complete metadata
+      for (const file of manifest.files) {
+        expect(file.path).toBeTruthy();
+        expect(file.loader).toBeTruthy();
+        expect(file.hash).toBeTruthy();
+        expect(file.input).toBeTruthy();
+
+        // Loader should match file type
+        if (file.path.endsWith(".html")) expect(file.loader).toBe("html");
+        if (file.path.endsWith(".css")) expect(file.loader).toBe("css");
+        if (file.path.endsWith(".js")) expect(file.loader).toBe("js");
+      }
+    },
+  });
 });

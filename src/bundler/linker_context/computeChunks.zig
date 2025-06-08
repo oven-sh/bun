@@ -316,9 +316,14 @@ pub noinline fn computeChunks(
         if (chunk.entry_point.is_entry_point and
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
         {
-            chunk.template = PathTemplate.file;
-            if (this.resolver.opts.entry_naming.len > 0)
-                chunk.template.data = this.resolver.opts.entry_naming;
+            // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
+            if (this.graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
+                chunk.template = PathTemplate.fileWithTarget;
+            } else {
+                chunk.template = PathTemplate.file;
+                if (this.resolver.opts.entry_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_naming;
+            }
         } else {
             chunk.template = PathTemplate.chunk;
             if (this.resolver.opts.chunk_naming.len > 0)
@@ -329,7 +334,6 @@ pub noinline fn computeChunks(
         chunk.template.placeholder.name = pathname.base;
         chunk.template.placeholder.ext = chunk.content.ext();
 
-        // Epic 4.1: Populate target field based on chunk's origin
         // Determine the target from the AST of the entry point source
         const ast_targets = this.graph.ast.items(.target);
         const chunk_target = ast_targets[chunk.entry_point.source_index];

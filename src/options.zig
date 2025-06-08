@@ -2575,6 +2575,11 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
+        .data = "[dir]/[name].[ext]",
+        .placeholder = .{},
+    };
+
+    pub const fileWithTarget = PathTemplate{
         .data = "[dir]/[name].[target].[ext]",
         .placeholder = .{},
     };

@@ -396,8 +396,6 @@ pub const Chunk = struct {
                 const browser_source_index = graph.html_imports.html_source_indices.slice()[index];
 
                 // Start the manifest object
-                // _ = writer.write("{\"index\":") catch unreachable;
-                // _ = writer.print("{}", .{index}) catch unreachable;
                 _ = writer.write("{\"files\":[") catch unreachable;
 
                 // Find and add JS/CSS chunks
@@ -419,7 +417,7 @@ pub const Chunk = struct {
 
                         switch (html_chunk.content) {
                             .javascript => {
-                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"js\\\",\\\"hash\\\":\\\"{}\\\", \\\"input\\\":{}}}", .{
+                                _ = writer.print("{{\"path\":{s},\"loader\":\"js\",\"hash\":\"{}\",\"input\":{s}}}", .{
                                     bun.fmt.quote(html_chunk.final_rel_path),
                                     bun.fmt.truncatedHash32(html_chunk.isolated_hash),
                                     bun.fmt.quote(graph.input_files.items(.source)[browser_source_index].path.text),
@@ -428,7 +426,7 @@ pub const Chunk = struct {
                                 for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
                                     if (css_chunk_idx < chunks.len) {
                                         const css_chunk = &chunks[css_chunk_idx];
-                                        _ = writer.print(",{{\\\"path\\\":{},\\\"loader\\\":\\\"css\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                        _ = writer.print(",{{\"path\":{s},\"loader\":\"css\",\"hash\":\"{}\"}}", .{
                                             bun.fmt.quote(css_chunk.final_rel_path),
                                             bun.fmt.truncatedHash32(css_chunk.isolated_hash),
                                         }) catch unreachable;
@@ -436,13 +434,13 @@ pub const Chunk = struct {
                                 }
                             },
                             .css => {
-                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"css\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                _ = writer.print("{{\"path\":{s},\"loader\":\"css\",\"hash\":\"{}\"}}", .{
                                     bun.fmt.quote(html_chunk.final_rel_path),
                                     bun.fmt.truncatedHash32(html_chunk.isolated_hash),
                                 }) catch unreachable;
                             },
                             .html => {
-                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"html\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                _ = writer.print("{{\"path\":{s},\"loader\":\"html\",\"hash\":\"{}\"}}", .{
                                     bun.fmt.quote(html_chunk.final_rel_path),
                                     bun.fmt.truncatedHash32(html_chunk.isolated_hash),
                                 }) catch unreachable;

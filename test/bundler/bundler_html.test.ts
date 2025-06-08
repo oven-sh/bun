@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
+import { readdirSync } from "node:fs";
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -841,6 +842,267 @@ body {
 
       // JS file SHOULD contain sourcemap comment since it's supported
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
+    },
+  });
+
+  // Test server-side HTML imports with manifest generation
+  itBundled("html/server-side-import-basic", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import template from './template.html';
+console.log('Server loaded template:', template);
+export function render() {
+  return template;
+}`,
+      "/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Server Template</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./client.js"></script>
+  </head>
+  <body>
+    <h1>Server-Side Template</h1>
+  </body>
+</html>`,
+      "/styles.css": `
+body { 
+  background-color: #f0f0f0;
+  font-family: sans-serif;
+}`,
+      "/client.js": `
+console.log('Client-side JavaScript loaded');
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM ready');
+});`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      // Check server bundle contains manifest
+      const serverBundle = api.readFile("out/server.bun.js");
+      expect(serverBundle).toContain('{"files":[');
+
+      // Check that files array contains proper JSON
+      expect(serverBundle).toMatch(/{"path":"[^"]+","loader":"js","hash":"[^"]+","input":"[^"]+"}/);
+
+      // Check for target-aware filenames
+      api.assertFileExists("out/template.browser.html");
+      api.assertFileExists("out/template.browser.js");
+      api.assertFileExists("out/template.browser.css");
+
+      // Verify HTML content is correct
+      const htmlContent = api.readFile("out/template.browser.html");
+      expect(htmlContent).toContain("Server-Side Template");
+      expect(htmlContent).toMatch(/href="\.\/template\.browser-[a-f0-9]+\.css"/);
+      expect(htmlContent).toMatch(/src="\.\/template\.browser-[a-f0-9]+\.js"/);
+    },
+  });
+
+  // Test multiple server-side HTML imports
+  itBundled("html/server-side-import-multiple", {
+    outdir: "out/",
+    target: "node",
+    files: {
+      "/server.js": `
+import homeTemplate from './home.html';
+import aboutTemplate from './about.html';
+
+export function renderHome() {
+  return homeTemplate;
+}
+
+export function renderAbout() {
+  return aboutTemplate;
+}`,
+      "/home.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home Page</title>
+    <link rel="stylesheet" href="./home.css">
+    <script src="./home.js"></script>
+  </head>
+  <body>
+    <h1>Welcome Home</h1>
+  </body>
+</html>`,
+      "/about.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>About Page</title>
+    <link rel="stylesheet" href="./about.css">
+    <script src="./about.js"></script>
+  </head>
+  <body>
+    <h1>About Us</h1>
+  </body>
+</html>`,
+      "/home.css": `.home { color: blue; }`,
+      "/home.js": `console.log('Home page JS');`,
+      "/about.css": `.about { color: green; }`,
+      "/about.js": `console.log('About page JS');`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.node.js");
+
+      // Check both manifests are included
+      expect(serverBundle.match(/{"files":\[/g)?.length).toBe(2);
+
+      // Check target-aware filenames for both templates
+      api.assertFileExists("out/home.browser.html");
+      api.assertFileExists("out/home.browser.js");
+      api.assertFileExists("out/home.browser.css");
+
+      api.assertFileExists("out/about.browser.html");
+      api.assertFileExists("out/about.browser.js");
+      api.assertFileExists("out/about.browser.css");
+
+      // Verify each HTML has correct references
+      const homeHtml = api.readFile("out/home.browser.html");
+      const aboutHtml = api.readFile("out/about.browser.html");
+
+      expect(homeHtml).toContain("Welcome Home");
+      expect(aboutHtml).toContain("About Us");
+
+      expect(homeHtml).toMatch(/href="\.\/home\.browser-[a-f0-9]+\.css"/);
+      expect(aboutHtml).toMatch(/href="\.\/about\.browser-[a-f0-9]+\.css"/);
+    },
+  });
+
+  // Test server-side HTML import with shared CSS
+  itBundled("html/server-side-import-shared-css", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import template from './template.html';
+export default template;`,
+      "/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./main.css">
+    <script src="./app.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <h1 class="title">Shared CSS Test</h1>
+    </div>
+  </body>
+</html>`,
+      "/main.css": `
+@import './shared.css';
+.title { font-size: 2rem; }`,
+      "/shared.css": `
+@import './reset.css';
+.container { max-width: 1200px; }`,
+      "/reset.css": `
+* { margin: 0; padding: 0; box-sizing: border-box; }`,
+      "/app.js": `
+import { utils } from './shared.js';
+console.log('App initialized');
+utils.init();`,
+      "/shared.js": `
+export const utils = {
+  init() { console.log('Utils initialized'); }
+};`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      const serverBundle = api.readFile("out/server.bun.js");
+
+      // Check manifest is present
+      expect(serverBundle).toContain('{"files":[');
+
+      // Check CSS is bundled correctly
+      const files = readdirSync(api.outdir);
+      const cssFiles = files.filter(f => f.includes(".browser") && f.endsWith(".css"));
+      expect(cssFiles.length).toBe(1);
+
+      const cssContent = api.readFile(cssFiles[0]);
+      expect(cssContent).toContain("box-sizing: border-box");
+      expect(cssContent).toContain(".container");
+      expect(cssContent).toContain(".title");
+
+      // Check JS is bundled correctly
+      const jsFiles = files.filter(f => f.includes(".browser") && f.endsWith(".js") && f.includes("template"));
+      expect(jsFiles.length).toBe(1);
+
+      const jsContent = api.readFile(jsFiles[0]);
+      expect(jsContent).toContain("App initialized");
+      expect(jsContent).toContain("Utils initialized");
+    },
+  });
+
+  // Test server-side HTML import without user-specified naming
+  itBundled("html/server-side-import-default-naming", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/server.js": `
+import template from './template.html';
+export default template;`,
+      "/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>Default Naming Test</h1>
+  </body>
+</html>`,
+      "/script.js": `console.log('Script loaded');`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      // Without manual naming override, should use target-aware naming
+      api.assertFileExists("out/server.bun.js");
+      api.assertFileExists("out/template.browser.html");
+      api.assertFileExists("out/template.browser.js");
+
+      // Check that the HTML references the correct JS file
+      const htmlContent = api.readFile("out/template.browser.html");
+      expect(htmlContent).toMatch(/src="\.\/template\.browser-[a-f0-9]+\.js"/);
+    },
+  });
+
+  // Test server-side HTML import with custom naming
+  itBundled("html/server-side-import-custom-naming", {
+    outdir: "out/",
+    target: "bun",
+    entryNaming: "[dir]/[name]-custom.[ext]",
+    files: {
+      "/server.js": `
+import template from './template.html';
+export default template;`,
+      "/template.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./script.js"></script>
+  </head>
+  <body>
+    <h1>Custom Naming Test</h1>
+  </body>
+</html>`,
+      "/script.js": `console.log('Script loaded');`,
+    },
+    entryPoints: ["/server.js"],
+    onAfterBundle(api) {
+      // With custom naming, should not include target
+      api.assertFileExists("out/server-custom.js");
+      api.assertFileExists("out/template-custom.html");
+      api.assertFileExists("out/template-custom.js");
+
+      // Target should not be in the filename when custom naming is used
+      expect(() => api.assertFileExists("out/server.bun.js")).toThrow();
+      expect(() => api.assertFileExists("out/template.browser.html")).toThrow();
     },
   });
 });

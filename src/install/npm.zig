@@ -170,8 +170,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("???", response_buf.list.items);
-    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         switch (err) {
             error.OutOfMemory => |oom| return oom,
             else => {
@@ -199,8 +199,8 @@ pub fn responseError(
 ) OOM!noreturn {
     const message = message: {
         var log = logger.Log.init(allocator);
-        const source = logger.Source.initPathString("???", response_body.list.items);
-        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        const source = &logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => break :message null,
@@ -1563,20 +1563,20 @@ pub const PackageManifest = struct {
         etag: []const u8,
         public_max_age: u32,
     ) !?PackageManifest {
-        const source = logger.Source.initPathString(expected_name, json_buffer);
+        const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
-            &source,
+            source,
             log,
             arena.allocator(),
         ) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }
@@ -1647,7 +1647,7 @@ pub const PackageManifest = struct {
 
                     if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
                     }
 

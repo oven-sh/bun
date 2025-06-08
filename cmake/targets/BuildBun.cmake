@@ -893,6 +893,9 @@ if(NOT WIN32)
 else()
   target_compile_options(${bun} PUBLIC
     -Wno-nullability-completeness
+    -Wno-inconsistent-dllimport
+    -Wno-incompatible-pointer-types
+    -Wno-deprecated-declarations
   )
 endif()
 

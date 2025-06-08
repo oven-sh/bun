@@ -569,7 +569,6 @@ pub const Features = struct {
         out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
         out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
         out |= @as(u8, @intFromBool(this.workspaces)) << 5;
-        out |= @as(u8, @intFromBool(this.link_workspace_packages)) << 6;
         return @as(Behavior, @enumFromInt(out));
     }
 

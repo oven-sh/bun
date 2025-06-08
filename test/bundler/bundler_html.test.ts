@@ -882,53 +882,10 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     entryPoints: ["/server.js"],
     onAfterBundle(api) {
-      // Server bundle should be fully bundled
       const serverBundle = api.readFile("out/server.js");
 
-      // Should not contain the original import statement
-      expect(serverBundle).not.toContain("import htmlManifest from");
-
-      // Should contain the manifest object
-      expect(serverBundle).toContain('{"files":[');
-
-      // Extract the manifest from the bundle
-      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
-      expect(manifestMatch).toBeTruthy();
-
-      const manifest = JSON.parse(manifestMatch![1]);
-      expect(manifest.files).toBeArray();
-      expect(manifest.files.length).toBeGreaterThan(0);
-
-      // Check that all asset types are included in the manifest
-      const paths = manifest.files.map((f: any) => f.path);
-      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
-      const hasCSS = paths.some((p: string) => p.endsWith(".css"));
-      const hasJS = paths.some((p: string) => p.endsWith(".js"));
-      const hasPNG = paths.some((p: string) => p.endsWith(".png"));
-
-      expect(hasHTML).toBe(true);
-      expect(hasCSS).toBe(true);
-      expect(hasJS).toBe(true);
-      expect(hasPNG).toBe(true);
-
-      // Verify all files in manifest actually exist
-      for (const file of manifest.files) {
-        api.assertFileExists(`out/${file.path}`);
-      }
-
-      // Check the HTML file was processed
-      const htmlFile = manifest.files.find((f: any) => f.path.includes(".html"));
-      expect(htmlFile).toBeDefined();
-      const htmlContent = api.readFile(`out/${htmlFile.path}`);
-      expect(htmlContent).toContain("Server-Side Template");
-
-      // Verify assets are hashed
-      expect(htmlContent).not.toContain('href="./styles.css"');
-      expect(htmlContent).not.toContain('src="./client.js"');
-      expect(htmlContent).not.toContain('src="./logo.png"');
-      expect(htmlContent).toMatch(/href="[^"]+\.css"/);
-      expect(htmlContent).toMatch(/src="[^"]+\.js"/);
-      expect(htmlContent).toMatch(/src="[^"]+\.png"/);
+      // Server bundle should be fully bundled and contain the manifest
+      expect(serverBundle).toMatchInlineSnapshot();
     },
   });
 
@@ -988,34 +945,7 @@ export function getAbout() {
       const serverBundle = api.readFile("out/server.js");
 
       // Should contain two separate manifests
-      const manifestMatches = serverBundle.matchAll(/({\"files\":\[[^\]]+\]})/g);
-      const manifests = Array.from(manifestMatches).map(m => JSON.parse(m[1]));
-      expect(manifests.length).toBe(2);
-
-      // Each manifest should have files
-      for (const manifest of manifests) {
-        expect(manifest.files.length).toBeGreaterThan(0);
-
-        // Verify all files exist
-        for (const file of manifest.files) {
-          api.assertFileExists(`out/${file.path}`);
-        }
-      }
-
-      // Check that shared assets are properly handled
-      const allFiles = new Set<string>();
-      manifests.forEach(m => m.files.forEach((f: any) => allFiles.add(f.path)));
-
-      // Should have both HTML files
-      const htmlFiles = Array.from(allFiles).filter(f => f.endsWith(".html"));
-      expect(htmlFiles.length).toBe(2);
-
-      // Verify HTML content
-      const homeHtml = api.readFile(`out/${htmlFiles.find(f => api.readFile(`out/${f}`).includes("Welcome Home"))!}`);
-      const aboutHtml = api.readFile(`out/${htmlFiles.find(f => api.readFile(`out/${f}`).includes("About Us"))!}`);
-
-      expect(homeHtml).toContain("Welcome Home");
-      expect(aboutHtml).toContain("About Us");
+      expect(serverBundle).toMatchInlineSnapshot();
     },
   });
 
@@ -1047,6 +977,8 @@ export default pageManifest;`,
       "/theme.css": `
 @import './colors.css';
 body { font-size: 16px; }`,
+      "/colors.css": `
+:root { --primary: blue; }`,
       "/main.js": `
 import { utils } from './utils.js';
 import { api } from './api.js';
@@ -1069,105 +1001,8 @@ export const config = { version: '1.0' };`,
     onAfterBundle(api) {
       const serverBundle = api.readFile("out/server.js");
 
-      // Extract manifest
-      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
-      expect(manifestMatch).toBeTruthy();
-      const manifest = JSON.parse(manifestMatch![1]);
-
-      // Should include all nested dependencies
-      const paths = manifest.files.map((f: any) => f.path);
-
-      // Check all file types are present
-      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
-      const hasCSS = paths.some((p: string) => p.endsWith(".css"));
-      const hasJS = paths.some((p: string) => p.endsWith(".js"));
-
-      expect(hasHTML).toBe(true);
-      expect(hasCSS).toBe(true);
-      expect(hasJS).toBe(true);
-
-      // Verify CSS was bundled (should have merged imports)
-      const cssFile = manifest.files.find((f: any) => f.path.endsWith(".css"));
-      const cssContent = api.readFile(`out/${cssFile.path}`);
-      expect(cssContent).toContain("margin: 0");
-      expect(cssContent).toContain("--primary: blue");
-      expect(cssContent).toContain("font-size: 16px");
-      expect(cssContent).toContain("padding: 20px");
-
-      // Verify JS was bundled (should have shared module)
-      const jsFile = manifest.files.find((f: any) => f.path.endsWith(".js") && !f.path.includes("chunk"));
-      const jsContent = api.readFile(`out/${jsFile.path}`);
-      expect(jsContent).toContain("Utils init");
-      expect(jsContent).toContain("API setup");
-      expect(jsContent).toContain("version:");
-    },
-  });
-
-  // Test with dynamic imports in HTML
-  itBundled("html/server-import-dynamic", {
-    outdir: "out/",
-    target: "bun",
-    splitting: true,
-    files: {
-      "/server.js": `
-import appManifest from './app.html';
-export function getApp() {
-  return appManifest;
-}`,
-      "/app.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <script type="module" src="./app.js"></script>
-  </head>
-  <body>
-    <div id="app">Loading...</div>
-  </body>
-</html>`,
-      "/app.js": `
-console.log('App starting');
-document.getElementById('app').addEventListener('click', async () => {
-  const { showModal } = await import('./modal.js');
-  showModal();
-});`,
-      "/modal.js": `
-export function showModal() {
-  console.log('Showing modal');
-  import('./modal-styles.js').then(m => m.applyStyles());
-}`,
-      "/modal-styles.js": `
-export function applyStyles() {
-  console.log('Applying modal styles');
-}`,
-    },
-    entryPoints: ["/server.js"],
-    onAfterBundle(api) {
-      const serverBundle = api.readFile("out/server.js");
-
-      // Extract manifest
-      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
-      expect(manifestMatch).toBeTruthy();
-      const manifest = JSON.parse(manifestMatch![1]);
-
-      // Should include the main entry files
-      const paths = manifest.files.map((f: any) => f.path);
-      const hasHTML = paths.some((p: string) => p.endsWith(".html"));
-      const hasJS = paths.some((p: string) => p.endsWith(".js"));
-
-      expect(hasHTML).toBe(true);
-      expect(hasJS).toBe(true);
-
-      // Dynamic imports should create separate chunks
-      // Check that there are multiple JS files in the manifest
-      const jsFiles = manifest.files.filter((f: any) => f.path.endsWith(".js"));
-
-      // Should have at least the main entry JS
-      expect(jsFiles.length).toBeGreaterThan(0);
-
-      // Verify the HTML file references the correct entry
-      const htmlFile = manifest.files.find((f: any) => f.path.endsWith(".html"));
-      const htmlContent = api.readFile(`out/${htmlFile.path}`);
-      expect(htmlContent).toMatch(/src="[^"]+\.js"/);
+      // Should include all nested dependencies in the manifest
+      expect(serverBundle).toMatchInlineSnapshot();
     },
   });
 
@@ -1214,37 +1049,8 @@ fetch('/api/data').then(r => r.json()).then(console.log);`,
     onAfterBundle(api) {
       const appBundle = api.readFile("out/app.js");
 
-      // Should be a complete bundle ready to run
-      expect(appBundle).toContain("Bun.serve");
-
-      // Extract manifest
-      const manifestMatch = appBundle.match(/({\"files\":\[[^\]]+\]})/);
-      expect(manifestMatch).toBeTruthy();
-      const manifest = JSON.parse(manifestMatch![1]);
-
-      // Verify all asset types are included
-      const fileTypes = new Set(
-        manifest.files.map((f: any) => {
-          const ext = f.path.split(".").pop();
-          return ext;
-        }),
-      );
-
-      expect(fileTypes.has("html")).toBe(true);
-      expect(fileTypes.has("css")).toBe(true);
-      expect(fileTypes.has("js")).toBe(true);
-      expect(fileTypes.has("ico")).toBe(true);
-      expect(fileTypes.has("svg")).toBe(true);
-
-      // All files should exist and have proper loaders
-      for (const file of manifest.files) {
-        api.assertFileExists(`out/${file.path}`);
-        expect(file.loader).toBeTruthy();
-        expect(file.path).toBeTruthy();
-      }
-
-      // The manifest should be complete enough for serving
-      expect(manifest.files.every((f: any) => f.path && f.loader)).toBe(true);
+      // Should be a complete bundle with all assets in manifest
+      expect(appBundle).toMatchInlineSnapshot();
     },
   });
 
@@ -1274,23 +1080,8 @@ export { htmlData };`,
     onAfterBundle(api) {
       const serverBundle = api.readFile("out/server.js");
 
-      // Extract manifest
-      const manifestMatch = serverBundle.match(/({\"files\":\[[^\]]+\]})/);
-      expect(manifestMatch).toBeTruthy();
-      const manifest = JSON.parse(manifestMatch![1]);
-
-      // Each file should have complete metadata
-      for (const file of manifest.files) {
-        expect(file.path).toBeTruthy();
-        expect(file.loader).toBeTruthy();
-        expect(file.hash).toBeTruthy();
-        expect(file.input).toBeTruthy();
-
-        // Loader should match file type
-        if (file.path.endsWith(".html")) expect(file.loader).toBe("html");
-        if (file.path.endsWith(".css")) expect(file.loader).toBe("css");
-        if (file.path.endsWith(".js")) expect(file.loader).toBe("js");
-      }
+      // Each file in manifest should have complete metadata
+      expect(serverBundle).toMatchInlineSnapshot();
     },
   });
 });

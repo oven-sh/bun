@@ -167,7 +167,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    fn initializeClientTranspiler(this: *BundleV2) !*Transpiler {
+    fn ensureClientTranspiler(this: *BundleV2) !*Transpiler {
         @branchHint(.cold);
         const allocator = this.graph.allocator;
 
@@ -215,7 +215,7 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse this.initializeClientTranspiler() catch bun.outOfMemory();
+                return this.client_transpiler orelse this.ensureClientTranspiler() catch bun.outOfMemory();
             }
 
             return this.transpiler;
@@ -1386,7 +1386,6 @@ pub const BundleV2 = struct {
         try this.processFilesToCopy(reachable_files);
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
-        try this.addHTMLImportsAsEntryPoints();
 
         try this.cloneAST();
 
@@ -1448,8 +1447,6 @@ pub const BundleV2 = struct {
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
 
-        try this.addHTMLImportsAsEntryPoints();
-
         try this.cloneAST();
 
         const chunks = try this.linker.link(
@@ -1476,18 +1473,6 @@ pub const BundleV2 = struct {
                 inline for (.{ original_index, ssr_index }) |idx| {
                     this.graph.entry_points.appendAssumeCapacity(Index.init(idx));
                 }
-            }
-        }
-    }
-
-    pub fn addHTMLImportsAsEntryPoints(this: *BundleV2) !void {
-        // Add HTML files that were imported from server code as entry points
-        // This ensures they get chunks assigned and can be referenced via S prefix
-        const html_imports = &this.graph.html_imports;
-        if (html_imports.html_source_indices.len > 0) {
-            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, html_imports.html_source_indices.len);
-            for (html_imports.html_source_indices.slice()) |html_idx| {
-                this.graph.entry_points.appendAssumeCapacity(Index.init(html_idx));
             }
         }
     }
@@ -3066,7 +3051,12 @@ pub const BundleV2 = struct {
             const resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
-            resolve_task.known_target = target;
+
+            resolve_task.known_target = if (import_record.kind == .html_manifest)
+                .browser
+            else
+                target;
+
             resolve_task.jsx = resolve_result.jsx;
             resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
                 .development => true,
@@ -3220,7 +3210,7 @@ pub const BundleV2 = struct {
                 const is_server_side = result.ast.target.isServerSide();
                 while (iter.next()) |entry| {
                     const hash = entry.key_ptr.*;
-                    const value = entry.value_ptr.*;
+                    const value: *ParseTask = entry.value_ptr.*;
 
                     var existing = path_to_source_index_map.getOrPut(graph.allocator, hash) catch unreachable;
 
@@ -3234,8 +3224,22 @@ pub const BundleV2 = struct {
                         }
                     }
 
-                    if (!existing.found_existing) outer: {
-                        const loader = value.loader orelse value.source.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+                    const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+                    var html_entrypoint_path_to_index_entry: ?@TypeOf(existing) = null;
+
+                    // Handle a scenario where the developer adds an HTML file as an entry point to their server through CLI.
+                    //
+                    //   bun build --target=bun ./src/index.tsx ./src/index.html`
+                    const is_html_entrypoint = loader == .html and is_server_side and value.known_target == .browser;
+                    if (!existing.found_existing and is_html_entrypoint) {
+                        html_entrypoint_path_to_index_entry = this.pathToSourceIndexMap(.browser).getOrPut(graph.allocator, hash) catch bun.outOfMemory();
+                        if (html_entrypoint_path_to_index_entry.?.found_existing) {
+                            existing.found_existing = true;
+                            existing.value_ptr.* = html_entrypoint_path_to_index_entry.?.value_ptr.*;
+                        }
+                    }
+
+                    if (!existing.found_existing) {
                         var new_task: *ParseTask = value;
                         var new_input_file = Graph.InputFile{
                             .source = Logger.Source.initEmptyFile(new_task.path.text),
@@ -3250,8 +3254,18 @@ pub const BundleV2 = struct {
 
                         existing.value_ptr.* = new_input_file.source.index.get();
                         new_task.source_index = new_input_file.source.index;
+                        if (html_entrypoint_path_to_index_entry) |*html| {
+                            // This is a new entry point, let's add it to the list.
+                            html.value_ptr.* = new_input_file.source.index.get();
+                            graph.entry_points.append(graph.allocator, new_input_file.source.index) catch bun.outOfMemory();
+
+                            if (this.client_transpiler == null) {
+                                _ = this.ensureClientTranspiler() catch bun.outOfMemory();
+                            }
+                        }
 
                         new_task.ctx = this;
+
                         graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
                         graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
                         diff += 1;
@@ -3269,10 +3283,6 @@ pub const BundleV2 = struct {
 
                         graph.pool.schedule(new_task);
                     } else {
-                        const loader = value.loader orelse
-                            graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
-                            options.Loader.file;
-
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;

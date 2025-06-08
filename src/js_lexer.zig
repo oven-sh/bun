@@ -182,7 +182,7 @@ fn NewLexer_(
             return logger.usize2Loc(self.start);
         }
 
-        pub fn syntaxError(self: *LexerType) !void {
+        pub fn syntaxError(noalias self: *LexerType) !void {
             @branchHint(.cold);
 
             // Only add this if there is not already an error.
@@ -193,20 +193,20 @@ fn NewLexer_(
             return Error.SyntaxError;
         }
 
-        pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
+        pub fn addDefaultError(noalias self: *LexerType, msg: []const u8) !void {
             @branchHint(.cold);
 
             self.addError(self.start, "{s}", .{msg}, true);
             return Error.SyntaxError;
         }
 
-        pub fn addSyntaxError(self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
+        pub fn addSyntaxError(noalias self: *LexerType, _loc: usize, comptime fmt: []const u8, args: anytype) !void {
             @branchHint(.cold);
             self.addError(_loc, fmt, args, false);
             return Error.SyntaxError;
         }
 
-        pub fn addError(self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
+        pub fn addError(noalias self: *LexerType, _loc: usize, comptime format: []const u8, args: anytype, _: bool) void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -219,7 +219,7 @@ fn NewLexer_(
             self.prev_error_loc = __loc;
         }
 
-        pub fn addRangeError(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
+        pub fn addRangeError(noalias self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, _: bool) !void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -236,7 +236,7 @@ fn NewLexer_(
             // }
         }
 
-        pub fn addRangeErrorWithNotes(self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
+        pub fn addRangeErrorWithNotes(noalias self: *LexerType, r: logger.Range, comptime format: []const u8, args: anytype, notes: []const logger.Data) !void {
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
@@ -282,7 +282,7 @@ fn NewLexer_(
 
         /// Look ahead at the next n codepoints without advancing the iterator.
         /// If fewer than n codepoints are available, then return the remainder of the string.
-        fn peek(it: *LexerType, n: usize) string {
+        fn peek(noalias it: *LexerType, n: usize) string {
             const original_i = it.current;
             defer it.current = original_i;
 
@@ -794,7 +794,7 @@ fn NewLexer_(
             }
         }
 
-        inline fn nextCodepointSlice(it: *LexerType) []const u8 {
+        inline fn nextCodepointSlice(noalias it: *const LexerType) []const u8 {
             if (it.current >= it.source.contents.len) {
                 return "";
             }
@@ -806,7 +806,7 @@ fn NewLexer_(
             return it.source.contents[it.current..];
         }
 
-        inline fn nextCodepoint(it: *LexerType) CodePoint {
+        inline fn nextCodepoint(noalias it: *LexerType) CodePoint {
             if (it.current >= it.source.contents.len) {
                 it.end = it.source.contents.len;
                 return -1;
@@ -830,7 +830,7 @@ fn NewLexer_(
             return code_point;
         }
 
-        pub fn step(lexer: *LexerType) void {
+        pub fn step(noalias lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate
@@ -842,7 +842,7 @@ fn NewLexer_(
             lexer.approximate_newline_count += @intFromBool(lexer.code_point == '\n');
         }
 
-        pub inline fn expect(self: *LexerType, comptime token: T) !void {
+        pub inline fn expect(noalias self: *LexerType, comptime token: T) !void {
             if (self.token != token) {
                 try self.expected(token);
             }
@@ -850,7 +850,7 @@ fn NewLexer_(
             try self.next();
         }
 
-        pub inline fn expectOrInsertSemicolon(lexer: *LexerType) !void {
+        pub inline fn expectOrInsertSemicolon(noalias lexer: *LexerType) !void {
             if (lexer.token == T.t_semicolon or (!lexer.has_newline_before and
                 lexer.token != T.t_close_brace and lexer.token != T.t_end_of_file))
             {
@@ -858,7 +858,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn addUnsupportedSyntaxError(self: *LexerType, msg: []const u8) !void {
+        pub fn addUnsupportedSyntaxError(noalias self: *LexerType, msg: []const u8) !void {
             self.addError(self.end, "Unsupported syntax: {s}", .{msg}, true);
             return Error.SyntaxError;
         }
@@ -993,7 +993,7 @@ fn NewLexer_(
             return result;
         }
 
-        pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
+        pub fn expectContextualKeyword(noalias self: *LexerType, comptime keyword: string) !void {
             if (!self.isContextualKeyword(keyword)) {
                 if (@import("builtin").mode == std.builtin.Mode.Debug) {
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
@@ -1009,7 +1009,7 @@ fn NewLexer_(
             try self.next();
         }
 
-        pub fn maybeExpandEquals(lexer: *LexerType) !void {
+        pub fn maybeExpandEquals(noalias lexer: *LexerType) !void {
             switch (lexer.code_point) {
                 '>' => {
                     // "=" + ">" = "=>"
@@ -1031,7 +1031,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectLessThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
+        pub fn expectLessThan(noalias lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
             switch (lexer.token) {
                 .t_less_than => {
                     if (is_inside_jsx_element) {
@@ -1059,7 +1059,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectGreaterThan(lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
+        pub fn expectGreaterThan(noalias lexer: *LexerType, comptime is_inside_jsx_element: bool) !void {
             switch (lexer.token) {
                 .t_greater_than => {
                     if (is_inside_jsx_element) {
@@ -1101,7 +1101,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn next(lexer: *LexerType) !void {
+        pub fn next(noalias lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
             lexer.has_pure_comment_before = false;
             lexer.has_no_side_effect_comment_before = false;
@@ -1801,7 +1801,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expected(self: *LexerType, token: T) !void {
+        pub fn expected(noalias self: *LexerType, token: T) !void {
             if (self.is_log_disabled) {
                 return error.Backtrack;
             } else if (tokenToString.get(token).len > 0) {
@@ -1811,7 +1811,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn unexpected(lexer: *LexerType) !void {
+        pub fn unexpected(noalias lexer: *LexerType) !void {
             const found = finder: {
                 lexer.start = @min(lexer.start, lexer.end);
 
@@ -1826,11 +1826,11 @@ fn NewLexer_(
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 
-        pub fn raw(self: *LexerType) []const u8 {
+        pub fn raw(noalias self: *LexerType) []const u8 {
             return self.source.contents[self.start..self.end];
         }
 
-        pub fn isContextualKeyword(self: *LexerType, comptime keyword: string) bool {
+        pub fn isContextualKeyword(noalias self: *LexerType, comptime keyword: string) bool {
             return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
         }
 
@@ -1878,7 +1878,7 @@ fn NewLexer_(
             }
         }
 
-        fn scanCommentText(lexer: *LexerType, for_pragma: bool) void {
+        fn scanCommentText(noalias lexer: *LexerType, for_pragma: bool) void {
             const text = lexer.source.contents[lexer.start..lexer.end];
             const has_legal_annotation = text.len > 2 and text[2] == '!';
             const is_multiline_comment = text.len > 1 and text[1] == '*';
@@ -1936,7 +1936,7 @@ fn NewLexer_(
         }
 
         /// This scans a "// comment" in a single pass over the input.
-        fn scanSingleLineComment(lexer: *LexerType) void {
+        fn scanSingleLineComment(noalias lexer: *LexerType) void {
             while (true) {
                 // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
                 if (bun.highway.indexOfNewlineOrNonASCIIOrHashOrAt(lexer.remaining())) |relative_index| {
@@ -1998,7 +1998,7 @@ fn NewLexer_(
         /// Scans the string for a pragma.
         /// offset is used when there's an issue with the JSX pragma later on.
         /// Returns the byte length to advance by if found, otherwise 0.
-        fn scanPragma(lexer: *LexerType, offset_for_errors: usize, chunk: string, allow_newline: bool) usize {
+        fn scanPragma(noalias lexer: *LexerType, offset_for_errors: usize, chunk: string, allow_newline: bool) usize {
             if (!lexer.has_pure_comment_before) {
                 if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
                     lexer.has_pure_comment_before = true;
@@ -2203,10 +2203,10 @@ fn NewLexer_(
             }
         }
 
-        pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) !string {
+        pub fn utf16ToString(noalias lexer: *const LexerType, js: JavascriptString) !string {
             return try strings.toUTF8AllocWithType(lexer.allocator, []const u16, js);
         }
-        pub fn nextInsideJSXElement(lexer: *LexerType) !void {
+        pub fn nextInsideJSXElement(noalias lexer: *LexerType) !void {
             lexer.assertNotJSON();
 
             lexer.has_newline_before = false;
@@ -2428,7 +2428,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn expectJSXElementChild(lexer: *LexerType, token: T) !void {
+        pub fn expectJSXElementChild(noalias lexer: *LexerType, token: T) !void {
             lexer.assertNotJSON();
 
             if (lexer.token != token) {
@@ -2558,7 +2558,7 @@ fn NewLexer_(
             }
         }
 
-        fn maybeDecodeJSXEntity(lexer: *LexerType, text: string, cursor: *strings.CodepointIterator.Cursor) void {
+        fn maybeDecodeJSXEntity(noalias lexer: *LexerType, text: string, noalias cursor: *strings.CodepointIterator.Cursor) void {
             lexer.assertNotJSON();
 
             if (strings.indexOfChar(text[cursor.width + cursor.i ..], ';')) |length| {
@@ -2622,7 +2622,7 @@ fn NewLexer_(
                 }
             }
         }
-        pub fn expectInsideJSXElement(lexer: *LexerType, token: T) !void {
+        pub fn expectInsideJSXElement(noalias lexer: *LexerType, token: T) !void {
             lexer.assertNotJSON();
 
             if (lexer.token != token) {
@@ -2644,7 +2644,7 @@ fn NewLexer_(
             try lexer.nextInsideJSXElement();
         }
 
-        fn scanRegExpValidateAndStep(lexer: *LexerType) !void {
+        fn scanRegExpValidateAndStep(noalias lexer: *LexerType) !void {
             lexer.assertNotJSON();
 
             if (lexer.code_point == '\\') {
@@ -2680,7 +2680,7 @@ fn NewLexer_(
             lexer.rescan_close_brace_as_template_token = false;
         }
 
-        pub fn rawTemplateContents(lexer: *LexerType) string {
+        pub fn rawTemplateContents(noalias lexer: *LexerType) string {
             lexer.assertNotJSON();
 
             var text: string = undefined;
@@ -2732,7 +2732,7 @@ fn NewLexer_(
             return bytes.toOwnedSliceLength(end);
         }
 
-        fn parseNumericLiteralOrDot(lexer: *LexerType) !void {
+        fn parseNumericLiteralOrDot(noalias lexer: *LexerType) !void {
             // Number or dot;
             const first = lexer.code_point;
             lexer.step();

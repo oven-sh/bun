@@ -3693,7 +3693,7 @@ pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
 
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
-pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3_fast {
+pub fn encodeWTF8Rune(noalias p: *[4]u8, r: i32) u3_fast {
     return @call(
         .always_inline,
         encodeWTF8RuneT,
@@ -3705,7 +3705,7 @@ pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3_fast {
     );
 }
 
-pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3_fast {
+pub fn encodeWTF8RuneT(noalias p: *[4]u8, comptime R: type, r: R) u3_fast {
     switch (r) {
         0...0x7F => {
             p[0] = @as(u8, @intCast(r));
@@ -3795,7 +3795,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u8 {
 /// This is a clone of esbuild's decodeWTF8Rune
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
-pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
+pub inline fn decodeWTF8RuneTMultibyte(noalias p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
     if (comptime Environment.allow_assert) assert(len > 1);
 
     const s1 = p[1];
@@ -4845,7 +4845,7 @@ pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: c
             unreachable;
         }
 
-        pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
+        pub inline fn next(noalias it: *const Iterator, noalias cursor: *Cursor) bool {
             const pos: u32 = @as(u32, cursor.width) + cursor.i;
             if (pos >= it.bytes.len) {
                 return false;

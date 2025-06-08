@@ -2355,6 +2355,7 @@ pub const LinkerContext = struct {
                 'A' => .asset,
                 'C' => .chunk,
                 'S' => .scb,
+                'H' => .html_import,
                 else => {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});

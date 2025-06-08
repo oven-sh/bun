@@ -180,7 +180,7 @@ pub const Chunk = struct {
                         count += piece.data_len;
 
                         switch (piece.query.kind) {
-                            .chunk, .asset, .scb => {
+                            .chunk, .asset, .scb, .html_import => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -195,6 +195,12 @@ pub const Chunk = struct {
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
+                                    .html_import => {
+                                        // For HTML imports, we need to calculate the size of the manifest JSON
+                                        // This is a rough estimate - we'll generate the actual manifest later
+                                        count += 1024; // Reserve space for the manifest
+                                        continue;
+                                    },
                                     .none => unreachable,
                                 };
 
@@ -239,7 +245,7 @@ pub const Chunk = struct {
                         remain = remain[data.len..];
 
                         switch (piece.query.kind) {
-                            .asset, .chunk, .scb => {
+                            .asset, .chunk, .scb, .html_import => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -271,6 +277,80 @@ pub const Chunk = struct {
                                         }
 
                                         break :brk piece_chunk.final_rel_path;
+                                    },
+                                    .html_import => {
+                                        // Handle HTML import manifests specially
+                                        const html_idx = index;
+
+                                        var manifest_buf: [1024]u8 = undefined;
+                                        var stream = std.io.fixedBufferStream(&manifest_buf);
+                                        var writer = stream.writer();
+
+                                        // Start the manifest object
+                                        _ = writer.write("{\"index\":\"") catch unreachable;
+
+                                        // Write the HTML file path
+                                        const html_files = additional_files[html_idx];
+                                        if (html_files.len > 0) {
+                                            const html_output_file = html_files.last().?.output_file;
+                                            const html_path = graph.additional_output_files.items[html_output_file].dest_path;
+                                            _ = writer.write(html_path) catch unreachable;
+                                        }
+
+                                        _ = writer.write("\",\"files\":[") catch unreachable;
+
+                                        // Add HTML file entry
+                                        if (html_files.len > 0) {
+                                            const html_output_file = html_files.last().?.output_file;
+                                            const html_path = graph.additional_output_files.items[html_output_file].dest_path;
+                                            const content_hashes = graph.input_files.items(.content_hash_for_additional_file);
+                                            const html_hash = content_hashes[html_idx];
+
+                                            _ = writer.print("{{\"path\":\"{s}\",\"loader\":\"html\",\"hash\":\"{}\"}}", .{
+                                                html_path,
+                                                bun.fmt.truncatedHash32(html_hash),
+                                            }) catch unreachable;
+                                        }
+
+                                        // Find and add JS/CSS chunks
+                                        const entry_point_chunk_indices = linker_graph.files.items(.entry_point_chunk_index);
+                                        if (html_idx < entry_point_chunk_indices.len) {
+                                            const html_chunk_index = entry_point_chunk_indices[html_idx];
+                                            if (html_chunk_index < chunks.len) {
+                                                const html_chunk = &chunks[html_chunk_index];
+
+                                                // Add JS chunk
+                                                _ = writer.print(",{{\"path\":\"{s}\",\"loader\":\"js\",\"hash\":\"{}\"}}", .{
+                                                    html_chunk.final_rel_path,
+                                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
+                                                }) catch unreachable;
+
+                                                // Add CSS chunks
+                                                if (html_chunk.content == .javascript) {
+                                                    for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
+                                                        if (css_chunk_idx < chunks.len) {
+                                                            const css_chunk = &chunks[css_chunk_idx];
+                                                            _ = writer.print(",{{\"path\":\"{s}\",\"loader\":\"css\",\"hash\":\"{}\"}}", .{
+                                                                css_chunk.final_rel_path,
+                                                                bun.fmt.truncatedHash32(css_chunk.isolated_hash),
+                                                            }) catch unreachable;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        _ = writer.write("]}") catch unreachable;
+
+                                        const manifest_data = stream.getWritten();
+                                        @memcpy(remain[0..manifest_data.len], manifest_data);
+                                        remain = remain[manifest_data.len..];
+
+                                        if (enable_source_map_shifts) {
+                                            shift.after.advance(manifest_data);
+                                            shifts.appendAssumeCapacity(shift);
+                                        }
+                                        continue;
                                     },
                                     else => unreachable,
                                 };
@@ -385,10 +465,10 @@ pub const Chunk = struct {
         }
 
         pub const Query = packed struct(u32) {
-            index: u30,
+            index: u29,
             kind: Kind,
 
-            pub const Kind = enum(u2) {
+            pub const Kind = enum(u3) {
                 /// The last piece in an array uses this to indicate it is just data
                 none,
                 /// Given a source index, print the asset's output
@@ -397,6 +477,8 @@ pub const Chunk = struct {
                 chunk,
                 /// Given a server component boundary index, print the chunk's output path
                 scb,
+                /// Given an HTML import index, print the manifest
+                html_import,
             };
 
             pub const none: Query = .{ .index = 0, .kind = .none };

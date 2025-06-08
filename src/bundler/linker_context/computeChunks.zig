@@ -329,6 +329,18 @@ pub noinline fn computeChunks(
         chunk.template.placeholder.name = pathname.base;
         chunk.template.placeholder.ext = chunk.content.ext();
 
+        // Epic 4.1: Populate target field based on chunk's origin
+        // Determine the target from the AST of the entry point source
+        const ast_targets = this.graph.ast.items(.target);
+        const chunk_target = ast_targets[chunk.entry_point.source_index];
+        chunk.template.placeholder.target = switch (chunk_target) {
+            .browser => "browser",
+            .bun => "bun",
+            .node => "node",
+            .bun_macro => "macro",
+            .bake_server_components_ssr => "ssr",
+        };
+
         // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
         const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
 

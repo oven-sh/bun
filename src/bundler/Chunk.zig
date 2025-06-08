@@ -392,64 +392,58 @@ pub const Chunk = struct {
                 try writeHTMLImportManifest(this.index, this.graph, this.linker_graph, this.chunks, writer);
             }
 
-            fn writeHTMLImportManifest(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []Chunk, writer: anytype) !void {
+            fn writeHTMLImportManifest(index: u32, graph: *const Graph, _: *const LinkerGraph, chunks: []Chunk, writer: anytype) !void {
                 const browser_source_index = graph.html_imports.html_source_indices.slice()[index];
 
                 // Start the manifest object
                 _ = writer.write("{\"files\":[") catch unreachable;
 
-                // Find and add JS/CSS chunks
-                const entry_point_chunk_indices: []const u32 = linker_graph.files.items(.entry_point_chunk_index);
-                const entry_point_id = brk: {
-                    for (graph.entry_points.items, 0..) |*entry_point, i| {
-                        if (entry_point.get() == browser_source_index) {
-                            break :brk i;
-                        }
+                var first = true;
+
+                // Find all chunks that came from this HTML file
+                for (chunks) |*ch| {
+                    if (ch.entry_point.source_index == browser_source_index) {
+                        if (!first) _ = writer.write(",") catch unreachable;
+                        first = false;
+
+                        _ = writer.write("{\"path\":") catch unreachable;
+                        bun.js_printer.writeJSONString(ch.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                        _ = writer.write(",\"loader\":\"") catch unreachable;
+                        _ = writer.write(ch.content.ext()) catch unreachable;
+                        _ = writer.write("\",\"hash\":\"") catch unreachable;
+                        _ = writer.print("{}", .{bun.fmt.truncatedHash32(ch.isolated_hash)}) catch unreachable;
+                        _ = writer.write("\"}") catch unreachable;
                     }
+                }
 
-                    @panic("Assertion failed: HTML import file not found in entry points");
-                };
+                // Add additional files (images, fonts, etc.) referenced by the HTML
+                const import_records = graph.ast.items(.import_records)[browser_source_index];
+                for (import_records.slice()) |import_record| {
+                    if (import_record.source_index.isValid() and !import_record.is_external_without_side_effects) {
+                        const source_index = import_record.source_index.get();
+                        const loader = graph.input_files.items(.loader)[source_index];
 
-                if (entry_point_id < entry_point_chunk_indices.len) {
-                    const html_chunk_index = entry_point_chunk_indices[entry_point_id];
-                    if (html_chunk_index < chunks.len) {
-                        const html_chunk = &chunks[html_chunk_index];
-
-                        switch (html_chunk.content) {
-                            .javascript => {
-                                _ = writer.write("{\"path\":") catch unreachable;
-                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
-                                _ = writer.write(",\"loader\":\"js\",\"hash\":\"") catch unreachable;
-                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
-                                _ = writer.write("\",\"input\":") catch unreachable;
-                                bun.js_printer.writeJSONString(graph.input_files.items(.source)[browser_source_index].path.text, @TypeOf(writer), writer, .utf8) catch unreachable;
-                                _ = writer.write("}") catch unreachable;
-
-                                for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
-                                    if (css_chunk_idx < chunks.len) {
-                                        const css_chunk = &chunks[css_chunk_idx];
-                                        _ = writer.write(",{\"path\":") catch unreachable;
-                                        bun.js_printer.writeJSONString(css_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
-                                        _ = writer.write(",\"loader\":\"css\",\"hash\":\"") catch unreachable;
-                                        _ = writer.print("{}", .{bun.fmt.truncatedHash32(css_chunk.isolated_hash)}) catch unreachable;
+                        // Skip JS and CSS files as they're handled as chunks above
+                        if (!loader.isJavaScriptLike() and !loader.isCSS()) {
+                            const additional_files = graph.input_files.items(.additional_files)[source_index];
+                            if (additional_files.len > 0) {
+                                switch (additional_files.slice()[0]) {
+                                    .output_file => |output_file_id| {
+                                        const dest_path = graph.additional_output_files.items[output_file_id].dest_path;
+                                        if (!first) _ = writer.write(",") catch unreachable;
+                                        first = false;
+                                        _ = writer.write("{\"path\":") catch unreachable;
+                                        bun.js_printer.writeJSONString(dest_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                        _ = writer.write(",\"loader\":\"") catch unreachable;
+                                        _ = writer.write(@tagName(loader)) catch unreachable;
+                                        _ = writer.write("\",\"hash\":\"") catch unreachable;
+                                        const content_hash = graph.input_files.items(.content_hash_for_additional_file)[source_index];
+                                        _ = writer.print("{}", .{bun.fmt.truncatedHash32(content_hash)}) catch unreachable;
                                         _ = writer.write("\"}") catch unreachable;
-                                    }
+                                    },
+                                    else => {},
                                 }
-                            },
-                            .css => {
-                                _ = writer.write("{\"path\":") catch unreachable;
-                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
-                                _ = writer.write(",\"loader\":\"css\",\"hash\":\"") catch unreachable;
-                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
-                                _ = writer.write("\"}") catch unreachable;
-                            },
-                            .html => {
-                                _ = writer.write("{\"path\":") catch unreachable;
-                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
-                                _ = writer.write(",\"loader\":\"html\",\"hash\":\"") catch unreachable;
-                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
-                                _ = writer.write("\"}") catch unreachable;
-                            },
+                            }
                         }
                     }
                 }

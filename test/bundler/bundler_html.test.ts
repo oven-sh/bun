@@ -888,7 +888,7 @@ document.addEventListener('DOMContentLoaded', () => {
       expect(serverBundle).toMatchInlineSnapshot(`
 "// @bun
 // template.html
-var template_default = "./template-h12rf7k0.html";
+var template_default = __jsonParse("{"files":[{"path":"./template-9xtxtpnm.js","loader":"js","hash":"5pvhc24r"},{"path":"./template.html","loader":"html","hash":"tavkx41f"},{"path":"./template-39ryshgf.css","loader":"css","hash":"tm7n96dd"},{"path":"./logo-t6g14bq9.png","loader":"file","hash":"t6g14bq9"}]}");
 
 // server.js
 console.log("HTML manifest:", template_default);
@@ -962,10 +962,10 @@ export function getAbout() {
       expect(serverBundle).toMatchInlineSnapshot(`
 "// @bun
 // home.html
-var home_default = "./home-077j1ffz.html";
+var home_default = __jsonParse("{"files":[{"path":"./home-xknw72bg.js","loader":"js","hash":"7wcgtj8w"},{"path":"./home.html","loader":"html","hash":"0x59yy6q"},{"path":"./home-mrjs00yz.css","loader":"css","hash":"jnx9amw6"}]}");
 
 // about.html
-var about_default = "./about-nx4m5ss5.html";
+var about_default = __jsonParse("{"files":[{"path":"./about-4wt6nb97.js","loader":"js","hash":"e4p5eywy"},{"path":"./about.html","loader":"html","hash":"c8fb09sb"},{"path":"./about-ddd3danw.css","loader":"css","hash":"kfkd1fdt"}]}");
 
 // server.js
 function getHome() {
@@ -1039,7 +1039,7 @@ export const config = { version: '1.0' };`,
       expect(serverBundle).toMatchInlineSnapshot(`
 "// @bun
 // page.html
-var page_default = "./page-bq9m3sd5.html";
+var page_default = __jsonParse("{"files":[{"path":"./page-256naknx.js","loader":"js","hash":"nj9w30ca"},{"path":"./page.html","loader":"html","hash":"f5ddyd05"},{"path":"./page-4btw6d53.css","loader":"css","hash":"1pngv86f"}]}");
 
 // server.js
 var server_default = page_default;
@@ -1098,7 +1098,7 @@ fetch('/api/data').then(r => r.json()).then(console.log);`,
       expect(appBundle).toMatchInlineSnapshot(`
 "// @bun
 // dashboard.html
-var dashboard_default = "./dashboard-gpj27xyj.html";
+var dashboard_default = __jsonParse("{"files":[{"path":"./dashboard-b3qf2b7g.js","loader":"js","hash":"tye2hkpb"},{"path":"./dashboard.html","loader":"html","hash":"gyx24kdp"},{"path":"./dashboard-3fxnqp19.css","loader":"css","hash":"520tsev6"},{"path":"./favicon-pytz1nfb.ico","loader":"file","hash":"pytz1nfb"},{"path":"./chart-9q6p3em7.svg","loader":"file","hash":"9q6p3em7"}]}");
 
 // app.js
 Bun.serve({
@@ -1144,7 +1144,7 @@ export { htmlData };`,
       expect(serverBundle).toMatchInlineSnapshot(`
 "// @bun
 // index.html
-var server_import_metadata_default = "./index-4s9h6ybx.html";
+var server_import_metadata_default = __jsonParse("{"files":[{"path":"./index-1zbb1gjs.js","loader":"js","hash":"akfrwy27"},{"path":"./index.html","loader":"html","hash":"pmc0g65g"},{"path":"./index-skz1pf92.css","loader":"css","hash":"fqspnz4x"}]}");
 export {
   server_import_metadata_default as htmlData
 };

@@ -559,7 +559,6 @@ pub const Features = struct {
     trusted_dependencies: bool = false,
     workspaces: bool = false,
     patched_dependencies: bool = false,
-    link_workspace_packages: bool = true,
 
     check_for_duplicate_dependencies: bool = false,
 

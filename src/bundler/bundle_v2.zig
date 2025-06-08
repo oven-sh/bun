@@ -167,7 +167,13 @@ pub const BundleV2 = struct {
         }
     }
 
-    fn ensureClientTranspiler(this: *BundleV2) !*Transpiler {
+    fn ensureClientTranspiler(this: *BundleV2) void {
+        if (this.client_transpiler == null) {
+            _ = this.initializeClientTranspiler() catch bun.outOfMemory();
+        }
+    }
+
+    fn initializeClientTranspiler(this: *BundleV2) !*Transpiler {
         @branchHint(.cold);
         const allocator = this.graph.allocator;
 
@@ -212,10 +218,10 @@ pub const BundleV2 = struct {
     ///
     /// Note that .log, .allocator, and other things are shared
     /// between the three transpiler configurations
-    pub inline fn transpilerForTarget(this: *BundleV2, target: options.Target) *Transpiler {
+    pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse this.ensureClientTranspiler() catch bun.outOfMemory();
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch bun.outOfMemory();
             }
 
             return this.transpiler;
@@ -714,6 +720,7 @@ pub const BundleV2 = struct {
         }
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
+
         const loader = brk: {
             const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
             break :brk loader;
@@ -957,7 +964,27 @@ pub const BundleV2 = struct {
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
 
-                        _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
+                        _ = try this.enqueueEntryItem(
+                            null,
+                            resolved,
+                            true,
+                            brk: {
+                                const main_target = this.transpiler.options.target;
+
+                                if (main_target.isServerSide()) {
+                                    if (resolved.pathConst()) |path| {
+                                        if (path.loader(&this.transpiler.options.loaders)) |loader| {
+                                            if (loader == .html) {
+                                                this.ensureClientTranspiler();
+                                                break :brk .browser;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                break :brk main_target;
+                            },
+                        );
                     }
                 },
                 .dev_server => {
@@ -1163,8 +1190,8 @@ pub const BundleV2 = struct {
     }
 
     pub fn enqueueParseTask(
-        this: *BundleV2,
-        resolve_result: *const _resolver.Result,
+        noalias this: *BundleV2,
+        noalias resolve_result: *const _resolver.Result,
         source: *const Logger.Source,
         loader: Loader,
         known_target: options.Target,
@@ -1173,7 +1200,7 @@ pub const BundleV2 = struct {
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
         this.graph.input_files.append(bun.default_allocator, .{
-            .source = source,
+            .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
@@ -3260,7 +3287,7 @@ pub const BundleV2 = struct {
                             graph.entry_points.append(graph.allocator, new_input_file.source.index) catch bun.outOfMemory();
 
                             if (this.client_transpiler == null) {
-                                _ = this.ensureClientTranspiler() catch bun.outOfMemory();
+                                this.ensureClientTranspiler();
                             }
                         }
 

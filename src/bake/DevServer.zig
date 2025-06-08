@@ -4133,7 +4133,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 prev_dependency.next_dependency = edge.next_dependency;
             } else {
                 assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
-                g.first_dep.items[edge.imported.get()] = .none;
+            	g.first_dep.items[edge.imported.get()] = edge.next_dependency;
             }
             if (edge.next_dependency.unwrap()) |next| {
                 const next_dependency = &g.edges.items[next.get()];

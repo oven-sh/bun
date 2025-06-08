@@ -591,7 +591,6 @@ pub const Features = struct {
         .dev_dependencies = true,
         .optional_dependencies = true,
         .trusted_dependencies = true,
-        .link_workspace_packages = true,
     };
 
     pub const link = Features{

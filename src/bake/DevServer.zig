@@ -5223,10 +5223,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.edges.items[edge_index.get()] = undefined;
             }
 
-                g.edges_free_list.append(g.owner().allocator, edge_index) catch {
-                    // Leak an edge object; Ok since it may get cleaned up by
-                    // the next incremental graph garbage-collection cycle.
-                };
+            g.edges_free_list.append(g.owner().allocator, edge_index) catch {
+                // Leak an edge object; Ok since it may get cleaned up by
+                // the next incremental graph garbage-collection cycle.
+            };
         }
 
         pub fn owner(g: *@This()) *DevServer {

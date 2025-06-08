@@ -1204,7 +1204,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn enqueueParseTask(
-        noalias this: *BundleV2,
+        this: *BundleV2,
         noalias resolve_result: *const _resolver.Result,
         source: *const Logger.Source,
         loader: Loader,
@@ -3428,11 +3428,11 @@ pub const BundleV2 = struct {
                             result.source,
                         ) catch bun.outOfMemory();
 
-                        var ssr_source = result.source;
+                        const ssr_source = &result.source;
                         ssr_source.path.pretty = ssr_source.path.text;
                         ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .bake_server_components_ssr) catch bun.outOfMemory();
                         const ssr_index = this.enqueueParseTask2(
-                            &ssr_source,
+                            ssr_source,
                             graph.input_files.items(.loader)[result.source.index.get()],
                             .bake_server_components_ssr,
                         ) catch bun.outOfMemory();
@@ -3440,11 +3440,11 @@ pub const BundleV2 = struct {
                         break :brk .{ reference_source_index, ssr_index };
                     } else brk: {
                         // Enqueue only one file
-                        var server_source = result.source;
+                        const server_source = &result.source;
                         server_source.path.pretty = server_source.path.text;
                         server_source.path = this.pathWithPrettyInitialized(server_source.path, this.transpiler.options.target) catch bun.outOfMemory();
                         const server_index = this.enqueueParseTask2(
-                            &server_source,
+                            server_source,
                             graph.input_files.items(.loader)[result.source.index.get()],
                             .browser,
                         ) catch bun.outOfMemory();

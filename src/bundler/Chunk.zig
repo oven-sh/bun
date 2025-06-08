@@ -417,33 +417,38 @@ pub const Chunk = struct {
 
                         switch (html_chunk.content) {
                             .javascript => {
-                                _ = writer.print("{{\"path\":{s},\"loader\":\"js\",\"hash\":\"{}\",\"input\":{s}}}", .{
-                                    bun.fmt.quote(html_chunk.final_rel_path),
-                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
-                                    bun.fmt.quote(graph.input_files.items(.source)[browser_source_index].path.text),
-                                }) catch unreachable;
+                                _ = writer.write("{\"path\":") catch unreachable;
+                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                _ = writer.write(",\"loader\":\"js\",\"hash\":\"") catch unreachable;
+                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
+                                _ = writer.write("\",\"input\":") catch unreachable;
+                                bun.js_printer.writeJSONString(graph.input_files.items(.source)[browser_source_index].path.text, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                _ = writer.write("}") catch unreachable;
 
                                 for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
                                     if (css_chunk_idx < chunks.len) {
                                         const css_chunk = &chunks[css_chunk_idx];
-                                        _ = writer.print(",{{\"path\":{s},\"loader\":\"css\",\"hash\":\"{}\"}}", .{
-                                            bun.fmt.quote(css_chunk.final_rel_path),
-                                            bun.fmt.truncatedHash32(css_chunk.isolated_hash),
-                                        }) catch unreachable;
+                                        _ = writer.write(",{\"path\":") catch unreachable;
+                                        bun.js_printer.writeJSONString(css_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                        _ = writer.write(",\"loader\":\"css\",\"hash\":\"") catch unreachable;
+                                        _ = writer.print("{}", .{bun.fmt.truncatedHash32(css_chunk.isolated_hash)}) catch unreachable;
+                                        _ = writer.write("\"}") catch unreachable;
                                     }
                                 }
                             },
                             .css => {
-                                _ = writer.print("{{\"path\":{s},\"loader\":\"css\",\"hash\":\"{}\"}}", .{
-                                    bun.fmt.quote(html_chunk.final_rel_path),
-                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
-                                }) catch unreachable;
+                                _ = writer.write("{\"path\":") catch unreachable;
+                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                _ = writer.write(",\"loader\":\"css\",\"hash\":\"") catch unreachable;
+                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
+                                _ = writer.write("\"}") catch unreachable;
                             },
                             .html => {
-                                _ = writer.print("{{\"path\":{s},\"loader\":\"html\",\"hash\":\"{}\"}}", .{
-                                    bun.fmt.quote(html_chunk.final_rel_path),
-                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
-                                }) catch unreachable;
+                                _ = writer.write("{\"path\":") catch unreachable;
+                                bun.js_printer.writeJSONString(html_chunk.final_rel_path, @TypeOf(writer), writer, .utf8) catch unreachable;
+                                _ = writer.write(",\"loader\":\"html\",\"hash\":\"") catch unreachable;
+                                _ = writer.print("{}", .{bun.fmt.truncatedHash32(html_chunk.isolated_hash)}) catch unreachable;
+                                _ = writer.write("\"}") catch unreachable;
                             },
                         }
                     }

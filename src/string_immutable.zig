@@ -3795,7 +3795,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u8 {
 /// This is a clone of esbuild's decodeWTF8Rune
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
-pub inline fn decodeWTF8RuneTMultibyte(noalias p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
+pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T: type, comptime zero: T) T {
     if (comptime Environment.allow_assert) assert(len > 1);
 
     const s1 = p[1];

@@ -580,7 +580,6 @@ pub const Features = struct {
         .trusted_dependencies = true,
         .patched_dependencies = true,
         .workspaces = true,
-        .link_workspace_packages = true,
     };
 
     pub const folder = Features{

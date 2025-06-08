@@ -1129,7 +1129,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
         resolve_result: *const _resolver.Result,
         source: *const Logger.Source,
-        loader: Loader,
+        loader_: Loader,
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));

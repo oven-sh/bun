@@ -566,7 +566,7 @@ pub const BundleV2 = struct {
             }).disableHTML();
             const idx = this.enqueueParseTask(
                 &resolve_result,
-                .{
+                &.{
                     .path = path.*,
                     .contents = "",
                 },
@@ -1128,8 +1128,8 @@ pub const BundleV2 = struct {
     pub fn enqueueParseTask(
         this: *BundleV2,
         resolve_result: *const _resolver.Result,
-        source: Logger.Source,
-        loader_: Loader,
+        source: *const Logger.Source,
+        loader: Loader,
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -1170,7 +1170,7 @@ pub const BundleV2 = struct {
 
     pub fn enqueueParseTask2(
         this: *BundleV2,
-        source: Logger.Source,
+        source: *const Logger.Source,
         loader: Loader,
         known_target: options.Target,
     ) OOM!Index.Int {
@@ -1178,7 +1178,7 @@ pub const BundleV2 = struct {
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
         this.graph.input_files.append(bun.default_allocator, .{
-            .source = source,
+            .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
@@ -3301,24 +3301,24 @@ pub const BundleV2 = struct {
                             result.source,
                         ) catch bun.outOfMemory();
 
-                        var ssr_source = result.source;
+                        const ssr_source = &result.source;
                         ssr_source.path.pretty = ssr_source.path.text;
                         ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .bake_server_components_ssr) catch bun.outOfMemory();
                         const ssr_index = this.enqueueParseTask2(
                             ssr_source,
-                            this.graph.input_files.items(.loader)[result.source.index.get()],
+                            graph.input_files.items(.loader)[result.source.index.get()],
                             .bake_server_components_ssr,
                         ) catch bun.outOfMemory();
 
                         break :brk .{ reference_source_index, ssr_index };
                     } else brk: {
                         // Enqueue only one file
-                        var server_source = result.source;
+                        const server_source = &result.source;
                         server_source.path.pretty = server_source.path.text;
                         server_source.path = this.pathWithPrettyInitialized(server_source.path, this.transpiler.options.target) catch bun.outOfMemory();
                         const server_index = this.enqueueParseTask2(
                             server_source,
-                            this.graph.input_files.items(.loader)[result.source.index.get()],
+                            graph.input_files.items(.loader)[result.source.index.get()],
                             .browser,
                         ) catch bun.outOfMemory();
 

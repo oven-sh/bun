@@ -4279,7 +4279,7 @@ pub const Parser = struct {
         return Parser{
             .options = _options,
             .allocator = allocator,
-            .lexer = try js_lexer.Lexer.init(log, source.*, allocator),
+            .lexer = try js_lexer.Lexer.init(log, source, allocator),
             .define = define,
             .source = source,
             .log = log,
@@ -24150,7 +24150,7 @@ pub fn newLazyExportASTImpl(
     var parser = Parser{
         .options = opts,
         .allocator = allocator,
-        .lexer = js_lexer.Lexer.initWithoutReading(log, source.*, allocator),
+        .lexer = js_lexer.Lexer.initWithoutReading(log, source, allocator),
         .define = define,
         .source = source,
         .log = log,

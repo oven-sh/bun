@@ -975,21 +975,21 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
@@ -1000,7 +1000,7 @@ pub const Bunfig = struct {
             .json = expr,
             .log = ctx.log,
             .allocator = allocator,
-            .source = &source,
+            .source = source,
             .bunfig = &ctx.args,
             .ctx = ctx,
         };

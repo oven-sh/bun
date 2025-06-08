@@ -885,7 +885,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const serverBundle = api.readFile("out/server.js");
 
       // Server bundle should be fully bundled and contain the manifest
-      expect(serverBundle).toMatchInlineSnapshot();
+      expect(serverBundle).toMatchInlineSnapshot(`
+"// @bun
+// template.html
+var template_default = "./template-h12rf7k0.html";
+
+// server.js
+console.log("HTML manifest:", template_default);
+function getManifest() {
+  return template_default;
+}
+export {
+  getManifest
+};
+"
+`);
     },
   });
 
@@ -945,7 +959,27 @@ export function getAbout() {
       const serverBundle = api.readFile("out/server.js");
 
       // Should contain two separate manifests
-      expect(serverBundle).toMatchInlineSnapshot();
+      expect(serverBundle).toMatchInlineSnapshot(`
+"// @bun
+// home.html
+var home_default = "./home-077j1ffz.html";
+
+// about.html
+var about_default = "./about-nx4m5ss5.html";
+
+// server.js
+function getHome() {
+  return home_default;
+}
+function getAbout() {
+  return about_default;
+}
+export {
+  getHome,
+  getAbout
+};
+"
+`);
     },
   });
 
@@ -1002,7 +1036,18 @@ export const config = { version: '1.0' };`,
       const serverBundle = api.readFile("out/server.js");
 
       // Should include all nested dependencies in the manifest
-      expect(serverBundle).toMatchInlineSnapshot();
+      expect(serverBundle).toMatchInlineSnapshot(`
+"// @bun
+// page.html
+var page_default = "./page-bq9m3sd5.html";
+
+// server.js
+var server_default = page_default;
+export {
+  server_default as default
+};
+"
+`);
     },
   });
 
@@ -1050,7 +1095,22 @@ fetch('/api/data').then(r => r.json()).then(console.log);`,
       const appBundle = api.readFile("out/app.js");
 
       // Should be a complete bundle with all assets in manifest
-      expect(appBundle).toMatchInlineSnapshot();
+      expect(appBundle).toMatchInlineSnapshot(`
+"// @bun
+// dashboard.html
+var dashboard_default = "./dashboard-gpj27xyj.html";
+
+// app.js
+Bun.serve({
+  port: 3000,
+  fetch(req) {
+    return new Response(JSON.stringify(dashboard_default), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+});
+"
+`);
     },
   });
 
@@ -1081,7 +1141,15 @@ export { htmlData };`,
       const serverBundle = api.readFile("out/server.js");
 
       // Each file in manifest should have complete metadata
-      expect(serverBundle).toMatchInlineSnapshot();
+      expect(serverBundle).toMatchInlineSnapshot(`
+"// @bun
+// index.html
+var server_import_metadata_default = "./index-4s9h6ybx.html";
+export {
+  server_import_metadata_default as htmlData
+};
+"
+`);
     },
   });
 });

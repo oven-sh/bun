@@ -1814,7 +1814,7 @@ registry = "${verdaccio.registryUrl()}"
     const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
     expect(barDependency).toBeDefined();
 
-    // Verify that the dependency linked to the bar package is the npm version, not the workspace version
+    // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
 });

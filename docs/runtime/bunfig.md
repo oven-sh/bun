@@ -384,7 +384,7 @@ registry = "https://username:password@registry.npmjs.org"
 
 ### `install.linkWorkspacePackages`
 
-To configure how workspace packages are linked, use the `install.linkWorkspacePackages` section.
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
 
 Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
 

@@ -317,7 +317,7 @@ pub noinline fn computeChunks(
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
-            if (this.graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
+            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
                 chunk.template = PathTemplate.fileWithTarget;
             } else {
                 chunk.template = PathTemplate.file;

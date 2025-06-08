@@ -13,6 +13,7 @@ pub const LinkerContext = struct {
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
     esm_runtime_ref: Ref = Ref.None,
+    json_parse_ref: Ref = Ref.None,
 
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
@@ -214,6 +215,7 @@ pub const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+        this.json_parse_ref = runtime_named_exports.get("__jsonParse").?.ref;
 
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
@@ -2382,6 +2384,11 @@ pub const LinkerContext = struct {
                     break;
                 },
                 .chunk => if (index >= count) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                .html_import => if (index >= c.parse_graph.html_imports.server_source_indices.len) {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;

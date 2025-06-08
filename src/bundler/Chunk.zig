@@ -196,9 +196,12 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
-                                        // For HTML imports, we need to calculate the size of the manifest JSON
-                                        // This is a rough estimate - we'll generate the actual manifest later
-                                        count += 1024; // Reserve space for the manifest
+                                        count += std.fmt.count("{}", .{HTMLImportManifest{
+                                            .index = index,
+                                            .graph = graph,
+                                            .chunks = chunks,
+                                            .linker_graph = linker_graph,
+                                        }});
                                         continue;
                                     },
                                     .none => unreachable,
@@ -279,75 +282,14 @@ pub const Chunk = struct {
                                         break :brk piece_chunk.final_rel_path;
                                     },
                                     .html_import => {
-                                        // Handle HTML import manifests specially
-                                        const html_idx = index;
-
-                                        var manifest_buf: [1024]u8 = undefined;
-                                        var stream = std.io.fixedBufferStream(&manifest_buf);
-                                        var writer = stream.writer();
-
-                                        // Start the manifest object
-                                        _ = writer.write("{\"index\":\"") catch unreachable;
-
-                                        // Write the HTML file path
-                                        const html_files = additional_files[html_idx];
-                                        if (html_files.len > 0) {
-                                            const html_output_file = html_files.last().?.output_file;
-                                            const html_path = graph.additional_output_files.items[html_output_file].dest_path;
-                                            _ = writer.write(html_path) catch unreachable;
-                                        }
-
-                                        _ = writer.write("\",\"files\":[") catch unreachable;
-
-                                        // Add HTML file entry
-                                        if (html_files.len > 0) {
-                                            const html_output_file = html_files.last().?.output_file;
-                                            const html_path = graph.additional_output_files.items[html_output_file].dest_path;
-                                            const content_hashes = graph.input_files.items(.content_hash_for_additional_file);
-                                            const html_hash = content_hashes[html_idx];
-
-                                            _ = writer.print("{{\"path\":\"{s}\",\"loader\":\"html\",\"hash\":\"{}\"}}", .{
-                                                html_path,
-                                                bun.fmt.truncatedHash32(html_hash),
-                                            }) catch unreachable;
-                                        }
-
-                                        // Find and add JS/CSS chunks
-                                        const entry_point_chunk_indices = linker_graph.files.items(.entry_point_chunk_index);
-                                        if (html_idx < entry_point_chunk_indices.len) {
-                                            const html_chunk_index = entry_point_chunk_indices[html_idx];
-                                            if (html_chunk_index < chunks.len) {
-                                                const html_chunk = &chunks[html_chunk_index];
-
-                                                // Add JS chunk
-                                                _ = writer.print(",{{\"path\":\"{s}\",\"loader\":\"js\",\"hash\":\"{}\"}}", .{
-                                                    html_chunk.final_rel_path,
-                                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
-                                                }) catch unreachable;
-
-                                                // Add CSS chunks
-                                                if (html_chunk.content == .javascript) {
-                                                    for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
-                                                        if (css_chunk_idx < chunks.len) {
-                                                            const css_chunk = &chunks[css_chunk_idx];
-                                                            _ = writer.print(",{{\"path\":\"{s}\",\"loader\":\"css\",\"hash\":\"{}\"}}", .{
-                                                                css_chunk.final_rel_path,
-                                                                bun.fmt.truncatedHash32(css_chunk.isolated_hash),
-                                                            }) catch unreachable;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        _ = writer.write("]}") catch unreachable;
-
-                                        const manifest_data = stream.getWritten();
-                                        @memcpy(remain[0..manifest_data.len], manifest_data);
-                                        remain = remain[manifest_data.len..];
+                                        var fixed_buffer_stream = std.io.fixedBufferStream(remain);
+                                        const writer = fixed_buffer_stream.writer();
+                                        try HTMLImportManifest.write(index, graph, linker_graph, chunks, writer);
+                                        remain = remain[fixed_buffer_stream.pos..];
 
                                         if (enable_source_map_shifts) {
-                                            shift.after.advance(manifest_data);
+                                            shift.before.advance(chunk.unique_key);
+                                            shift.after.advance(fixed_buffer_stream.buffer[0..fixed_buffer_stream.pos]);
                                             shifts.appendAssumeCapacity(shift);
                                         }
                                         continue;
@@ -439,6 +381,83 @@ pub const Chunk = struct {
                 },
             }
         }
+
+        pub const HTMLImportManifest = struct {
+            index: u32,
+            graph: *const Graph,
+            chunks: []Chunk,
+            linker_graph: *const LinkerGraph,
+
+            pub fn format(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writeHTMLImportManifest(this.index, this.graph, this.linker_graph, this.chunks, writer);
+            }
+
+            fn writeHTMLImportManifest(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []Chunk, writer: anytype) !void {
+                const browser_source_index = graph.html_imports.html_source_indices.slice()[index];
+
+                // Start the manifest object
+                // _ = writer.write("{\"index\":") catch unreachable;
+                // _ = writer.print("{}", .{index}) catch unreachable;
+                _ = writer.write("{\"files\":[") catch unreachable;
+
+                // Find and add JS/CSS chunks
+                const entry_point_chunk_indices: []const u32 = linker_graph.files.items(.entry_point_chunk_index);
+                const entry_point_id = brk: {
+                    for (graph.entry_points.items, 0..) |*entry_point, i| {
+                        if (entry_point.get() == browser_source_index) {
+                            break :brk i;
+                        }
+                    }
+
+                    @panic("Assertion failed: HTML import file not found in entry points");
+                };
+
+                if (entry_point_id < entry_point_chunk_indices.len) {
+                    const html_chunk_index = entry_point_chunk_indices[entry_point_id];
+                    if (html_chunk_index < chunks.len) {
+                        const html_chunk = &chunks[html_chunk_index];
+
+                        switch (html_chunk.content) {
+                            .javascript => {
+                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"js\\\",\\\"hash\\\":\\\"{}\\\", \\\"input\\\":{}}}", .{
+                                    bun.fmt.quote(html_chunk.final_rel_path),
+                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
+                                    bun.fmt.quote(graph.input_files.items(.source)[browser_source_index].path.text),
+                                }) catch unreachable;
+
+                                for (html_chunk.content.javascript.css_chunks) |css_chunk_idx| {
+                                    if (css_chunk_idx < chunks.len) {
+                                        const css_chunk = &chunks[css_chunk_idx];
+                                        _ = writer.print(",{{\\\"path\\\":{},\\\"loader\\\":\\\"css\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                            bun.fmt.quote(css_chunk.final_rel_path),
+                                            bun.fmt.truncatedHash32(css_chunk.isolated_hash),
+                                        }) catch unreachable;
+                                    }
+                                }
+                            },
+                            .css => {
+                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"css\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                    bun.fmt.quote(html_chunk.final_rel_path),
+                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
+                                }) catch unreachable;
+                            },
+                            .html => {
+                                _ = writer.print("{{\\\"path\\\":{s},\\\"loader\\\":\\\"html\\\",\\\"hash\\\":\\\"{}\\\"}}", .{
+                                    bun.fmt.quote(html_chunk.final_rel_path),
+                                    bun.fmt.truncatedHash32(html_chunk.isolated_hash),
+                                }) catch unreachable;
+                            },
+                        }
+                    }
+                }
+
+                _ = writer.write("]}") catch unreachable;
+            }
+
+            pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []Chunk, writer: anytype) !void {
+                try writeHTMLImportManifest(index, graph, linker_graph, chunks, writer);
+            }
+        };
     };
 
     /// An issue with asset files and server component boundaries is they

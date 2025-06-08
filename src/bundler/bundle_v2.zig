@@ -1055,6 +1055,20 @@ pub const BundleV2 = struct {
         }
     }
 
+    pub fn processHtmlImportFiles(this: *BundleV2) OOM!void {
+        if (this.graph.html_imports.server_source_indices.len == 0) return;
+
+        const input_files: []const Logger.Source = this.graph.input_files.items(.source);
+        for (this.graph.html_imports.server_source_indices.slice()) |html_import| {
+            const source = &input_files[html_import];
+            const source_index = this.pathToSourceIndexMap(.browser).get(source.path.hashKey()) orelse {
+                @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
+            };
+
+            this.graph.html_imports.html_source_indices.push(this.graph.allocator, source_index) catch unreachable;
+        }
+    }
+
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
@@ -1406,6 +1420,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHtmlImportFiles();
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
@@ -1467,6 +1482,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHtmlImportFiles();
 
         const reachable_files = try this.findReachableFiles();
 
@@ -2238,6 +2254,7 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+        try this.processHtmlImportFiles();
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -3033,26 +3050,22 @@ pub const BundleV2 = struct {
 
             const hash_key = path.hashKey();
 
+            const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+            import_record.loader = import_record_loader;
+
+            const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
+
             if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
-                    import_record.source_index = Index.init(id);
+                    import_record.source_index = .init(id);
                 }
                 continue;
             }
 
-            const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
-            import_record.loader = import_record_loader;
-
-            if (import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null) {
+            if (is_html_entrypoint) {
                 import_record.kind = .html_manifest;
-
-                if (this.pathToSourceIndexMap(.browser).get(hash_key)) |client_source_index| {
-                    import_record.source_index = .init(client_source_index);
-                    this.pathToSourceIndexMap(target).put(this.graph.allocator, hash_key, client_source_index) catch bun.outOfMemory();
-                    continue;
-                }
             }
 
             const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
@@ -3094,6 +3107,53 @@ pub const BundleV2 = struct {
             resolve_task.loader = import_record_loader;
             resolve_task.tree_shaking = transpiler.options.tree_shaking;
             resolve_entry.value_ptr.* = resolve_task;
+
+            if (is_html_entrypoint) {
+                // 1. Create the ast right here
+                // 2. Assign teh fake source index
+                // 3. Add it to the graph
+                const empty_html_file_source: Logger.Source = .{
+                    .path = path.*,
+                    .index = Index.source(this.graph.input_files.len),
+                    .contents = "",
+                };
+                var js_parser_options = bun.js_parser.Parser.Options.init(this.transpilerForTarget(target).options.jsx, .html);
+                js_parser_options.bundle = true;
+
+                const unique_key = std.fmt.allocPrint(this.graph.allocator, "{any}H{d:0>8}", .{
+                    bun.fmt.hexIntLower(this.unique_key),
+                    this.graph.html_imports.server_source_indices.len,
+                }) catch unreachable;
+
+                const ast_for_html_entrypoint = JSAst.init((bun.js_parser.newLazyExportAST(
+                    this.graph.allocator,
+                    this.transpilerForTarget(target).options.define,
+                    js_parser_options,
+                    this.transpilerForTarget(target).log,
+                    Expr.init(
+                        E.String,
+                        E.String{
+                            .data = unique_key,
+                        },
+                        Logger.Loc.Empty,
+                    ),
+                    &empty_html_file_source,
+                    "__jsonParse",
+                ) catch unreachable).?);
+
+                var fake_input_file = Graph.InputFile{
+                    .source = empty_html_file_source,
+                    .side_effects = .no_side_effects__empty_ast,
+                };
+
+                this.graph.input_files.append(this.graph.allocator, fake_input_file) catch unreachable;
+                this.graph.ast.append(this.graph.allocator, ast_for_html_entrypoint) catch unreachable;
+
+                import_record.source_index = fake_input_file.source.index;
+                this.pathToSourceIndexMap(target).put(this.graph.allocator, hash_key, fake_input_file.source.index.get()) catch unreachable;
+                this.graph.html_imports.server_source_indices.push(this.graph.allocator, fake_input_file.source.index.get()) catch unreachable;
+                this.ensureClientTranspiler();
+            }
         }
 
         if (last_error) |err| {
@@ -3234,35 +3294,25 @@ pub const BundleV2 = struct {
                 var iter = resolve_queue.iterator();
 
                 const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
-                const is_server_side = result.ast.target.isServerSide();
+                const original_target = result.ast.target;
                 while (iter.next()) |entry| {
                     const hash = entry.key_ptr.*;
                     const value: *ParseTask = entry.value_ptr.*;
 
-                    var existing = path_to_source_index_map.getOrPut(graph.allocator, hash) catch unreachable;
+                    const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+
+                    const is_html_entrypoint = loader == .html and original_target.isServerSide() and this.transpiler.options.dev_server == null;
+
+                    const map = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
+                    var existing = map.getOrPut(graph.allocator, hash) catch unreachable;
 
                     // If the same file is imported and required, and those point to different files
                     // Automatically rewrite it to the secondary one
                     if (value.secondary_path_for_commonjs_interop) |secondary_path| {
                         const secondary_hash = secondary_path.hashKey();
-                        if (path_to_source_index_map.get(secondary_hash)) |secondary| {
+                        if (map.get(secondary_hash)) |secondary| {
                             existing.found_existing = true;
                             existing.value_ptr.* = secondary;
-                        }
-                    }
-
-                    const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
-                    var html_entrypoint_path_to_index_entry: ?@TypeOf(existing) = null;
-
-                    // Handle a scenario where the developer adds an HTML file as an entry point to their server through CLI.
-                    //
-                    //   bun build --target=bun ./src/index.tsx ./src/index.html`
-                    const is_html_entrypoint = loader == .html and is_server_side and value.known_target == .browser;
-                    if (!existing.found_existing and is_html_entrypoint) {
-                        html_entrypoint_path_to_index_entry = this.pathToSourceIndexMap(.browser).getOrPut(graph.allocator, hash) catch bun.outOfMemory();
-                        if (html_entrypoint_path_to_index_entry.?.found_existing) {
-                            existing.found_existing = true;
-                            existing.value_ptr.* = html_entrypoint_path_to_index_entry.?.value_ptr.*;
                         }
                     }
 
@@ -3278,24 +3328,19 @@ pub const BundleV2 = struct {
 
                         // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
                         new_input_file.loader = loader;
-
-                        existing.value_ptr.* = new_input_file.source.index.get();
                         new_task.source_index = new_input_file.source.index;
-                        if (html_entrypoint_path_to_index_entry) |*html| {
-                            // This is a new entry point, let's add it to the list.
-                            html.value_ptr.* = new_input_file.source.index.get();
-                            graph.entry_points.append(graph.allocator, new_input_file.source.index) catch bun.outOfMemory();
-
-                            if (this.client_transpiler == null) {
-                                this.ensureClientTranspiler();
-                            }
-                        }
-
                         new_task.ctx = this;
+                        existing.value_ptr.* = new_task.source_index.get();
+
+                        diff += 1;
 
                         graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
                         graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
-                        diff += 1;
+
+                        if (is_html_entrypoint) {
+                            this.ensureClientTranspiler();
+                            this.graph.entry_points.append(this.graph.allocator, new_input_file.source.index) catch unreachable;
+                        }
 
                         if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
                             continue;

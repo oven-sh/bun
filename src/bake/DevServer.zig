@@ -4141,7 +4141,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
-
         fn processCSSChunkImportRecords(
             g: *@This(),
             ctx: *HotUpdateContext,

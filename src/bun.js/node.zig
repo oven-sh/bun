@@ -36,6 +36,7 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
+pub const FSEvents = @import("node/fs_events.zig");
 const stat = @import("node/Stat.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;

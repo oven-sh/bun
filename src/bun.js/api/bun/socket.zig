@@ -4373,3 +4373,36 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;
 }
+
+pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments();
+
+    if (arguments.len < 3) {
+        return global.throwNotEnoughArguments("setSocketOptions", 3, arguments.len);
+    }
+
+    const socket = arguments.ptr[0].as(TCPSocket) orelse {
+        return global.throw("Expected a SocketTCP instance", .{});
+    };
+
+    const is_for_send_buffer = arguments.ptr[1].toInt32() == 1;
+    const is_for_recv_buffer = arguments.ptr[1].toInt32() == 2;
+    const buffer_size = arguments.ptr[2].toInt32();
+    const file_descriptor = socket.socket.fd();
+
+    if (bun.Environment.isPosix) {
+        if (is_for_send_buffer) {
+            const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, buffer_size);
+            if (result.asErr()) |err| {
+                return global.throwValue(err.toJSC(global));
+            }
+        } else if (is_for_recv_buffer) {
+            const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, buffer_size);
+            if (result.asErr()) |err| {
+                return global.throwValue(err.toJSC(global));
+            }
+        }
+    }
+
+    return JSC.JSValue.jsUndefined();
+}

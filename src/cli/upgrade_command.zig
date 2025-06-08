@@ -209,9 +209,9 @@ pub const UpgradeCommand = struct {
 
         var log = logger.Log.init(allocator);
         defer if (comptime silent) log.deinit();
-        var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
+        const source = &logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();

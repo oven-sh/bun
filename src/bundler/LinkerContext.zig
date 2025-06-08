@@ -888,11 +888,11 @@ pub const LinkerContext = struct {
                             const parent_source_index = other_source_index;
 
                             if (parent_result_tla_keyword.len > 0) {
-                                const source = input_files[other_source_index];
+                                const source = &input_files[other_source_index];
                                 tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
                                     .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
-                                    .location = .initOrNull(&source, parent_result_tla_keyword),
+                                    .location = .initOrNull(source, parent_result_tla_keyword),
                                 }) catch bun.outOfMemory();
                                 break;
                             }

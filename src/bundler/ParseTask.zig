@@ -283,17 +283,17 @@ fn getEmptyCSSAST(
     transpiler: *Transpiler,
     opts: js_parser.Parser.Options,
     allocator: std.mem.Allocator,
-    source: Logger.Source,
+    source: *const Logger.Source,
 ) !JSAst {
     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
-    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
     ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
     return ast;
 }
 
-fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
+fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: *const Logger.Source, comptime RootType: type) !JSAst {
     const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
-    return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+    return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
 }
 
 const FileLoaderHash = struct {
@@ -307,7 +307,7 @@ fn getAST(
     opts: js_parser.Parser.Options,
     allocator: std.mem.Allocator,
     resolver: *Resolver,
-    source: Logger.Source,
+    source: *const Logger.Source,
     loader: Loader,
     unique_key_prefix: u64,
     unique_key_for_additional_file: *FileLoaderHash,
@@ -322,7 +322,7 @@ fn getAST(
                 opts,
                 transpiler.options.define,
                 log,
-                &source,
+                source,
             )) |res|
                 JSAst.init(res.ast)
             else switch (opts.module_type == .esm) {
@@ -340,7 +340,7 @@ fn getAST(
             const trace = bun.perf.trace("Bundler.ParseJSON");
             defer trace.end();
             const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
-            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
         },
         .toml => {
             const trace = bun.perf.trace("Bundler.ParseTOML");
@@ -350,22 +350,22 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try TOML.parse(&source, &temp_log, allocator, false);
-            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+            const root = try TOML.parse(source, &temp_log, allocator, false);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
-            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-            ast.addUrlForCss(allocator, &source, "text/plain", null);
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/plain", null);
             return ast;
         },
 
         .sqlite_embedded, .sqlite => {
             if (!transpiler.options.target.isBun()) {
                 log.addError(
-                    &source,
+                    source,
                     Logger.Loc.Empty,
                     "To use the \"sqlite\" loader, set target to \"bun\"",
                 ) catch bun.outOfMemory();
@@ -426,13 +426,13 @@ fn getAST(
                 .name = "db",
             }, Logger.Loc{ .start = 0 });
 
-            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
         },
         .napi => {
             // (dap-eval-cb "source.contents.ptr")
             if (transpiler.options.target == .browser) {
                 log.addError(
-                    &source,
+                    source,
                     Logger.Loc.Empty,
                     "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                 ) catch bun.outOfMemory();
@@ -460,10 +460,10 @@ fn getAST(
                 .key = unique_key,
                 .content_hash = ContentHasher.run(source.contents),
             };
-            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
         },
         .html => {
-            var scanner = HTMLScanner.init(allocator, log, &source);
+            var scanner = HTMLScanner.init(allocator, log, source);
             try scanner.scan(source.contents);
 
             // Reuse existing code for creating the AST
@@ -475,7 +475,7 @@ fn getAST(
                 opts,
                 log,
                 Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
-                &source,
+                source,
                 "",
             )).?;
             ast.import_records = scanner.import_records;
@@ -518,7 +518,7 @@ fn getAST(
             const source_code = source.contents;
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.appendToMaybeRecycled(log, &source) catch bun.outOfMemory();
+                temp_log.appendToMaybeRecycled(log, source) catch bun.outOfMemory();
             }
 
             const css_module_suffix = ".module.css";
@@ -540,7 +540,7 @@ fn getAST(
             )) {
                 .result => |v| v,
                 .err => |e| {
-                    try e.addToLogger(&temp_log, &source, allocator);
+                    try e.addToLogger(&temp_log, source, allocator);
                     return error.SyntaxError;
                 },
             };
@@ -557,7 +557,7 @@ fn getAST(
                 .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                 .unused_symbols = .{},
             }, &extra).asErr()) |e| {
-                try e.addToLogger(&temp_log, &source, allocator);
+                try e.addToLogger(&temp_log, source, allocator);
                 return error.MinifyError;
             }
             if (css_ast.local_scope.count() > 0) {
@@ -566,7 +566,7 @@ fn getAST(
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
             const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-            var ast = JSAst.init((try js_parser.newLazyExportASTImpl(allocator, transpiler.options.define, opts, &temp_log, root, &source, "", extra.symbols)).?);
+            var ast = JSAst.init((try js_parser.newLazyExportASTImpl(allocator, transpiler.options.define, opts, &temp_log, root, source, "", extra.symbols)).?);
             ast.css = css_ast_heap;
             ast.import_records = import_records;
             return ast;
@@ -608,8 +608,8 @@ fn getAST(
                 .key = unique_key,
                 .content_hash = content_hash,
             };
-            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
-            ast.addUrlForCss(allocator, &source, null, unique_key);
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, null, unique_key);
             return ast;
         },
     }
@@ -1138,7 +1138,7 @@ fn runWithSourceCode(
         bun.assert(transpiler.options.target == .browser);
     }
 
-    var source = Logger.Source{
+    const source = &Logger.Source{
         .path = file_path.*,
         .index = task.source_index,
         .contents = entry.contents,
@@ -1241,7 +1241,7 @@ fn runWithSourceCode(
 
     return .{
         .ast = ast,
-        .source = source,
+        .source = source.*,
         .log = log.*,
         .use_directive = use_directive,
         .unique_key_for_additional_file = unique_key_for_additional_file.key,

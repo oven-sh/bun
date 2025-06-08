@@ -357,7 +357,7 @@ pub const Arguments = struct {
             ctx.log.level = original_level;
         }
         ctx.log.level = logger.Log.Level.warn;
-        try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+        try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
     fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {

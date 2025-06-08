@@ -2048,10 +2048,10 @@ fn NewLexer_(
             };
         }
 
-        pub fn initTSConfig(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn initJSON(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var lex = LexerType{
                 .log = log,
-                .source = source,
+                .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
@@ -2064,26 +2064,10 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn initJSON(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            var lex = LexerType{
-                .log = log,
-                .source = source,
-                .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
-                .prev_error_loc = logger.Loc.Empty,
-                .allocator = allocator,
-                .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
-                .all_comments = std.ArrayList(logger.Range).init(allocator),
-            };
-            lex.step();
-            try lex.next();
-
-            return lex;
-        }
-
-        pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
+        pub fn initWithoutReading(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) LexerType {
             return LexerType{
                 .log = log,
-                .source = source,
+                .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
@@ -2092,7 +2076,7 @@ fn NewLexer_(
             };
         }
 
-        pub fn init(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+        pub fn init(log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !LexerType {
             var lex = initWithoutReading(log, source, allocator);
             lex.step();
             try lex.next();

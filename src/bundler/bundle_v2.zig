@@ -1138,7 +1138,7 @@ pub const BundleV2 = struct {
         const loader = loader_.disableHTML();
 
         this.graph.input_files.append(bun.default_allocator, .{
-            .source = source,
+            .source = source.*,
             .loader = loader,
             .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();

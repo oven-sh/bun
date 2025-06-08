@@ -600,7 +600,6 @@ pub const Features = struct {
 
     pub const npm = Features{
         .optional_dependencies = true,
-        .link_workspace_packages = true,
     };
 
     pub const tarball = npm;

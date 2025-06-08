@@ -178,7 +178,7 @@ fn NewLexer_(
             void = if (json_options.guess_indentation)
             .{},
 
-        pub inline fn loc(self: *const LexerType) logger.Loc {
+        pub inline fn loc(noalias self: *const LexerType) logger.Loc {
             return logger.usize2Loc(self.start);
         }
 
@@ -296,11 +296,11 @@ fn NewLexer_(
             return it.source.contents[original_i..end_ix];
         }
 
-        pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
+        pub inline fn isIdentifierOrKeyword(noalias lexer: *const LexerType) bool {
             return @intFromEnum(lexer.token) >= @intFromEnum(T.t_identifier);
         }
 
-        pub fn deinit(this: *LexerType) void {
+        pub fn deinit(noalias this: *LexerType) void {
             this.temp_buffer_u16.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
@@ -802,7 +802,7 @@ fn NewLexer_(
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
-        fn remaining(it: *const LexerType) []const u8 {
+        fn remaining(noalias it: *const LexerType) []const u8 {
             return it.source.contents[it.current..];
         }
 
@@ -1826,11 +1826,11 @@ fn NewLexer_(
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 
-        pub fn raw(noalias self: *LexerType) []const u8 {
+        pub fn raw(noalias self: *const LexerType) []const u8 {
             return self.source.contents[self.start..self.end];
         }
 
-        pub fn isContextualKeyword(noalias self: *LexerType, comptime keyword: string) bool {
+        pub fn isContextualKeyword(noalias self: *const LexerType, comptime keyword: string) bool {
             return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
         }
 

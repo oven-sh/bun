@@ -606,7 +606,6 @@ pub const Features = struct {
 
     pub const npm_manifest = Features{
         .optional_dependencies = true,
-        .link_workspace_packages = true,
     };
 };
 

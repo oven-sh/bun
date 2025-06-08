@@ -4141,6 +4141,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
+
         fn processCSSChunkImportRecords(
             g: *@This(),
             ctx: *HotUpdateContext,
@@ -4823,7 +4824,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const keys = g.bundled_files.keys();
 
-            // Disconnect all imports
+            // Disconnect all imports (edges where this file imports others)
             var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
@@ -5215,14 +5216,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.edges.items[edge_index.get()] = undefined;
             }
 
-            if (edge_index.get() == (g.edges.items.len - 1)) {
-                g.edges.items.len -= 1;
-            } else {
-                g.edges_free_list.append(g.owner().allocator, edge_index) catch {
-                    // Leak an edge object; Ok since it may get cleaned up by
-                    // the next incremental graph garbage-collection cycle.
-                };
-            }
+            // Always add to free list, never shrink the array during incremental updates.
+            // Shrinking can invalidate edge indices that are still held in various parts
+            // of the graph (e.g., in linked lists being traversed or in files being processed).
+            // The garbage collector will handle compacting the array when safe to do so.
+            g.edges_free_list.append(g.owner().allocator, edge_index) catch {
+                // Leak an edge object; Ok since it may get cleaned up by
+                // the next incremental graph garbage-collection cycle.
+            };
         }
 
         pub fn owner(g: *@This()) *DevServer {

@@ -26,6 +26,28 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+node_linker: NodeLinker = .auto,
+
+pub const NodeLinker = enum(u8) {
+    // If workspaces are used: isolated
+    // If not: hoisted
+    // Used when nodeLinker is absent from package.json/bun.lock/bun.lockb
+    auto,
+
+    hoisted,
+    isolated,
+
+    pub fn fromStr(input: string) ?NodeLinker {
+        if (strings.eqlComptime(input, "hoisted")) {
+            return .hoisted;
+        }
+        if (strings.eqlComptime(input, "isolated")) {
+            return .isolated;
+        }
+        return null;
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
@@ -618,6 +640,8 @@ pub fn cleanWithLogger(
     try new.buffers.preallocate(old.buffers, old.allocator);
     try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
 
+    new.node_linker = old.node_linker;
+
     old.scratch.dependency_list_queue.head = 0;
 
     {
@@ -1207,6 +1231,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
+        .node_linker = .auto,
         .meta_hash = zero_hash,
     };
 }
@@ -1952,10 +1977,10 @@ pub const default_trusted_dependencies = brk: {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
-        // just in case there's duplicates from truncating
-        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
-
-        map.putAssumeCapacity(dep, {});
+        const entry = map.getOrPutAssumeCapacity(dep);
+        if (entry.found_existing) {
+            @compileError("Duplicate trusted dependency: " ++ dep);
+        }
     }
 
     const final = map;

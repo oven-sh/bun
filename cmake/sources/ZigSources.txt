@@ -483,6 +483,7 @@ src/Global.zig
 src/grapheme.zig
 src/heap_breakdown.zig
 src/highway.zig
+src/paths.zig
 src/hive_array.zig
 src/hmac.zig
 src/HTMLScanner.zig
@@ -533,6 +534,7 @@ src/install/resolvers/folder_resolver.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
+src/install/workspaces.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig

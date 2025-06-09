@@ -43,6 +43,8 @@ const AsyncHTTP = HTTP.AsyncHTTP;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
 
+const installIsolatedPackages = @import("./workspaces.zig").installIsolatedPackages;
+
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
@@ -11923,13 +11925,15 @@ pub const PackageManager = struct {
         )));
     }
 
-    pub fn installPackages(
+    pub fn installHoistedPackages(
         this: *PackageManager,
         ctx: Command.Context,
         workspace_filters: []const WorkspaceFilter,
         install_root_dependencies: bool,
         log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
+        bun.Analytics.Features.hoisted_bun_install += 1;
+
         const original_trees = this.lockfile.buffers.trees;
         const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
@@ -12596,6 +12600,8 @@ pub const PackageManager = struct {
                         lockfile.catalogs.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
+                        manager.lockfile.node_linker = lockfile.node_linker;
+
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                         const len = @as(u32, @truncate(new_dependencies.len));
                         var packages = manager.lockfile.packages.slice();
@@ -13132,15 +13138,27 @@ pub const PackageManager = struct {
             }
         }
 
-        var install_summary = PackageInstall.Summary{};
-        if (manager.options.do.install_packages) {
-            install_summary = try manager.installPackages(
-                ctx,
-                workspace_filters.items,
-                install_root_dependencies,
-                log_level,
-            );
-        }
+        const install_summary: PackageInstall.Summary = install_summary: {
+            if (!manager.options.do.install_packages) {
+                break :install_summary .{};
+            }
+
+            if (manager.lockfile.node_linker == .hoisted or
+                // TODO
+                manager.lockfile.node_linker == .auto)
+            {
+                break :install_summary try manager.installHoistedPackages(
+                    ctx,
+                    workspace_filters.items,
+                    install_root_dependencies,
+                    log_level,
+                );
+            }
+
+            break :install_summary installIsolatedPackages(manager, install_root_dependencies, workspace_filters.items) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            };
+        };
 
         if (log_level != .silent) {
             try manager.log.print(Output.errorWriter());

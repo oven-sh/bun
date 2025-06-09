@@ -44,6 +44,9 @@ const tlsServer = tls.createServer(
     });
   },
 );
+tlsServer.on('connection', () => {
+  console.log('TLS server connection event');
+})
 
 const server = net.createServer((conn) => {
   console.log('Net server received connection');
@@ -77,6 +80,9 @@ const server = net.createServer((conn) => {
     tlsServer.emit('connection', serverSide);
   }));
 });
+server.on('connection', () => {
+  console.log('Net server connection event');
+})
 
 server.listen(0, () => {
   const port = server.address().port;

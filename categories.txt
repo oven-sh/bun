@@ -29,6 +29,38 @@ parallel/test-tls-client-resume-12.js
 
 parallel/test-tls-external-accessor.js
 - we don't support `_external`, but we pass the spirit of the test. trivial 'fix'
+parallel/test-tls-destroy-stream.js
+- the test calls `.emit("connection")` on the tlsServer. In node, this calls the connection
+  handler but in bun it does not. Switch tls to use emit("connection") rather than
+  calling the connection listener directly, and add .on('connection') in the constructor
+  like node does.
+  ```diff
+  if (typeof options === "function") {
+    connectionListener = options;
+    options = {};
+  +this.on("connection", connectionListener);
+  } else if (options == null || typeof options === "object") {
+    options = { ...options };
+  +this.on("connection", connectionListener);
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
+  }
+
+  -  if (typeof connectionListener === "function") {
+  -    this.pauseOnConnect = pauseOnConnect;
+  -    if (!isTLS) {
+  -      connectionListener.$call(self, _socket);
+  -    }
+  -  }
+
+  also check what to do here
+
+    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+    if (typeof connectionListener === "function") {
+      connectionListener.$call(server, self);
+    }
+    server.emit("secureConnection", self);
+  ```
 
 # probably easy
 
@@ -62,7 +94,6 @@ parallel/test-tls-cert-chains-concat.js
 - issuerCertificate is not defined?
 parallel/test-tls-streamwrap-buffersize.js
 - bufferSize is wrong. also it is deprecated.
-parallel/test-tls-destroy-stream.js
 
 parallel/test-tls-pause.js
 parallel/test-tls-connect-memleak.js

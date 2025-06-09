@@ -8,6 +8,7 @@ const tls = require('tls');
 const fixtures = require('../common/fixtures');
 const { X509Certificate } = require('crypto');
 
+console.log(fixtures.readKey('agent6-key.pem'));
 const options = {
   key: fixtures.readKey('agent6-key.pem'),
   cert: fixtures.readKey('agent6-cert.pem')

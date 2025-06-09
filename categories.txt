@@ -19,17 +19,22 @@ t.style.color = "black";
 
 # TODO CHECK:
 
-# max version env vars
+# max version env vars, not investigated.
 
 parallel/test-tls-client-reject-12.js
 parallel/test-tls-ticket-12.js
 parallel/test-tls-client-resume-12.js
+parallel/test-tls-destroy-stream-12.js
+parallel/test-tls-net-socket-keepalive-12.js
+parallel/test-tls-keylog-tlsv13.js
+parallel/test-tls-cli-min-max-conflict.js
 
 # trivial
 
 parallel/test-tls-external-accessor.js
 - we don't support `_external`, but we pass the spirit of the test. trivial 'fix'
 parallel/test-tls-destroy-stream.js
+parallel/test-double-tls-client.js (this one maybe not as easy, but it is somewhat related)
 - the test calls `.emit("connection")` on the tlsServer. In node, this calls the connection
   handler but in bun it does not. Switch tls to use emit("connection") rather than
   calling the connection listener directly, and add .on('connection') in the constructor
@@ -70,13 +75,15 @@ parallel/test-tls-basic-validations.js
 - 12 mismatched errors
 parallel/test-tls-error-servername.js
 - 2 mismatched errors
-
-# categorize
-
+parallel/test-tls-client-allow-partial-trust-chain.js
+- support allowPartialTrustChain
 parallel/test-tls-env-bad-extra-ca.js
 - emit a warning when the value in NODE_EXTRA_CA_CERTS is ignored because it fails to load
 - this is a little bit hard to do because currently we handle that in us_internal_init_root_certs with getenv,
   but we can't emit a warning from there. we would have to have it call out to bun code to emit the warning
+
+# categorize
+
 parallel/test-tls-connect-allow-half-open-option.js
 - with allowHalfOpen, if the server ends its socket, it should still be able to receive a message
 parallel/test-tls-server-parent-constructor-options.js
@@ -85,6 +92,11 @@ parallel/test-tls-get-ca-certificates-system.js
 parallel/test-tls-get-ca-certificates-default.js
 parallel/test-tls-get-ca-certificates-error.js
 parallel/test-tls-get-ca-certificates-extra-empty.js
+parallel/test-tls-get-ca-certificates-bundled.js
+parallel/test-tls-get-ca-certificates-extra-subset.js
+parallel/test-tls-get-ca-certificates-system-without-flag.js
+parallel/test-tls-get-ca-certificates-bundled-subset.js
+parallel/test-tls-get-ca-certificates-extra.js
 - tls.getCACertificates is not implemented
 parallel/test-tls-server-setkeycert.js
 - some kind of problem with getPeerX509Certificate?
@@ -94,28 +106,19 @@ parallel/test-tls-cert-chains-concat.js
 - issuerCertificate is not defined?
 parallel/test-tls-streamwrap-buffersize.js
 - bufferSize is wrong. also it is deprecated.
-
-parallel/test-tls-pause.js
-parallel/test-tls-connect-memleak.js
-parallel/test-tls-get-ca-certificates-bundled.js
 parallel/test-tls-clientcertengine-invalid-arg-type.js
-parallel/test-tls-timeout-server.js
-parallel/test-tls-destroy-stream-12.js
-parallel/test-tls-net-socket-keepalive-12.js
 parallel/test-tls-socket-default-options.js
-parallel/test-tls-get-ca-certificates-extra-subset.js
-parallel/test-double-tls-client.js
+- createSecureContext (kai)
+parallel/test-tls-timeout-server.js
+- handshakeTimeout is not implemented
 parallel/test-tls-retain-handle-no-abort.js
-parallel/test-tls-keylog-tlsv13.js
+- unable to verify the first certificate? UNABLE_TO_VERIFY_LEAF_SIGNATURE
 parallel/test-tls-client-resume.js
-parallel/test-tls-no-sslv23.js
+- done https://github.com/oven-sh/bun/pull/20197
 parallel/test-tls-connect-timeout-option.js
-parallel/test-tls-client-allow-partial-trust-chain.js
-parallel/test-tls-cli-min-max-conflict.js
-parallel/test-tls-get-ca-certificates-system-without-flag.js
-parallel/test-tls-get-ca-certificates-bundled-subset.js
+- support tls connect timeout option
 parallel/test-tls-getcertificate-x509.js
-parallel/test-tls-get-ca-certificates-extra.js
+- error: error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE
 parallel/test-tls-env-extra-ca.js
 parallel/test-tls-socket-destroy.js
 parallel/test-tls-socket-close.js
@@ -130,6 +133,11 @@ parallel/test-tls-wrap-event-emmiter.js
 parallel/test-tls-client-default-ciphers.js
 parallel/test-tls-socket-constructor-alpn-options-parsing.js
 sequential/test-tls-session-timeout.js
+
+# skipped (wontfix)
+
+parallel/test-tls-no-sslv23.js
+- skipped
 
 # Key
 
@@ -194,6 +202,8 @@ These tests are removed in new node versions: (createSecurePair is deprecated)
 - test-tls-onread-static-buffer
 - test-tls-lookup
 - test-tls-wrap-econnreset-pipe
+- parallel/test-tls-pause.js
+- parallel/test-tls-connect-memleak.js
 
 # Attempted
 

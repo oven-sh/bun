@@ -35,13 +35,17 @@ const options = {
   handshakeTimeout: 50
 };
 
+console.log('Creating TLS server with options:', options);
+
 const server = tls.createServer(options, common.mustNotCall());
 
 server.on('tlsClientError', common.mustCall(function(err, conn) {
+  console.log('TLS client error occurred:', err.message);
   conn.destroy();
   server.close();
 }));
 
 server.listen(0, common.mustCall(function() {
+  console.log('Server listening on port:', this.address().port);
   net.connect({ host: '127.0.0.1', port: this.address().port });
 }));

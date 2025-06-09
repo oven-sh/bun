@@ -11,10 +11,13 @@ if (!common.hasCrypto)
 const assert = require('assert');
 const tls = require('tls');
 
+console.log('Creating TLS socket with timeout option...');
 const socket = tls.connect({
   port: 42,
   lookup: () => {},
   timeout: 1000
 });
 
+console.log('Socket timeout value:', socket.timeout);
 assert.strictEqual(socket.timeout, 1000);
+console.log('Timeout assertion passed');

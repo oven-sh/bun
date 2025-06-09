@@ -4,7 +4,8 @@ import { BuildCommand } from "./build-layer";
 export class PublishCommand extends BuildCommand {
   static summary = "Publish a custom Lambda layer for Bun.";
 
-  #aws(args: string[]): string {
+  #aws(userArgs: string[], profile?: string): string {
+    const args = profile ? ["--profile", profile, ...userArgs] : userArgs;
     this.debug("$", "aws", ...args);
     const { status, stdout, stderr } = spawnSync("aws", args, {
       stdio: "pipe",
@@ -30,7 +31,12 @@ export class PublishCommand extends BuildCommand {
         { exit: 1 },
       );
     }
-    const { layer, region, arch, output, public: isPublic } = flags;
+    const { layer, region, profile, arch, output, public: isPublic } = flags;
+    if (profile) {
+      this.log("Using AWS profile:", profile);
+      // prettier-ignore
+      this.#aws(["configure", "set", "profile." + profile + ".output", "json"], profile);
+    }
     if (region.includes("*")) {
       // prettier-ignore
       const result = this.#aws(["ec2", "describe-regions", "--query", "Regions[].RegionName", "--output", "json"]);
@@ -66,7 +72,7 @@ export class PublishCommand extends BuildCommand {
           `fileb://${output}`,
           "--output",
           "json",
-        ]);
+        ], profile);
         const { LayerVersionArn } = JSON.parse(result);
         this.log("Published", LayerVersionArn);
         if (isPublic) {
@@ -86,7 +92,7 @@ export class PublishCommand extends BuildCommand {
             "lambda:GetLayerVersion",
             "--principal",
             "*",
-          ]);
+          ], profile);
         }
       }
     }

@@ -36,16 +36,16 @@ fn getAllocationCounter(comptime T: type) *std.atomic.Value(usize) {
 
 pub fn allocator(comptime T: type) std.mem.Allocator {
     const zone = getZoneT(T);
+    return zone.allocator(T);
+}
+
+pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    // For named allocators, we don't have a type to track
+    const zone = getZone("Bun__" ++ name);
 
     const S = struct {
         fn rawAlloc(zone_ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
-            const result = Zone.alignedAlloc(@ptrCast(zone_ptr), len, alignment);
-            if (result) |_| {
-                if (comptime enabled) {
-                    _ = getAllocationCounter(T).fetchAdd(1, .monotonic);
-                }
-            }
-            return result;
+            return Zone.alignedAlloc(@ptrCast(zone_ptr), len, alignment);
         }
 
         fn resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
@@ -62,9 +62,6 @@ pub fn allocator(comptime T: type) std.mem.Allocator {
         }
 
         fn rawFree(zone_ptr: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
-            if (comptime enabled) {
-                _ = getAllocationCounter(T).fetchSub(1, .monotonic);
-            }
             Zone.malloc_zone_free(@ptrCast(zone_ptr), @ptrCast(buf.ptr));
         }
     };
@@ -80,10 +77,6 @@ pub fn allocator(comptime T: type) std.mem.Allocator {
         .vtable = &vtable,
         .ptr = zone,
     };
-}
-
-pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
-    return getZone("Bun__" ++ name).allocator();
 }
 
 pub fn getZoneT(comptime T: type) *Zone {
@@ -127,35 +120,46 @@ pub const Zone = opaque {
         return std.c.malloc_size(ptr);
     }
 
-    fn rawAlloc(zone: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
-        return alignedAlloc(@ptrCast(zone), len, alignment);
-    }
+    pub fn allocator(zone: *Zone, comptime T: type) std.mem.Allocator {
+        const S = struct {
+            fn rawAlloc(zone_ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+                const result = Zone.alignedAlloc(@ptrCast(zone_ptr), len, alignment);
+                if (result) |_| {
+                    if (comptime enabled) {
+                        _ = getAllocationCounter(T).fetchAdd(1, .monotonic);
+                    }
+                }
+                return result;
+            }
 
-    fn resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
-        if (new_len <= buf.len) {
-            return true;
-        }
+            fn resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
+                if (new_len <= buf.len) {
+                    return true;
+                }
 
-        const full_len = alignedAllocSize(buf.ptr);
-        if (new_len <= full_len) {
-            return true;
-        }
+                const full_len = Zone.alignedAllocSize(buf.ptr);
+                if (new_len <= full_len) {
+                    return true;
+                }
 
-        return false;
-    }
+                return false;
+            }
 
-    fn rawFree(zone: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
-        malloc_zone_free(@ptrCast(zone), @ptrCast(buf.ptr));
-    }
+            fn rawFree(zone_ptr: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
+                if (comptime enabled) {
+                    _ = getAllocationCounter(T).fetchSub(1, .monotonic);
+                }
+                Zone.malloc_zone_free(@ptrCast(zone_ptr), @ptrCast(buf.ptr));
+            }
+        };
 
-    pub const vtable = std.mem.Allocator.VTable{
-        .alloc = &rawAlloc,
-        .resize = &resize,
-        .remap = &std.mem.Allocator.noRemap,
-        .free = &rawFree,
-    };
+        const vtable = comptime std.mem.Allocator.VTable{
+            .alloc = &S.rawAlloc,
+            .resize = &S.resize,
+            .remap = &std.mem.Allocator.noRemap,
+            .free = &S.rawFree,
+        };
 
-    pub fn allocator(zone: *Zone) std.mem.Allocator {
         return .{
             .vtable = &vtable,
             .ptr = zone,
@@ -164,23 +168,16 @@ pub const Zone = opaque {
 
     /// Create a single-item pointer with initialized data.
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
-        const alignment: std.mem.Alignment = .fromByteUnits(@alignOf(T));
-        const ptr: *T = @alignCast(@ptrCast(
-            rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
-        ));
+        const alloc = zone.allocator(T);
+        const ptr = alloc.create(T) catch bun.outOfMemory();
         ptr.* = data;
-
-        // Counter is now incremented in the type-specific rawAlloc
         return ptr;
     }
 
     /// Free a single-item pointer
     pub inline fn destroy(zone: *Zone, comptime T: type, ptr: *T) void {
-        // Decrement the counter before freeing
-        if (comptime enabled) {
-            _ = getAllocationCounter(T).fetchSub(1, .monotonic);
-        }
-        malloc_zone_free(zone, @ptrCast(ptr));
+        const alloc = zone.allocator(T);
+        alloc.destroy(ptr);
     }
 
     pub extern fn malloc_default_zone() *Zone;

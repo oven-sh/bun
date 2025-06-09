@@ -1579,13 +1579,13 @@ pub const Package = extern struct {
 
                 if (workspaces_expr.get("nodeLinker")) |node_linker_expr| {
                     if (!node_linker_expr.isString()) {
-                        try log.addError(&source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
                         return error.InvalidPackageJSON;
                     }
 
                     const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
                     lockfile.node_linker = Lockfile.NodeLinker.fromStr(node_linker_str) orelse {
-                        try log.addError(&source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
                         return error.InvalidPackageJSON;
                     };
                 }

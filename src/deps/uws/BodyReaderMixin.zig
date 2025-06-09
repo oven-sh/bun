@@ -43,6 +43,7 @@ pub fn BodyReaderMixin(
             if (last) {
                 // Free everything after
                 var body = ctx.body;
+                defer body.deinit();
                 ctx.body = .init(ctx.body.allocator);
                 resp.clearOnData();
                 if (body.items.len > 0) {

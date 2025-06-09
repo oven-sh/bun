@@ -11,6 +11,7 @@
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
     // making this opaque crashes Zig 0.14.0 when built in Debug or ReleaseSafe
+    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
     return struct {
         const Response = @This();
         const ssl = ssl_flag == 1;

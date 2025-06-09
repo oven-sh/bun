@@ -1245,7 +1245,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // Don't keep it open while we're parsing the JSON.
             // The longer the file stays open, the more likely it causes issues for
             // other processes on Windows.
-            const source = this.getInstalledPackageJsonSource(root_node_modules_dir, &mutable, resolution_tag) orelse return false;
+            const source = &(this.getInstalledPackageJsonSource(root_node_modules_dir, &mutable, resolution_tag) orelse return false);
 
             var log = logger.Log.init(this.allocator);
             defer log.deinit();
@@ -1254,7 +1254,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             var package_json_checker = JSON.PackageJSONVersionChecker.init(
                 this.allocator,
-                &source,
+                source,
                 &log,
             ) catch return false;
             _ = package_json_checker.parseExpr() catch return false;
@@ -2951,17 +2951,17 @@ pub const PackageManager = struct {
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             entry.key_ptr.* = key;
 
-            const source = bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
+            const source = &(bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
                 _ = this.map.remove(key);
                 allocator.free(key);
                 return .{ .read_err = err };
-            };
+            });
 
             if (comptime opts.init_reset_store)
                 initializeStore();
 
             const json = JSON.parsePackageJSONUTF8WithOpts(
-                &source,
+                source,
                 log,
                 allocator,
                 .{
@@ -2980,7 +2980,7 @@ pub const PackageManager = struct {
 
             entry.value_ptr.* = .{
                 .root = json.root.deepClone(bun.default_allocator) catch bun.outOfMemory(),
-                .source = source,
+                .source = source.*,
                 .indentation = json.indentation,
             };
 
@@ -2992,7 +2992,7 @@ pub const PackageManager = struct {
             this: *@This(),
             allocator: std.mem.Allocator,
             log: *logger.Log,
-            source: logger.Source,
+            source: *const logger.Source,
             comptime opts: GetJSONOptions,
         ) GetResult {
             bun.assertWithLocation(std.fs.path.isAbsolute(source.path.text), @src());
@@ -3015,7 +3015,7 @@ pub const PackageManager = struct {
                 initializeStore();
 
             const json_result = JSON.parsePackageJSONUTF8WithOpts(
-                &source,
+                source,
                 log,
                 allocator,
                 .{
@@ -3033,7 +3033,7 @@ pub const PackageManager = struct {
 
             entry.value_ptr.* = .{
                 .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
-                .source = source,
+                .source = source.*,
                 .indentation = json.indentation,
             };
 
@@ -6149,7 +6149,7 @@ pub const PackageManager = struct {
 
                     var pkg = Lockfile.Package{};
                     if (data.json) |json| {
-                        const package_json_source = logger.Source.initPathString(
+                        const package_json_source = &logger.Source.initPathString(
                             json.path,
                             json.buf,
                         );
@@ -6227,7 +6227,7 @@ pub const PackageManager = struct {
             },
             .local_tarball, .remote_tarball => {
                 const json = data.json.?;
-                const package_json_source = logger.Source.initPathString(
+                const package_json_source = &logger.Source.initPathString(
                     json.path,
                     json.buf,
                 );
@@ -6282,13 +6282,13 @@ pub const PackageManager = struct {
             },
             else => if (data.json.?.buf.len > 0) {
                 const json = data.json.?;
-                const package_json_source = logger.Source.initPathString(
+                const package_json_source = &logger.Source.initPathString(
                     json.path,
                     json.buf,
                 );
                 initializeStore();
                 const json_root = JSON.parsePackageJSONUTF8(
-                    &package_json_source,
+                    package_json_source,
                     manager.log,
                     manager.allocator,
                 ) catch |err| {
@@ -7925,10 +7925,10 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
+                const package_json_source = &(bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
-                };
+                });
                 lockfile.initEmpty(ctx.allocator);
 
                 var resolver: void = {};
@@ -8106,10 +8106,10 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
+                const package_json_source = &(bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
-                };
+                });
                 lockfile.initEmpty(ctx.allocator);
 
                 var resolver: void = {};
@@ -8999,11 +8999,11 @@ pub const PackageManager = struct {
                 }
             }
 
-            const source = logger.Source.initPathString("package.json", new_package_json_source);
+            const source = &logger.Source.initPathString("package.json", new_package_json_source);
 
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            var new_package_json = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
+            var new_package_json = JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -9038,7 +9038,7 @@ pub const PackageManager = struct {
                 @TypeOf(&package_json_writer_two),
                 &package_json_writer_two,
                 new_package_json,
-                &source,
+                source,
                 .{
                     .indent = current_package_json_indent,
                     .mangled_props = null,
@@ -9353,7 +9353,7 @@ pub const PackageManager = struct {
             .path => brk: {
                 var lockfile = manager.lockfile;
 
-                const package_json_source: logger.Source = src: {
+                const package_json_source: *const logger.Source = &src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
@@ -9367,7 +9367,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(package_json_source, manager.log, manager.allocator) catch |err| {
                     manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
@@ -9764,7 +9764,7 @@ pub const PackageManager = struct {
         var resolution_buf: [1024]u8 = undefined;
         const _cache_dir: std.fs.Dir, const _cache_dir_subpath: stringZ, const _changes_dir: []const u8, const _pkg: Package = switch (arg_kind) {
             .path => result: {
-                const package_json_source: logger.Source = brk: {
+                const package_json_source: *const logger.Source = &brk: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
@@ -9778,7 +9778,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(package_json_source, manager.log, manager.allocator) catch |err| {
                     manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
@@ -12412,7 +12412,7 @@ pub const PackageManager = struct {
                 const allocator = hostname_stack.get();
                 const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
                 defer allocator.free(hostname);
-                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname, manager.options.scope.url.getPortAuto());
             }
         }
 
@@ -12447,7 +12447,7 @@ pub const PackageManager = struct {
         manager.progress = .{};
 
         // Step 2. Parse the package.json file
-        const root_package_json_source = logger.Source.initPathString(package_json_cwd, root_package_json_contents);
+        const root_package_json_source = &logger.Source.initPathString(package_json_cwd, root_package_json_contents);
 
         switch (load_result) {
             .err => |cause| {

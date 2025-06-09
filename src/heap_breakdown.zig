@@ -34,11 +34,12 @@ fn getAllocationCounter(comptime T: type) *std.atomic.Value(usize) {
     return &static.active_allocation_counter;
 }
 
-// Create a per-type vtable that knows about the counter
-fn makeVTable(comptime T: type) std.mem.Allocator.VTable {
+pub fn allocator(comptime T: type) std.mem.Allocator {
+    const zone = getZoneT(T);
+
     const S = struct {
-        fn rawAlloc(zone: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
-            const result = Zone.alignedAlloc(@ptrCast(zone), len, alignment);
+        fn rawAlloc(zone_ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+            const result = Zone.alignedAlloc(@ptrCast(zone_ptr), len, alignment);
             if (result) |_| {
                 if (comptime enabled) {
                     _ = getAllocationCounter(T).fetchAdd(1, .monotonic);
@@ -60,25 +61,21 @@ fn makeVTable(comptime T: type) std.mem.Allocator.VTable {
             return false;
         }
 
-        fn rawFree(zone: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
+        fn rawFree(zone_ptr: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
             if (comptime enabled) {
                 _ = getAllocationCounter(T).fetchSub(1, .monotonic);
             }
-            Zone.malloc_zone_free(@ptrCast(zone), @ptrCast(buf.ptr));
+            Zone.malloc_zone_free(@ptrCast(zone_ptr), @ptrCast(buf.ptr));
         }
     };
 
-    return .{
+    const vtable = comptime std.mem.Allocator.VTable{
         .alloc = &S.rawAlloc,
         .resize = &S.resize,
         .remap = &std.mem.Allocator.noRemap,
         .free = &S.rawFree,
     };
-}
 
-pub fn allocator(comptime T: type) std.mem.Allocator {
-    const zone = getZoneT(T);
-    const vtable = comptime makeVTable(T);
     return .{
         .vtable = &vtable,
         .ptr = zone,
@@ -178,13 +175,12 @@ pub const Zone = opaque {
     }
 
     /// Free a single-item pointer
-    pub inline fn destroy(_: *Zone, comptime T: type, ptr: *T) void {
-        // Counter is now decremented in the type-specific rawFree
-        // But we need to use the typed allocator for this to work properly
-        const heap_breakdown = @import("heap_breakdown.zig");
-        const typed_allocator = heap_breakdown.allocator(T);
-        const bytes = @as([*]u8, @ptrCast(ptr))[0..@sizeOf(T)];
-        typed_allocator.free(bytes);
+    pub inline fn destroy(zone: *Zone, comptime T: type, ptr: *T) void {
+        // Decrement the counter before freeing
+        if (comptime enabled) {
+            _ = getAllocationCounter(T).fetchSub(1, .monotonic);
+        }
+        malloc_zone_free(zone, @ptrCast(ptr));
     }
 
     pub extern fn malloc_default_zone() *Zone;

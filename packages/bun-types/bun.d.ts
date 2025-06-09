@@ -3466,7 +3466,7 @@ declare module "bun" {
      *
      * Respond to {@link Request} objects with a {@link Response} object.
      */
-    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
+    fetch(this: Server, request: Request, server: Server): Response | HTMLBundle | Promise<Response | HTMLBundle>;
   }
 
   interface UnixServeOptions extends GenericServeOptions {

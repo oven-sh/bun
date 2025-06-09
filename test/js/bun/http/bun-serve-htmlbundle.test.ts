@@ -55,7 +55,11 @@ test("fetch () => HTMLBundle", async () => {
   using server = Bun.serve({
     port: 0,
     fetch: (req) => {
-      return html;
+      const url = new URL(req.url);
+      if (url.pathname == "/")
+        return html;
+
+      return new Response("404", { status: 404 });
     }
   });
 

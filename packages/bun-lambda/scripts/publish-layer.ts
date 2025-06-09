@@ -39,7 +39,7 @@ export class PublishCommand extends BuildCommand {
     }
     if (region.includes("*")) {
       // prettier-ignore
-      const result = this.#aws(["ec2", "describe-regions", "--query", "Regions[].RegionName", "--output", "json"]);
+      const result = this.#aws(["ec2", "describe-regions", "--query", "Regions[].RegionName", "--output", "json"], profile);
       region.length = 0;
       for (const name of JSON.parse(result)) {
         region.push(name);

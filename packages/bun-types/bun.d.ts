@@ -63,10 +63,10 @@ declare module "bun" {
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
       LibDomIsLoaded extends true
-        ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
-          ? T
-          : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
-        : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+      ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
+      ? T
+      : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
+      : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
   }
 
   /** @deprecated This type is unused in Bun's types and might be removed in the near future */
@@ -199,7 +199,7 @@ declare module "bun" {
   }
 
   interface EventSource extends EventTarget {
-    new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
+    new(url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
 
     onerror: ((this: EventSource, ev: Event) => any) | null;
     onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
@@ -1178,7 +1178,7 @@ declare module "bun" {
     ttl: number;
   }
 
-  interface FileBlob extends BunFile {}
+  interface FileBlob extends BunFile { }
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -1698,7 +1698,7 @@ declare module "bun" {
      * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
      * ```
      */
-    new (connectionString: string | URL): SQL;
+    new(connectionString: string | URL): SQL;
 
     /**
      * Creates a new SQL client instance with options
@@ -1711,7 +1711,7 @@ declare module "bun" {
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      * ```
      */
-    new (connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
+    new(connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
 
     /**
      * Creates a new SQL client instance with options
@@ -1723,7 +1723,7 @@ declare module "bun" {
      * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
      * ```
      */
-    new (options?: SQLOptions): SQL;
+    new(options?: SQLOptions): SQL;
   };
 
   /**
@@ -1748,7 +1748,7 @@ declare module "bun" {
   /**
    * Represents a savepoint within a transaction
    */
-  interface SavepointSQL extends SQL {}
+  interface SavepointSQL extends SQL { }
 
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
   interface CSRFGenerateOptions {
@@ -2144,23 +2144,23 @@ declare module "bun" {
      * ECMAScript Module format
      */
     | "esm"
-      /**
-       * CommonJS format
-       * **Experimental**
-       */
-      | "cjs"
-      /**
-       * IIFE format
-       * **Experimental**
-       */
-      | "iife";
+    /**
+     * CommonJS format
+     * **Experimental**
+     */
+    | "cjs"
+    /**
+     * IIFE format
+     * **Experimental**
+     */
+    | "iife";
     naming?:
-      | string
-      | {
-          chunk?: string;
-          entry?: string;
-          asset?: string;
-        }; // | string;
+    | string
+    | {
+      chunk?: string;
+      entry?: string;
+      asset?: string;
+    }; // | string;
     root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
@@ -2229,12 +2229,12 @@ declare module "bun" {
      * @default false
      */
     minify?:
-      | boolean
-      | {
-          whitespace?: boolean;
-          syntax?: boolean;
-          identifiers?: boolean;
-        };
+    | boolean
+    | {
+      whitespace?: boolean;
+      syntax?: boolean;
+      identifiers?: boolean;
+    };
 
     /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
@@ -3257,34 +3257,34 @@ declare module "bun" {
      * Default is `false`.
      */
     perMessageDeflate?:
-      | boolean
-      | {
-          /**
-           * Sets the compression level.
-           */
-          compress?: WebSocketCompressor | boolean;
-          /**
-           * Sets the decompression level.
-           */
-          decompress?: WebSocketCompressor | boolean;
-        };
+    | boolean
+    | {
+      /**
+       * Sets the compression level.
+       */
+      compress?: WebSocketCompressor | boolean;
+      /**
+       * Sets the decompression level.
+       */
+      decompress?: WebSocketCompressor | boolean;
+    };
   }
 
   namespace RouterTypes {
     type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
       ? { [K in Param]: string } & ExtractRouteParams<Rest>
       : T extends `${string}:${infer Param}`
-        ? { [K in Param]: string }
-        : T extends `${string}*`
-          ? {}
-          : {};
+      ? { [K in Param]: string }
+      : T extends `${string}*`
+      ? {}
+      : {};
 
-    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Bun.HTMLBundle | Promise<Response | Bun.HTMLBundle>;
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | HTMLBundle | Promise<Response | HTMLBundle>;
 
     type RouteHandlerWithWebSocketUpgrade<T extends string> = (
       req: BunRequest<T>,
       server: Server,
-    ) => Response | Bun.HTMLBundle | undefined | void | Promise<Response | Bun.HTMLBundle | undefined | void>;
+    ) => Response | HTMLBundle | undefined | void | Promise<Response | HTMLBundle | undefined | void>;
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
@@ -3344,46 +3344,46 @@ declare module "bun" {
      * @default process.env.NODE_ENV !== 'production'
      */
     development?:
-      | boolean
-      | {
-          /**
-           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
-           *
-           * @default true if process.env.NODE_ENV !== 'production'
-           *
-           */
-          hmr?: boolean;
+    | boolean
+    | {
+      /**
+       * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+       *
+       * @default true if process.env.NODE_ENV !== 'production'
+       *
+       */
+      hmr?: boolean;
 
-          /**
-           * Enable console log streaming from browser to server
-           * @default false
-           */
-          console?: boolean;
+      /**
+       * Enable console log streaming from browser to server
+       * @default false
+       */
+      console?: boolean;
 
-          /**
-           * Enable automatic workspace folders for Chrome DevTools
-           *
-           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
-           * `/.well-known/appspecific/com.chrome.devtools.json`
-           *
-           * The response is a JSON object with the following shape:
-           * ```json
-           * {
-           *   "workspace": {
-           *     "root": "<cwd>",
-           *     "uuid": "<uuid>"
-           *   }
-           * }
-           * ```
-           *
-           * The `root` field is the current working directory of the server.
-           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
-           *
-           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
-           * @default true
-           */
-          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
-        };
+      /**
+       * Enable automatic workspace folders for Chrome DevTools
+       *
+       * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+       * `/.well-known/appspecific/com.chrome.devtools.json`
+       *
+       * The response is a JSON object with the following shape:
+       * ```json
+       * {
+       *   "workspace": {
+       *     "root": "<cwd>",
+       *     "uuid": "<uuid>"
+       *   }
+       * }
+       * ```
+       *
+       * The `root` field is the current working directory of the server.
+       * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+       *
+       * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+       * @default true
+       */
+      chromeDevToolsAutomaticWorkspaceFolders?: boolean;
+    };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
 
@@ -3614,14 +3614,14 @@ declare module "bun" {
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptionsAsDeprecated {
+    TLSOptionsAsDeprecated {
     unix?: never;
     tls?: TLSOptions | TLSOptions[];
   }
 
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptionsAsDeprecated {
+    TLSOptionsAsDeprecated {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -4153,31 +4153,31 @@ declare module "bun" {
    */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
-        routes: R;
-        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-      })
+      routes: R;
+      fetch?: (this: Server, request: Request, server: Server) => Response | HTMLBundle | Promise<Response | HTMLBundle>;
+    })
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
-        routes?: never;
-        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-      })
+      routes?: never;
+      fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response | HTMLBundle>;
+    })
     | (Omit<WebSocketServeOptions<T>, "fetch"> & {
-        routes: {
-          [K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
-        };
-        fetch?: (
-          this: Server,
-          request: Request,
-          server: Server,
-        ) => Response | Promise<Response | void | undefined> | void | undefined;
-      })
+      routes: {
+        [K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
+      };
+      fetch?: (
+        this: Server,
+        request: Request,
+        server: Server,
+      ) => HTMLBundle | Response | Promise<Response | HTMLBundle | void | undefined> | void | undefined;
+    })
     | (Omit<WebSocketServeOptions<T>, "fetch"> & {
-        routes?: never;
-        fetch: (
-          this: Server,
-          request: Request,
-          server: Server,
-        ) => Response | Promise<Response | void | undefined> | void | undefined;
-      });
+      routes?: never;
+      fetch: (
+        this: Server,
+        request: Request,
+        server: Server,
+      ) => Response | HTMLBundle | Promise<Response | HTMLBundle | void | undefined> | void | undefined;
+    });
 
   /**
    * Bun.serve provides a high-performance HTTP server with built-in routing support.
@@ -4451,17 +4451,17 @@ declare module "bun" {
 
   type WebSocketOptionsProtocolsOrProtocol =
     | {
-        /**
-         * Protocols to use for the WebSocket connection
-         */
-        protocols?: string | string[];
-      }
+      /**
+       * Protocols to use for the WebSocket connection
+       */
+      protocols?: string | string[];
+    }
     | {
-        /**
-         * Protocol to use for the WebSocket connection
-         */
-        protocol?: string;
-      };
+      /**
+       * Protocol to use for the WebSocket connection
+       */
+      protocol?: string;
+    };
 
   type WebSocketOptionsTLS = {
     /**
@@ -4535,10 +4535,10 @@ declare module "bun" {
      * The current state of the connection
      */
     readonly readyState:
-      | typeof WebSocket.CONNECTING
-      | typeof WebSocket.OPEN
-      | typeof WebSocket.CLOSING
-      | typeof WebSocket.CLOSED;
+    | typeof WebSocket.CONNECTING
+    | typeof WebSocket.OPEN
+    | typeof WebSocket.CLOSING
+    | typeof WebSocket.CLOSED;
 
     /**
      * The number of bytes of data that have been queued using send() but not yet transmitted to the network
@@ -4760,7 +4760,7 @@ declare module "bun" {
      * True color ANSI color string, for use in terminals
      * @example \x1b[38;2;100;200;200m
      */
-    | "ansi"
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5358,27 +5358,27 @@ declare module "bun" {
      * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
-      | -9
-      | -10
-      | -11
-      | -12
-      | -13
-      | -14
-      | -15
-      | 9
-      | 10
-      | 11
-      | 12
-      | 13
-      | 14
-      | 15
-      | 25
-      | 26
-      | 27
-      | 28
-      | 29
-      | 30
-      | 31;
+    | -9
+    | -10
+    | -11
+    | -12
+    | -13
+    | -14
+    | -15
+    | 9
+    | 10
+    | 11
+    | 12
+    | 13
+    | 14
+    | 15
+    | 25
+    | 26
+    | 27
+    | 28
+    | 29
+    | 30
+    | 31;
     /**
      * Tunes the compression algorithm.
      *
@@ -6388,8 +6388,8 @@ declare module "bun" {
     readonly unix: string;
   }
 
-  interface TCPSocket extends Socket {}
-  interface TLSSocket extends Socket {}
+  interface TCPSocket extends Socket { }
+  interface TLSSocket extends Socket { }
 
   interface BinaryTypeList {
     arraybuffer: ArrayBuffer;
@@ -6970,8 +6970,8 @@ declare module "bun" {
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
-        ? number
-        : undefined;
+      ? number
+      : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined ? Buffer : undefined;
 
@@ -6980,8 +6980,8 @@ declare module "bun" {
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
       : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-        ? number
-        : undefined;
+      ? number
+      : undefined;
   }
 
   interface ResourceUsage {

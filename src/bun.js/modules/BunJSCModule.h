@@ -354,40 +354,39 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
             zoneSizesObject);
     }
-    
+
     // Read Zig allocation counters dynamically from the BUNHEAPCNT section
     {
-        const struct mach_header_64 *header = (struct mach_header_64 *)_dyld_get_image_header(0);
+        const struct mach_header_64* header = (struct mach_header_64*)_dyld_get_image_header(0);
         intptr_t slide = _dyld_get_image_vmaddr_slide(0);
-        const struct load_command *cmd = (const struct load_command *)(header + 1);
+        const struct load_command* cmd = (const struct load_command*)(header + 1);
 
-        const struct section_64 *target_sect = NULL;
+        const struct section_64* target_sect = NULL;
         uint8_t target_index = 0;
-        const struct symtab_command *symtab = NULL;
+        const struct symtab_command* symtab = NULL;
 
         uint8_t sect_index = 1;
         for (uint32_t i = 0; i < header->ncmds; i++) {
             if (cmd->cmd == LC_SEGMENT_64) {
-                const struct segment_command_64 *seg = (const struct segment_command_64 *)cmd;
-                const struct section_64 *sect = (const struct section_64 *)(seg + 1);
+                const struct segment_command_64* seg = (const struct segment_command_64*)cmd;
+                const struct section_64* sect = (const struct section_64*)(seg + 1);
                 for (uint32_t j = 0; j < seg->nsects; j++) {
-                    if (strcmp(sect[j].segname, "__DATA") == 0 &&
-                        strcmp(sect[j].sectname, "BUNHEAPCNT") == 0) {
+                    if (strcmp(sect[j].segname, "__DATA") == 0 && strcmp(sect[j].sectname, "BUNHEAPCNT") == 0) {
                         target_sect = &sect[j];
                         target_index = sect_index;
                     }
                     sect_index++;
                 }
             } else if (cmd->cmd == LC_SYMTAB) {
-                symtab = (const struct symtab_command *)cmd;
+                symtab = (const struct symtab_command*)cmd;
             }
-            cmd = (const struct load_command *)((const char *)cmd + cmd->cmdsize);
+            cmd = (const struct load_command*)((const char*)cmd + cmd->cmdsize);
         }
 
         if (symtab && target_sect) {
-            const char *base = (const char *)header;
-            const struct nlist_64 *symbols = (const struct nlist_64 *)(base + symtab->symoff);
-            const char *strtab = base + symtab->stroff;
+            const char* base = (const char*)header;
+            const struct nlist_64* symbols = (const struct nlist_64*)(base + symtab->symoff);
+            const char* strtab = base + symtab->stroff;
 
             uint64_t sect_start = target_sect->addr;
             uint64_t sect_end = sect_start + target_sect->size;
@@ -395,25 +394,24 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
             Vector<std::pair<Identifier, size_t>> zigCounts;
 
             for (uint32_t i = 0; i < symtab->nsyms; i++) {
-                const struct nlist_64 *sym = &symbols[i];
+                const struct nlist_64* sym = &symbols[i];
                 if (!(sym->n_type & N_SECT) || sym->n_sect != target_index) continue;
                 if (sym->n_value < sect_start || sym->n_value >= sect_end) continue;
 
-                uintptr_t *ptr = (uintptr_t *)(sym->n_value + slide);
-                const char *name = strtab + sym->n_un.n_strx;
-                
+                uintptr_t* ptr = (uintptr_t*)(sym->n_value + slide);
+                const char* name = strtab + sym->n_un.n_strx;
+
                 // Parse the type name from the symbol name
                 // Symbol format: "Bun__allocationCounter__Bun__TypeName"
-                const char *prefix = "Bun__allocationCounter__Bun__";
+                const char* prefix = "Bun__allocationCounter__Bun__";
                 size_t prefix_len = strlen(prefix);
                 if (strncmp(name, prefix, prefix_len) == 0) {
-                    const char *type_name = name + prefix_len;
+                    const char* type_name = name + prefix_len;
                     size_t count = *ptr;
                     if (count > 0) {
                         zigCounts.append(std::make_pair(
                             Identifier::fromString(vm, String::fromUTF8(type_name)),
-                            count
-                        ));
+                            count));
                     }
                 }
             }

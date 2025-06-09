@@ -2409,10 +2409,10 @@ pub const Arguments = struct {
         fd: FileDescriptor,
         buffer: StringOrBuffer,
         // buffer_val: JSC.JSValue = JSC.JSValue.zero,
-        offset: u64 = 0,
-        length: u64 = std.math.maxInt(u64),
-        position: ?ReadPosition = null,
-        encoding: Encoding = Encoding.buffer,
+        offset: u64,
+        length: u64,
+        position: ?ReadPosition,
+        encoding: Encoding,
 
         pub fn deinit(this: *const @This()) void {
             this.buffer.deinit();
@@ -2427,86 +2427,101 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Write {
+            // fs.write(fd, string[, position[, encoding]], callback)
             const fd_value = arguments.nextEat() orelse JSC.JSValue.undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const buffer_value = arguments.next();
-            const buffer = try StringOrBuffer.fromJS(ctx, bun.default_allocator, buffer_value orelse {
-                return ctx.throwInvalidArguments("data is required", .{});
-            }) orelse {
-                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+            const buffer_value = arguments.next() orelse {
+                return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
-            if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
-                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+
+            if (buffer_value.isString() and !buffer_value.isStringLiteral()) {
+                return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             }
 
-            var args = Write{
-                .fd = fd,
-                .buffer = buffer,
-                .encoding = switch (buffer) {
-                    .buffer => Encoding.buffer,
-                    inline else => Encoding.utf8,
-                },
-            };
-            errdefer args.deinit();
+            var encoding: Encoding = Encoding.buffer;
+            var position_res: ?ReadPosition = null;
+            var offset: u64 = 0;
+            var length_res: u64 = std.math.maxInt(u64);
             arguments.eat();
 
+            var buffer: ?StringOrBuffer = null;
+            errdefer if (buffer) |*b| b.deinit();
+
+            const allow_string_object = false;
             parse: {
                 var current = arguments.next() orelse break :parse;
-                switch (buffer) {
-                    // fs.write(fd, string[, position[, encoding]], callback)
-                    else => {
-                        if (current.isNumber()) {
-                            args.position = current.to(i52);
-                            arguments.eat();
-                            current = arguments.next() orelse break :parse;
-                        }
+                if (buffer_value.isString()) {
+                    encoding = Encoding.utf8;
+                    if (current.isNumber()) {
+                        position_res = current.to(i52);
+                        arguments.eat();
+                        current = arguments.next() orelse break :parse;
+                    }
 
-                        if (current.isString()) {
-                            args.encoding = try Encoding.assert(current, ctx, args.encoding);
-                            arguments.eat();
-                        }
-                    },
+                    if (current.isString()) {
+                        encoding = try Encoding.assert(current, ctx, encoding);
+                        try bun.validators.validateEncoding(ctx, buffer_value, encoding, "encoding");
+                        arguments.eat();
+                    }
+                } else {
+                    buffer = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, buffer_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+                        return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                    };
+                    if (buffer.? != .buffer) {
+                        return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                    }
+
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
-                    .buffer => {
-                        if (current.isUndefinedOrNull() or current.isFunction()) break :parse;
-                        args.offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
-                        arguments.eat();
-                        current = arguments.next() orelse break :parse;
+                    if (current.isUndefinedOrNull() or current.isFunction()) break :parse;
+                    offset = @intCast(try JSC.Node.validators.validateInteger(ctx, current, "offset", 0, 9007199254740991));
+                    arguments.eat();
+                    current = arguments.next() orelse break :parse;
 
-                        if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        const length = current.to(i64);
-                        const buf_len = args.buffer.buffer.slice().len;
-                        const max_offset = @min(buf_len, std.math.maxInt(i64));
-                        if (args.offset > max_offset) {
-                            return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(args.offset)),
-                                .{ .field_name = "offset", .max = @intCast(max_offset) },
-                            );
-                        }
-                        const max_len = @min(buf_len - args.offset, std.math.maxInt(i32));
-                        if (length > max_len or length < 0) {
-                            return ctx.throwRangeError(
-                                @as(f64, @floatFromInt(length)),
-                                .{ .field_name = "length", .min = 0, .max = @intCast(max_len) },
-                            );
-                        }
-                        args.length = @intCast(length);
+                    if (!(current.isNumber() or current.isBigInt())) break :parse;
+                    const length = current.to(i64);
+                    const buf_len = buffer.?.buffer.slice().len;
+                    const max_offset = @min(buf_len, std.math.maxInt(i64));
+                    if (offset > max_offset) {
+                        return ctx.throwRangeError(
+                            @as(f64, @floatFromInt(offset)),
+                            .{ .field_name = "offset", .max = @intCast(max_offset) },
+                        );
+                    }
+                    const max_len = @min(buf_len - offset, std.math.maxInt(i32));
+                    if (length > max_len or length < 0) {
+                        return ctx.throwRangeError(
+                            @as(f64, @floatFromInt(length)),
+                            .{ .field_name = "length", .min = 0, .max = @intCast(max_len) },
+                        );
+                    }
+                    length_res = @intCast(length);
 
-                        arguments.eat();
-                        current = arguments.next() orelse break :parse;
+                    arguments.eat();
+                    current = arguments.next() orelse break :parse;
 
-                        if (!(current.isNumber() or current.isBigInt())) break :parse;
-                        const position = current.to(i52);
-                        if (position >= 0) args.position = position;
-                        arguments.eat();
-                    },
+                    if (!(current.isNumber() or current.isBigInt())) break :parse;
+                    const position = current.to(i52);
+                    if (position >= 0) position_res = position;
+                    arguments.eat();
                 }
             }
+            if (buffer == null) {
+                buffer = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, buffer_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+                    return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                };
+            }
 
-            return args;
+            return Write{
+                .fd = fd,
+                .buffer = buffer.?,
+                .encoding = encoding,
+                .position = position_res,
+                .offset = offset,
+                .length = length_res,
+            };
         }
     };
 

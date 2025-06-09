@@ -296,3 +296,13 @@ pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: 
     };
     return throwErrInvalidArgTypeWithMessage(globalThis, name_fmt ++ " must be one of: {s}", name_args ++ .{values_info});
 }
+
+pub fn validateEncoding(globalThis: *JSGlobalObject, value: JSValue, encoding: @import("../types.zig").Encoding, param_name: string) bun.JSError!void {
+    if (encoding != .hex) return;
+    if (!value.isString()) {
+        return;
+    }
+    const str = value.asString();
+    if (str.length() % 2 == 0) return;
+    return globalThis.ERR(.INVALID_ARG_VALUE, "The argument '{s}' is invalid for data of length {d}. Received 'hex'", .{ param_name, str.length() }).throw();
+}

@@ -59,6 +59,23 @@ pub const JSBundler = struct {
         env_behavior: Api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
+        // S3 credentials for uploading outputs
+        s3: ?S3Config = null,
+
+        pub const S3Config = struct {
+            url: []const u8 = "",
+            credentials: ?*bun.S3.S3Credentials = null,
+
+            pub fn deinit(self: *S3Config, allocator: std.mem.Allocator) void {
+                if (self.url.len > 0) {
+                    allocator.free(self.url);
+                }
+                if (self.credentials) |creds| {
+                    creds.deref();
+                }
+            }
+        };
+
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, config: JSC.JSValue, plugins: *?*Plugin, allocator: std.mem.Allocator) JSError!Config {
@@ -471,6 +488,42 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
+            // Parse S3 configuration
+            if (try config.getTruthy(globalThis, "s3")) |s3_value| {
+                // Handle string case: s3: "s3://bucket/prefix"
+                if (s3_value.isString()) {
+                    const slice = try s3_value.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    this.s3 = S3Config{
+                        .url = allocator.dupe(u8, slice.slice()) catch bun.outOfMemory(),
+                    };
+                } else if (s3_value.isObject()) {
+                    // Handle object case with credentials
+                    var credentials = try bun.S3.S3Credentials.getCredentialsWithOptions(
+                        globalThis.bunVM().transpiler.env.getS3Credentials(),
+                        .{},
+                        s3_value,
+                        null,
+                        null,
+                        globalThis,
+                    );
+
+                    // Check if URL is provided in the object
+                    var url: []const u8 = "";
+                    if (try s3_value.getOptional(globalThis, "url", ZigString.Slice)) |url_slice| {
+                        defer url_slice.deinit();
+                        url = allocator.dupe(u8, url_slice.slice()) catch bun.outOfMemory();
+                    }
+
+                    this.s3 = S3Config{
+                        .url = url,
+                        .credentials = credentials.toHeap(),
+                    };
+                } else {
+                    return globalThis.throwInvalidArguments("Expected s3 to be a string URL or object with credentials", .{});
+                }
+            }
+
             return this;
         }
 
@@ -529,6 +582,9 @@ pub const JSBundler = struct {
             self.banner.deinit();
             self.env_prefix.deinit();
             self.footer.deinit();
+            if (self.s3) |*s3| {
+                s3.deinit(allocator);
+            }
         }
     };
 

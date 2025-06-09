@@ -300,6 +300,7 @@ pub const Arguments = struct {
         clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
         clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
         clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+        clap.parseParam("--s3 <STR>                       Upload output files to S3. Example: s3://bucket/prefix") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
         clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -907,7 +908,7 @@ pub const Arguments = struct {
             ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 
             ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
-                !ctx.bundler_options.minify_whitespace;
+                (args.flag("--minify-whitespace") == false);
 
             if (args.options("--external").len > 0) {
                 var externals = try allocator.alloc([]const u8, args.options("--external").len);
@@ -1121,6 +1122,20 @@ pub const Arguments = struct {
                     opts.source_map = .external;
                 }
             }
+
+            if (args.option("--conditions")) |conditions| {
+                var iter = std.mem.tokenizeAny(u8, conditions, " \t,");
+                while (iter.next()) |condition| {
+                    try ctx.bundler_options.conditions.append(condition);
+                }
+            }
+
+            // Handle --s3 flag
+            if (args.option("--s3")) |s3_url| {
+                ctx.bundler_options.s3_url = s3_url;
+            }
+
+            ctx.bundler_options.dump_environment_variables = args.flag("--dump-environment-variables");
         }
 
         if (opts.entry_points.len == 0) {
@@ -1611,6 +1626,9 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+            conditions: std.ArrayList(string) = std.ArrayList(string){},
+            s3_url: ?string = null,
+            dump_environment_variables: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

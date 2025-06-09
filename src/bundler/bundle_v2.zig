@@ -1523,6 +1523,7 @@ pub const BundleV2 = struct {
             .plugins = plugins,
             .log = Logger.Log.init(bun.default_allocator),
             .task = undefined,
+            .s3_config = config.s3,
         });
         completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
@@ -1604,6 +1605,7 @@ pub const BundleV2 = struct {
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         started_at_ns: u64 = 0,
+        s3_config: ?bun.JSC.API.JSBundler.Config.S3Config = null,
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -1667,6 +1669,11 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+
+            // Pass S3 configuration
+            if (config.s3) |s3_config| {
+                transpiler.options.s3_url = s3_config.url;
+            }
 
             transpiler.configureLinker();
             try transpiler.configureDefines();

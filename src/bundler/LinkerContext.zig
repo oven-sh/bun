@@ -1333,6 +1333,7 @@ pub const LinkerContext = struct {
     }
 
     pub const writeOutputFilesToDisk = @import("linker_context/writeOutputFilesToDisk.zig").writeOutputFilesToDisk;
+    pub const writeOutputFilesToS3 = @import("linker_context/writeOutputFilesToDisk.zig").writeOutputFilesToS3;
 
     // Sort cross-chunk exports by chunk name for determinism
     pub fn sortedCrossChunkExportItems(

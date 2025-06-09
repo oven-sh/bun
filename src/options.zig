@@ -1797,6 +1797,9 @@ pub const BundleOptions = struct {
 
     ignore_module_resolution_errors: bool = false,
 
+    /// S3 URL for uploading output files (e.g., s3://bucket/prefix)
+    s3_url: ?string = null,
+
     pub const ForceNodeEnv = enum {
         unspecified,
         development,

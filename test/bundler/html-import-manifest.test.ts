@@ -352,15 +352,15 @@ console.log("✓ Both import types work correctly");
         expect(stdout).toContain("✓ Both import types work correctly");
       },
     },
-    
+
     onAfterBundle(api) {
       // Check that the generated code correctly handles both import types
       const entryCode = api.readFile("out/entry.js");
-      
+
       // Should have a file import for page.html
       expect(entryCode).toContain('var page_default = "./page-');
       expect(entryCode).toContain('.html";');
-      
+
       // Should have a manifest import for index.html
       expect(entryCode).toContain('__jsonParse("');
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');

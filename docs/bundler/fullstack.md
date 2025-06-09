@@ -128,6 +128,7 @@ console.log(index);
 ```
 
 The manifest includes:
+
 - `index`: The original HTML file path
 - `files`: Array of all generated files with metadata:
   - `input`: Original source file path
@@ -137,6 +138,7 @@ The manifest includes:
   - `headers`: HTTP headers including ETag and Content-Type
 
 This enables applications to:
+
 - Know all files generated from an HTML import
 - Get proper MIME types and ETags for serving files
 - Implement proper caching strategies
@@ -152,7 +154,7 @@ import dashboard from "./dashboard.html";
 Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
-    
+
     // Find the file in the manifest
     const file = dashboard.files.find(f => f.path === url.pathname);
     if (file) {
@@ -161,7 +163,7 @@ Bun.serve({
         headers: file.headers,
       });
     }
-    
+
     return new Response("Not found", { status: 404 });
   },
 });
@@ -173,7 +175,7 @@ If you need the previous behavior where HTML imports return a URL string instead
 
 ```ts
 // Returns a string URL (previous behavior)
-import htmlUrl from "./index.html" with { type: 'file' };
+import htmlUrl from "./index.html" with { type: "file" };
 console.log(htmlUrl); // "./index-abc123.html"
 
 // Returns a manifest object (new behavior)

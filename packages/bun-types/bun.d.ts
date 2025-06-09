@@ -3278,12 +3278,12 @@ declare module "bun" {
           ? {}
           : {};
 
-    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Bun.HTMLBundle | Promise<Response | Bun.HTMLBundle>;
 
     type RouteHandlerWithWebSocketUpgrade<T extends string> = (
       req: BunRequest<T>,
       server: Server,
-    ) => Response | undefined | void | Promise<Response | undefined | void>;
+    ) => Response | Bun.HTMLBundle | undefined | void | Promise<Response | Bun.HTMLBundle | undefined | void>;
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
@@ -3295,7 +3295,7 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> = Response | HTMLBundle | false | RouteHandler<T> | RouteHandlerObject<T>;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>

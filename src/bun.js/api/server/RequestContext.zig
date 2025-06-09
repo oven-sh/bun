@@ -1474,6 +1474,25 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
+            // HTMLBundle actually detected.
+            if (response_value.as(HTMLBundle)) |html_bundle| {
+                if (ctx.resp != null) |resp|
+                {
+                    if (ctx.req != null) |req_ptr| 
+                    {
+                        var route = HTMLBundle.Route.init(html_bundle);
+                        route.data.server = AnyServer.from(this);
+                        defer route.deref();
+                        // implement response.
+
+                        return;
+                    } else {
+                        ctx.renderMissingInvalidResponse(response_value);
+                        return;
+                    }
+                }
+            }
+
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
@@ -1528,6 +1547,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         }
+
                         var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
@@ -2537,3 +2557,5 @@ const AnyRequestContext = JSC.API.AnyRequestContext;
 const VirtualMachine = JSC.VirtualMachine;
 const writeStatus = @import("../server.zig").writeStatus;
 const Fallback = @import("../../../runtime.zig").Fallback;
+const HTMLBundle = JSC.API.HTMLBundle;
+const AnyServer = JSC.API.AnyServer;

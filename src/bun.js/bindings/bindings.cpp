@@ -2756,10 +2756,10 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
-    RETURN_IF_EXCEPTION(scope, {});
+    EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
 }
 
@@ -3213,7 +3213,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
     auto* newPromise = promise->then(globalObject, resolverFunction, nullptr);
-    ASSERT(!!scope.exception() == !newPromise);
+    EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
     return newPromise;
 }
 #pragma mark - JSC::JSPromise

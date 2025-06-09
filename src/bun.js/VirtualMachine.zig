@@ -1905,7 +1905,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 return error.ModuleNotFound;
             },
         };
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).protect();

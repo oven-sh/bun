@@ -355,94 +355,89 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
             zoneSizesObject);
     }
     
-    // Read Zig allocation counters
-    // We need to declare these as weak symbols so they don't cause link errors if not present
-    #define DECLARE_ALLOCATION_COUNTER(name) \
-        extern "C" __attribute__((weak)) size_t Bun__allocationCounter__Bun__##name;
-    
-    // Declare counters for common types - add more as needed
-    DECLARE_ALLOCATION_COUNTER(JSValue)
-    DECLARE_ALLOCATION_COUNTER(String)
-    DECLARE_ALLOCATION_COUNTER(JSObject)
-    DECLARE_ALLOCATION_COUNTER(JSArray)
-    DECLARE_ALLOCATION_COUNTER(JSFunction)
-    DECLARE_ALLOCATION_COUNTER(JSPromise)
-    DECLARE_ALLOCATION_COUNTER(Request)
-    DECLARE_ALLOCATION_COUNTER(Response)
-    DECLARE_ALLOCATION_COUNTER(Blob)
-    DECLARE_ALLOCATION_COUNTER(ReadableStream)
-    DECLARE_ALLOCATION_COUNTER(WritableStream)
-    DECLARE_ALLOCATION_COUNTER(FormData)
-    DECLARE_ALLOCATION_COUNTER(Headers)
-    DECLARE_ALLOCATION_COUNTER(URL)
-    DECLARE_ALLOCATION_COUNTER(URLSearchParams)
-    DECLARE_ALLOCATION_COUNTER(AbortSignal)
-    DECLARE_ALLOCATION_COUNTER(AbortController)
-    DECLARE_ALLOCATION_COUNTER(TextDecoder)
-    DECLARE_ALLOCATION_COUNTER(TextEncoder)
-    DECLARE_ALLOCATION_COUNTER(Crypto)
-    DECLARE_ALLOCATION_COUNTER(SubtleCrypto)
-    
-    #undef DECLARE_ALLOCATION_COUNTER
-    
+    // Read Zig allocation counters dynamically from the BUNHEAPCNT section
     {
-        Vector<std::pair<Identifier, size_t>> zigCounts;
-        
-        #define CHECK_ALLOCATION_COUNTER(name) \
-            if (&Bun__allocationCounter__Bun__##name != nullptr) { \
-                size_t count = *(volatile size_t*)&Bun__allocationCounter__Bun__##name; \
-                if (count > 0) { \
-                    zigCounts.append(std::make_pair( \
-                        Identifier::fromString(vm, #name), \
-                        count \
-                    )); \
-                } \
-            }
-        
-        // Check each counter
-        CHECK_ALLOCATION_COUNTER(JSValue)
-        CHECK_ALLOCATION_COUNTER(String)
-        CHECK_ALLOCATION_COUNTER(JSObject)
-        CHECK_ALLOCATION_COUNTER(JSArray)
-        CHECK_ALLOCATION_COUNTER(JSFunction)
-        CHECK_ALLOCATION_COUNTER(JSPromise)
-        CHECK_ALLOCATION_COUNTER(Request)
-        CHECK_ALLOCATION_COUNTER(Response)
-        CHECK_ALLOCATION_COUNTER(Blob)
-        CHECK_ALLOCATION_COUNTER(ReadableStream)
-        CHECK_ALLOCATION_COUNTER(WritableStream)
-        CHECK_ALLOCATION_COUNTER(FormData)
-        CHECK_ALLOCATION_COUNTER(Headers)
-        CHECK_ALLOCATION_COUNTER(URL)
-        CHECK_ALLOCATION_COUNTER(URLSearchParams)
-        CHECK_ALLOCATION_COUNTER(AbortSignal)
-        CHECK_ALLOCATION_COUNTER(AbortController)
-        CHECK_ALLOCATION_COUNTER(TextDecoder)
-        CHECK_ALLOCATION_COUNTER(TextEncoder)
-        CHECK_ALLOCATION_COUNTER(Crypto)
-        CHECK_ALLOCATION_COUNTER(SubtleCrypto)
-        
-        #undef CHECK_ALLOCATION_COUNTER
-        
-        if (!zigCounts.isEmpty()) {
-            // Sort by count first, then by name
-            std::sort(zigCounts.begin(), zigCounts.end(),
-                [](const std::pair<Identifier, size_t>& a,
-                    const std::pair<Identifier, size_t>& b) {
-                    if (a.second == b.second) {
-                        WTF::StringView left = a.first.string();
-                        WTF::StringView right = b.first.string();
-                        return WTF::codePointCompare(left, right) == std::strong_ordering::less;
+        const struct mach_header_64 *header = (struct mach_header_64 *)_dyld_get_image_header(0);
+        intptr_t slide = _dyld_get_image_vmaddr_slide(0);
+        const struct load_command *cmd = (const struct load_command *)(header + 1);
+
+        const struct section_64 *target_sect = NULL;
+        uint8_t target_index = 0;
+        const struct symtab_command *symtab = NULL;
+
+        uint8_t sect_index = 1;
+        for (uint32_t i = 0; i < header->ncmds; i++) {
+            if (cmd->cmd == LC_SEGMENT_64) {
+                const struct segment_command_64 *seg = (const struct segment_command_64 *)cmd;
+                const struct section_64 *sect = (const struct section_64 *)(seg + 1);
+                for (uint32_t j = 0; j < seg->nsects; j++) {
+                    if (strcmp(sect[j].segname, "__DATA") == 0 &&
+                        strcmp(sect[j].sectname, "BUNHEAPCNT") == 0) {
+                        target_sect = &sect[j];
+                        target_index = sect_index;
                     }
-                    return a.second > b.second;
-                });
+                    sect_index++;
+                }
+            } else if (cmd->cmd == LC_SYMTAB) {
+                symtab = (const struct symtab_command *)cmd;
+            }
+            cmd = (const struct load_command *)((const char *)cmd + cmd->cmdsize);
+        }
 
-            auto* zigObject = constructEmptyObject(globalObject);
-            for (auto& it : zigCounts) {
-                zigObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+        if (symtab && target_sect) {
+            const char *base = (const char *)header;
+            const struct nlist_64 *symbols = (const struct nlist_64 *)(base + symtab->symoff);
+            const char *strtab = base + symtab->stroff;
+
+            uint64_t sect_start = target_sect->addr;
+            uint64_t sect_end = sect_start + target_sect->size;
+
+            Vector<std::pair<Identifier, size_t>> zigCounts;
+
+            for (uint32_t i = 0; i < symtab->nsyms; i++) {
+                const struct nlist_64 *sym = &symbols[i];
+                if (!(sym->n_type & N_SECT) || sym->n_sect != target_index) continue;
+                if (sym->n_value < sect_start || sym->n_value >= sect_end) continue;
+
+                uintptr_t *ptr = (uintptr_t *)(sym->n_value + slide);
+                const char *name = strtab + sym->n_un.n_strx;
+                
+                // Parse the type name from the symbol name
+                // Symbol format: "Bun__allocationCounter__Bun__TypeName"
+                const char *prefix = "Bun__allocationCounter__Bun__";
+                size_t prefix_len = strlen(prefix);
+                if (strncmp(name, prefix, prefix_len) == 0) {
+                    const char *type_name = name + prefix_len;
+                    size_t count = *ptr;
+                    if (count > 0) {
+                        zigCounts.append(std::make_pair(
+                            Identifier::fromString(vm, String::fromUTF8(type_name)),
+                            count
+                        ));
+                    }
+                }
             }
 
-            object->putDirect(vm, Identifier::fromString(vm, "zig"_s), zigObject);
+            if (!zigCounts.isEmpty()) {
+                // Sort by count first, then by name
+                std::sort(zigCounts.begin(), zigCounts.end(),
+                    [](const std::pair<Identifier, size_t>& a,
+                        const std::pair<Identifier, size_t>& b) {
+                        if (a.second == b.second) {
+                            WTF::StringView left = a.first.string();
+                            WTF::StringView right = b.first.string();
+                            return WTF::codePointCompare(left, right) == std::strong_ordering::less;
+                        }
+                        return a.second > b.second;
+                    });
+
+                auto* zigObject = constructEmptyObject(globalObject);
+                for (auto& it : zigCounts) {
+                    zigObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+                }
+
+                object->putDirect(vm, Identifier::fromString(vm, "zig"_s), zigObject);
+            }
         }
     }
 #endif

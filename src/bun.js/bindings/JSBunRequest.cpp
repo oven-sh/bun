@@ -98,13 +98,15 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         clone->setParams(paramsClone);
     }
 
-    if (auto* wrapper = jsDynamicCast<JSCookieMap*>(this->cookies())) {
-        auto cookieMap = wrapper->protectedWrapped();
-        auto cookieMapClone = cookieMap->clone();
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
-        clone->setCookies(cookies.getObject());
+    auto* cookies = this->cookies();
+    if (cookies) {
+        if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookies)) {
+            auto cookieMap = wrapper->protectedWrapped();
+            auto cookieMapClone = cookieMap->clone();
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
+            clone->setCookies(cookies.getObject());
+        }
     }
-
     RELEASE_AND_RETURN(throwScope, clone);
 }
 

@@ -592,3 +592,15 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(parsed.value).toBe("value");
   });
 });
+
+it("doesnt crash if you clone it without accessing cookies", async () => {
+  using server = Bun.serve({
+    routes: {
+      "/": req => {
+        req.clone();
+      },
+    },
+    port: 0,
+  });
+  await fetch(`http://127.0.0.1:${server.port}`);
+});

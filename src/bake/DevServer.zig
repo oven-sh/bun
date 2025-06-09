@@ -358,7 +358,6 @@ pub const RouteBundle = struct {
                 }
                 if (html.cached_response) |cached_response| {
                     cached_response.deref();
-                    html.cached_response = null;
                 }
                 html.html_bundle.deref();
             },
@@ -686,6 +685,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     return dev;
 }
+
 pub fn deinit(dev: *DevServer) void {
     dev_server_deinit_count_for_testing +|= 1;
 
@@ -1447,6 +1447,7 @@ fn deferRequest(
     resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
     requests_array.prepend(deferred);
 }
+
 fn checkRouteFailures(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
@@ -1922,7 +1923,6 @@ fn startAsyncBundle(
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
 
-    var event_loop = EventLoop{ .js = dev.vm.eventLoop() };
     const bv2 = try BundleV2.init(
         &dev.server_transpiler,
         .{
@@ -1932,7 +1932,7 @@ fn startAsyncBundle(
             .plugins = dev.bundler_options.plugin,
         },
         allocator,
-        &event_loop,
+        .{ .js = dev.vm.eventLoop() },
         false, // watching is handled separately
         JSC.WorkPool.get(),
         heap,
@@ -2244,6 +2244,7 @@ pub const HotUpdateContext = struct {
         return @ptrCast(&subslice[i.get()]);
     }
 };
+
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
 pub fn finalizeBundle(
@@ -3009,7 +3010,7 @@ pub fn getLogForResolutionFailures(dev: *DevServer, abs_path: []const u8, graph:
             if (is_client) "client" else "server",
             try (if (is_client) dev.client_graph else dev.server_graph)
                 .insertStale(abs_path, !is_client and graph == .ssr),
-        ).encode();
+        ).encode(),
     };
     const gop = try current_bundle.resolution_failure_entries.getOrPut(current_bundle.bv2.graph.allocator, owner);
     if (!gop.found_existing) {
@@ -3042,6 +3043,7 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
         },
     }
 }
+
 fn appendOpaqueEntryPoint(
     dev: *DevServer,
     file_names: [][]const u8,
@@ -3543,8 +3545,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 /// If set, the client graph contains a matching file.
                 /// The server
                 is_client_component_boundary: bool,
-                /// If this file is a route root, the route can be looked up
-                /// in the route list. This also stops dependency propagation.
+                /// If this file is a route root, the route can be looked up in
+                /// the route list. This also stops dependency propagation.
                 is_route: bool,
                 /// If the file has an error, the failure can be looked up
                 /// in the `.failures` map.
@@ -3759,7 +3761,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             var code: usize = 0;
             var source_maps: usize = 0;
             graph += memoryCostArrayHashMap(g.bundled_files);
-            graph += g.stale_files.bit_length;
+            graph += g.stale_files.bytes().len;
             graph += memoryCostArrayList(g.first_dep);
             graph += memoryCostArrayList(g.first_import);
             graph += memoryCostArrayList(g.edges);
@@ -4175,6 +4177,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
         }
+
         fn processEdgeAttachment(
             g: *@This(),
             ctx: *HotUpdateContext,
@@ -4694,7 +4697,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     .is_client_component_boundary = false,
                     .failed = false,
                     .kind = .css,
-                };
+                },
             }
 
             ctx.getCachedIndex(.server, index).* = .init(file_index);
@@ -4965,6 +4968,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g.current_chunk_parts.clearRetainingCapacity();
             if (side == .client) g.current_css_files.clearRetainingCapacity();
         }
+
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
@@ -5614,6 +5618,7 @@ const ChunkKind = enum(u1) {
     initial_response,
     hmr_chunk,
 };
+
 /// Errors sent to the HMR client in the browser are serialized. The same format
 /// is used for thrown JavaScript exceptions as well as bundler errors.
 /// Serialized failures contain a handle on what file or route they came from,
@@ -5938,7 +5943,6 @@ fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     defer payload.deinit();
     payload.appendAssumeCapacity(MessageId.memory_visualizer.char());
     writeMemoryVisualizerMessage(dev, &payload) catch return; // drop packet
-
     dev.publish(.memory_visualizer, payload.items, .binary);
 }
 
@@ -6250,6 +6254,7 @@ const HmrTopic = enum(u8) {
         .layout = .@"packed",
     } });
 };
+
 const HmrSocket = struct {
     dev: *DevServer,
     underlying: ?AnyWebSocket = null,
@@ -6624,7 +6629,7 @@ pub fn inspector(dev: *const DevServer) ?*BunFrontendDevServerAgent {
 /// This task informs the DevServer's thread about new files to be bundled.
 pub const HotReloadEvent = struct {
     /// Align to cache lines to eliminate false sharing.
-    _: u0 align(std.atomic.cache_line) = 0;
+    _: u0 align(std.atomic.cache_line) = 0,
 
     owner: *DevServer,
     /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
@@ -7022,6 +7027,7 @@ const WatcherAtomics = struct {
         }
     }
 };
+
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
     assert(dev.magic == .valid);
@@ -7497,6 +7503,7 @@ pub const Assets = struct {
         return cost;
     }
 };
+
 /// Storage for source maps on `/_bun/client/{id}.js.map`
 ///
 /// All source maps are referenced counted, so that when a websocket disconnects
@@ -7543,7 +7550,7 @@ pub const SourceMapStore = struct {
                 generation_id: u32,
             },
             hmr_chunk: packed struct(u63) {
-                content_hash: u64,
+                content_hash: u63,
             },
         },
     };
@@ -8018,6 +8025,7 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     dev.next_bundle.route_queue.clearRetainingCapacity();
     // TODO: allow recovery from this state
 }
+
 /// Fetched when a client-side error happens. This performs two actions
 /// - Logs the remapped stack trace to the console.
 /// - Replies with the remapped stack trace.

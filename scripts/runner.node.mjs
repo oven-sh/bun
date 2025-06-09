@@ -847,6 +847,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 
   if (basename(execPath).includes("asan")) {
     bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
+    bunEnv.BUN_JSC_validateExceptionChecks = "1";
   }
 
   if (isWindows && bunEnv.Path) {

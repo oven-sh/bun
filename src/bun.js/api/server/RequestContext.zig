@@ -1476,15 +1476,26 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             // HTMLBundle actually detected.
             if (response_value.as(HTMLBundle)) |html_bundle| {
-                if (ctx.resp != null) |resp|
+                if (ctx.resp) |resp|
                 {
-                    if (ctx.req != null) |req_ptr| 
+                    if (ctx.req) |req_ptr| 
                     {
                         var route = HTMLBundle.Route.init(html_bundle);
                         route.data.server = AnyServer.from(this);
                         defer route.deref();
-                        // implement response.
+                        
+                        ctx.detachResponse();
+                        ctx.endRequestStreamingAndDrain();
 
+                        const any_resp = uws.AnyResponse.init(resp);
+                        if (ctx.method == .HEAD) {
+                            route.data.onHEADRequest(req_ptr, any_resp);
+                        } else {
+                            route.data.onRequest(req_ptr, any_resp);
+                        }
+
+                        ctx.finalizeWithoutDeinit();
+                        ctx.deref();
                         return;
                     } else {
                         ctx.renderMissingInvalidResponse(response_value);

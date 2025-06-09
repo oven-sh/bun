@@ -56,6 +56,11 @@
 #define IS_MALLOC_DEBUGGING_ENABLED 1
 #endif
 #endif
+// Add mach-o related headers for reading sections
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#include <mach-o/nlist.h>
 #endif
 
 using namespace JSC;
@@ -348,6 +353,97 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
             zoneSizesObject);
+    }
+    
+    // Read Zig allocation counters
+    // We need to declare these as weak symbols so they don't cause link errors if not present
+    #define DECLARE_ALLOCATION_COUNTER(name) \
+        extern "C" __attribute__((weak)) size_t Bun__allocationCounter__Bun__##name;
+    
+    // Declare counters for common types - add more as needed
+    DECLARE_ALLOCATION_COUNTER(JSValue)
+    DECLARE_ALLOCATION_COUNTER(String)
+    DECLARE_ALLOCATION_COUNTER(JSObject)
+    DECLARE_ALLOCATION_COUNTER(JSArray)
+    DECLARE_ALLOCATION_COUNTER(JSFunction)
+    DECLARE_ALLOCATION_COUNTER(JSPromise)
+    DECLARE_ALLOCATION_COUNTER(Request)
+    DECLARE_ALLOCATION_COUNTER(Response)
+    DECLARE_ALLOCATION_COUNTER(Blob)
+    DECLARE_ALLOCATION_COUNTER(ReadableStream)
+    DECLARE_ALLOCATION_COUNTER(WritableStream)
+    DECLARE_ALLOCATION_COUNTER(FormData)
+    DECLARE_ALLOCATION_COUNTER(Headers)
+    DECLARE_ALLOCATION_COUNTER(URL)
+    DECLARE_ALLOCATION_COUNTER(URLSearchParams)
+    DECLARE_ALLOCATION_COUNTER(AbortSignal)
+    DECLARE_ALLOCATION_COUNTER(AbortController)
+    DECLARE_ALLOCATION_COUNTER(TextDecoder)
+    DECLARE_ALLOCATION_COUNTER(TextEncoder)
+    DECLARE_ALLOCATION_COUNTER(Crypto)
+    DECLARE_ALLOCATION_COUNTER(SubtleCrypto)
+    
+    #undef DECLARE_ALLOCATION_COUNTER
+    
+    {
+        Vector<std::pair<Identifier, size_t>> zigCounts;
+        
+        #define CHECK_ALLOCATION_COUNTER(name) \
+            if (&Bun__allocationCounter__Bun__##name != nullptr) { \
+                size_t count = *(volatile size_t*)&Bun__allocationCounter__Bun__##name; \
+                if (count > 0) { \
+                    zigCounts.append(std::make_pair( \
+                        Identifier::fromString(vm, #name), \
+                        count \
+                    )); \
+                } \
+            }
+        
+        // Check each counter
+        CHECK_ALLOCATION_COUNTER(JSValue)
+        CHECK_ALLOCATION_COUNTER(String)
+        CHECK_ALLOCATION_COUNTER(JSObject)
+        CHECK_ALLOCATION_COUNTER(JSArray)
+        CHECK_ALLOCATION_COUNTER(JSFunction)
+        CHECK_ALLOCATION_COUNTER(JSPromise)
+        CHECK_ALLOCATION_COUNTER(Request)
+        CHECK_ALLOCATION_COUNTER(Response)
+        CHECK_ALLOCATION_COUNTER(Blob)
+        CHECK_ALLOCATION_COUNTER(ReadableStream)
+        CHECK_ALLOCATION_COUNTER(WritableStream)
+        CHECK_ALLOCATION_COUNTER(FormData)
+        CHECK_ALLOCATION_COUNTER(Headers)
+        CHECK_ALLOCATION_COUNTER(URL)
+        CHECK_ALLOCATION_COUNTER(URLSearchParams)
+        CHECK_ALLOCATION_COUNTER(AbortSignal)
+        CHECK_ALLOCATION_COUNTER(AbortController)
+        CHECK_ALLOCATION_COUNTER(TextDecoder)
+        CHECK_ALLOCATION_COUNTER(TextEncoder)
+        CHECK_ALLOCATION_COUNTER(Crypto)
+        CHECK_ALLOCATION_COUNTER(SubtleCrypto)
+        
+        #undef CHECK_ALLOCATION_COUNTER
+        
+        if (!zigCounts.isEmpty()) {
+            // Sort by count first, then by name
+            std::sort(zigCounts.begin(), zigCounts.end(),
+                [](const std::pair<Identifier, size_t>& a,
+                    const std::pair<Identifier, size_t>& b) {
+                    if (a.second == b.second) {
+                        WTF::StringView left = a.first.string();
+                        WTF::StringView right = b.first.string();
+                        return WTF::codePointCompare(left, right) == std::strong_ordering::less;
+                    }
+                    return a.second > b.second;
+                });
+
+            auto* zigObject = constructEmptyObject(globalObject);
+            for (auto& it : zigCounts) {
+                zigObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+            }
+
+            object->putDirect(vm, Identifier::fromString(vm, "zig"_s), zigObject);
+        }
     }
 #endif
 #endif

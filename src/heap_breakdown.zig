@@ -14,6 +14,26 @@ fn heapLabel(comptime T: type) [:0]const u8 {
     return base_name;
 }
 
+// Function to get the allocation counter for a given type
+fn getAllocationCounter(comptime T: type) *std.atomic.Value(usize) {
+    const name = comptime heapLabel(T);
+    const full_name = comptime "Bun__" ++ name;
+
+    const static = struct {
+        pub var active_allocation_counter = std.atomic.Value(usize).init(0);
+    };
+
+    // Export the counter with the specific naming convention and section
+    comptime {
+        @export(&static.active_allocation_counter, .{
+            .name = std.fmt.comptimePrint("Bun__allocationCounter__{s}", .{full_name}),
+            .section = "__DATA,BUNHEAPCNT",
+        });
+    }
+
+    return &static.active_allocation_counter;
+}
+
 pub fn allocator(comptime T: type) std.mem.Allocator {
     return namedAllocator(comptime heapLabel(T));
 }
@@ -104,11 +124,22 @@ pub const Zone = opaque {
             rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
         ));
         ptr.* = data;
+
+        // Increment the allocation counter
+        if (comptime enabled) {
+            _ = getAllocationCounter(T).fetchAdd(1, .monotonic);
+        }
+
         return ptr;
     }
 
     /// Free a single-item pointer
     pub inline fn destroy(zone: *Zone, comptime T: type, ptr: *T) void {
+        // Decrement the allocation counter before freeing
+        if (comptime enabled) {
+            _ = getAllocationCounter(T).fetchSub(1, .monotonic);
+        }
+
         malloc_zone_free(zone, @ptrCast(ptr));
     }
 

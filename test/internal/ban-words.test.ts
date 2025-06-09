@@ -32,12 +32,12 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 241, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1854 },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1857 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
-  "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
+  "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 102 },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },

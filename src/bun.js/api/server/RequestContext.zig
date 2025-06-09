@@ -1474,7 +1474,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            // HTMLBundle actually detected.
             if (response_value.as(HTMLBundle)) |html_bundle| {
                 if (ctx.resp) |resp|
                 {

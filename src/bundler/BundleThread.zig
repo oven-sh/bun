@@ -117,11 +117,12 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             transpiler.resolver.generation = generation;
 
+            var event_loop = JSC.AnyEventLoop.init(allocator);
             const this = try BundleV2.init(
                 transpiler,
                 null, // TODO: Kit
                 allocator,
-                JSC.AnyEventLoop.init(allocator),
+                &event_loop,
                 false,
                 JSC.WorkPool.get(),
                 heap,

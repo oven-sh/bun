@@ -149,7 +149,7 @@ pub const BundleV2 = struct {
     const debug = Output.scoped(.Bundle, false);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
-        return &this.linker.loop;
+        return this.linker.loop;
     }
 
     /// Returns the JSC.EventLoop where plugin callbacks can be queued up on
@@ -733,7 +733,7 @@ pub const BundleV2 = struct {
         transpiler: *Transpiler,
         bake_options: ?BakeOptions,
         allocator: std.mem.Allocator,
-        event_loop: EventLoop,
+        event_loop: *EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
         heap: ThreadlocalArena,
@@ -1308,7 +1308,7 @@ pub const BundleV2 = struct {
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         allocator: std.mem.Allocator,
-        event_loop: EventLoop,
+        event_loop: *EventLoop,
         enable_reloading: bool,
         reachable_files_count: *usize,
         minify_duration: *u64,
@@ -1377,7 +1377,7 @@ pub const BundleV2 = struct {
         server_transpiler: *Transpiler,
         bake_options: BakeOptions,
         allocator: std.mem.Allocator,
-        event_loop: EventLoop,
+        event_loop: *EventLoop,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(
             server_transpiler,

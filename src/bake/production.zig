@@ -248,6 +248,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
     );
 
+    var event_loop = bun.JSC.AnyEventLoop{ .js = vm.event_loop };
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         entry_points,
         &server_transpiler,
@@ -258,7 +259,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .plugins = options.bundler_options.plugin,
         },
         allocator,
-        .{ .js = vm.event_loop },
+        &event_loop,
     );
     const bundled_outputs = bundled_outputs_list.items;
 

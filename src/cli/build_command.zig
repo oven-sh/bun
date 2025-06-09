@@ -316,10 +316,11 @@ pub const BuildCommand = struct {
                 this_transpiler.resolver.opts.entry_naming = this_transpiler.options.entry_naming;
             }
 
+            var event_loop = bun.JSC.AnyEventLoop.init(ctx.allocator);
             break :brk (BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
-                bun.JSC.AnyEventLoop.init(ctx.allocator),
+                &event_loop,
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,

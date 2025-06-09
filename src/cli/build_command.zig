@@ -107,6 +107,7 @@ pub const BuildCommand = struct {
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
+        this_transpiler.options.output_compression = ctx.bundler_options.output_compression;
 
         if (ctx.bundler_options.output_format == .internal_bake_dev) {
             this_transpiler.options.tree_shaking = false;

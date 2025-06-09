@@ -22,6 +22,7 @@ const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const compression = @import("./compression.zig");
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -1765,6 +1766,7 @@ pub const BundleOptions = struct {
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
     bytecode: bool = false,
+    output_compression: compression.OutputCompression = .none,
 
     code_coverage: bool = false,
     debugger: bool = false,

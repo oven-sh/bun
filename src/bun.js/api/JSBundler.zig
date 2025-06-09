@@ -19,6 +19,7 @@ const logger = bun.logger;
 const Loader = options.Loader;
 const Target = options.Target;
 const Index = @import("../../ast/base.zig").Index;
+const compression = @import("../../compression.zig");
 
 const debug = bun.Output.scoped(.Transpiler, false);
 
@@ -26,6 +27,7 @@ pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
     pub const Config = struct {
+        output_compression: compression.OutputCompression = .none,
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
@@ -264,6 +266,13 @@ pub const JSBundler = struct {
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
+            }
+
+            if (try config.getOptional(globalThis, "gz", ZigString.Slice)) |compression_slice| {
+                defer compression_slice.deinit();
+                this.output_compression = compression.OutputCompression.fromString(compression_slice.slice()) orelse {
+                    return globalThis.throwInvalidArguments("Invalid compression type: \"{s}\". Must be 'gzip' or 'brotli'", .{compression_slice.slice()});
+                };
             }
 
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {

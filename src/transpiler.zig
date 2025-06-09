@@ -37,6 +37,8 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 const DataURL = @import("./resolver/data_url.zig").DataURL;
+const compression = @import("compression.zig");
+const resolver = @import("resolver/resolver.zig");
 
 pub const MacroJSValueType = JSC.JSValue;
 const default_macro_js_value = JSC.JSValue.zero;
@@ -993,6 +995,13 @@ pub const Transpiler = struct {
 
         keep_json_and_toml_as_one_statement: bool = false,
         allow_bytecode_cache: bool = false,
+
+        footer: bun.String = bun.String.empty,
+        hot_module_reloading: bool = false,
+        bytecode: bool = false,
+        output_compression: compression.OutputCompression = .none,
+
+        entry_naming: string = "[dir]/[name].[ext]",
     };
 
     pub fn parse(

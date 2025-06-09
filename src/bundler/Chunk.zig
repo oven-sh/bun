@@ -129,6 +129,21 @@ pub const Chunk = struct {
             display_size: ?*usize,
             enable_source_map_shifts: bool,
         ) !CodeResult {
+            // Apply compression if needed
+            if (linker_graph.linker.options.output_compression.canCompress() and chunk.content != .css) {
+                return try this.codeWithCompression(
+                    allocator_to_use,
+                    parse_graph,
+                    linker_graph,
+                    import_prefix,
+                    chunk,
+                    chunks,
+                    display_size,
+                    enable_source_map_shifts,
+                    linker_graph.linker.options.output_compression,
+                );
+            }
+
             return switch (enable_source_map_shifts) {
                 inline else => |source_map_shifts| this.codeWithSourceMapShifts(
                     allocator_to_use,
@@ -141,6 +156,83 @@ pub const Chunk = struct {
                     source_map_shifts,
                 ),
             };
+        }
+
+        pub fn codeWithCompression(
+            this: *IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
+            graph: *const Graph,
+            linker_graph: *const LinkerGraph,
+            import_prefix: []const u8,
+            chunk: *Chunk,
+            chunks: []Chunk,
+            display_size: ?*usize,
+            enable_source_map_shifts: bool,
+            output_compression: bundler.compression.OutputCompression,
+        ) !CodeResult {
+            // First get the uncompressed result
+            const result_uncompressed = try switch (enable_source_map_shifts) {
+                inline else => |source_map_shifts| this.codeWithSourceMapShifts(
+                    allocator_to_use,
+                    graph,
+                    linker_graph,
+                    import_prefix,
+                    chunk,
+                    chunks,
+                    display_size,
+                    source_map_shifts,
+                ),
+            };
+
+            // Don't compress empty files
+            if (result_uncompressed.buffer.len == 0) {
+                return result_uncompressed;
+            }
+
+            const allocator = allocator_to_use orelse allocatorForSize(result_uncompressed.buffer.len);
+
+            switch (output_compression) {
+                .none => return result_uncompressed,
+                .gzip => {
+                    const zlib = @import("../zlib.zig");
+
+                    var compressed_list = std.ArrayList(u8).init(allocator);
+                    errdefer compressed_list.deinit();
+
+                    var compressor = zlib.ZlibCompressorArrayList.init(
+                        result_uncompressed.buffer,
+                        &compressed_list,
+                        allocator,
+                        .{
+                            .gzip = true,
+                            .level = 6,
+                            .strategy = 0,
+                            .windowBits = 15,
+                        },
+                    ) catch |err| {
+                        return err;
+                    };
+                    defer compressor.deinit();
+
+                    compressor.readAll() catch |err| {
+                        return err;
+                    };
+
+                    // Free the old buffer and replace with compressed
+                    if (allocator != allocator_to_use) {
+                        allocator.free(result_uncompressed.buffer);
+                    }
+
+                    return .{
+                        .buffer = try compressed_list.toOwnedSlice(),
+                        .shifts = result_uncompressed.shifts,
+                    };
+                },
+                .brotli => {
+                    // TODO: Implement brotli compression
+                    return error.BrotliNotYetImplemented;
+                },
+            }
         }
 
         pub fn codeWithSourceMapShifts(

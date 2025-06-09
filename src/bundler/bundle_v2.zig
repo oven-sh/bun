@@ -816,6 +816,7 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.output_compression = transpiler.options.output_compression;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1667,6 +1668,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.output_compression = config.output_compression;
 
             transpiler.configureLinker();
             try transpiler.configureDefines();
@@ -4052,3 +4054,4 @@ pub const ParseTask = @import("ParseTask.zig").ParseTask;
 pub const LinkerContext = @import("LinkerContext.zig").LinkerContext;
 pub const LinkerGraph = @import("LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("Graph.zig").Graph;
+const compression = @import("../compression.zig");

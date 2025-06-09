@@ -27,6 +27,7 @@ const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const FilterRun = @import("./cli/filter_run.zig");
+const compression = @import("./compression.zig");
 
 const fs = @import("fs.zig");
 
@@ -300,6 +301,7 @@ pub const Arguments = struct {
         clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
         clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
         clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+        clap.parseParam("--gz <STR>                       Compress output files. Options: 'gzip', 'brotli'") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
         clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
         clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -998,6 +1000,19 @@ pub const Arguments = struct {
                 ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
+            if (args.option("--gz")) |compression_str| {
+                ctx.bundler_options.output_compression = compression.OutputCompression.fromString(compression_str) orelse {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid compression type: \"{s}\". Must be 'gzip' or 'brotli'", .{compression_str});
+                    Global.exit(1);
+                };
+
+                // Check if --gz was specified with --compile
+                if (ctx.bundler_options.compile) {
+                    Output.errGeneric("--gz is not supported with --compile", .{});
+                    Global.exit(1);
+                }
+            }
+
             if (args.flag("--windows-hide-console")) {
                 // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
                 // does, all of these customization options have been gated to windows-only
@@ -1611,6 +1626,8 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+
+            output_compression: compression.OutputCompression = .none,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

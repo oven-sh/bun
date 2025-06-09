@@ -23,7 +23,7 @@ pub const LinkerContext = struct {
 
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
-    loop: EventLoop,
+    loop: *bundle_v2.EventLoop,
 
     /// string buffer containing pre-formatted unique keys
     unique_key_buf: []u8 = "",
@@ -68,6 +68,10 @@ pub const LinkerContext = struct {
         mode: Mode = .bundle,
 
         public_path: []const u8 = "",
+
+        /// Used for bake to insert code for dev/production
+        dev_server: ?*DevServer = null,
+        output_compression: compression.OutputCompression = .none,
 
         pub const Mode = enum {
             passthrough,
@@ -2477,3 +2481,4 @@ const WrapKind = bundler.WrapKind;
 const genericPathWithPrettyInitialized = bundler.genericPathWithPrettyInitialized;
 const AdditionalFile = bundler.AdditionalFile;
 const logPartDependencyTree = bundler.logPartDependencyTree;
+const compression = @import("../compression.zig");

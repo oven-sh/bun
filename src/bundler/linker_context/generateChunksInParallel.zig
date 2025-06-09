@@ -272,6 +272,18 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             chunk.final_rel_path = rel_path;
         }
 
+        // Add compression extension if compression is enabled
+        if (!is_dev_server and c.options.output_compression != .none) {
+            for (chunks) |*chunk| {
+                // Only compress JavaScript chunks (not CSS or HTML)
+                if (chunk.content == .javascript) {
+                    const compression_ext = c.options.output_compression.extension();
+                    const new_path = try std.fmt.allocPrint(c.allocator, "{s}{s}", .{ chunk.final_rel_path, compression_ext });
+                    chunk.final_rel_path = new_path;
+                }
+            }
+        }
+
         if (duplicates_map.count() > 0) {
             var msg = std.ArrayList(u8).init(bun.default_allocator);
             errdefer msg.deinit();

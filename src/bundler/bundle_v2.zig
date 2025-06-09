@@ -138,7 +138,6 @@ pub const BundleV2 = struct {
     /// true, a callback is executed after all work is complete.
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
-    event_loop: EventLoop,
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -150,7 +149,7 @@ pub const BundleV2 = struct {
     const debug = Output.scoped(.Bundle, false);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
-        return &this.event_loop;
+        return this.linker.loop;
     }
 
     /// Returns the JSC.EventLoop where plugin callbacks can be queued up on
@@ -758,7 +757,7 @@ pub const BundleV2 = struct {
                 .kit_referenced_client_data = false,
             },
             .linker = .{
-                .loop = undefined, // will be set below
+                .loop = &event_loop,
                 .graph = .{
                     .allocator = undefined,
                 },
@@ -768,10 +767,8 @@ pub const BundleV2 = struct {
             .completion = null,
             .source_code_length = 0,
             .thread_lock = bun.DebugThreadLock.initLocked(),
-            .event_loop = event_loop,
             .asynchronous = false,
         };
-        this.linker.loop = &this.event_loop;
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
             this.ssr_transpiler = bo.ssr_transpiler;
@@ -821,7 +818,6 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
         this.linker.options.output_compression = transpiler.options.output_compression;
-        debug("Setting linker output_compression: {s}", .{@tagName(this.linker.options.output_compression)});
 
         this.linker.dev_server = transpiler.options.dev_server;
 

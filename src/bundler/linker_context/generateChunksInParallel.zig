@@ -274,13 +274,13 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
 
         // Add compression extension if compression is enabled
         if (!is_dev_server and c.options.output_compression != .none) {
+            debug("Applying compression extension: {s}", .{@tagName(c.options.output_compression)});
             for (chunks) |*chunk| {
-                // Only compress JavaScript chunks (not CSS or HTML)
-                if (chunk.content == .javascript) {
-                    const compression_ext = c.options.output_compression.extension();
-                    const new_path = try std.fmt.allocPrint(c.allocator, "{s}{s}", .{ chunk.final_rel_path, compression_ext });
-                    chunk.final_rel_path = new_path;
-                }
+                // Apply compression extension to all chunk types (JS, CSS, HTML)
+                const compression_ext = c.options.output_compression.extension();
+                const new_path = try std.fmt.allocPrint(c.allocator, "{s}{s}", .{ chunk.final_rel_path, compression_ext });
+                debug("Chunk path: {s} -> {s}", .{ chunk.final_rel_path, new_path });
+                chunk.final_rel_path = new_path;
             }
         }
 

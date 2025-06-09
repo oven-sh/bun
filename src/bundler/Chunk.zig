@@ -130,7 +130,7 @@ pub const Chunk = struct {
             enable_source_map_shifts: bool,
         ) !CodeResult {
             // Apply compression if needed
-            if (linker_graph.linker.options.output_compression.canCompress() and chunk.content != .css) {
+            if (linker_graph.linker.options.output_compression.canCompress()) {
                 return try this.codeWithCompression(
                     allocator_to_use,
                     parse_graph,
@@ -184,25 +184,31 @@ pub const Chunk = struct {
                 ),
             };
 
-            // Don't compress empty files
-            if (result_uncompressed.buffer.len == 0) {
+            // Check if compression is enabled
+            const compression = linker_graph.linker.options.output_compression;
+            if (compression == .none) {
+                // No compression, just return normal result
                 return result_uncompressed;
             }
 
-            const allocator = allocator_to_use orelse allocatorForSize(result_uncompressed.buffer.len);
+            // Don't compress if running in dev server mode
+            if (linker_graph.linker.options.dev_server != null) {
+                return result_uncompressed;
+            }
 
+            // Compress the output for JS, CSS, JSON, and HTML chunks
             switch (output_compression) {
                 .none => return result_uncompressed,
                 .gzip => {
                     const zlib = @import("../zlib.zig");
 
-                    var compressed_list = std.ArrayList(u8).init(allocator);
+                    var compressed_list = std.ArrayList(u8).init(allocator_to_use orelse allocatorForSize(result_uncompressed.buffer.len));
                     errdefer compressed_list.deinit();
 
                     var compressor = zlib.ZlibCompressorArrayList.init(
                         result_uncompressed.buffer,
                         &compressed_list,
-                        allocator,
+                        allocator_to_use orelse allocatorForSize(result_uncompressed.buffer.len),
                         .{
                             .gzip = true,
                             .level = 6,
@@ -219,8 +225,8 @@ pub const Chunk = struct {
                     };
 
                     // Free the old buffer and replace with compressed
-                    if (allocator != allocator_to_use) {
-                        allocator.free(result_uncompressed.buffer);
+                    if (allocator_to_use != allocator_to_use orelse allocatorForSize(result_uncompressed.buffer.len)) {
+                        allocator_to_use.free(result_uncompressed.buffer);
                     }
 
                     return .{

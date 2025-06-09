@@ -23,7 +23,7 @@ pub const LinkerContext = struct {
 
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
-    loop: *bundle_v2.EventLoop,
+    loop: *bundler.EventLoop,
 
     /// string buffer containing pre-formatted unique keys
     unique_key_buf: []u8 = "",
@@ -70,7 +70,7 @@ pub const LinkerContext = struct {
         public_path: []const u8 = "",
 
         /// Used for bake to insert code for dev/production
-        dev_server: ?*DevServer = null,
+        dev_server: ?*bun.bake.DevServer = null,
         output_compression: compression.OutputCompression = .none,
 
         pub const Mode = enum {

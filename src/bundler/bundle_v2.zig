@@ -817,6 +817,7 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
         this.linker.options.output_compression = transpiler.options.output_compression;
+        debug("Setting linker output_compression: {s}", .{@tagName(this.linker.options.output_compression)});
 
         this.linker.dev_server = transpiler.options.dev_server;
 

@@ -130,7 +130,7 @@ pub const Chunk = struct {
             enable_source_map_shifts: bool,
         ) !CodeResult {
             // Apply compression if needed
-            if (linker_graph.linker.options.output_compression.canCompress()) {
+            if (linker_graph.c.linker.options.output_compression.canCompress()) {
                 return try this.codeWithCompression(
                     allocator_to_use,
                     parse_graph,
@@ -140,7 +140,7 @@ pub const Chunk = struct {
                     chunks,
                     display_size,
                     enable_source_map_shifts,
-                    linker_graph.linker.options.output_compression,
+                    linker_graph.c.linker.options.output_compression,
                 );
             }
 
@@ -185,14 +185,14 @@ pub const Chunk = struct {
             };
 
             // Check if compression is enabled
-            const compression = linker_graph.linker.options.output_compression;
+            const compression = linker_graph.c.linker.options.output_compression;
             if (compression == .none) {
                 // No compression, just return normal result
                 return result_uncompressed;
             }
 
             // Don't compress if running in dev server mode
-            if (linker_graph.linker.options.dev_server != null) {
+            if (linker_graph.c.linker.options.dev_server != null) {
                 return result_uncompressed;
             }
 

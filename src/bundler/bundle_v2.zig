@@ -113,7 +113,7 @@ pub const BundleV2 = struct {
     framework: ?bake.Framework,
     graph: Graph,
     linker: LinkerContext,
-    bun_watcher: ?*bun.Watcher,
+    bun_watcher: ?*Watcher,
     plugins: ?*JSC.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
     source_code_length: usize,
@@ -138,6 +138,7 @@ pub const BundleV2 = struct {
     /// true, a callback is executed after all work is complete.
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
+    event_loop: EventLoop,
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -149,7 +150,7 @@ pub const BundleV2 = struct {
     const debug = Output.scoped(.Bundle, false);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
-        return this.linker.loop;
+        return &this.event_loop;
     }
 
     /// Returns the JSC.EventLoop where plugin callbacks can be queued up on
@@ -733,7 +734,7 @@ pub const BundleV2 = struct {
         transpiler: *Transpiler,
         bake_options: ?BakeOptions,
         allocator: std.mem.Allocator,
-        event_loop: *EventLoop,
+        event_loop: EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
         heap: ThreadlocalArena,
@@ -757,7 +758,7 @@ pub const BundleV2 = struct {
                 .kit_referenced_client_data = false,
             },
             .linker = .{
-                .loop = event_loop,
+                .loop = undefined, // will be set below
                 .graph = .{
                     .allocator = undefined,
                 },
@@ -767,7 +768,10 @@ pub const BundleV2 = struct {
             .completion = null,
             .source_code_length = 0,
             .thread_lock = bun.DebugThreadLock.initLocked(),
+            .event_loop = event_loop,
+            .asynchronous = false,
         };
+        this.linker.loop = &this.event_loop;
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
             this.ssr_transpiler = bo.ssr_transpiler;
@@ -1308,7 +1312,7 @@ pub const BundleV2 = struct {
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         allocator: std.mem.Allocator,
-        event_loop: *EventLoop,
+        event_loop: EventLoop,
         enable_reloading: bool,
         reachable_files_count: *usize,
         minify_duration: *u64,
@@ -1377,7 +1381,7 @@ pub const BundleV2 = struct {
         server_transpiler: *Transpiler,
         bake_options: BakeOptions,
         allocator: std.mem.Allocator,
-        event_loop: *EventLoop,
+        event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(
             server_transpiler,

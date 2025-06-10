@@ -511,6 +511,10 @@ const StreamTransfer = struct {
 
     fn finish(this: *StreamTransfer) void {
         log("finish", .{});
+        this.resp.clearOnWritable();
+        this.resp.clearAborted();
+        this.resp.clearTimeout();
+
         if (!this.state.has_ended_response) {
             this.state.has_ended_response = true;
             this.state.waiting_for_writable = false;
@@ -529,14 +533,12 @@ const StreamTransfer = struct {
         this.deinit();
     }
 
-    fn onAborted(this: *StreamTransfer, resp: AnyResponse) void {
+    fn onAborted(this: *StreamTransfer, _: AnyResponse) void {
         log("onAborted", .{});
         var scope: DeinitScope = undefined;
         scope.enter(this);
         defer scope.exit();
 
-        this.state.has_ended_response = true;
-        this.route.onResponseComplete(resp);
         this.finish();
     }
 

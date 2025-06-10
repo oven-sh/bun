@@ -274,7 +274,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     if (!matcherProp.isCell()) {
         return AsymmetricMatcherResult::NOT_MATCHER;
     }
-    
+
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 

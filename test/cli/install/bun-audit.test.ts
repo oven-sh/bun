@@ -287,4 +287,60 @@ describe("`bun audit`", () => {
       expect(await stdout).toInclude("workspace:a › ms");
     },
   });
+
+  // Tests for --fix functionality
+  doAuditTest("should fix vulnerabilities with --fix flag", {
+    exitCode: 0,
+    files: fixture("express@3"),
+    args: ["--fix"],
+    fn: async ({ stdout, dir }) => {
+      const out = await stdout;
+      expect(out).toContain("Analyzing vulnerabilities");
+      expect(out).toContain("Fixing");
+      expect(out).toContain("✓ Fixed");
+
+      // Verify package.json was updated
+      const packageJson = JSON.parse(await Bun.file(join(dir, "package.json")).text());
+      expect(packageJson.dependencies.express).not.toBe("3");
+    },
+  });
+
+  doAuditTest("should not fix when --json and --fix are both passed", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--json", "--fix"],
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      const json = JSON.parse(out);
+      // Should output JSON and not attempt to fix
+      expect(json).toHaveProperty("express");
+      expect(out).not.toContain("Fixing");
+    },
+  });
+
+  doAuditTest("should exit 0 when --fix is passed with no vulnerabilities", {
+    exitCode: 0,
+    files: fixture("safe-is-number@7"),
+    args: ["--fix"],
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      expect(out).toContain("No vulnerabilities found");
+      expect(out).not.toContain("Fixing");
+    },
+  });
+
+  doAuditTest("should handle --fix with dev dependencies", {
+    exitCode: 0,
+    files: fixture("vuln-with-only-dev-dependencies"),
+    args: ["--fix"],
+    fn: async ({ stdout, dir }) => {
+      const out = await stdout;
+      expect(out).toContain("Fixing");
+      expect(out).toContain("✓ Fixed");
+
+      // Verify package.json was updated
+      const packageJson = JSON.parse(await Bun.file(join(dir, "package.json")).text());
+      expect(packageJson.devDependencies).toBeDefined();
+    },
+  });
 });

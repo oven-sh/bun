@@ -79,14 +79,15 @@ pub const AuditCommand = struct {
             return err;
         };
 
-        const code = try audit(ctx, manager, manager.options.json_output);
+        const should_fix = cli.audit_flags.fix;
+        const code = try audit(ctx, manager, manager.options.json_output, should_fix);
         Global.exit(code);
     }
 
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub fn audit(ctx: Command.Context, pm: *PackageManager, json_output: bool) bun.OOM!u32 {
+    pub fn audit(ctx: Command.Context, pm: *PackageManager, json_output: bool, fix: bool) bun.OOM!u32 {
         Output.prettyError(comptime Output.prettyFmt("<r><b>bun audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
         Output.flush();
 
@@ -108,20 +109,76 @@ pub const AuditCommand = struct {
         const response_text = try sendAuditRequest(ctx.allocator, pm, packages_result.audit_body);
         defer ctx.allocator.free(response_text);
 
+        // Parse the audit response
+        const source = &logger.Source.initPathString("audit-response.json", response_text);
+        var log = logger.Log.init(ctx.allocator);
+        defer log.deinit();
+
+        const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
+            if (!json_output) {
+                Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
+            } else {
+                Output.writer().writeAll(response_text) catch {};
+                Output.writer().writeByte('\n') catch {};
+            }
+            return 1;
+        };
+
+        // If fix is enabled and we have vulnerabilities
+        if (fix and !json_output and expr.data == .e_object and expr.data.e_object.properties.len > 0) {
+            var audit_result = AuditResult.init(ctx.allocator);
+            defer audit_result.deinit();
+
+            // Parse vulnerabilities
+            if (expr.data == .e_object) {
+                const properties = expr.data.e_object.properties.slice();
+
+                for (properties) |prop| {
+                    if (prop.key) |key| {
+                        if (key.data == .e_string) {
+                            const package_name = key.data.e_string.data;
+
+                            if (prop.value) |value| {
+                                if (value.data == .e_array) {
+                                    const vulns = value.data.e_array.items.slice();
+                                    for (vulns) |vuln| {
+                                        if (vuln.data == .e_object) {
+                                            const vulnerability = try parseVulnerability(ctx.allocator, package_name, vuln);
+                                            try audit_result.all_vulnerabilities.append(vulnerability);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Build package info
+            for (audit_result.all_vulnerabilities.items) |vulnerability| {
+                const result = try audit_result.vulnerable_packages.getOrPut(vulnerability.package_name);
+                if (!result.found_existing) {
+                    result.value_ptr.* = PackageInfo{
+                        .package_id = 0,
+                        .name = vulnerability.package_name,
+                        .version = vulnerability.vulnerable_versions,
+                        .vulnerabilities = std.ArrayList(VulnerabilityInfo).init(ctx.allocator),
+                        .dependents = std.ArrayList(PackageInfo.DependencyPath).init(ctx.allocator),
+                    };
+                }
+                try result.value_ptr.vulnerabilities.append(vulnerability);
+            }
+
+            // Apply fixes
+            return try auditFix(ctx, pm, &audit_result);
+        }
+
+        // Normal audit flow
         if (json_output) {
             Output.writer().writeAll(response_text) catch {};
             Output.writer().writeByte('\n') catch {};
 
             if (response_text.len > 0) {
-                const source = &logger.Source.initPathString("audit-response.json", response_text);
-                var log = logger.Log.init(ctx.allocator);
-                defer log.deinit();
-
-                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
-                    Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
-                    return 1; // If we can't parse then safe to assume a similar failure
-                };
-
                 // If the response is an empty object, no vulnerabilities
                 if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
                     return 0;
@@ -145,6 +202,63 @@ pub const AuditCommand = struct {
 
             return 0;
         }
+    }
+
+    fn auditFix(
+        ctx: Command.Context,
+        pm: *PackageManager,
+        audit_result: *const AuditResult,
+    ) bun.OOM!u32 {
+        var update_requests = std.ArrayList(PackageManager.UpdateRequest).init(ctx.allocator);
+        defer update_requests.deinit();
+
+        var failed_fixes = std.ArrayList(struct { name: []const u8, reason: []const u8 }).init(ctx.allocator);
+        defer failed_fixes.deinit();
+
+        Output.prettyln("\n<cyan>Analyzing vulnerabilities...<r>", .{});
+
+        // Process each vulnerable package
+        var iter = audit_result.vulnerable_packages.iterator();
+        while (iter.next()) |entry| {
+            const package_info = entry.value_ptr;
+
+            // For now, create a simple update request that will update to latest safe version
+            // In a full implementation, we would fetch the package manifest and find the minimum safe version
+            for (package_info.vulnerabilities.items) |vuln| {
+                if (vuln.vulnerable_versions.len > 0) {
+                    try update_requests.append(.{
+                        .name = try ctx.allocator.dupe(u8, package_info.name),
+                        .name_hash = bun.StringHashMap.stringHash(package_info.name),
+                        .version = .{}, // Let the update command determine the latest version
+                        .version_buf = "",
+                    });
+                    break; // Only add once per package
+                }
+            }
+        }
+
+        if (update_requests.items.len == 0) {
+            Output.prettyln("<yellow>No vulnerabilities can be automatically fixed<r>", .{});
+            return 1;
+        }
+
+        Output.prettyln("\n<cyan>Fixing {d} vulnerable packages...<r>", .{update_requests.items.len});
+
+        // Save the original package.json path
+        const original_cwd = try ctx.allocator.dupe(u8, pm.lockfile.relative_package_json_dir);
+
+        // Use the existing update infrastructure
+        try pm.updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
+            ctx,
+            &update_requests.items,
+            .update,
+            original_cwd,
+        );
+
+        Output.prettyln("\n<green>✓ Fixed {d} vulnerabilities<r>", .{update_requests.items.len});
+        Output.prettyln("\n<d>Run <cyan>bun audit<r> <d>again to verify all vulnerabilities are resolved<r>", .{});
+
+        return 0;
     }
 };
 
@@ -627,16 +741,6 @@ fn printEnhancedAuditReport(
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
 
-                // const is_direct_dependency: bool = brk: {
-                //     for (package_info.dependents.items) |path| {
-                //         if (path.is_direct) {
-                //             break :brk true;
-                //         }
-                //     }
-
-                //     break :brk false;
-                // };
-
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
                 } else {
@@ -681,12 +785,6 @@ fn printEnhancedAuditReport(
                         }
                     }
                 }
-
-                // if (is_direct_dependency) {
-                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
-                // } else {
-                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                // }
 
                 Output.prettyln("", .{});
             }

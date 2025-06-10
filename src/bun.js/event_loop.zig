@@ -113,6 +113,12 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
     jsc_vm.releaseWeakRefs();
     JSC__JSGlobalObject__drainMicrotasks(globalObject);
 
+    // Check if an exception was thrown during microtask execution
+    if (globalObject.hasException()) {
+        // Report the exception as unhandled - this will clear the exception and report it
+        globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+    }
+
     this.virtual_machine.is_inside_deferred_task_queue = true;
     this.deferred_tasks.run();
     this.virtual_machine.is_inside_deferred_task_queue = false;

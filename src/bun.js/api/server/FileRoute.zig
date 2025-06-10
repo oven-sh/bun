@@ -155,7 +155,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     };
 
     const open_flags = bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NONBLOCK;
-    const fd_result = bun.sys.openA(
+    const fd_result = bun.sys.open(
         path,
         open_flags,
         0,

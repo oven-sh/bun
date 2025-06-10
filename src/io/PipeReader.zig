@@ -441,7 +441,7 @@ const PosixBufferedReader = struct {
 
                         if (bytes_read == 0) {
                             // EOF - finished and closed pipe
-                            defer parent.closeWithoutReporting();
+                            parent.closeWithoutReporting();
                             if (!parent.flags.is_done)
                                 parent.done();
                             return;
@@ -473,7 +473,7 @@ const PosixBufferedReader = struct {
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            defer parent.closeWithoutReporting();
+                            parent.closeWithoutReporting();
                             if (!parent.flags.is_done)
                                 parent.done();
                             return;
@@ -529,7 +529,7 @@ const PosixBufferedReader = struct {
                             stack_buffer_head = stack_buffer_head[bytes_read..];
 
                             if (bytes_read == 0) {
-                                defer parent.closeWithoutReporting();
+                                parent.closeWithoutReporting();
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
                                 if (!parent.flags.is_done)
@@ -590,7 +590,7 @@ const PosixBufferedReader = struct {
                     parent._offset += bytes_read;
 
                     if (bytes_read == 0) {
-                        defer parent.closeWithoutReporting();
+                        parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
                         if (!parent.flags.is_done)
                             parent.done();
@@ -626,7 +626,7 @@ const PosixBufferedReader = struct {
                     resizable_buffer.items.len += bytes_read;
 
                     if (bytes_read == 0) {
-                        defer parent.closeWithoutReporting();
+                        parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
                         if (!parent.flags.is_done)
                             parent.done();

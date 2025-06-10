@@ -340,7 +340,9 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         return error.MultipleOutputFilesWithoutOutputDir;
     }
 
-    if (root_path.len > 0) {
+    // Check if S3 upload is requested - in that case, we skip writing to disk
+    // The actual S3 upload will be handled in the completion task where globalThis is available
+    if (c.resolver.opts.s3_url == null and root_path.len > 0) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
         // In-memory build

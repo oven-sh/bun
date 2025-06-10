@@ -1747,6 +1747,29 @@ pub const BundleV2 = struct {
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
+
+                    // Check if S3 upload is configured
+                    if (this.s3_config) |s3_config| {
+                        if (s3_config.url.len > 0) {
+                            @import("./s3_upload.zig").uploadOutputFilesToS3(
+                                output_files,
+                                s3_config.url,
+                                s3_config.credentials,
+                                globalThis,
+                            ) catch |err| {
+                                // Add error to log
+                                this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "S3 upload failed: {s}", .{@errorName(err)}) catch {};
+
+                                // Still return the build result but with the error logged
+                                root_obj.put(
+                                    globalThis,
+                                    JSC.ZigString.static("s3_error"),
+                                    JSC.ZigString.init(@errorName(err)).toJS(globalThis),
+                                );
+                            };
+                        }
+                    }
+
                     const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");

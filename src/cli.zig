@@ -1123,11 +1123,9 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.option("--conditions")) |conditions| {
-                var iter = std.mem.tokenizeAny(u8, conditions, " \t,");
-                while (iter.next()) |condition| {
-                    try ctx.bundler_options.conditions.append(condition);
-                }
+            const conditions = args.options("--conditions");
+            for (conditions) |condition| {
+                try ctx.bundler_options.conditions.append(condition);
             }
 
             // Handle --s3 flag
@@ -1626,7 +1624,7 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
-            conditions: std.ArrayList(string) = std.ArrayList(string){},
+            conditions: std.ArrayList(string) = std.ArrayList(string).init(bun.default_allocator),
             s3_url: ?string = null,
             dump_environment_variables: bool = false,
         };

@@ -517,7 +517,7 @@ pub const JSBundler = struct {
 
                     this.s3 = S3Config{
                         .url = url,
-                        .credentials = credentials.toHeap(),
+                        .credentials = if (credentials.changed_credentials) credentials.credentials.dupe() else null,
                     };
                 } else {
                     return globalThis.throwInvalidArguments("Expected s3 to be a string URL or object with credentials", .{});

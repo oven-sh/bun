@@ -499,7 +499,6 @@ pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize
     if (T == u8) return indexOf(haystack, needle);
     return std.mem.indexOf(T, haystack, needle);
 }
-
 pub fn split(self: string, delimiter: string) SplitIterator {
     return SplitIterator{
         .buffer = self,
@@ -996,7 +995,6 @@ pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
-
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
     const rhs = comptime switch (T) {
         u8 => alt,
@@ -1898,7 +1896,6 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     wbuf[0..prefix.len].* = prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
-
 pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindowsWTF16(path)) {
         return toWPathNormalized16(wbuf, path);
@@ -2118,19 +2115,25 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
 
-    // Check if the input UTF-8 string is too long to fit in the buffer
-    // In the worst case, each UTF-8 byte becomes a UTF-16 code unit
-    // Add extra space for potential trailing slash and null terminator
-    const max_len = wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)));
-    if (utf8.len > max_len) {
-        // Return empty string to indicate error
+    // Ensure we always have space for the null terminator
+    if (wbuf.len == 0) {
+        return wbuf[0..0 :0];
+    }
+
+    // Reserve space for null terminator and optional trailing slash
+    const reserved_space = 1 + @as(usize, @intFromBool(add_trailing_lash));
+
+    // If the buffer is too small to hold even a null terminator, return empty
+    if (wbuf.len < reserved_space) {
         wbuf[0] = 0;
         return wbuf[0..0 :0];
     }
 
+    const max_result_len = wbuf.len -| reserved_space;
+
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
-        wbuf[0..max_len],
+        wbuf[0..max_result_len],
     );
 
     // Many Windows APIs expect normalized path slashes, particularly when the
@@ -4101,7 +4104,6 @@ pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
     bun.debugAssert(slice.len > result + start_index);
     return result + start_index;
 }
-
 pub fn indexOfAnyPosComptime(slice: []const u8, comptime chars: []const u8, start_index: usize) ?usize {
     if (chars.len == 1) return indexOfCharPos(slice, chars[0], start_index);
     return std.mem.indexOfAnyPos(u8, slice, start_index, chars);
@@ -4599,7 +4601,6 @@ pub fn codepointSize(comptime R: type, r: R) u3_fast {
 //         else => {
 //             // Replacement character
 //             out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
 //             return 3;
 //         },
 //     }
@@ -5094,7 +5095,6 @@ pub fn isIPV6Address(input: []const u8) bool {
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
     return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
-
 pub fn cloneNormalizingSeparators(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -5934,7 +5934,6 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool)
 
     return 1;
 }
-
 pub const visible = struct {
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
     fn visibleLatin1Width(input_: []const u8) usize {

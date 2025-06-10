@@ -127,6 +127,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
         }
     }
 
+    var scope: JSC.CatchScope = undefined;
+    scope.init(virtual_machine.jsc, @src());
+    defer scope.deinit();
+
     while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
         defer counter += 1;
@@ -488,6 +492,8 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 bun.Output.panic("Unknown tag: {d}", .{@intFromEnum(task.tag())});
             },
         }
+
+        if (scope.hasException()) return counter;
 
         this.drainMicrotasksWithGlobal(global, global_vm);
     }

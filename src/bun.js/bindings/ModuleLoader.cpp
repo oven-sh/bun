@@ -439,12 +439,18 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);
 
-    if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
+    auto* map = globalObject->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, );
+    auto entry = map->get(globalObject, specifierValue);
+    RETURN_IF_EXCEPTION(scope, );
+    if (entry) {
         if (entry.isObject()) {
 
             auto* object = entry.getObject();
-            if (auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName())) {
-                if (state.toInt32(globalObject) > JSC::JSModuleLoader::Status::Fetch) {
+            auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName());
+            RETURN_IF_EXCEPTION(scope, );
+            if (state && state.isInt32()) {
+                if (state.asInt32() > JSC::JSModuleLoader::Status::Fetch) {
                     // it's a race! we lost.
                     // https://github.com/oven-sh/bun/issues/6946
                     // https://github.com/oven-sh/bun/issues/12910
@@ -460,12 +466,15 @@ extern "C" void Bun__onFulfillAsyncModule(
                 promise->resolve(globalObject, code);
             } else {
                 auto* exception = scope.exception();
-                scope.clearException();
-                promise->reject(globalObject, exception);
+                if (!vm.isTerminationException(exception)) {
+                    scope.clearException();
+                    promise->reject(globalObject, exception);
+                }
             }
         } else {
             auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
             promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            scope.assertNoExceptionExceptTermination();
         }
     } else {
         // the module has since been deleted from the registry.

@@ -4659,13 +4659,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
         populateStackTrace(vm, *stackTrace, &except->stack, global, flags);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), &except->stack, global, flags);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     } else {
         getFromSourceURL = true;
@@ -4679,17 +4679,26 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
     if (except->type == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
+        }
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
         except->message = Bun::toStringRef(global, message);
     } else {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
+        }
     }
 
-    if (scope.exception()) [[unlikely]] {
-        scope.clearExceptionExceptTermination();
+    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        return;
     }
 
     except->name = Bun::toStringRef(err->sanitizedNameString(global));
+    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        return;
+    }
 
     except->runtime_type = err->runtimeTypeForCause();
 
@@ -4702,8 +4711,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName())) {
@@ -4712,8 +4721,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue path = getNonObservable(vm, global, obj, names.pathPublicName())) {
@@ -4722,8 +4731,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue fd = getNonObservable(vm, global, obj, names.fdPublicName())) {
@@ -4732,8 +4741,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue errno_ = getNonObservable(vm, global, obj, names.errnoPublicName())) {
@@ -4742,8 +4751,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     }
 
@@ -4753,14 +4762,12 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             // we don't want to serialize JSC::StackFrame longer than we need to
             // so in this case, we parse the stack trace as a string
 
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
             // This one intentionally calls getters.
             if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
                 if (stackValue.isString()) {
                     WTF::String stack = stackValue.toWTFString(global);
-                    if (catchScope.exception()) [[unlikely]] {
-                        catchScope.clearExceptionExceptTermination();
+                    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+                        return;
                     }
                     if (!stack.isEmpty()) {
 
@@ -4804,8 +4811,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 }
             }
 
-            if (catchScope.exception()) [[unlikely]] {
-                catchScope.clearExceptionExceptTermination();
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+                return;
             }
         }
 
@@ -6436,7 +6443,7 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     }
 
     auto& vm = global->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         return {};
     }
@@ -6444,9 +6451,9 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     auto& builtinNames = WebCore::builtinNames(vm);
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    ASSERT(!scope.exception());
+    scope.assertNoExceptionExceptTermination();
     if (!object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot)) {
-        ASSERT(!scope.exception());
+        scope.assertNoExceptionExceptTermination();
         return {};
     }
 

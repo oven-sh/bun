@@ -541,7 +541,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * glo
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
+    auto* nullable = thisObject->requireProperty.getInitializedOnMainThread(thisObject);
+    return JSValue::encode(nullable ? nullable : jsUndefined());
 }
 
 // https://github.com/oven-sh/bun/issues/11754#issuecomment-2452626172
@@ -651,6 +652,7 @@ void ImportMetaObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
         WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
@@ -666,8 +668,10 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        JSFunction* value = jsCast<JSFunction*>(Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path));
-        init.set(value);
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        RETURN_IF_EXCEPTION(scope, );
+        ASSERT(object);
+        init.set(jsCast<JSFunction*>(object));
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);

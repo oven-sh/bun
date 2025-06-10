@@ -1513,12 +1513,14 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     ASSERT(!pathString.startsWith("file://"_s));
 
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
     auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
     JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);
     }
@@ -1533,12 +1535,14 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->requireFunctionUnbound(),
         moduleObject,
         ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->filename(),
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
 

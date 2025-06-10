@@ -127,10 +127,6 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
         }
     }
 
-    var scope: JSC.CatchScope = undefined;
-    scope.init(virtual_machine.jsc, @src());
-    defer scope.deinit();
-
     while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
         defer counter += 1;
@@ -459,7 +455,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(RuntimeTranspilerStore)) => {
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                any.drain();
+                any.drain() catch {};
             },
             @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                 var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
@@ -493,9 +489,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
         }
 
-        if (scope.hasException()) return counter;
-
-        this.drainMicrotasksWithGlobal(global, global_vm);
+        this.drainMicrotasksWithGlobal(global, global_vm) catch return counter;
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;

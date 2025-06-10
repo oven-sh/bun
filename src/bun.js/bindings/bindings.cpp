@@ -6521,14 +6521,20 @@ extern "C" void CatchScope__construct(
         ExceptionEventLocation { currentStackPointer(), function, file, line });
 }
 
-extern "C" bool CatchScope__hasException(void* ptr)
+extern "C" JSC::Exception* CatchScope__exception(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
-    return !!static_cast<CatchScope*>(ptr)->exception();
+    return static_cast<CatchScope*>(ptr)->exception();
 }
 
 extern "C" void CatchScope__destruct(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
     static_cast<CatchScope*>(ptr)->~CatchScope();
+}
+
+extern "C" void CatchScope__assertNoException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    static_cast<CatchScope*>(ptr)->assertNoException();
 }

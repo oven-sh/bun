@@ -12,6 +12,7 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
 
+/// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.get().eventLoop().tick();
 }

@@ -2140,7 +2140,7 @@ pub const RuntimeTranspilerStore = struct {
     }
 
     // This is run at the top of the event loop on the JS thread.
-    pub fn drain(this: *RuntimeTranspilerStore) void {
+    pub fn drain(this: *RuntimeTranspilerStore) bun.JSExecutionTerminated!void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
         if (iter.next()) |job| {
@@ -2155,7 +2155,7 @@ pub const RuntimeTranspilerStore = struct {
         const jsc_vm = vm.jsc;
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
             job.runFromJSThread();
         }
 

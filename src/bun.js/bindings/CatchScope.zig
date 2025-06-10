@@ -23,6 +23,7 @@ const size = 56;
 const alignment = 8;
 
 bytes: [size]u8 align(alignment),
+vm: *jsc.VM,
 /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
 location: if (Environment.allow_assert) *u8 else void,
 
@@ -36,17 +37,48 @@ pub fn init(self: *CatchScope, vm: *jsc.VM, src: std.builtin.SourceLocation) voi
         @sizeOf(@TypeOf(self.bytes)),
         @typeInfo(CatchScope).@"struct".fields[0].alignment,
     );
+    self.vm = vm;
     if (Environment.allow_assert) self.location = &self.bytes[0];
 }
 
-pub fn hasException(self: *CatchScope) bool {
+/// Generate a useful message including where the exception was thrown.
+/// Only intended to be called when there is a pending exception.
+fn assertionFailure(self: *CatchScope, proof: *jsc.Exception) noreturn {
+    _ = proof;
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
-    return CatchScope__hasException(&self.bytes);
+    CatchScope__assertNoException(&self.bytes);
+    @panic("assertionFailure called without a pending exception");
+}
+
+pub fn hasException(self: *CatchScope) bool {
+    return self.exception() != null;
+}
+
+pub fn exception(self: *CatchScope) ?*jsc.Exception {
+    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    return CatchScope__exception(&self.bytes);
+}
+
+pub fn zigError(self: *CatchScope) ?bun.JSError {
+    return if (self.hasException()) error.JSError else null;
+}
+
+/// If no exception, returns.
+/// If termination exception, returns JSExecutionTerminated (so you can `try`)
+/// If non-termination exception, assertion failure.
+pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
+    return if (self.exception()) |e|
+        if (jsc.JSValue.fromCell(e).isTerminationException(self.vm))
+            error.JSExecutionTerminated
+        else
+            self.assertionFailure(e)
+    else {};
 }
 
 pub fn deinit(self: *CatchScope) void {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
     CatchScope__destruct(&self.bytes);
+    self.bytes = undefined;
 }
 
 extern fn CatchScope__construct(
@@ -58,7 +90,8 @@ extern fn CatchScope__construct(
     size: usize,
     alignment: usize,
 ) void;
-extern fn CatchScope__hasException(ptr: *align(alignment) [size]u8) bool;
+extern fn CatchScope__exception(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");

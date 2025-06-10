@@ -1592,7 +1592,7 @@ pub const ThreadSafeFunction = struct {
             break :brk .{ !this.isClosing(), t };
         };
 
-        this.call(task, !is_first);
+        this.call(task, !is_first) catch return false;
 
         if (queue_finalizer_after_call) {
             this.maybeQueueFinalizer();
@@ -1604,10 +1604,10 @@ pub const ThreadSafeFunction = struct {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSExecutionTerminated!void {
         const env = this.env;
         if (!is_first) {
-            this.event_loop.drainMicrotasks();
+            try this.event_loop.drainMicrotasks();
         }
         const globalObject = env.toJS();
 

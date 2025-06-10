@@ -686,3 +686,22 @@ it("connectionListener should emit the right amount of times, and with alpnProto
   await Promise.all(promises);
   expect(count).toBe(50);
 });
+
+describe("should fuzz the native handle and not crash", () => {
+  const handle = require("tls").Server().listen().unref()._handle;
+  const proto = Object.getPrototypeOf(handle);
+  const descs = Object.getOwnPropertyDescriptors(proto);
+  for (const k in descs) {
+    for (const v of [undefined, null, "", "a", 24, -3.4, {}, [], Symbol("b")]) {
+      it(`${k}(${String(v)})`, () => {
+        const descriptor = descs[k];
+        expect(() => descriptor.get?.call(handle)).not.toCrash();
+        if (typeof descriptor.value !== "function") return;
+        expect(() => descriptor.value.call(handle, v)).not.toCrash();
+        expect(() => descriptor.value.call(undefined, v)).not.toCrash();
+        expect(() => descriptor.value.call(null, v)).not.toCrash();
+        expect(() => descriptor.set?.call(handle, v)).not.toCrash();
+      });
+    }
+  }
+});

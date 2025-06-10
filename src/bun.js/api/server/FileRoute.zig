@@ -300,7 +300,7 @@ const StreamTransfer = struct {
         has_reader_closed: bool = false,
         _: u4 = 0,
     } = .{},
-    const log = Output.scoped(.StreamTransfer, true);
+    const log = Output.scoped(.StreamTransfer, false);
 
     pub fn create(
         fd: bun.FileDescriptor,
@@ -364,7 +364,10 @@ const StreamTransfer = struct {
                 }
             }
         }
-
+        // the socket maybe open for some time before so we reset the timeout here
+        if (this.route.server) |server| {
+            this.resp.timeout(server.config().idleTimeout);
+        }
         this.reader.read();
 
         if (!scope.deinit_called) {
@@ -388,14 +391,8 @@ const StreamTransfer = struct {
 
         const chunk, const state = brk: {
             if (this.max_size) |*max_size| {
-                if (chunk_.len >= max_size.*) {
-                    const limited_chunk = chunk_[0..max_size.*];
-                    max_size.* = 0;
-                    break :brk .{ limited_chunk, .eof };
-                } else {
-                    max_size.* -= chunk_.len;
-                    break :brk .{ chunk_, state_ };
-                }
+                const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
+                max_size.* -|= chunk.len;
                 if (state_ != .eof and max_size.* == 0) {
                     break :brk .{ chunk, .eof };
                 }
@@ -413,6 +410,7 @@ const StreamTransfer = struct {
             const route = this.route;
             route.onResponseComplete(resp);
             resp.end(chunk, resp.shouldCloseConnection());
+            log("end: {}", .{chunk.len});
             this.finish();
             return false;
         }
@@ -488,10 +486,12 @@ const StreamTransfer = struct {
 
         if (this.reader.isDone()) {
             @branchHint(.unlikely);
+            log("finish inside onWritable", .{});
             this.finish();
             return true;
         }
 
+        // reset the socket timeout before reading more data
         if (this.route.server) |server| {
             this.resp.timeout(server.config().idleTimeout);
         }
@@ -510,6 +510,7 @@ const StreamTransfer = struct {
             const resp = this.resp;
             const route = this.route;
             route.onResponseComplete(resp);
+            log("endWithoutBody", .{});
             resp.endWithoutBody(resp.shouldCloseConnection());
         }
 

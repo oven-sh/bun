@@ -441,7 +441,7 @@ const PosixBufferedReader = struct {
 
                         if (bytes_read == 0) {
                             // EOF - finished and closed pipe
-                            parent.closeWithoutReporting();
+                            defer parent.closeWithoutReporting();
                             if (!parent.flags.is_done)
                                 parent.done();
                             return;
@@ -473,7 +473,7 @@ const PosixBufferedReader = struct {
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            parent.closeWithoutReporting();
+                            defer parent.closeWithoutReporting();
                             if (!parent.flags.is_done)
                                 parent.done();
                             return;
@@ -529,7 +529,7 @@ const PosixBufferedReader = struct {
                             stack_buffer_head = stack_buffer_head[bytes_read..];
 
                             if (bytes_read == 0) {
-                                parent.closeWithoutReporting();
+                                defer parent.closeWithoutReporting();
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
                                 if (!parent.flags.is_done)
@@ -590,7 +590,7 @@ const PosixBufferedReader = struct {
                     parent._offset += bytes_read;
 
                     if (bytes_read == 0) {
-                        parent.closeWithoutReporting();
+                        defer parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
                         if (!parent.flags.is_done)
                             parent.done();
@@ -626,7 +626,7 @@ const PosixBufferedReader = struct {
                     resizable_buffer.items.len += bytes_read;
 
                     if (bytes_read == 0) {
-                        parent.closeWithoutReporting();
+                        defer parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
                         if (!parent.flags.is_done)
                             parent.done();
@@ -895,11 +895,11 @@ pub const WindowsBufferedReader = struct {
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
+        this.source = null;
         if (!source.isClosed()) {
             // closeImpl will take care of freeing the source
             this.closeImpl(false);
         }
-        this.source = null;
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
@@ -1060,9 +1060,9 @@ pub const WindowsBufferedReader = struct {
             switch (source) {
                 .sync_file, .file => |file| {
                     if (!this.flags.is_paused) {
+                        this.flags.is_paused = true;
                         // always cancel the current one
                         file.fs.cancel();
-                        this.flags.is_paused = true;
                     }
                     // always use close_fs here because we can have a operation in progress
                     file.close_fs.data = file;
@@ -1070,6 +1070,7 @@ pub const WindowsBufferedReader = struct {
                 },
                 .pipe => |pipe| {
                     pipe.data = pipe;
+                    this.flags.is_paused = true;
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
@@ -1079,6 +1080,7 @@ pub const WindowsBufferedReader = struct {
                     }
 
                     tty.data = tty;
+                    this.flags.is_paused = true;
                     tty.close(onTTYClose);
                 },
             }

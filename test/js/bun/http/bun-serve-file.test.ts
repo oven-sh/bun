@@ -4,11 +4,12 @@ import { isWindows, rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+const LARGE_SIZE = 1024 * 1024 * 100;
 const files = {
   "hello.txt": "Hello, World!",
   "empty.txt": "",
   "binary.bin": Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]),
-  "large.txt": Buffer.alloc(1024 * 1024 * 8, "bun").toString(), // 8MB file
+  "large.txt": Buffer.alloc(LARGE_SIZE, "bun").toString(), // 8MB file
   "unicode.txt": "Hello 世界 🌍 émojis",
   "json.json": JSON.stringify({ message: "test", number: 42 }),
   "nested/file.txt": "nested content",
@@ -86,6 +87,44 @@ describe("Bun.file in serve routes", () => {
     using _ = rmScope(tempDir);
   });
 
+  it("big file concurrent requests", async () => {
+    async function iter() {
+      const res = await fetch(new URL(`/large.txt`, server.url));
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toHaveLength(LARGE_SIZE);
+
+      if (files["large.txt"] !== text) {
+        console.log("Expected length:", files["large.txt"].length);
+        console.log("Actual length:", text.length);
+        console.log("First 100 chars expected:", files["large.txt"].slice(0, 100));
+        console.log("First 100 chars actual:", text.slice(0, 100));
+        console.log("Last 100 chars expected:", files["large.txt"].slice(-100));
+        console.log("Last 100 chars actual:", text.slice(-100));
+
+        // Find first difference
+        for (let i = 0; i < Math.min(files["large.txt"].length, text.length); i++) {
+          if (files["large.txt"][i] !== text[i]) {
+            console.log(`First difference at index ${i}:`);
+            console.log(`Expected: "${files["large.txt"][i]}" (code: ${files["large.txt"].charCodeAt(i)})`);
+            console.log(`Actual: "${text[i]}" (code: ${text.charCodeAt(i)})`);
+            console.log(`Context around difference: "${files["large.txt"].slice(Math.max(0, i - 10), i + 10)}"`);
+            console.log(`Actual context: "${text.slice(Math.max(0, i - 10), i + 10)}"`);
+            break;
+          }
+        }
+        throw new Error("large.txt is not the same");
+      }
+    }
+    for (let j = 0; j < 10; j++) {
+      const promises = [];
+      for (let i = 0; i < 40; i++) {
+        promises.push(iter());
+      }
+      await Promise.all(promises);
+    }
+  }, 120_000);
+
   describe("Basic file serving", () => {
     it("serves text file", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
@@ -152,7 +191,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/large.txt`, server.url));
       expect(res.status).toBe(200);
       const text = await res.text();
-      expect(text).toHaveLength(1024 * 1024 * 8);
+      expect(text).toHaveLength(LARGE_SIZE);
 
       if (files["large.txt"] !== text) {
         console.log("Expected length:", files["large.txt"].length);
@@ -176,7 +215,7 @@ describe("Bun.file in serve routes", () => {
         throw new Error("large.txt is not the same");
       }
 
-      expect(res.headers.get("Content-Length")).toBe((1024 * 1024 * 8).toString());
+      expect(res.headers.get("Content-Length")).toBe(LARGE_SIZE.toString());
 
       const headers = res.headers.toJSON();
       delete headers.date;
@@ -184,7 +223,7 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
-          "content-length": "8388608",
+          "content-length": "${LARGE_SIZE}",
           "content-type": "text/plain;charset=utf-8",
         }
       `);

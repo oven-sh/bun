@@ -473,9 +473,9 @@ pub const InitCommand = struct {
         var did_load_package_json = false;
         if (package_json_contents.list.items.len > 0) {
             process_package_json: {
-                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+                const source = &logger.Source.initPathString("package.json", package_json_contents.list.items);
                 var log = logger.Log.init(alloc);
-                var package_json_expr = JSON.parsePackageJSONUTF8(&source, &log, alloc) catch {
+                var package_json_expr = JSON.parsePackageJSONUTF8(source, &log, alloc) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };

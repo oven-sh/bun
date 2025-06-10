@@ -1132,7 +1132,7 @@ pub const LinuxWaker = struct {
 
 pub const KEventWaker = struct {
     kq: std.posix.fd_t,
-    machport: *anyopaque = undefined,
+    machport: bun.mach_port = undefined,
     machport_buf: []u8 = &.{},
     has_pending_wake: bool = false,
 
@@ -1155,6 +1155,10 @@ pub const KEventWaker = struct {
     }
 
     pub fn wait(this: Waker) void {
+        if (!bun.FD.fromNative(this.kq).isValid()) {
+            return;
+        }
+
         bun.JSC.markBinding(@src());
         var events = zeroed;
 
@@ -1169,14 +1173,15 @@ pub const KEventWaker = struct {
         );
     }
 
+    extern fn io_darwin_close_machport(bun.mach_port) void;
+
     extern fn io_darwin_create_machport(
-        *anyopaque,
         std.posix.fd_t,
         *anyopaque,
         usize,
-    ) ?*anyopaque;
+    ) bun.mach_port;
 
-    extern fn io_darwin_schedule_wakeup(*anyopaque) bool;
+    extern fn io_darwin_schedule_wakeup(bun.mach_port) bool;
 
     pub fn init() !Waker {
         return initWithFileDescriptor(bun.default_allocator, try std.posix.kqueue());
@@ -1187,11 +1192,13 @@ pub const KEventWaker = struct {
         bun.assert(kq > -1);
         const machport_buf = try allocator.alloc(u8, 1024);
         const machport = io_darwin_create_machport(
-            machport_buf.ptr,
             kq,
             machport_buf.ptr,
             1024,
-        ) orelse return error.MachportCreationFailed;
+        );
+        if (machport == 0) {
+            return error.MachportCreationFailed;
+        }
 
         return Waker{
             .kq = kq,

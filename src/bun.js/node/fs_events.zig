@@ -619,3 +619,16 @@ pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, 
         return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, updateEnd, ctx);
     }
 }
+
+pub fn closeAndWait() void {
+    if (!bun.Environment.isMac) {
+        return;
+    }
+
+    if (fsevents_default_loop) |loop| {
+        fsevents_default_loop_mutex.lock();
+        defer fsevents_default_loop_mutex.unlock();
+        loop.deinit();
+        fsevents_default_loop = null;
+    }
+}

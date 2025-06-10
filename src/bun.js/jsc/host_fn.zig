@@ -96,7 +96,7 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime func: anytype,
     args: std.meta.ArgsTuple(@TypeOf(func)),
 ) bun.JSError!JSValue {

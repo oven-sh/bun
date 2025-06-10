@@ -191,7 +191,7 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 };
 
 #if ASSERT_ENABLED
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_THROW_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
 #else
 #define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
 #endif

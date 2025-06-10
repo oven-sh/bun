@@ -27,6 +27,7 @@ const path = bun.path;
 const DependencySlice = Lockfile.DependencySlice;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;
+const PackageNameHash = install.PackageNameHash;
 
 const IsolatedInstaller = struct {
     manager: *PackageManager,
@@ -158,6 +159,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
     defer ctx.deinit();
 
     {
+        var timer = std.time.Timer.start() catch unreachable;
         const pkgs = lockfile.packages.slice();
         const pkg_dependency_slices = pkgs.items(.dependencies);
         const pkg_resolutions = pkgs.items(.resolution);
@@ -204,7 +206,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
                         // skip the node, but add the dependency so it appears in
                         // `node_modules/.bun/name@version/node_modules`
-                        bun.debugAssert(entry.parent_id != .invalid);
                         try node_nodes[entry.parent_id.get()].append(lockfile.allocator, curr_id);
                         continue :node_queue;
                     }
@@ -264,27 +265,26 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 try peer_dep_ids.append(lockfile.allocator, dep_id);
             }
 
-            for (peer_dep_ids.items) |peer_dep_id| {
+            next_peer: for (peer_dep_ids.items) |peer_dep_id| {
+                const resolved_pkg_id, const auto_installed = resolved_pkg_id: {
 
-                // It's a peer. Go through parents looking for a package with the same name.
-                // If none is found, use current best version. Parents visited must have
-                // the package id for the chosen peer marked as a transitive peer. Nodes
-                // are deduplicated only if their package id and their transitive peer package
-                // ids are equal.
-                const peer_dep = dependencies[peer_dep_id];
+                    // Go through the peers parents looking for a package with the same name.
+                    // If none is found, use current best version. Parents visited must have
+                    // the package id for the chosen peer marked as a transitive peer. Nodes
+                    // are deduplicated only if their package id and their transitive peer package
+                    // ids are equal.
+                    const peer_dep = dependencies[peer_dep_id];
 
-                // TODO: double check this
-                // Start with the current package. A package
-                // can satisfy it's own peers.
-                var curr_id = node_id;
+                    // TODO: double check this
+                    // Start with the current package. A package
+                    // can satisfy it's own peers.
+                    var curr_id = node_id;
 
-                visited_node_ids.clearRetainingCapacity();
-                const resolved_pkg_id = resolved_pkg_id: {
+                    visited_node_ids.clearRetainingCapacity();
                     while (curr_id != .invalid) {
                         try visited_node_ids.append(lockfile.allocator, curr_id);
 
-                        const curr_deps = node_dependencies[curr_id.get()];
-                        for (curr_deps.items) |ids| {
+                        for (node_dependencies[curr_id.get()].items) |ids| {
                             const dep = dependencies[ids.dep_id];
 
                             if (dep.name_hash != peer_dep.name_hash) {
@@ -296,7 +296,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                             if (peer_dep.version.tag != .npm or res.tag != .npm) {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.
-                                break :resolved_pkg_id ids.pkg_id;
+                                break :resolved_pkg_id .{ ids.pkg_id, false };
                             }
 
                             const peer_dep_version = peer_dep.version.value.npm.version;
@@ -306,11 +306,54 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                                 // TODO: add warning!
                             }
 
-                            break :resolved_pkg_id ids.pkg_id;
+                            break :resolved_pkg_id .{ ids.pkg_id, false };
                         }
 
-                        // TODO: also loop through transitive peers? it might be a shortcut
-                        // const curr_peers = node_peers[curr_id.get()];
+                        const curr_peers = node_peers[curr_id.get()];
+                        for (curr_peers.list.items) |ids| {
+                            const transitive_peer_dep = dependencies[ids.dep_id];
+
+                            if (transitive_peer_dep.name_hash != peer_dep.name_hash) {
+                                continue;
+                            }
+
+                            // A transitive peer with the same name has already passed
+                            // through this node
+
+                            if (!ids.auto_installed) {
+                                // The resolution was found here or above. Choose the same
+                                // peer resolution. No need to mark this node or above.
+
+                                // TODO: add warning if not satisfies()!
+                                break :resolved_pkg_id .{ ids.pkg_id, false };
+                            }
+
+                            // It didn't find a matching name and auto installed
+                            // from somewhere this peer can't reach. Choose best
+                            // version. Only mark all parents if resolution is
+                            // different from this transitive peer.
+
+                            if (peer_dep.behavior.isOptionalPeer()) {
+                                // exclude it
+                                continue :next_peer;
+                            }
+
+                            const best_version = resolutions[peer_dep_id];
+
+                            if (best_version == ids.pkg_id) {
+                                _ = visited_node_ids.pop();
+                                break :resolved_pkg_id .{ ids.pkg_id, true };
+                            }
+
+                            // add the remaining parent ids
+                            curr_id = node_parent_ids[curr_id.get()];
+                            while (curr_id != .invalid) {
+                                try visited_node_ids.append(lockfile.allocator, curr_id);
+                                curr_id = node_parent_ids[curr_id.get()];
+                            }
+
+                            break :resolved_pkg_id .{ best_version, true };
+                        }
 
                         curr_id = node_parent_ids[curr_id.get()];
                     }
@@ -321,17 +364,24 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     }
 
                     // choose the current best version
-                    break :resolved_pkg_id resolutions[peer_dep_id];
+                    break :resolved_pkg_id .{ resolutions[peer_dep_id], true };
                 };
 
                 bun.debugAssert(resolved_pkg_id != invalid_package_id);
 
                 for (visited_node_ids.items) |visited_parent_id| {
-                    const context: OrderedPeerPutContext = .{
-                        .pkg_names = pkg_names,
-                        .string_buf = string_buf,
-                    };
-                    try node_peers[visited_parent_id.get()].put(lockfile.allocator, resolved_pkg_id, &context);
+                    try node_peers[visited_parent_id.get()].append(
+                        lockfile.allocator,
+                        .{
+                            .dep_id = peer_dep_id,
+                            .pkg_id = resolved_pkg_id,
+                            .auto_installed = auto_installed,
+                        },
+                        .{
+                            .string_buf = string_buf,
+                            .pkg_names = pkg_names,
+                        },
+                    );
                 }
 
                 if (visited_node_ids.items.len != 1) {
@@ -347,11 +397,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             }
         }
 
-        Store.Node.debugPrintList(&nodes, lockfile);
+        const full_tree_end = timer.read();
+
+        // Store.Node.debugPrintList(&nodes, lockfile);
+
+        timer.reset();
 
         const PlacedInfo = struct {
             store_id: Store.Entry.Id,
-            peers: OrderedList(PackageID),
+            peers: Store.Node.TransitivePeer.OrderedList,
         };
 
         var placed: std.AutoHashMap(PackageID, std.ArrayListUnmanaged(PlacedInfo)) = .init(lockfile.allocator);
@@ -427,7 +481,20 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             }
         }
 
-        Store.Entry.debugPrintList(&store, lockfile);
+        const dedupe_end = timer.read();
+
+        // Store.Entry.debugPrintList(&store, lockfile);
+
+        std.debug.print(
+            \\Build tree: [{}]
+            \\Deduplicate tree: [{}]
+            \\Total: [{}]
+            \\
+        , .{
+            bun.fmt.fmtDurationOneDecimal(full_tree_end),
+            bun.fmt.fmtDurationOneDecimal(dedupe_end),
+            bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
+        });
     }
 
     // TODO: install with `store`
@@ -435,64 +502,10 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
     return .{};
 }
 
-const OrderedPeerPutContext = struct {
-    string_buf: string,
-    pkg_names: []String,
-
-    pub fn eql(this: *const @This(), new: PackageID, existing: PackageID) bool {
-        _ = this;
-        return new == existing;
-    }
-
-    pub fn lessThan(this: *const @This(), new: PackageID, existing: PackageID) bool {
-        const string_buf = this.string_buf;
-        const pkg_names = this.pkg_names;
-
-        const existing_name = pkg_names[existing];
-        const new_name = pkg_names[new];
-
-        return new_name.order(&existing_name, string_buf, string_buf) == .lt;
-    }
+const Ids = struct {
+    dep_id: DependencyID,
+    pkg_id: PackageID,
 };
-
-fn OrderedList(comptime T: type) type {
-    return struct {
-        list: std.ArrayListUnmanaged(T) = .empty,
-
-        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
-            this.list.deinit(allocator);
-        }
-
-        pub fn eql(this: *const @This(), other: *const @This()) bool {
-            return std.mem.eql(T, this.list.items, other.list.items);
-        }
-
-        pub fn contains(this: *const @This(), item: T) bool {
-            for (this.list.items) |existing| {
-                if (existing == item) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        pub fn put(this: *@This(), allocator: std.mem.Allocator, new: T, context: anytype) OOM!void {
-            for (0..this.list.items.len) |i| {
-                const existing = this.list.items[i];
-                if (context.eql(new, existing)) {
-                    return;
-                }
-
-                if (context.lessThan(new, existing)) {
-                    try this.list.insert(allocator, i, new);
-                    return;
-                }
-            }
-
-            try this.list.append(allocator, new);
-        }
-    };
-}
 
 const Store = struct {
 
@@ -582,9 +595,78 @@ const Store = struct {
         dep_id: DependencyID,
         pkg_id: PackageID,
         parent_id: Id,
-        dependencies: std.ArrayListUnmanaged(struct { dep_id: DependencyID, pkg_id: PackageID }) = .empty,
-        peers: OrderedList(PackageID) = .{},
+        dependencies: std.ArrayListUnmanaged(Ids) = .empty,
+
+        peers: TransitivePeer.OrderedList = .{},
         nodes: std.ArrayListUnmanaged(Id) = .empty,
+
+        const TransitivePeer = struct {
+            dep_id: DependencyID,
+            pkg_id: PackageID,
+            auto_installed: bool,
+
+            pub const OrderedList = struct {
+                list: std.ArrayListUnmanaged(TransitivePeer) = .empty,
+
+                pub fn deinit(this: *const OrderedList, allocator: std.mem.Allocator) void {
+                    this.list.deinit(allocator);
+                }
+
+                pub fn eql(l: *const OrderedList, r: *const OrderedList) bool {
+                    if (l.list.items.len != r.list.items.len) {
+                        return false;
+                    }
+
+                    for (l.list.items, r.list.items) |l_item, r_item| {
+                        if (l_item.pkg_id != r_item.pkg_id) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                pub fn contains(this: *const OrderedList, item: TransitivePeer, context: anytype) bool {
+                    for (this.list.items) |existing| {
+                        if (context.eql(item, existing)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                pub fn append(
+                    this: *OrderedList,
+                    allocator: std.mem.Allocator,
+                    new: TransitivePeer,
+                    bufs: struct {
+                        string_buf: string,
+                        pkg_names: []const String,
+                    },
+                ) OOM!void {
+                    const new_pkg_name = bufs.pkg_names[new.pkg_id];
+                    for (0..this.list.items.len) |i| {
+                        const existing = this.list.items[i];
+                        if (new.pkg_id == existing.pkg_id) {
+                            return;
+                        }
+
+                        const existing_pkg_name = bufs.pkg_names[existing.pkg_id];
+
+                        const order = new_pkg_name.order(&existing_pkg_name, bufs.string_buf, bufs.string_buf);
+
+                        bun.debugAssert(order != .eq);
+
+                        if (order == .lt) {
+                            try this.list.insert(allocator, i, new);
+                            return;
+                        }
+                    }
+
+                    try this.list.append(allocator, new);
+                }
+            };
+        };
 
         pub const List = bun.MultiArrayList(Node);
 
@@ -661,13 +743,17 @@ const Store = struct {
                 }
 
                 std.debug.print("\n  peers ({d}):\n", .{node.peers.list.items.len});
-                for (node.peers.list.items) |pkg_id| {
-                    const pkg_name = pkg_names[pkg_id].slice(string_buf);
-                    const pkg_res = pkg_resolutions[pkg_id];
+                for (node.peers.list.items) |ids| {
+                    const dep = dependencies[ids.dep_id];
+                    const dep_name = dep.name.slice(string_buf);
+                    const pkg_name = pkg_names[ids.pkg_id].slice(string_buf);
+                    const pkg_res = pkg_resolutions[ids.pkg_id];
 
-                    std.debug.print("    {s}@{}\n", .{
+                    std.debug.print("    {s}@{} ({s}@{s})\n", .{
                         pkg_name,
                         pkg_res.fmt(string_buf, .posix),
+                        dep_name,
+                        dep.version.literal.slice(string_buf),
                     });
                 }
             }

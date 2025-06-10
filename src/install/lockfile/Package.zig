@@ -527,6 +527,7 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
+            node_linker_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -543,6 +544,7 @@ pub const Package = extern struct {
 
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
+                    this.node_linker_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -657,6 +659,10 @@ pub const Package = extern struct {
                             break :catalogs;
                         }
                     }
+                }
+
+                if (from_lockfile.node_linker != to_lockfile.node_linker) {
+                    summary.node_linker_changed = true;
                 }
             }
 

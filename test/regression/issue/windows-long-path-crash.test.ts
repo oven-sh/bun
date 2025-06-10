@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { existsSync, accessSync, constants } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { accessSync, constants, existsSync } from "node:fs";
 import { platform } from "node:os";
 
 // Test for Windows path length crash bug

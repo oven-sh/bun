@@ -609,4 +609,70 @@ describe("bundler", () => {
       stdout: "42 true 42",
     },
   });
+  itBundled("splitting/ReExportDuplicateExportsFix", {
+    // Direct test for the duplicate exports fix
+    files: {
+      "/shared.js": /* js */ `
+        export function shared() {
+          return "shared";
+        }
+      `,
+      "/a.js": /* js */ `
+        export { shared } from './shared.js';
+      `,
+      "/b.js": /* js */ `
+        export { shared } from './shared.js';
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { shared as s1 } from './out/a.js';
+        import { shared as s2 } from './out/b.js';
+        console.log(s1 === s2, s1());
+      `,
+    },
+    run: [{ file: "/test.js", stdout: "true shared" }],
+    onAfterBundle(api) {
+      // Check that the output files don't have duplicate export statements
+      const aContent = api.readFile("/out/a.js");
+      const bContent = api.readFile("/out/b.js");
+
+      // Count occurrences of export statements for 'shared'
+      const countExports = (content: string) => {
+        const matches = content.match(/export\s*\{\s*shared\s*\}/g) || [];
+        return matches.length;
+      };
+
+      assert.strictEqual(countExports(aContent), 1, "File a.js should have exactly one export for 'shared'");
+      assert.strictEqual(countExports(bContent), 1, "File b.js should have exactly one export for 'shared'");
+    },
+  });
+  itBundled("splitting/DuplicateExportsIssue5106", {
+    // Test for https://github.com/oven-sh/bun/issues/5106
+    files: {
+      "/entry-a.js": /* js */ `
+        export function a() {}
+      `,
+      "/entry-b.js": /* js */ `
+        export { a } from './entry-a.js'
+        export function b() {}
+      `,
+    },
+    entryPoints: ["/entry-a.js", "/entry-b.js"],
+    splitting: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { a } from './out/entry-a.js';
+        import { a as a2, b } from './out/entry-b.js';
+        console.log(a === a2, typeof a, typeof b);
+      `,
+    },
+    run: [{ file: "/test.js", stdout: "true function function" }],
+    assertNotPresent: {
+      // Make sure we don't have duplicate exports
+      "/out/entry-b.js": ["export { a };", "export { a };"],
+    },
+  });
 });

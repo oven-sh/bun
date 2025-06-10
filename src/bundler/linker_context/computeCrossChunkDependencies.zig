@@ -336,19 +336,23 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     }
 
                     if (clause_items.len > 0) {
-                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
-                        const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
-                        export_clause.* = .{
-                            .items = clause_items.slice(),
-                            .is_single_line = true,
-                        };
-                        stmts.appendAssumeCapacity(.{
-                            .data = .{
-                                .s_export_clause = export_clause,
-                            },
-                            .loc = Logger.Loc.Empty,
-                        });
-                        repr.cross_chunk_suffix_stmts = stmts;
+                        // Skip generating cross-chunk exports for entry points
+                        // Entry points already export all their symbols through the entry point tail
+                        if (!chunk.isEntryPoint()) {
+                            var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
+                            const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
+                            export_clause.* = .{
+                                .items = clause_items.slice(),
+                                .is_single_line = true,
+                            };
+                            stmts.appendAssumeCapacity(.{
+                                .data = .{
+                                    .s_export_clause = export_clause,
+                                },
+                                .loc = Logger.Loc.Empty,
+                            });
+                            repr.cross_chunk_suffix_stmts = stmts;
+                        }
                     }
                 },
                 else => {},

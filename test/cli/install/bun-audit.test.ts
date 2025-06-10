@@ -287,4 +287,61 @@ describe("`bun audit`", () => {
       expect(await stdout).toInclude("workspace:a › ms");
     },
   });
+
+  describe("bun audit --fix", () => {
+    doAuditTest("should provide fix instructions when vulnerabilities are found", {
+      exitCode: 1,
+      files: fixture("express@3"),
+      args: ["--fix"],
+      fn: async ({ stdout }) => {
+        const out = await stdout;
+
+        // Should show the regular audit report
+        expect(out).toContain("vulnerabilities");
+
+        // Should show fix summary
+        expect(out).toContain("Fix Summary");
+        expect(out).toContain("To fix vulnerabilities:");
+
+        // Should suggest update commands
+        expect(out).toContain("bun update");
+      },
+    });
+
+    doAuditTest("should still report no vulnerabilities when none are found", {
+      exitCode: 0,
+      files: fixture("safe-is-number@7"),
+      args: ["--fix"],
+      fn: async ({ stdout }) => {
+        expect(await stdout).toBe("No vulnerabilities found\n");
+      },
+    });
+
+    doAuditTest("should return JSON output when --json is used with --fix", {
+      exitCode: 1,
+      files: fixture("express@3"),
+      args: ["--fix", "--json"],
+      fn: async ({ stdout }) => {
+        const out = await stdout;
+        const json = JSON.parse(out); // Should be valid JSON
+        expect(json).toBeDefined();
+        expect(Object.keys(json).length).toBeGreaterThan(0); // Has vulnerabilities
+      },
+    });
+
+    doAuditTest("should distinguish between direct and transitive dependencies", {
+      exitCode: 1,
+      files: fixture("mix-of-safe-and-vulnerable-dependencies"),
+      args: ["--fix"],
+      fn: async ({ stdout }) => {
+        const out = await stdout;
+
+        // Should contain fix instructions
+        expect(out).toContain("To fix vulnerabilities:");
+
+        // Should mention if there are transitive dependencies
+        expect(out).toMatch(/Direct dependencies|transitive dependencies/);
+      },
+    });
+  });
 });

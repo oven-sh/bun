@@ -79,7 +79,10 @@ pub const AuditCommand = struct {
             return err;
         };
 
-        const code = try audit(ctx, manager, manager.options.json_output);
+        const code = if (cli.fix)
+            try auditFix(ctx, manager, cli.json_output)
+        else
+            try audit(ctx, manager, manager.options.json_output);
         Global.exit(code);
     }
 
@@ -145,6 +148,137 @@ pub const AuditCommand = struct {
 
             return 0;
         }
+    }
+
+    pub fn auditFix(ctx: Command.Context, pm: *PackageManager, json_output: bool) bun.OOM!u32 {
+        Output.prettyError(comptime Output.prettyFmt("<r><b>bun audit --fix <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
+        Output.flush();
+
+        const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
+        @import("./package_manager_command.zig").PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
+
+        var dependency_tree = try buildDependencyTree(ctx.allocator, pm);
+        defer dependency_tree.deinit();
+
+        const packages_result = try collectPackagesForAudit(ctx.allocator, pm);
+        defer ctx.allocator.free(packages_result.audit_body);
+        defer {
+            for (packages_result.skipped_packages.items) |package_name| {
+                ctx.allocator.free(package_name);
+            }
+            packages_result.skipped_packages.deinit();
+        }
+
+        const response_text = try sendAuditRequest(ctx.allocator, pm, packages_result.audit_body);
+        defer ctx.allocator.free(response_text);
+
+        if (response_text.len == 0) {
+            Output.prettyln("<green>No vulnerabilities found<r>", .{});
+            printSkippedPackages(packages_result.skipped_packages);
+            return 0;
+        }
+
+        // Parse the audit response to identify vulnerable packages
+        const source = &logger.Source.initPathString("audit-response.json", response_text);
+        var log = logger.Log.init(ctx.allocator);
+        defer log.deinit();
+
+        const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
+            Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
+            return 1;
+        };
+
+        if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
+            Output.prettyln("<green>No vulnerabilities found<r>", .{});
+            return 0;
+        }
+
+        // Collect vulnerable packages
+        var vulnerable_packages = std.ArrayList([]const u8).init(ctx.allocator);
+        defer {
+            for (vulnerable_packages.items) |pkg| {
+                ctx.allocator.free(pkg);
+            }
+            vulnerable_packages.deinit();
+        }
+
+        var direct_deps = bun.StringHashMap(void).init(ctx.allocator);
+        defer direct_deps.deinit();
+
+        if (expr.data == .e_object) {
+            const properties = expr.data.e_object.properties.slice();
+            for (properties) |prop| {
+                if (prop.key) |key| {
+                    if (key.data == .e_string) {
+                        const package_name = key.data.e_string.data;
+                        try vulnerable_packages.append(try ctx.allocator.dupe(u8, package_name));
+
+                        // Check if this is a direct dependency
+                        const paths = try findDependencyPaths(ctx.allocator, package_name, &dependency_tree, pm);
+                        defer {
+                            for (paths.items) |*path| {
+                                path.path.deinit();
+                            }
+                            paths.deinit();
+                        }
+
+                        for (paths.items) |path| {
+                            if (path.is_direct) {
+                                try direct_deps.put(package_name, {});
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (vulnerable_packages.items.len == 0) {
+            Output.prettyln("<green>No vulnerabilities found<r>", .{});
+            return 0;
+        }
+
+        if (json_output) {
+            // For JSON output, just return the audit response
+            Output.writer().writeAll(response_text) catch {};
+            Output.writer().writeByte('\n') catch {};
+            return 1; // Still return error code since vulnerabilities exist
+        }
+
+        // Print regular audit report first
+        const exit_code = try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
+        printSkippedPackages(packages_result.skipped_packages);
+
+        Output.prettyln("\n<b>Fix Summary<r>", .{});
+        Output.prettyln("Found <red>{d}<r> vulnerable package{s}\n", .{ vulnerable_packages.items.len, if (vulnerable_packages.items.len == 1) "" else "s" });
+
+        // Separate direct and transitive dependencies
+        var has_direct = false;
+        var has_transitive = false;
+
+        Output.prettyln("<b>To fix vulnerabilities:<r>", .{});
+
+        if (direct_deps.count() > 0) {
+            has_direct = true;
+            Output.prettyln("\n<b>Direct dependencies that can be updated:<r>", .{});
+            var iter = direct_deps.iterator();
+            while (iter.next()) |entry| {
+                Output.prettyln("  <green>bun update {s}@latest<r>", .{entry.key_ptr.*});
+            }
+        }
+
+        const transitive_count = vulnerable_packages.items.len - direct_deps.count();
+        if (transitive_count > 0) {
+            has_transitive = true;
+            Output.prettyln("\n<b>{d} vulnerable transitive dependencies found.<r>", .{transitive_count});
+            Output.prettyln("To fix all vulnerabilities including transitive dependencies:", .{});
+            Output.prettyln("  <green>bun update --latest<r>", .{});
+            Output.prettyln("\n<yellow>Note:<r> This may introduce breaking changes.", .{});
+        }
+
+        Output.prettyln("\n<d>Run the suggested commands to fix vulnerabilities.<r>", .{});
+
+        return exit_code;
     }
 };
 
@@ -627,16 +761,6 @@ fn printEnhancedAuditReport(
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
 
-                // const is_direct_dependency: bool = brk: {
-                //     for (package_info.dependents.items) |path| {
-                //         if (path.is_direct) {
-                //             break :brk true;
-                //         }
-                //     }
-
-                //     break :brk false;
-                // };
-
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
                 } else {
@@ -681,12 +805,6 @@ fn printEnhancedAuditReport(
                         }
                     }
                 }
-
-                // if (is_direct_dependency) {
-                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
-                // } else {
-                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                // }
 
                 Output.prettyln("", .{});
             }

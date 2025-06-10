@@ -47,7 +47,7 @@ std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const C
         return std::nullopt;
 
     Vector<uint8_t> sharedSecret(X25519_SHARED_KEY_LEN);
-    
+
     if (!X25519(sharedSecret.data(), baseKeyData.data(), publicKeyData.data()))
         return std::nullopt;
 

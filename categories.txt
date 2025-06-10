@@ -34,7 +34,9 @@ parallel/test-tls-cli-min-max-conflict.js
 parallel/test-tls-external-accessor.js
 - we don't support `_external`, but we pass the spirit of the test. trivial 'fix'
 parallel/test-tls-destroy-stream.js
+parallel/test-tls-socket-close.js
 parallel/test-double-tls-client.js (this one maybe not as easy, but it is somewhat related)
+parallel/test-tls-server-capture-rejection.js (maybe related? async createServer callback does not work with events.captureRejections)
 - the test calls `.emit("connection")` on the tlsServer. In node, this calls the connection
   handler but in bun it does not. Switch tls to use emit("connection") rather than
   calling the connection listener directly, and add .on('connection') in the constructor
@@ -66,9 +68,13 @@ parallel/test-double-tls-client.js (this one maybe not as easy, but it is somewh
     }
     server.emit("secureConnection", self);
   ```
+parallel/test-tls-wrap-event-emmiter.js
+- missing error for passing plain eventEmitter to TlsSocket constructor
 
 # probably easy
 
+parallel/test-tls-exportkeyingmaterial.js
+- exportKeyingMaterial emits as uncaughtException rather than thrown error
 parallel/test-tls-cert-chains-in-ca.js
 parallel/test-tls-env-extra-ca.js
 - checkServerIdentity callback is not implemented
@@ -109,6 +115,7 @@ parallel/test-tls-streamwrap-buffersize.js
 - bufferSize is wrong. also it is deprecated.
 parallel/test-tls-clientcertengine-invalid-arg-type.js
 parallel/test-tls-socket-default-options.js
+parallel/test-tls-set-secure-context.js
 - createSecureContext (kai)
 parallel/test-tls-timeout-server.js
 parallel/test-tls-socket-destroy.js
@@ -121,18 +128,16 @@ parallel/test-tls-connect-timeout-option.js
 - support tls connect timeout option
 parallel/test-tls-getcertificate-x509.js
 - error: error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE
-parallel/test-tls-socket-close.js
 parallel/test-tls-connect-given-socket.js
+- "invalid socket" when passing 'socket: socket' in tls.connect?
 parallel/test-double-tls-server.js
+- ALPNCallback
 parallel/test-tls-writewrap-leak.js
-parallel/test-tls-exportkeyingmaterial.js
-parallel/test-tls-env-extra-ca-with-options.js
-parallel/test-tls-set-secure-context.js
-parallel/test-tls-server-capture-rejection.js
-parallel/test-tls-wrap-event-emmiter.js
+- the write callback is supposed to get an error ECANCELED "Canceled because of SSL destruction"
 parallel/test-tls-client-default-ciphers.js
 parallel/test-tls-socket-constructor-alpn-options-parsing.js
 sequential/test-tls-session-timeout.js
+parallel/test-tls-env-extra-ca-with-options.js
 
 # skipped (wontfix)
 

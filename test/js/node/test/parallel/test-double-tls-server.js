@@ -28,12 +28,15 @@ const net = require('net');
 const serverReplaySize = 2 * 1024 * 1024;
 
 (async function() {
+  console.log('Starting test...');
   const tlsClientHello = await getClientHello();
+  console.log('Got client hello, length:', tlsClientHello.length);
 
   const subserver = tls.createServer({
     key: fixtures.readKey('agent1-key.pem'),
     cert: fixtures.readKey('agent1-cert.pem'),
     ALPNCallback: common.mustCall(({ sn, protocols }) => {
+      console.log('ALPN callback called with protocols:', protocols);
       // Once `subserver` receives `tlsClientHello` from the underlying net.Socket,
       // in this test, a TLSSocket actually, it should be able to proceed to the handshake
       // and emit this event
@@ -48,17 +51,22 @@ const serverReplaySize = 2 * 1024 * 1024;
   })
     .listen(startClient)
     .on('secureConnection', (serverTlsSock) => {
+      console.log('Server received secure connection');
       // Craft writes that are large enough to stuck in sending
       // In reality this can be a 200 response to the incoming HTTP CONNECT
       const half = Buffer.alloc(serverReplaySize / 2, 0);
+      console.log('Writing first half of data...');
       serverTlsSock.write(half, common.mustSucceed());
+      console.log('Writing second half of data...');
       serverTlsSock.write(half, common.mustSucceed());
 
+      console.log('Emitting connection to subserver...');
       subserver.emit('connection', serverTlsSock);
     });
 
 
   function startClient() {
+    console.log('Starting client connection...');
     const clientTlsSock = tls.connect({
       host: '127.0.0.1',
       port: server.address().port,
@@ -68,34 +76,44 @@ const serverReplaySize = 2 * 1024 * 1024;
     const recv = [];
     let revcLen = 0;
     clientTlsSock.on('data', (chunk) => {
+      console.log('Client received chunk of size:', chunk.length);
       revcLen += chunk.length;
       recv.push(chunk);
       if (revcLen > serverReplaySize) {
+        console.log('Received enough data, checking server hello...');
         // Check the server's replay is followed by the subserver's TLS ServerHello
         const serverHelloFstByte = Buffer.concat(recv).subarray(serverReplaySize, serverReplaySize + 1);
+        console.log('Server hello first byte:', serverHelloFstByte.toString('hex'));
         assert.strictEqual(serverHelloFstByte.toString('hex'), '16');
         process.exit(0);
       }
     });
 
     // In reality, one may want to send a HTTP CONNECT before starting this double TLS
+    console.log('Writing client hello...');
     clientTlsSock.write(tlsClientHello);
   }
 })().then(common.mustCall());
 
 function getClientHello() {
   return new Promise((resolve) => {
+    console.log('Creating temporary server to get client hello...');
     const server = net.createServer((sock) => {
+      console.log('Temporary server received connection');
       sock.on('data', (chunk) => {
+        console.log('Temporary server received client hello, length:', chunk.length);
         resolve(chunk);
       });
     })
     .listen(() => {
+      console.log('Temporary server listening, connecting client...');
       tls.connect({
         port: server.address().port,
         host: '127.0.0.1',
         ALPNProtocols: ['h2'],
-      }).on('error', () => {});
+      }).on('error', () => {
+        console.log('Client connection error (expected)');
+      });
     });
   });
 }

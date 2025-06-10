@@ -11,7 +11,18 @@ const assert = require('assert');
 
 const TlsSocket = require('tls').TLSSocket;
 const EventEmitter = require('events').EventEmitter;
+
+console.log('Creating new EventEmitter...');
+const emitter = new EventEmitter();
+console.log('EventEmitter created');
+
+console.log('Attempting to create new TLSSocket with EventEmitter...');
 assert.throws(
-  () => { new TlsSocket(new EventEmitter()); },
+  () => { 
+    console.log('Inside throws callback');
+    new TlsSocket(emitter);
+    console.log('TLSSocket created (this should not happen)');
+  },
   TypeError
 );
+console.log('Successfully caught TypeError as expected');

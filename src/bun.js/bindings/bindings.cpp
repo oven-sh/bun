@@ -270,6 +270,11 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope, ExpectFlags& flags)
 {
+    // Add check to ensure matcherProp is actually a cell before calling asCell()
+    if (!matcherProp.isCell()) {
+        return AsymmetricMatcherResult::NOT_MATCHER;
+    }
+    
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 

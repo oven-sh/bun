@@ -159,7 +159,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     @memcpy(path_buffer[0..path.len], path);
     path_buffer[path.len] = 0;
     const fd_result = bun.sys.open(
-        path_buffer[0..path.len],
+        path_buffer[0..path.len :0],
         open_flags,
         0,
     );

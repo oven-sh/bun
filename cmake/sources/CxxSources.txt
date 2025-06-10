@@ -425,6 +425,7 @@ src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA256.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA384.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA512.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmX25519.cpp
+src/bun.js/bindings/webcrypto/CryptoAlgorithmX25519OpenSSL.cpp
 src/bun.js/bindings/webcrypto/CryptoDigest.cpp
 src/bun.js/bindings/webcrypto/CryptoKey.cpp
 src/bun.js/bindings/webcrypto/CryptoKeyAES.cpp

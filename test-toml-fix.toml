@@ -1,0 +1,10 @@
+[global]
+inline_table = { q1 = 1 }
+
+[[items]]
+q1 = 1
+q2 = 2
+
+[[items]]
+q1 = 3
+q2 = 4

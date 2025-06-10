@@ -689,7 +689,7 @@ it("connectionListener should emit the right amount of times, and with alpnProto
 
 describe("should fuzz the native handle and not crash", () => {
   const handle = require("tls").Server().listen().unref()._handle;
-  for (const k in Object.getPrototypeOf(handle)) {
+  for (const k in Object.getOwnPropertyDescriptors(Object.getPrototypeOf(handle))) {
     for (const v of [undefined, null, "", "a", 24, -3.4, {}, [], Symbol("b")]) {
       it(`${k}(${String(v)})`, () => {
         try {

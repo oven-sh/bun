@@ -92,39 +92,23 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
     return normal;
 }
 
-/// Convert the return value of a function returning either a nullable pointer or a maybe-empty
-/// JSValue into an error union
+/// Convert the return value of a function returning a maybe-empty JSValue into an error union
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions
     comptime src: std.builtin.SourceLocation,
     comptime func: anytype,
     args: std.meta.ArgsTuple(@TypeOf(func)),
-) bun.JSError!switch (@typeInfo(@TypeOf(func)).@"fn".return_type.?) {
-    JSValue => JSValue,
-    else => nonnull_ptr: {
-        const T = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
-        const OptionalChild = @typeInfo(T).optional.child;
-        bun.assert(@typeInfo(@typeInfo(OptionalChild).pointer.child) == .@"opaque");
-        break :nonnull_ptr OptionalChild;
-    },
-} {
+) bun.JSError!JSValue {
     var scope: jsc.CatchScope = undefined;
     scope.init(globalThis.vm(), src);
     defer scope.deinit();
 
     const value = @call(.auto, func, args);
     if (Environment.allow_assert) {
-        const return_value_indicates_exception = switch (@TypeOf(value)) {
-            JSValue => value == .zero,
-            else => value == null,
-        };
-        bun.assert(return_value_indicates_exception == scope.hasException());
+        bun.assert((value == .zero) == scope.hasException());
     }
-    return switch (@TypeOf(value)) {
-        JSValue => if (value == .zero) error.JSError else value,
-        else => value orelse bun.JSError,
-    };
+    return if (value == .zero) error.JSError else value;
 }
 
 const ParsedHostFunctionErrorSet = struct {

@@ -155,8 +155,11 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     };
 
     const open_flags = bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NONBLOCK;
+    const path_buffer: bun.PathBuffer = .{};
+    @memcpy(path_buffer[0..path.len], path);
+    path_buffer[path.len] = 0;
     const fd_result = bun.sys.open(
-        path,
+        path_buffer[0..path.len],
         open_flags,
         0,
     );

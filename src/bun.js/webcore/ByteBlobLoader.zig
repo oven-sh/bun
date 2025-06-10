@@ -149,9 +149,9 @@ pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, actio
 
 pub fn memoryCost(this: *const ByteBlobLoader) usize {
     // ReadableStreamSource covers @sizeOf(FileReader)
-    if (this.store) |store| {
-        return store.memoryCost();
-    }
+    // Don't report the store's memory cost here since it's already reported by the Blob
+    // Only report our own overhead to avoid double-counting
+    _ = this;
     return 0;
 }
 

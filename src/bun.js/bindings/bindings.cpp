@@ -6516,9 +6516,16 @@ extern "C" void CatchScope__construct(
     // stack corruption if Zig's array is too small
     memset(ptr, 0xaa, size);
 
-    // TODO how important is the stack pointer passed here?
+// TODO how important is the stack pointer passed here?
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
     new (ptr) JSC::CatchScope(*vm,
         ExceptionEventLocation { currentStackPointer(), function, file, line });
+#else
+    (void)function;
+    (void)file;
+    (void)line;
+    new (ptr) JSC::CatchScope(*vm);
+#endif
 }
 
 extern "C" JSC::Exception* CatchScope__exception(void* ptr)

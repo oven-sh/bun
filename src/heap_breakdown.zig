@@ -4,7 +4,7 @@ const Environment = bun.Environment;
 const Allocator = std.mem.Allocator;
 const vm_size_t = usize;
 
-pub const enabled = Environment.allow_assert and Environment.isMac;
+pub const enabled = Environment.allow_assert and (Environment.isMac or Environment.isLinux);
 
 fn heapLabel(comptime T: type) [:0]const u8 {
     const base_name = if (@hasDecl(T, "heap_label"))
@@ -25,9 +25,10 @@ fn getAllocationCounter(comptime T: type) *std.atomic.Value(usize) {
 
     // Export the counter with the specific naming convention and section
     comptime {
+        const section_name = if (Environment.isMac) "__DATA,BUNHEAPCNT" else ".bunheapcnt";
         @export(&static.active_allocation_counter, .{
             .name = std.fmt.comptimePrint("Bun__allocationCounter__{s}", .{full_name}),
-            .section = "__DATA,BUNHEAPCNT",
+            .section = section_name,
         });
     }
 

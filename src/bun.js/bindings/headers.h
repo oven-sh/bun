@@ -326,16 +326,6 @@ CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC:
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__whenIdle(JSC::VM* arg0, void(* ArgFn1)());
 
-#pragma mark - JSC::ThrowScope
-
-CPP_DECL void JSC__ThrowScope__clearException(JSC::ThrowScope* arg0);
-CPP_DECL JSC::Exception* JSC__ThrowScope__exception(JSC::ThrowScope* arg0);
-CPP_DECL void JSC__ThrowScope__release(JSC::ThrowScope* arg0);
-
-#pragma mark - JSC::CatchScope
-
-CPP_DECL void JSC__CatchScope__clearException(JSC::CatchScope* arg0);
-CPP_DECL JSC::Exception* JSC__CatchScope__exception(JSC::CatchScope* arg0);
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus

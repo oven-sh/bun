@@ -121,8 +121,11 @@ const JSPropertyIteratorImpl = opaque {
         own_properties_only: bool,
         only_non_index_properties: bool,
     ) bun.JSError!?*JSPropertyIteratorImpl {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject.vm(), @src());
+        defer scope.deinit();
         const iter = Bun__JSPropertyIterator__create(globalObject, object.toJS(), count, own_properties_only, only_non_index_properties);
-        if (globalObject.hasException()) {
+        if (scope.hasException()) {
             return error.JSError;
         }
         return iter;
@@ -134,6 +137,7 @@ const JSPropertyIteratorImpl = opaque {
     pub const getName = Bun__JSPropertyIterator__getName;
     pub const getLongestPropertyName = Bun__JSPropertyIterator__getLongestPropertyName;
 
+    /// may return null without an exception
     extern "c" fn Bun__JSPropertyIterator__create(globalObject: *JSC.JSGlobalObject, encodedValue: JSC.JSValue, count: *usize, own_properties_only: bool, only_non_index_properties: bool) ?*JSPropertyIteratorImpl;
     extern "c" fn Bun__JSPropertyIterator__getNameAndValue(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) JSC.JSValue;
     extern "c" fn Bun__JSPropertyIterator__getNameAndValueNonObservable(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) JSC.JSValue;

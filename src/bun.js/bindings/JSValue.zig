@@ -336,7 +336,7 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__createEmptyArray(global: *JSGlobalObject, len: usize) JSValue;
     pub fn createEmptyArray(global: *JSGlobalObject, len: usize) bun.JSError!JSValue {
-        return bun.jsc.fromJSHostValue(JSC__JSValue__createEmptyArray(global, len));
+        return bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__createEmptyArray, .{ global, len });
     }
 
     extern fn JSC__JSValue__putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void;

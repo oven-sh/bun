@@ -76,6 +76,7 @@ src/bun.js/bindings/AnyPromise.zig
 src/bun.js/bindings/bun-simdutf.zig
 src/bun.js/bindings/CachedBytecode.zig
 src/bun.js/bindings/CallFrame.zig
+src/bun.js/bindings/CatchScope.zig
 src/bun.js/bindings/codegen.zig
 src/bun.js/bindings/CommonAbortReason.zig
 src/bun.js/bindings/CommonStrings.zig

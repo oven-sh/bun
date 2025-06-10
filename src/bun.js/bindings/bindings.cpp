@@ -6489,3 +6489,39 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
 }
+
+#pragma mark - JSC::CatchScope
+
+extern "C" void CatchScope__construct(
+    void* ptr,
+    JSC::VM* vm,
+    const char* function,
+    const char* file,
+    unsigned line,
+    size_t size,
+    size_t alignment)
+{
+    // validate that Zig is correct about what the size and alignment should be
+    ASSERT(size >= sizeof(CatchScope));
+    ASSERT(alignment >= alignof(CatchScope));
+    ASSERT((uintptr_t)ptr % alignment == 0);
+    // wipe out the entire array in the hope of causing (and detecting)
+    // stack corruption if Zig's array is too small
+    memset(ptr, 0xaa, size);
+
+    // TODO how important is the stack pointer passed here?
+    new (ptr) JSC::CatchScope(*vm,
+        ExceptionEventLocation { currentStackPointer(), function, file, line });
+}
+
+extern "C" bool CatchScope__hasException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    return !!static_cast<CatchScope*>(ptr)->exception();
+}
+
+extern "C" void CatchScope__destruct(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    static_cast<CatchScope*>(ptr)->~CatchScope();
+}

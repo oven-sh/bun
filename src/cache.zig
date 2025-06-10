@@ -303,16 +303,16 @@ pub const Json = struct {
     pub fn init(_: std.mem.Allocator) Json {
         return Json{};
     }
-    fn parse(_: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime func: anytype, comptime force_utf8: bool) anyerror!?js_ast.Expr {
+    fn parse(_: *@This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, comptime func: anytype, comptime force_utf8: bool) anyerror!?js_ast.Expr {
         var temp_log = logger.Log.init(allocator);
         defer {
-            temp_log.appendToMaybeRecycled(log, &source) catch {};
+            temp_log.appendToMaybeRecycled(log, source) catch {};
         }
-        return func(&source, &temp_log, allocator, force_utf8) catch handler: {
+        return func(source, &temp_log, allocator, force_utf8) catch handler: {
             break :handler null;
         };
     }
-    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, mode: enum { json, jsonc }, comptime force_utf8: bool) anyerror!?js_ast.Expr {
+    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, mode: enum { json, jsonc }, comptime force_utf8: bool) anyerror!?js_ast.Expr {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
@@ -323,11 +323,11 @@ pub const Json = struct {
         return try parse(cache, log, source, allocator, json_parser.parse, force_utf8);
     }
 
-    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {
+    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {
         return try parse(cache, log, source, allocator, json_parser.parseTSConfig, force_utf8);
     }
 
-    pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
+    pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
         return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
     }
 };

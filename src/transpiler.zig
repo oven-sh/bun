@@ -1034,7 +1034,7 @@ pub const Transpiler = struct {
 
         var input_fd: ?StoredFileDescriptorType = null;
 
-        const source: logger.Source = brk: {
+        const source: *const logger.Source = &brk: {
             if (this_parse.virtual_source) |virtual_source| {
                 break :brk virtual_source.*;
             }
@@ -1084,12 +1084,12 @@ pub const Transpiler = struct {
         };
 
         if (comptime return_file_only) {
-            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+            return ParseResult{ .source = source.*, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
         if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
             if (!loader.handlesEmptyFile()) {
-                return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                return ParseResult{ .source = source.*, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
             }
         }
 
@@ -1102,7 +1102,7 @@ pub const Transpiler = struct {
                 // wasm magic number
                 if (source.isWebAssembly()) {
                     return ParseResult{
-                        .source = source,
+                        .source = source.*,
                         .input_fd = input_fd,
                         .loader = .wasm,
                         .empty = true,
@@ -1167,11 +1167,11 @@ pub const Transpiler = struct {
                     opts,
                     transpiler.options.define,
                     transpiler.log,
-                    &source,
+                    source,
                 ) catch null) orelse return null) {
                     .ast => |value| .{
                         .ast = value,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
@@ -1179,7 +1179,7 @@ pub const Transpiler = struct {
                     .cached => .{
                         .ast = undefined,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
@@ -1203,7 +1203,7 @@ pub const Transpiler = struct {
                                 break :brk default_value;
                             },
                         },
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
@@ -1214,11 +1214,11 @@ pub const Transpiler = struct {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .json)
-                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, transpiler.log, allocator, false) catch return null
+                    TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1339,7 +1339,7 @@ pub const Transpiler = struct {
 
                 return ParseResult{
                     .ast = ast,
-                    .source = source,
+                    .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,
                 };
@@ -1363,7 +1363,7 @@ pub const Transpiler = struct {
 
                 return ParseResult{
                     .ast = js_ast.Ast.initTest(parts),
-                    .source = source,
+                    .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,
                 };
@@ -1383,7 +1383,7 @@ pub const Transpiler = struct {
 
                     return ParseResult{
                         .ast = js_ast.Ast.empty,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     };

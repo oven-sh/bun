@@ -1474,6 +1474,42 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
+            // if your return a HTMLBundle instead of a Response
+            if (response_value.as(JSC.API.HTMLBundle)) |html_bundle| {
+                ctx.response_jsvalue = response_value;
+                ctx.response_jsvalue.ensureStillAlive();
+                ctx.flags.response_protected = false;
+                
+                if (ctx.resp) |resp|
+                {
+                    if (ctx.req) |req_ptr| 
+                    {
+                        var route = JSC.API.HTMLBundle.Route.init(html_bundle);
+                        route.data.server = JSC.API.AnyServer.from(this);
+                        defer route.deref();
+                        
+                        ctx.detachResponse();
+                        ctx.endRequestStreamingAndDrain();
+
+                        const any_resp = uws.AnyResponse.init(resp);
+                        if (ctx.method == .HEAD) {
+                            route.data.onHEADRequest(req_ptr, any_resp);
+                        } else {
+                            route.data.onRequest(req_ptr, any_resp);
+                        }
+
+                        ctx.finalizeWithoutDeinit();
+                        ctx.deref();
+                        return;
+                    }
+                } else {
+                    // expected a Response object but received 'HTMLBundle { index: string }'
+                    std.log.debug(">>> response error", .{});
+                    ctx.renderMissingInvalidResponse(response_value);
+                    return;
+                }
+            }
+
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();

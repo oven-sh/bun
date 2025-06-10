@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Blob to ReadableStream memory reporting", async () => {
   // Test 1: Basic Blob to stream conversion

@@ -2358,3 +2358,27 @@ for (const backend of ["api", "cli"] as const) {
     });
   });
 }
+
+// Fixes #20278
+itBundled("edgecase/SvgEntryPointAndDataUrl", {
+  files: {
+    "/style.css": `select {
+  background-image: url("./chevron-down.svg");
+}`,
+    "/chevron-down.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down-icon lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>`,
+  },
+  entryPoints: ["/style.css", "/chevron-down.svg"],
+  outdir: "/out",
+  onAfterBundle(api) {
+    // The CSS should inline the SVG as a data URL
+    api.expectFile("/out/style.css").toContain("background-image: url(");
+    api.expectFile("/out/style.css").toContain("data:image/svg+xml");
+
+    // The SVG should also be emitted as a separate file
+    api
+      .expectFile("/out/chevron-down.svg")
+      .toEqual(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down-icon lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>`,
+      );
+  },
+});

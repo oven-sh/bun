@@ -195,6 +195,10 @@ pub noinline fn computeChunks(
                     const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
                     if (css_reprs[source_index.get()] != null) continue;
 
+                    // Check if this file has a JavaScript-like loader
+                    const loader = loaders[source_index.get()];
+                    if (!loader.isJavaScriptLike()) continue;
+
                     if (this.graph.code_splitting) {
                         const js_chunk_key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
                         var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);

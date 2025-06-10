@@ -8308,17 +8308,7 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
-
-                // On Windows, handle escaped @ symbols in scoped package names
-                if (comptime Environment.isWindows) {
-                    // Check if this looks like an escaped scoped package name (e.g., \@heroicons/react)
-                    if (input.len > 2 and input[0] == '\\' and input[1] == '@') {
-                        // Remove the escape backslash
-                        std.mem.copyForwards(u8, input[0..], input[1..]);
-                        input.len -= 1;
-                    }
-                }
+                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t\\")) catch bun.outOfMemory();
 
                 {
                     var temp: [2048]u8 = undefined;

@@ -441,6 +441,48 @@ it("should handle @scoped names", async () => {
   }
 });
 
+it.skipIf(process.platform !== "win32")("should handle escaped @scoped names on Windows", async () => {
+  const urls: string[] = [];
+  setHandler(async request => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  // Test with escaped @ symbol, as Windows shells might pass it
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "\\@bar/baz"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
+  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun add v1."));
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should add dependency with capital letters", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -601,7 +643,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(

@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -292,18 +292,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -323,7 +320,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -385,7 +382,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -394,17 +391,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -433,7 +428,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -472,7 +467,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// When each task is finished, decrement.
         /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
         subtask_count: std.atomic.Value(usize),
-        deinitialized: bool = false,
 
         shelltask: ShellTaskT,
 
@@ -648,7 +642,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
             }
 
             if (this.evtloop == .js) {
@@ -671,18 +665,15 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const globalObject = this.evtloop.globalObject() orelse {
                 @panic("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
             };
-            var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            const success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            var promise_value = this.promise.value();
+            var promise = this.promise.get();
             const result = switch (this.result) {
                 .err => |err| err.toJSC(globalObject),
                 .result => |*res| brk: {
-                    const out = globalObject.toJS(res, .temporary);
-                    success = out != .zero;
-
-                    break :brk out;
+                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
             };
-            var promise_value = this.promise.value();
-            var promise = this.promise.get();
             promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
@@ -701,8 +692,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn deinit(this: *ThisAsyncCpTask) void {
-            bun.assert(!this.deinitialized);
-            this.deinitialized = true;
+            if (this.result == .err) {
+                this.result.err.deinit();
+            }
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
             this.promise.deinit();
@@ -1225,22 +1217,17 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
         const globalObject = this.globalObject;
-        var success = this.pending_err == null;
+        const success = this.pending_err == null;
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
         const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            const out = res.toJS(globalObject);
-            if (out == .zero) {
-                success = false;
-            }
-
-            break :brk out;
+            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
         const tracker = this.tracker;
@@ -1261,7 +1248,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
         bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
 
         this.ref.unref(this.globalObject.bunVM());
@@ -3289,11 +3276,11 @@ const Return = struct {
             files,
         };
 
-        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
-                    var array = JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
                         const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
@@ -3308,11 +3295,11 @@ const Return = struct {
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
+                    return JSC.toJS(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return JSC.toJS(globalObject, []const bun.String, this.files, .temporary);
+                    return JSC.toJS(globalObject, []const bun.String, this.files);
                 },
             }
         }
@@ -5964,11 +5951,7 @@ pub const NodeFS = struct {
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
         return switch (args.createFSWatcher()) {
             .result => |result| .{ .result = result.js_this },
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .syscall = err.syscall,
-                .path = if (err.path.len > 0) args.path.slice() else "",
-            } },
+            .err => |err| .{ .err = err },
         };
     }
 

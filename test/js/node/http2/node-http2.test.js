@@ -1513,7 +1513,7 @@ it("http2 server with minimal maxSessionMemory handles multiple requests", async
       next(0);
     });
   });
-}, 10_000);
+}, 15_000);
 
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer

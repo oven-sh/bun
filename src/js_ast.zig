@@ -1520,7 +1520,7 @@ pub const E = struct {
 
         pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
-            var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
+            var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
@@ -3352,8 +3352,8 @@ pub const Expr = struct {
         const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
-            var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
+            const source = &logger.Source.initPathString("fetch.json", bytes);
+            var out_expr = JSONParser.parseForMacro(source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;
@@ -9126,6 +9126,7 @@ const ToJSError = error{
     @"Cannot convert identifier to JS. Try a statically-known value",
     MacroError,
     OutOfMemory,
+    JSError,
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;

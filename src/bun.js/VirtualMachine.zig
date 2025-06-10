@@ -349,7 +349,7 @@ const SourceMapHandlerGetter = struct {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in source_mappings like normal
     /// This is hideously expensive memory-wise...
-    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
         temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
@@ -3382,7 +3382,7 @@ pub const IPCInstance = struct {
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
         if (Environment.isPosix) {
-            uws.us_socket_context_free(0, this.context);
+            this.context.deinit(false);
         }
         vm.channel_ref.disable();
     }
@@ -3412,7 +3412,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize)).?;
+            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
             IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
 
             var instance = IPCInstance.new(.{

@@ -107,7 +107,7 @@ struct addrinfo_result {
 #define us_internal_ssl_socket_context_r struct us_internal_ssl_socket_context_t *nonnull_arg
 #define us_internal_ssl_socket_r struct us_internal_ssl_socket_t *nonnull_arg
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);

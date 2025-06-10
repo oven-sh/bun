@@ -1294,6 +1294,7 @@ pub const Listener = struct {
         }
 
         const out = callFrame.argumentsAsArray(1)[0];
+        if (!out.isObject()) return .jsUndefined();
         const socket = this.listener.uws;
 
         var buf: [64]u8 = [_]u8{0} ** 64;

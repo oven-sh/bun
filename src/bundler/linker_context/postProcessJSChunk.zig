@@ -659,6 +659,26 @@ pub fn generateEntryPointTailJS(
                             }
                         }
 
+                        // Deduplicate export items to prevent duplicate exports in code splitting
+                        if (items.items.len > 1) {
+                            var seen_aliases = std.StringHashMap(void).init(temp_allocator);
+                            defer seen_aliases.deinit();
+                            
+                            var unique_items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
+                            defer unique_items.deinit();
+                            
+                            for (items.items) |item| {
+                                if (!seen_aliases.contains(item.alias)) {
+                                    seen_aliases.put(item.alias, {}) catch unreachable;
+                                    unique_items.append(item) catch unreachable;
+                                }
+                            }
+                            
+                            // Replace items with deduplicated ones
+                            items.clearAndFree();
+                            items.appendSlice(unique_items.items) catch unreachable;
+                        }
+
                         stmts.append(
                             Stmt.alloc(
                                 S.ExportClause,

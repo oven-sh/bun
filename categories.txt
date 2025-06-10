@@ -70,6 +70,7 @@ parallel/test-double-tls-client.js (this one maybe not as easy, but it is somewh
 # probably easy
 
 parallel/test-tls-cert-chains-in-ca.js
+parallel/test-tls-env-extra-ca.js
 - checkServerIdentity callback is not implemented
 parallel/test-tls-basic-validations.js
 - 12 mismatched errors
@@ -110,6 +111,7 @@ parallel/test-tls-clientcertengine-invalid-arg-type.js
 parallel/test-tls-socket-default-options.js
 - createSecureContext (kai)
 parallel/test-tls-timeout-server.js
+parallel/test-tls-socket-destroy.js
 - handshakeTimeout is not implemented
 parallel/test-tls-retain-handle-no-abort.js
 - unable to verify the first certificate? UNABLE_TO_VERIFY_LEAF_SIGNATURE
@@ -119,8 +121,6 @@ parallel/test-tls-connect-timeout-option.js
 - support tls connect timeout option
 parallel/test-tls-getcertificate-x509.js
 - error: error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE
-parallel/test-tls-env-extra-ca.js
-parallel/test-tls-socket-destroy.js
 parallel/test-tls-socket-close.js
 parallel/test-tls-connect-given-socket.js
 parallel/test-double-tls-server.js
@@ -139,71 +139,16 @@ sequential/test-tls-session-timeout.js
 parallel/test-tls-no-sslv23.js
 - skipped
 
-# Key
+# wontfix
 
-[ES] = skipped by electron
-[RM] = removed
+test-tls-disable-renegotiation.js
+- boringssl doesn't support client-initiated renegotiation
 
-# Try First
+# passes already
 
-missing socket.on('data') event when data received after socket.end():
-- test-tls-net-socket-keepalive.js
-
-getTLSPeerFinishedMessage not working right? and same for getFinished
-- test-tls-finished.js
-
-SNICallback not supported: (#17932, #14395, #6749, #4053) (kai)
-- test-tls-starttls-server.js
-- test-tls-socket-snicallback-without-server.js
-- test-tls-snicallback-error.js
-- test-tls-sni-option.js
-- test-tls-sni-servername.js
-- [ES] test-tls-empty-sni-context.js
-- checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
-
-No cipher match: (look at electron? openssl.c)
-- [ES] no cipher match: test-tls-multi-pfx, test-tls-psk-errors
-- no cipher match: test-tls-connect-stream-writes.js
-- [ES] errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
-- errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
-connect() callback never called when invalid pfx provided: test-tls-invalid-pfx.js
-
-SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext. (kai)
-
-Is ncrypt used in node tls, do we need to update it?
-
-# More
-
-- [ES] bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
-- different cipher list, support --tls-cipher-list: test-tls-cipher-list
-- after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
-- node never trips `ret !== false` branch: test-tlsp-ause.js
-- [ES] cluster stuff: test-tls-ticket-cluster
-- [ES] ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
-- takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
-- [ES] overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
-- missing '_tlsError' event: test-tls-delayed-attach-error.js
-- tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
-- [ES] getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
-- [ES] test-tls-socket-failed-handshake-emits-error.js
-
-SecureContext:
-- missing addCACert: test-tls-addca
-
-createSecurePair not implemented:
-These tests are removed in new node versions: (createSecurePair is deprecated)
-- [RM] test-tls-securepair-fiftharg.js
-- [RM] test-tls-securepair-leak.js
-- [RM] test-tls-legacy-deprecated.js
-
-# Pass on mac
-
-- [ES] test-tls-junk-closes-server
-- test-tls-onread-static-buffer
-- test-tls-lookup
-- test-tls-wrap-econnreset-pipe
-- parallel/test-tls-pause.js
-- parallel/test-tls-connect-memleak.js
+parallel/test-tls-pause.js
+parallel/test-tls-connect-memleak.js
+- passes already
 
 # Attempted
 
@@ -228,24 +173,6 @@ test-tls-secure-session.js
 - we probably don't support setting secureProtocol
 - we don't emit a session event at all ever except in http2. node emits a session at the end of onConnectSecure and in onnewesssionclient
 - search terms: 'emit('session)'
-
-desc
-
-test-tls-secure-session is failing for two reasions:
-1. Bun doesn't implement secureProtocol, so it does not use tls v1.2
-2. Bun does not emit a session event.
-
-Tasks. Complete tasks one at a time. Once a task is completed and tested, check off the task and commit your code.
-- [ ] Create a test file called `repro.js` that tests if the session event is emitted. Make sure it passes using `node repro.js` and fails using `bun bd repro.js`
-- [ ] Search node's source code (in ../node) and find when it emits a sesssion event, then update Bun's code to emit a session event the same way. Test if this worked using `bun bd repro.js`
-- [ ] Implement secureProtocol. Test if this worked using `bun bd test/js/node/test/parallel/test-tls-secure-session.js`. It will time out if it fails.
-
-test-tls-js-stream.js:
-- connection closes earlier than expected?
-
-# Done
-
-- 3 failures: test-tls-check-server-identity
 
 # Skipped by electron
 

@@ -44,7 +44,6 @@ const server = tls.createServer(options, common.mustCall(function(s) {
     PORT: this.address().port,
     NODE_EXTRA_CA_CERTS: fixtures.path('keys', 'ca1-cert.pem')
   };
-  console.log('Environment variables:', env);
 
   fork(__filename, { env }).on('exit', common.mustCall(function(status) {
     console.log('Child process exited with status:', status);

@@ -360,7 +360,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const { pauseOnConnect, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
     const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket._requestCert = requestCert;
@@ -409,12 +409,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       _socket.pause();
     }
 
-    if (typeof connectionListener === "function") {
-      this.pauseOnConnect = pauseOnConnect;
-      if (!isTLS) {
-        connectionListener.$call(self, _socket);
-      }
-    }
+    this.pauseOnConnect = pauseOnConnect;
     self.emit("connection", _socket);
     // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
     if (!pauseOnConnect && !isTLS) {
@@ -454,10 +449,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     } else {
       self.authorized = true;
-    }
-    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-    if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -2073,8 +2064,13 @@ function Server(options?, connectionListener?) {
   if (typeof options === "function") {
     connectionListener = options;
     options = {};
+    this.on("connection", connectionListener);
   } else if (options == null || typeof options === "object") {
     options = { ...options };
+
+    if (typeof connectionListener === "function") {
+      this.on("connection", connectionListener);
+    }
   } else {
     throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
   }
@@ -2105,7 +2101,6 @@ function Server(options?, connectionListener?) {
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
 
-  options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
 
   if (options.blockList) {
@@ -2440,6 +2435,16 @@ Server.prototype[kRealListen] = function (
 Server.prototype.getsockname = function getsockname(out) {
   out.port = this.address().port;
   return out;
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
 };
 
 function emitErrorNextTick(self, error) {

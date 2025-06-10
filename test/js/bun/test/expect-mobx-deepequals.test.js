@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Mock of MobX-like reactive object that could trigger the segfault
 // The issue was that MobX reactive objects can return non-cell values

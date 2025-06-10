@@ -1123,6 +1123,14 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isException(this, vm);
     }
 
+    /// Cast to an Exception pointer, or null if not an Exception
+    pub fn asException(this: JSValue, vm: *VM) ?*JSC.Exception {
+        return if (this.isException(vm))
+            this.uncheckedPtrCast(JSC.Exception)
+        else
+            null;
+    }
+
     extern fn JSC__JSValue__isTerminationException(this: JSValue, vm: *VM) bool;
     pub fn isTerminationException(this: JSValue, vm: *VM) bool {
         return JSC__JSValue__isTerminationException(this, vm);
@@ -2214,7 +2222,7 @@ pub const JSValue = enum(i64) {
 
     // TODO: remove this (no replacement)
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
-        return @as(C_API.JSObjectRef, @ptrCast(this.asVoid()));
+        return @ptrFromInt(@as(usize, @bitCast(@intFromEnum(this))));
     }
 
     /// When the GC sees a JSValue referenced in the stack, it knows not to free it
@@ -2222,19 +2230,6 @@ pub const JSValue = enum(i64) {
     pub inline fn ensureStillAlive(this: JSValue) void {
         if (!this.isCell()) return;
         std.mem.doNotOptimizeAway(this.asEncoded().asPtr);
-    }
-
-    pub inline fn asNullableVoid(this: JSValue) ?*anyopaque {
-        return @as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(@intFromEnum(this)))));
-    }
-
-    pub inline fn asVoid(this: JSValue) *anyopaque {
-        if (comptime bun.Environment.allow_assert) {
-            if (@intFromEnum(this) == 0) {
-                @panic("JSValue is null");
-            }
-        }
-        return this.asNullableVoid().?;
     }
 
     pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {

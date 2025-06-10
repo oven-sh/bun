@@ -1578,7 +1578,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;
     }
 
@@ -1668,7 +1668,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -1712,7 +1712,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
@@ -1720,13 +1720,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid(),
+                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
                     referrer.toUTF8(bun.default_allocator).slice(),
-                ) catch |e| globalThis.takeException(e)).asVoid(),
+                ) catch |e| globalThis.takeException(e)),
             });
             return;
         },
@@ -1759,7 +1759,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ).asVoid(),
+                ),
             );
         },
     }
@@ -1828,8 +1828,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.isException(this.global.vm())) {
-        const exception = @as(*Exception, @ptrCast(result.asVoid()));
+    if (result.asException(this.jsc)) |exception| {
         this.printException(
             exception,
             exception_list,

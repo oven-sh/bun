@@ -358,7 +358,7 @@ static JSValue handleVirtualModuleResult(
     case OnLoadResultTypeCode: {
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
         if (!res->success) {
-            return reject(JSValue::decode(reinterpret_cast<EncodedJSValue>(res->result.err.ptr)));
+            return reject(JSValue::decode(res->result.err.value));
         }
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -434,10 +434,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        throwException(scope, res->result.err, globalObject);
-        auto* exception = scope.exception();
-        scope.clearException();
-        return promise->reject(globalObject, exception);
+        return promise->reject(globalObject, JSValue::decode(res->result.err.value));
     }
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);

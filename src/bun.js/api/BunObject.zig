@@ -847,7 +847,7 @@ fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(errorable.result.err.value);
     }
 
     if (query_string.len > 0) {

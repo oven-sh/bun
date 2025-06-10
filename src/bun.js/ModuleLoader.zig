@@ -429,7 +429,7 @@ pub const AsyncModule = struct {
             errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                 switch (err) {
                     error.JSError => {
-                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError).asVoid());
+                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError));
                         break :outer;
                     },
                     else => {
@@ -487,7 +487,7 @@ pub const AsyncModule = struct {
             }
 
             if (e == error.JSError) {
-                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError).asVoid());
+                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
             } else {
                 VirtualMachine.processFetchLog(
                     globalThis,
@@ -1616,7 +1616,7 @@ pub export fn Bun__transpileFile(
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?JSC.WebCore.Blob = null;
     var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
-        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS().asVoid());
+        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
@@ -1815,7 +1815,7 @@ pub export fn Bun__transpileFile(
                 },
                 error.PluginError => return null,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return null;
                 },
                 else => {
@@ -1991,7 +1991,7 @@ export fn Bun__transpileVirtualModule(
             switch (err) {
                 error.PluginError => return true,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return true;
                 },
                 else => {

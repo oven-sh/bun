@@ -2311,3 +2311,69 @@ it("should add local tarball dependency", async () => {
   expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
     await access(join(package_dir, "bun.lockb"));
 });
+
+it("should handle escaped @scoped names on Windows", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "1.0.0": {},
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // On Windows, the shell may escape the @ symbol as \@
+  // This test verifies the fix for the bug where escaped @ symbols
+  // would cause "Do not pass posix paths to Windows APIs" error
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", isWindows ? "\\@types/test" : "@types/test"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("panic");
+  expect(err).not.toContain("Do not pass posix paths to Windows APIs");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed @types/test@1.0.0",
+    "",
+    "1 package installed",
+  ]);
+
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/@types%2ftest`, `${root_url}/@types/test-1.0.0.tgz`]);
+  expect(requested).toBe(2);
+
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@types"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@types"))).toEqual(["test"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@types", "test"))).toEqual(["package.json"]);
+
+  expect(await file(join(package_dir, "node_modules", "@types", "test", "package.json")).json()).toEqual({
+    name: "@types/test",
+    version: "1.0.0",
+  });
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "@types/test": "^1.0.0",
+    },
+  });
+
+  await access(join(package_dir, "bun.lockb"));
+});

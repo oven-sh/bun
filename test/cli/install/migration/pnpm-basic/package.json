@@ -1,0 +1,6 @@
+{
+  "name": "test-pnpm-migration",
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

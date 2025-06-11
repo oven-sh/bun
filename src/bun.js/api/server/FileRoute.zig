@@ -449,9 +449,6 @@ const StreamTransfer = struct {
                 this.state.waiting_for_readable = true;
                 this.state.waiting_for_writable = false;
 
-                if (bun.Environment.isWindows)
-                    this.reader.unpause();
-
                 return true;
             },
         }

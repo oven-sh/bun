@@ -546,12 +546,6 @@ pub fn generateEntryPointTailJS(
                                 resolved_export.data.source_index = import_data.data.source_index;
                             }
 
-                            // Skip exports that are defined locally in this entry point to avoid duplicates.
-                            // Only generate entry point tail exports for symbols imported from other files.
-                            if (resolved_export.data.source_index.get() == source_index) {
-                                continue;
-                            }
-
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
                             if (c.graph.symbols.get(resolved_export.data.import_ref).?.namespace_alias != null) {
@@ -667,12 +661,12 @@ pub fn generateEntryPointTailJS(
                             }
                         }
 
-                        // Deduplicate export items and filter out items already in cross-chunk exports
-                        // to prevent duplicate exports in code splitting
+                        // Filter out exports that are already handled by cross-chunk exports
+                        // and deduplicate to prevent duplicate exports in code splitting
                         var seen_aliases = std.StringHashMap(void).init(temp_allocator);
                         defer seen_aliases.deinit();
 
-                        // First, populate seen_aliases with exports that are already in cross-chunk exports
+                        // First, mark aliases that are already exported in cross-chunk exports
                         const cross_chunk_exports = &chunk.content.javascript.exports_to_other_chunks;
                         var iterator = cross_chunk_exports.iterator();
                         while (iterator.next()) |entry| {

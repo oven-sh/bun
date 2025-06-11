@@ -406,7 +406,7 @@ const StreamTransfer = struct {
                     break :brk .{ chunk, .eof };
                 }
 
-                break :brk .{ chunk_, state_ };
+                break :brk .{ chunk, state_ };
             }
 
             break :brk .{ chunk_, state_ };

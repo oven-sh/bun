@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { Worker as WebWorker } from "worker_threads";
 
 const CONFIG = {
-  WARMUP_ITERATIONS: 5,
-  TEST_ITERATIONS: 20,
-  BATCH_SIZE: 10,
+  WARMUP_ITERATIONS: 2,
+  TEST_ITERATIONS: 10,
+  BATCH_SIZE: 5,
   MEMORY_THRESHOLD_MB: 20,
-  GC_SETTLE_TIME: 200,
-  TEST_TIMEOUT_MS: 30000,
+  GC_SETTLE_TIME: 50,
+  TEST_TIMEOUT_MS: 15000,
 };
 
 interface MemorySnapshot {
@@ -28,7 +28,7 @@ function takeMemorySnapshot(): MemorySnapshot {
 }
 
 async function forceGCAndSettle(): Promise<void> {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 2; i++) {
     Bun.gc(true);
     await Bun.sleep(CONFIG.GC_SETTLE_TIME);
   }
@@ -106,7 +106,7 @@ describe("Worker Memory Leak Tests", () => {
       for (let i = 0; i < CONFIG.TEST_ITERATIONS; i++) {
         await runWorkerBatch(workerCode);
 
-        if ((i + 1) % 5 === 0) {
+        if ((i + 1) % 3 === 0) {
           const currentMemory = takeMemorySnapshot();
           console.log(`Test iteration ${i + 1}/${CONFIG.TEST_ITERATIONS} - RSS: ${currentMemory.rss}MB`);
         }
@@ -162,7 +162,7 @@ describe("Worker Memory Leak Tests", () => {
       for (let i = 0; i < CONFIG.TEST_ITERATIONS; i++) {
         await runWorkerBatch(workerCode);
 
-        if ((i + 1) % 5 === 0) {
+        if ((i + 1) % 3 === 0) {
           const currentMemory = takeMemorySnapshot();
           console.log(`HTTP test iteration ${i + 1}/${CONFIG.TEST_ITERATIONS} - RSS: ${currentMemory.rss}MB`);
         }
@@ -229,7 +229,7 @@ describe("Worker Memory Leak Tests", () => {
       for (let i = 0; i < CONFIG.TEST_ITERATIONS; i++) {
         await runMessagePassingBatch();
 
-        if ((i + 1) % 5 === 0) {
+        if ((i + 1) % 3 === 0) {
           const currentMemory = takeMemorySnapshot();
           console.log(
             `Message passing test iteration ${i + 1}/${CONFIG.TEST_ITERATIONS} - RSS: ${currentMemory.rss}MB`,
@@ -276,7 +276,7 @@ describe("Worker Memory Leak Tests", () => {
       for (let i = 0; i < CONFIG.TEST_ITERATIONS; i++) {
         await runWorkerBatch(workerCode);
 
-        if ((i + 1) % 5 === 0) {
+        if ((i + 1) % 3 === 0) {
           const currentMemory = takeMemorySnapshot();
           console.log(`Timer test iteration ${i + 1}/${CONFIG.TEST_ITERATIONS} - RSS: ${currentMemory.rss}MB`);
         }

@@ -3022,6 +3022,8 @@ pub const Api = struct {
 
         ignore_scripts: ?bool = null,
 
+        link_workspace_packages: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 

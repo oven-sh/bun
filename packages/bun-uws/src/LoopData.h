@@ -118,7 +118,6 @@ public:
         time_t now = time(0);
         struct tm tstruct = {};
 #ifdef _WIN32
-        /* Micro, fucking soft never follows spec. */
         gmtime_s(&tstruct, &now);
 #else
         gmtime_r(&now, &tstruct);

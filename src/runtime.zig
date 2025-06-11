@@ -315,6 +315,7 @@ pub const Runtime = struct {
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
+        __jsonParse: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -330,6 +331,7 @@ pub const Runtime = struct {
             "$$typeof",
             "__using",
             "__callDispose",
+            "__jsonParse",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

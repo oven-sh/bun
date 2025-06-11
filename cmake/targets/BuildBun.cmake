@@ -582,6 +582,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   TARGETS
     clone-zig
+    zstd
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}

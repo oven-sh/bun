@@ -31,8 +31,11 @@ imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
 signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
-// Permalink comment why this flag:
-// https://github.com/oven-sh/bun/blob/6cbd25820128bf9ac75ace6eb1d160a9ae531226/src/bun.js/event_loop.zig#L939-L943
+// this exists because while we're inside a spawnSync call, some tasks can actually
+// still complete which leads to a case where module resolution can partially complete and
+// some modules are only partialy evaluated which causes reference errors.
+// TODO: A better fix here could be a second event loop so we can come off the main one
+// while processing spawnSync, then resume back to here afterwards
 is_inside_spawn_sync: bool = false,
 
 pub const Debug = if (Environment.isDebug) struct {
@@ -120,11 +123,7 @@ extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrota
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
     jsc.markBinding(@src());
 
-    // this exists because while we're inside a spawnSync call, some tasks can actually
-    // still complete which leads to a case where module resolution can partially complete and
-    // some modules are only partially evaluated which causes reference errors.
-    // TODO: A better fix here could be a second event loop so we can come off the main one
-    // while processing spawnSync, then resume back to here afterwards
+    // see is_inside_spawn_sync doc comment
     if (this.is_inside_spawn_sync) {
         return;
     }

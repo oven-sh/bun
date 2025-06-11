@@ -360,8 +360,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({}) as NetSocket | TLSSocket;
+    const { pauseOnConnect, allowHalfOpen, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const _socket = new SClass({ allowHalfOpen }) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket._requestCert = requestCert;
     _socket._rejectUnauthorized = rejectUnauthorized;
@@ -405,7 +405,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._connections++;
     _socket.server = self;
 
-    if (pauseOnConnect) {
+    if (pauseOnConnect && !isTLS) {
       _socket.pause();
     }
 
@@ -450,15 +450,16 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     } else {
       self.authorized = true;
     }
-    server.emit("secureConnection", self);
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
     if (server.pauseOnConnect) {
       self.pause();
     } else {
       self.resume();
     }
+    server.emit("secureConnection", self);
+    // after secureConnection event we emit secure and secureConnect
+    // in node, a 'secure' handler emits 'secureConnection'. but since there is no nextTick, a user program sees 'secureConnection' then 'secure'.
+    self.emit("secure", self);
+    self.emit("secureConnect", verifyError);
   },
   error(socket, error) {
     const data = this.data;

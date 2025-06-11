@@ -479,6 +479,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
+        // cache HTMLBundle routes returned by handlers at runtime.
+        html_bundle_route_cache: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)) = undefined,
+        
         on_clienterror: JSC.Strong.Optional = .empty,
 
         inspector_server_id: JSC.Debugger.DebuggerId = .init(0),
@@ -1525,6 +1528,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
             this.user_routes.deinit(bun.default_allocator);
 
+            //HTMLBundle
+            var iter_html = this.html_bundle_route_cache.valueIterator();
+            while (iter_html.next()) | route_ptr | {
+                route_ptr.deref();
+            }
+            this.html_bundle_route_cache.deinit();
+
             this.config.deinit();
 
             this.on_clienterror.deinit();
@@ -1569,6 +1579,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .allocator = Arena.getThreadlocalDefault(),
                 .dev_server = dev_server,
             });
+            
+            server.html_bundle_route_cache = std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)).init(bun.default_allocator);
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(

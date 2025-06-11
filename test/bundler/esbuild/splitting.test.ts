@@ -671,8 +671,9 @@ describe("bundler", () => {
     },
     run: [{ file: "/test.js", stdout: "true function function" }],
     assertNotPresent: {
-      // Make sure we don't have duplicate exports
-      "/out/entry-b.js": ["export { a };", "export { a };"],
+      // Make sure we don't have duplicate exports in any entry point
+      "/out/entry-a.js": "export { a };\n\nexport { a };",
+      "/out/entry-b.js": "export { a };\n\nexport { a };", 
     },
   });
 });

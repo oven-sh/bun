@@ -178,10 +178,18 @@ const CrossChunkDependencies = struct {
                     for (sorted_and_filtered_export_aliases) |alias| {
                         const export_ = resolved_exports.get(alias).?;
                         var target_ref = export_.data.import_ref;
+                        var source_index = export_.data.source_index;
 
                         // If this is an import, then target what the import points to
-                        if (deps.imports_to_bind[export_.data.source_index.get()].get(target_ref)) |import_data| {
+                        if (deps.imports_to_bind[source_index.get()].get(target_ref)) |import_data| {
                             target_ref = import_data.data.import_ref;
+                            source_index = import_data.data.source_index;
+                        }
+
+                        // Skip exports that are defined locally in this entry point to avoid 
+                        // duplicate exports in cross-chunk and entry point tail generation
+                        if (source_index.get() == chunk.entry_point.source_index) {
+                            continue;
                         }
 
                         // If this is an ES6 import from a CommonJS file, it will become a

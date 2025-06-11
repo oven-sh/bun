@@ -4795,9 +4795,12 @@ pub const Headers = struct {
     }
 
     pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
-        for (this.entries.items(.name), 0..) |name_ptr, i| {
+        const entries = this.entries.slice();
+        const names = entries.items(.name);
+        const values = entries.items(.value);
+        for (names, 0..) |name_ptr, i| {
             if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name_ptr), name, true)) {
-                return this.asStr(this.entries.items(.value)[i]);
+                return this.asStr(values[i]);
             }
         }
 

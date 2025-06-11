@@ -1,0 +1,154 @@
+//! A state node which represents the execution of a shell script. This struct
+//! is used for both top-level scripts and also expansions (when running a
+//! command substitution) and subshells.
+pub const Script = @This();
+
+base: State,
+node: *const ast.Script,
+io: IO,
+parent: ParentPtr,
+state: union(enum) {
+    normal: struct {
+        idx: usize = 0,
+    },
+} = .{ .normal = .{} },
+
+pub const ParentPtr = StatePtrUnion(.{
+    Interpreter,
+    Expansion,
+    Subshell,
+});
+
+pub const ChildPtr = struct {
+    val: *Stmt,
+    pub inline fn init(child: *Stmt) ChildPtr {
+        return .{ .val = child };
+    }
+    pub inline fn deinit(this: ChildPtr) void {
+        this.val.deinit();
+    }
+};
+
+pub fn format(this: *const Script, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    try writer.print("Script(0x{x}, stmts={d})", .{ @intFromPtr(this), this.node.stmts.len });
+}
+
+pub fn init(
+    interpreter: *Interpreter,
+    shell_state: *ShellState,
+    node: *const ast.Script,
+    parent_ptr: ParentPtr,
+    io: IO,
+) *Script {
+    const script = interpreter.allocator.create(Script) catch bun.outOfMemory();
+    script.* = .{
+        .base = .{ .kind = .script, .interpreter = interpreter, .shell = shell_state },
+        .node = node,
+        .parent = parent_ptr,
+        .io = io,
+    };
+    log("{} init", .{script});
+    return script;
+}
+
+fn getIO(this: *Script) IO {
+    return this.io;
+}
+
+pub fn start(this: *Script) void {
+    if (this.node.stmts.len == 0)
+        return this.finish(0);
+    this.next();
+}
+
+fn next(this: *Script) void {
+    switch (this.state) {
+        .normal => {
+            if (this.state.normal.idx >= this.node.stmts.len) return;
+            const stmt_node = &this.node.stmts[this.state.normal.idx];
+            this.state.normal.idx += 1;
+            var io = this.getIO();
+            var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, io.ref().*);
+            stmt.start();
+            return;
+        },
+    }
+}
+
+fn finish(this: *Script, exit_code: ExitCode) void {
+    if (this.parent.ptr.is(Interpreter)) {
+        log("Interpreter script finish", .{});
+        this.base.interpreter.childDone(InterpreterChildPtr.init(this), exit_code);
+        return;
+    }
+
+    this.parent.childDone(this, exit_code);
+}
+
+pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
+    child.deinit();
+    if (this.state.normal.idx >= this.node.stmts.len) {
+        this.finish(exit_code);
+        return;
+    }
+    this.next();
+}
+
+pub fn deinit(this: *Script) void {
+    log("Script(0x{x}) deinit", .{@intFromPtr(this)});
+    this.io.deref();
+    if (!this.parent.ptr.is(Interpreter) and !this.parent.ptr.is(Subshell)) {
+        // The shell state is owned by the parent when the parent is Interpreter or Subshell
+        // Otherwise this Script represents a command substitution which is duped from the parent
+        // and must be deinitalized.
+        this.base.shell.deinit();
+    }
+
+    bun.default_allocator.destroy(this);
+}
+
+pub fn deinitFromInterpreter(this: *Script) void {
+    log("Script(0x{x}) deinitFromInterpreter", .{@intFromPtr(this)});
+    this.io.deinit();
+    // Let the interpreter deinitialize the shell state
+    // this.base.shell.deinitImpl(false, false);
+    bun.default_allocator.destroy(this);
+}
+
+const std = @import("std");
+const bun = @import("bun");
+
+const Allocator = std.mem.Allocator;
+
+const Interpreter = bun.shell.Interpreter;
+const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const ast = bun.shell.AST;
+const ExitCode = bun.shell.ExitCode;
+const GlobWalker = bun.shell.interpret.GlobWalker;
+const ShellState = Interpreter.ShellState;
+const StateKind = bun.shell.interpret.StateKind;
+const State = bun.shell.Interpreter.State;
+const throwShellErr = bun.shell.interpret.throwShellErr;
+const IO = bun.shell.Interpreter.IO;
+const log = bun.shell.interpret.log;
+const EnvStr = bun.shell.interpret.EnvStr;
+
+const Cmd = bun.shell.Interpreter.Cmd;
+const Assigns = bun.shell.Interpreter.Assigns;
+const CondExpr = bun.shell.Interpreter.CondExpr;
+const Subshell = bun.shell.Interpreter.Subshell;
+const Expansion = bun.shell.Interpreter.Expansion;
+const Stmt = bun.shell.Interpreter.Stmt;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;
+const Maybe = JSC.Maybe;
+const assert = bun.assert;
+const Arena = bun.shell.interpret.Arena;
+const Braces = bun.shell.interpret.Braces;
+const OOM = bun.shell.interpret.OOM;
+const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
+const WorkPool = bun.shell.interpret.WorkPool;
+const Syscall = bun.shell.interpret.Syscall;

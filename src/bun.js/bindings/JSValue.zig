@@ -254,13 +254,13 @@ pub const JSValue = enum(i64) {
         return this.call(globalThis, globalThis.toJSValue(), args);
     }
 
-    pub extern "c" fn Bun__JSValue__call(
+    extern "c" fn Bun__JSValue__call(
         ctx: *JSGlobalObject,
         object: JSValue,
         thisObject: JSValue,
         argumentCount: usize,
         arguments: [*]const JSValue,
-    ) JSValue.MaybeException;
+    ) JSValue;
 
     pub fn call(function: JSValue, global: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
@@ -276,13 +276,13 @@ pub const JSValue = enum(i64) {
             // this can be an async context so it's fine if it's not callable.
         }
 
-        return Bun__JSValue__call(
+        return JSC.fromJSHostCall(global, @src(), Bun__JSValue__call, .{
             global,
             function,
             thisValue,
             args.len,
             args.ptr,
-        ).unwrap();
+        });
     }
 
     extern fn Bun__Process__queueNextTick1(*JSGlobalObject, func: JSValue, JSValue) void;

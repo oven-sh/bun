@@ -101,8 +101,8 @@ pub fn fromJSHostCall(
     args: std.meta.ArgsTuple(@TypeOf(func)),
 ) bun.JSError!JSValue {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis.vm(), src);
-    defer scope.deinit();
+    if (Environment.allow_assert) scope.init(globalThis.vm(), src);
+    defer if (Environment.allow_assert) scope.deinit();
 
     const value = @call(.auto, func, args);
     if (Environment.allow_assert) {

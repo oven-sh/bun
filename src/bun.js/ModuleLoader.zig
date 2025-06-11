@@ -468,13 +468,16 @@ pub const AsyncModule = struct {
         specifier_: bun.String,
         referrer_: bun.String,
         log: *logger.Log,
-    ) void {
+    ) !void {
         JSC.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis.vm(), @src());
         defer {
             specifier.deref();
             referrer.deref();
+            scope.deinit();
         }
 
         var errorable: JSC.ErrorableResolvedSource = undefined;
@@ -512,6 +515,7 @@ pub const AsyncModule = struct {
             &specifier,
             &referrer,
         );
+        try scope.assertNoExceptionExceptTermination();
     }
 
     pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
@@ -2145,7 +2149,7 @@ pub const RuntimeTranspilerStore = struct {
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            job.runFromJSThread();
+            try job.runFromJSThread();
         } else {
             return;
         }
@@ -2156,7 +2160,7 @@ pub const RuntimeTranspilerStore = struct {
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
             try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
-            job.runFromJSThread();
+            try job.runFromJSThread();
         }
 
         // immediately after this is called, the microtasks will be drained again.
@@ -2263,7 +2267,7 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
-        pub fn runFromJSThread(this: *TranspilerJob) void {
+        pub fn runFromJSThread(this: *TranspilerJob) !void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
@@ -2296,7 +2300,7 @@ pub const RuntimeTranspilerStore = struct {
 
             _ = vm.transpiler_store.store.put(this);
 
-            ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
+            try ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }
 
         pub fn schedule(this: *TranspilerJob) void {

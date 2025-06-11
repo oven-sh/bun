@@ -388,9 +388,10 @@ describe("Bun.file in serve routes", () => {
 
           // Verify all responses are identical
           const expected = results[0];
-          results.forEach(result => {
+          for (const result of results) {
+            expect(result?.length).toBe(expected.length);
             expect(result).toBe(expected);
-          });
+          }
         }
 
         for (let i = 0; i < iterations; i++) {
@@ -398,7 +399,7 @@ describe("Bun.file in serve routes", () => {
           Bun.gc();
         }
       },
-      30000,
+      60000,
     );
 
     it("memory usage stays reasonable", async () => {

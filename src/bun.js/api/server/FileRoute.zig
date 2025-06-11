@@ -403,6 +403,7 @@ const StreamTransfer = struct {
                 const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
                 max_size.* -|= chunk.len;
                 if (state_ != .eof and max_size.* == 0) {
+                    this.reader.pause();
                     break :brk .{ chunk, .eof };
                 }
 
@@ -431,7 +432,6 @@ const StreamTransfer = struct {
             .backpressure => {
                 this.resp.onWritable(*StreamTransfer, onWritable, this);
                 this.reader.pause();
-                this.resp.markNeedsMore();
                 this.state.waiting_for_writable = true;
                 this.state.waiting_for_readable = false;
                 return false;

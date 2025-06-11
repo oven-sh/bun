@@ -394,8 +394,6 @@ void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionCont
     postTaskOnTimeout(task, timeout);
 }
 
-extern "C" void Bun__queueImmediateCppTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
-
 void ScriptExecutionContext::queueImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTFMove(lambda));

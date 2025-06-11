@@ -45,6 +45,7 @@ pub const ResolveMessage = struct {
                         else
                             break :brk "ERR_MODULE_NOT_FOUND",
 
+                        .html_manifest,
                         .entry_point_run,
                         .entry_point_build,
                         .at,

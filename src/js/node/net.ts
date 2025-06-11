@@ -312,7 +312,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketEmitEndNT = (self, _err?) => {
+function SocketEmitEndNT(self, _err?) {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -324,7 +324,7 @@ const SocketEmitEndNT = (self, _err?) => {
   // if (err) {
   //   self.destroy(err);
   // }
-};
+}
 
 const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
@@ -1708,12 +1708,12 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   if (localAddress || localPort) {
     if (addressType === 4) {
-      localAddress ||= DEFAULT_IPV4_ADDR;
+      localAddress ||= "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress ||= DEFAULT_IPV6_ADDR;
+      localAddress ||= "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }

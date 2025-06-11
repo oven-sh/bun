@@ -558,9 +558,9 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
 
-    // if (this.vm) |vm| {
-    //     vm.global.requestTermination();
-    // }
+    if (this.vm) |vm| {
+        vm.global.requestTermination();
+    }
 
     this.notifyNeedTermination();
 }

@@ -4690,12 +4690,12 @@ pub const PackageManager = struct {
                         const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
                         const workspace_version = this.lockfile.workspace_versions.get(name_hash);
                         const buf = this.lockfile.buffers.string_bytes.items;
-                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
-
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            (workspace_path != null and version.value.npm.version.@"is *"()))
+                        if (this.options.link_workspace_packages and
+                            (((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
+                                // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
+                                // if the workspace doesn't have a version, it can still be used if
+                                // dependency version is wildcard
+                                (workspace_path != null and version.value.npm.version.@"is *"()))))
                         {
                             const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                             const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);

@@ -173,3 +173,5 @@ export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
+
+export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);

@@ -260,7 +260,7 @@ public:
                 * since written < buffer_len is very likely to be true
                 */
                 if(written < max_flush_len) {
-                     [[likely]]
+                    [[likely]]
                     /* Cannot write more at this time, return what we've written so far */
                     return total_written;
                 }

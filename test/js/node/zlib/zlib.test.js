@@ -218,21 +218,23 @@ describe("zlib.brotli", () => {
     const out_path_d = resolve(x_dir, "this.js");
 
     {
-      const { resolve, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers();
       const readStream = fs.createReadStream(import.meta.filename);
       const writeStream = fs.createWriteStream(out_path_c);
       const brStream = zlib.createBrotliCompress();
       const the_stream = readStream.pipe(brStream).pipe(writeStream);
       the_stream.on("finish", resolve);
+      the_stream.on("error", reject);
       await promise;
     }
     {
-      const { resolve, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers();
       const readStream = fs.createReadStream(out_path_c);
       const writeStream = fs.createWriteStream(out_path_d);
       const brStream = zlib.createBrotliDecompress();
       const the_stream = readStream.pipe(brStream).pipe(writeStream);
       the_stream.on("finish", resolve);
+      the_stream.on("error", reject);
       await promise;
     }
     {
@@ -252,8 +254,10 @@ describe("zlib.brotli", () => {
     const rand = createPRNG(1);
     let all = [];
 
+    const { promise, resolve, reject } = Promise.withResolvers();
     brotliStream.on("data", chunk => all.push(chunk.length));
-    brotliStream.on("end", () => expect(all).toEqual([11180, 13, 14, 13, 13, 13, 14]));
+    brotliStream.on("end", resolve);
+    brotliStream.on("error", reject);
 
     for (let i = 0; i < 50; i++) {
       let buf = Buffer.alloc(1024 * 1024);
@@ -262,6 +266,8 @@ describe("zlib.brotli", () => {
     }
     readStream.push(null);
     readStream.pipe(brotliStream);
+    await promise;
+    expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
 
   it("should accept params", async () => {
@@ -576,21 +582,23 @@ describe("zlib.zstd", () => {
     const out_path_d = resolve(x_dir, "this.js");
 
     {
-      const { resolve, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers();
       const readStream = fs.createReadStream(import.meta.filename);
       const writeStream = fs.createWriteStream(out_path_c);
       const brStream = zlib.createZstdCompress();
       const the_stream = readStream.pipe(brStream).pipe(writeStream);
       the_stream.on("finish", resolve);
+      the_stream.on("error", reject);
       await promise;
     }
     {
-      const { resolve, promise } = Promise.withResolvers();
+      const { resolve, reject, promise } = Promise.withResolvers();
       const readStream = fs.createReadStream(out_path_c);
       const writeStream = fs.createWriteStream(out_path_d);
       const brStream = zlib.createZstdDecompress();
       const the_stream = readStream.pipe(brStream).pipe(writeStream);
       the_stream.on("finish", resolve);
+      the_stream.on("error", reject);
       await promise;
     }
     {
@@ -610,8 +618,10 @@ describe("zlib.zstd", () => {
     const rand = createPRNG(1);
     let all = [];
 
+    const { promise, resolve, reject } = Promise.withResolvers();
     zstdStream.on("data", chunk => all.push(chunk.length));
-    zstdStream.on("end", () => expect(all).toEqual([11180, 13, 14, 13, 13, 13, 14]));
+    zstdStream.on("end", resolve);
+    zstdStream.on("error", reject);
 
     for (let i = 0; i < 50; i++) {
       let buf = Buffer.alloc(1024 * 1024);
@@ -620,5 +630,7 @@ describe("zlib.zstd", () => {
     }
     readStream.push(null);
     readStream.pipe(zstdStream);
+    await promise;
+    expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
 });

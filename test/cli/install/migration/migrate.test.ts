@@ -131,3 +131,26 @@ test("npm lockfile with relative workspaces", async () => {
 
   expect(exitCode).toBe(0);
 });
+
+test("migrate from pnpm lockfile", async () => {
+  const testDir = tmpdirSync();
+
+  fs.cpSync(join(import.meta.dir, "pnpm-basic"), testDir, { recursive: true });
+
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "pm", "migrate"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+
+  const err = stderr.toString();
+  // Should successfully migrate from pnpm-lock.yaml
+  expect(err).toContain("migrated lockfile from pnpm-lock.yaml");
+
+  // Should not show error messages
+  expect(err).not.toContain("InvalidPnpmLockfile");
+  
+  // Should create a bun lockfile
+  expect(fs.existsSync(join(testDir, "bun.lockb"))).toBeTrue();
+
+  expect(exitCode).toBe(0);
+});

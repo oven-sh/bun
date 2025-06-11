@@ -14,9 +14,9 @@ declare module "bun" {
 }
 
 /** $debug is a preprocessor macro that works like a templated console.log, and only runs in debug mode if you pass
- * BUN_DEBUG_JS=<module>
+ * BUN_DEBUG_JS=1 or BUN_DEBUG_<MODULE>=1
  *
- * So to get node stream to log, you pass BUN_DEBUG_JS=stream or BUN_DEBUG_JS=node:stream
+ * So to get node stream to log, you pass BUN_DEBUG_STREAM=1 or BUN_DEBUG_NODE_STREAM=1
  *
  * This only works in debug builds, the log fn is completely removed in release builds.
  */

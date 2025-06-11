@@ -412,7 +412,11 @@ const StreamTransfer = struct {
             break :brk .{ chunk_, state_ };
         };
 
-        if (state == .eof and !this.state.waiting_for_writable) {
+        if (this.route.server) |server| {
+            this.resp.timeout(server.config().idleTimeout);
+        }
+
+        if (state == .eof) {
             this.state.waiting_for_readable = false;
             this.state.has_ended_response = true;
             const resp = this.resp;
@@ -421,10 +425,6 @@ const StreamTransfer = struct {
             resp.end(chunk, resp.shouldCloseConnection());
             log("end: {}", .{chunk.len});
             return false;
-        }
-
-        if (this.route.server) |server| {
-            this.resp.timeout(server.config().idleTimeout);
         }
 
         switch (this.resp.write(chunk)) {
@@ -439,11 +439,6 @@ const StreamTransfer = struct {
             .want_more => {
                 this.state.waiting_for_readable = true;
                 this.state.waiting_for_writable = false;
-
-                if (state == .eof) {
-                    this.state.waiting_for_readable = false;
-                    return false;
-                }
 
                 if (bun.Environment.isWindows)
                     this.reader.unpause();

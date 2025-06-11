@@ -1,9 +1,12 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { isASAN } from "harness";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 
 const input = Buffer.alloc(50000);
 for (let i = 0; i < input.length; i++) input[i] = Math.random();
+
+const upper = 1024 * 1024 * (isASAN ? 15 : 10);
 
 describe("zlib compression does not leak memory", () => {
   beforeAll(() => {
@@ -30,8 +33,8 @@ describe("zlib compression does not leak memory", () => {
         const after = process.memoryUsage.rss();
         console.log(after);
         console.log("-", after - baseline);
-        console.log("-", 1024 * 1024 * 10);
-        expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+        console.log("-", upper);
+        expect(after - baseline).toBeLessThan(upper);
       },
       0,
     );
@@ -53,8 +56,8 @@ describe("zlib compression does not leak memory", () => {
         const after = process.memoryUsage.rss();
         console.log(after);
         console.log("-", after - baseline);
-        console.log("-", 1024 * 1024 * 10);
-        expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+        console.log("-", upper);
+        expect(after - baseline).toBeLessThan(upper);
       },
       0,
     );
@@ -73,8 +76,8 @@ describe("zlib compression does not leak memory", () => {
     const after = process.memoryUsage.rss();
     console.log(after);
     console.log("-", after - baseline);
-    console.log("-", 1024 * 1024 * 10);
-    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+    console.log("-", upper);
+    expect(after - baseline).toBeLessThan(upper);
   }, 0);
 
   test("brotliCompressSync", async () => {
@@ -90,8 +93,8 @@ describe("zlib compression does not leak memory", () => {
     const after = process.memoryUsage.rss();
     console.log(after);
     console.log("-", after - baseline);
-    console.log("-", 1024 * 1024 * 10);
-    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+    console.log("-", upper);
+    expect(after - baseline).toBeLessThan(upper);
   }, 0);
 
   test("zstdCompress", async () => {
@@ -107,8 +110,8 @@ describe("zlib compression does not leak memory", () => {
     const after = process.memoryUsage.rss();
     console.log(after);
     console.log("-", after - baseline);
-    console.log("-", 1024 * 1024 * 10);
-    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+    console.log("-", upper);
+    expect(after - baseline).toBeLessThan(upper);
   }, 0);
 
   test("zstdCompressSync", async () => {
@@ -124,7 +127,7 @@ describe("zlib compression does not leak memory", () => {
     const after = process.memoryUsage.rss();
     console.log(after);
     console.log("-", after - baseline);
-    console.log("-", 1024 * 1024 * 10);
-    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+    console.log("-", upper);
+    expect(after - baseline).toBeLessThan(upper);
   }, 0);
 });

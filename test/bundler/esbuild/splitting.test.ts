@@ -673,7 +673,7 @@ describe("bundler", () => {
     assertNotPresent: {
       // Make sure we don't have duplicate exports in any entry point
       "/out/entry-a.js": "export { a };\n\nexport { a };",
-      "/out/entry-b.js": "export { a };\n\nexport { a };", 
+      "/out/entry-b.js": "export { a };\n\nexport { a };",
     },
   });
 });

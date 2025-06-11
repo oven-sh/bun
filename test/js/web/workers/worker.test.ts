@@ -342,9 +342,7 @@ describe("worker_threads", () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
-    let exitCode: number | undefined = undefined;
-    worker.once("exit", code => (exitCode = code));
-    await Bun.sleep(200);
+    const [exitCode] = await once(worker, "exit");
     expect<number | undefined>(await worker.terminate()).toBe(undefined);
     expect<number | undefined>(exitCode).toBe(2);
   });

@@ -433,7 +433,14 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     };
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
-    if (vm.worker) |worker_| worker_.lifecycle_handle.requestTermination();
+    if (vm.worker) |worker_| {
+        // During unhandled rejection, we're already holding the API lock - now
+        // is the right time to set exit_called to true so that
+        // notifyNeedTermination uses vm.global.requestTermination() instead of
+        // vm.jsc.notifyNeedTermination() which avoid VMTraps assertion failures
+        worker_.exit_called = true;
+        worker_.lifecycle_handle.requestTermination();
+    }
 }
 
 fn setStatus(this: *WebWorker, status: Status) void {
@@ -557,11 +564,6 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
-
-    if (this.vm) |vm| {
-        vm.global.requestTermination();
-    }
-
     this.notifyNeedTermination();
 }
 
@@ -579,17 +581,15 @@ pub fn notifyNeedTermination(this: *WebWorker) void {
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
 
-        // for process.exit() called from JavaScript, we only need to set the flag
-        // and wake up the event loop. The event loop will check hasRequestedTerminate()
-        // and exit cleanly. Calling notifyNeedTermination() while holding the js lock
-        // causes assertion failures in jsc
-        if (!this.exit_called) {
-            // only call jsc traps for external terminate requests
-            // (e.g worker.terminate() from parent thread)
+        if (this.exit_called) {
+            // For process.exit() called from JavaScript, use JSC's termination
+            // exception mechanism to interrupt ongoing JS execution
+            vm.global.requestTermination();
+        } else {
+            // For external terminate requests (e.g worker.terminate() from parent thread),
+            // use VM traps system
             vm.jsc.notifyNeedTermination();
         }
-        // if exit_called is true we're in process.exit() context and should
-        // let the event loop handle termination naturally
     }
 
     // TODO(@190n) delete

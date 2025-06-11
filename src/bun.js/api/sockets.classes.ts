@@ -240,6 +240,17 @@ const sslOnly = {
   SNICallback: {
     setter: "setSNICallback",
   },
+  certCallback: {
+    setter: "setCertCallback",
+  },
+  certCallbackDone: {
+    fn: "certCallbackDone",
+    length: 0,
+  },
+  enableCertCallback: {
+    fn: "enableCertCallback",
+    length: 0,
+  },
 } as const;
 export default [
   generate(true),

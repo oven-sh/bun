@@ -1,6 +1,7 @@
 #include "config.h"
 #include "NodeTLS.h"
 
+#include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
@@ -151,6 +152,47 @@ void NodeTLSSecureContext::setRootCerts()
     X509_STORE* store = getCertStore();
     X509_STORE_up_ref(store);
     SSL_CTX_set_cert_store(context(), store);
+}
+
+bool NodeTLSSecureContext::applySNI(SSL* ssl)
+{
+    // TODO(@heimskr): ERR_clear_error()?
+    X509* x509 = SSL_get_certificate(ssl);
+    if (!x509) {
+        return false;
+    }
+
+    SSL_CTX* ctx = context();
+    EVP_PKEY* pkey = SSL_CTX_get0_privatekey(ctx);
+    STACK_OF(X509) * chain;
+
+    int success = SSL_CTX_get0_chain_certs(ctx, &chain);
+
+    if (success == 1) {
+        success = SSL_use_certificate(ssl, x509);
+    }
+
+    if (success == 1) {
+        success = SSL_use_PrivateKey(ssl, pkey);
+    }
+
+    if (success == 1 && chain != nullptr) {
+        success = SSL_set1_chain(ssl, chain);
+    }
+
+    return success == 1;
+}
+
+int NodeTLSSecureContext::setCACerts(SSL* ssl)
+{
+    int err = SSL_set1_verify_cert_store(ssl, SSL_CTX_get_cert_store(context()));
+    if (err != 1) {
+        return err;
+    }
+
+    STACK_OF(X509_NAME)* list = SSL_dup_CA_list(SSL_CTX_get_client_CA_list(context()));
+    SSL_set_client_CA_list(ssl, list);
+    return 1;
 }
 
 void NodeTLSSecureContext::setX509StoreFlag(unsigned long flags)
@@ -479,5 +521,27 @@ DEFINE_VISIT_CHILDREN(NodeTLSSecureContext);
 const ClassInfo NodeTLSSecureContext::s_info = { "NodeTLSSecureContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeTLSSecureContext) };
 const ClassInfo NodeTLSSecureContextPrototype::s_info = { "NodeTLSSecureContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeTLSSecureContextPrototype) };
 const ClassInfo NodeTLSSecureContextConstructor::s_info = { "SecureContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeTLSSecureContextConstructor) };
+
+extern "C" int Bun__NodeTLS__certCallbackDone(EncodedJSValue encoded_sni_context, SSL* ssl, JSGlobalObject* globalObject)
+{
+    // Returns to certCallbackDone in socket.zig
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue sni_context_value = JSValue::decode(encoded_sni_context);
+
+    auto* sni_context = jsDynamicCast<NodeTLSSecureContext*>(sni_context_value);
+    if (!sni_context) {
+        if (sni_context_value.isObject()) {
+            return 0; // emit "Invalid SNI context" error
+        }
+    } else if (sni_context->applySNI(ssl) && !sni_context->setCACerts(ssl)) {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "CertCbDone");
+        return 2; // threw
+    }
+
+    return 1; // all good
+}
 
 } // namespace Bun

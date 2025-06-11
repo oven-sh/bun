@@ -103,10 +103,17 @@ public:
     SSL_CTX* context() { return m_context.get(); }
     void context(SSL_CTX* ctx) { m_context = { ctx, SSL_CTX_free }; }
 
+    JSC::JSValue wrapper() const { return m_wrapper.get(); }
+    JSC::JSValue certCallback() const { return m_certCallback.get(); }
+
     void setCACert(const ncrypto::BIOPointer& bio);
     void setRootCerts();
+    bool applySNI(SSL* ssl);
+    int setCACerts(SSL* ssl);
 
 private:
+    WriteBarrier<Unknown> m_wrapper;
+    WriteBarrier<Unknown> m_certCallback;
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> m_context { nullptr, nullptr };
     mutable std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)> m_certStore { nullptr, nullptr };
     unsigned char m_ticketKeyName[16] {};

@@ -1433,7 +1433,8 @@ fn NewSocket(comptime ssl: bool) type {
             is_paused: bool = false,
             allow_half_open: bool = false,
             cert_cb_running: bool = false,
-            _: u6 = 0,
+            is_waiting_cert_cb: bool = false,
+            _: u5 = 0,
         };
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
@@ -2039,16 +2040,12 @@ fn NewSocket(comptime ssl: bool) type {
             return BoringSSL.SSL_TLSEXT_ERR_OK;
         }
 
-        fn isWaitingCertCb(this: *This) bool {
-            return this.cert_callback.get() != null;
-        }
-
         pub fn onCert(this: *This, servername: []const u8) c_int {
             if (comptime ssl == false) {
                 return 1;
             }
 
-            if (!this.handlers.is_server or !this.isWaitingCertCb()) {
+            if (!this.handlers.is_server or !this.flags.is_waiting_cert_cb) {
                 return 1;
             }
 
@@ -2078,16 +2075,40 @@ fn NewSocket(comptime ssl: bool) type {
             return if (this.flags.cert_cb_running) -1 else 1;
         }
 
+        extern fn Bun__NodeTLS__certCallbackDone(sni_context: JSValue, ssl_ptr: *BoringSSL.SSL, globalObject: *JSC.JSGlobalObject) callconv(.C) c_int;
+
+        pub fn enableCertCallback(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+            this.flags.is_waiting_cert_cb = true;
+            return JSValue.jsUndefined();
+        }
+
         pub fn certCallbackDone(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            bun.assert(this.isWaitingCertCb() and this.flags.cert_cb_running);
+            _ = callframe;
+
+            bun.assert(this.flags.is_waiting_cert_cb and this.flags.cert_cb_running);
 
             const this_value: JSC.JSValue = this.getThisValue(globalObject);
 
-            _ = this_value;
-            _ = callframe;
+            const ssl_ptr = this.socket.ssl() orelse return JSValue.jsBoolean(false);
+            const sni_context = try this_value.get(globalObject, "sni_context") orelse return JSValue.jsBoolean(false);
 
-            // TODO(@heimskr)
-            return error.JSError;
+            const cpp_result = Bun__NodeTLS__certCallbackDone(sni_context, ssl_ptr, globalObject);
+
+            switch (cpp_result) {
+                0 => {
+                    return this.handlers.onError.call(globalObject, this_value, &[_]JSValue{ this_value, globalObject.toTypeError(JSC.Error.INVALID_ARG_TYPE, "Invalid SNI context", .{}) });
+                },
+                1 => {},
+                else => return error.JSError, // C++ code threw
+            }
+
+            this.flags.cert_cb_running = false;
+
+            // TODO(@heimskr): do the equivalent of TLSWrap::Cycle() here.
+
+            this.flags.is_waiting_cert_cb = false;
+
+            return JSValue.jsBoolean(true);
         }
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
@@ -2680,6 +2701,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn close(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             _ = callframe;
+            _ = this.cert_callback.swap();
             this.socket.close(.normal);
             this.socket.detach();
             this.poll_ref.unref(globalObject.bunVM());

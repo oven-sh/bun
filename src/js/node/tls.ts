@@ -162,7 +162,6 @@ function splitEscapedAltNames(altNames) {
 }
 
 function checkServerIdentity(hostname, cert) {
-  console.trace("checkServerIdentity", { hostname, cert });
   const altNames = cert?.subjectaltname;
   const dnsNames = [];
   const ips = [];
@@ -225,7 +224,7 @@ var InternalSecureContext = class SecureContext {
   constructor(options) {
     const { honorCipherOrder, minVersion, maxVersion, secureProtocol } = options;
 
-    const context = new NodeTLSSecureContext(secureProtocol, minVersion, maxVersion);
+    this.context = new NodeTLSSecureContext(secureProtocol, minVersion, maxVersion);
 
     if (options) {
       let { cert } = options;
@@ -285,7 +284,6 @@ var InternalSecureContext = class SecureContext {
       }
     }
 
-    this.context = context;
     this.context.init(
       secureProtocol,
       toV("minimum", minVersion, DEFAULT_MIN_VERSION),
@@ -591,7 +589,7 @@ function TLSSocket(socket?, options?) {
   this._newSessionPending = undefined;
   this._controlReleased = undefined;
   this.secureConnecting = false;
-  this._SNICallback = undefined;
+  this._SNICallback = null;
   this.servername = undefined;
   this.authorized = false;
   this.authorizationError;
@@ -636,12 +634,15 @@ function TLSSocket(socket?, options?) {
 
   this.once("connect", socket => {
     if (socket?.isServer) {
-      this._handle.SNICallback = (socket, servername) => {
+      this._handle.SNICallback = (_socket, servername) => {
         if (!servername || !this._SNICallback) {
           // return requestOCSP(
         }
         console.trace("SNICallback", { servername }, this._SNICallback);
       };
+
+      this._handle.certCallback = loadSNI.bind(this);
+      this._handle.enableCertCallback();
     }
   });
 }
@@ -935,6 +936,7 @@ function Server(options, secureConnectionListener): void {
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
+        SNICallback: this._SNICallback,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
@@ -1052,6 +1054,35 @@ function SNICallback(servername, callback) {
   }
 
   callback(null, undefined);
+}
+
+function loadSNI(servername) {
+  if (!servername || !this._SNICallback) {
+    return this._handle.certCallbackDone();
+  }
+
+  let once = false;
+  this._SNICallback(servername, (err, context) => {
+    if (once) {
+      return this.destroy($ERR_MULTIPLE_CALLBACK());
+    }
+
+    once = true;
+
+    if (err) {
+      return this.destroy(err);
+    }
+
+    if (this._handle === null) {
+      return this.destroy($ERR_SOCKET_CLOSED());
+    }
+
+    if (context) {
+      this._handle.sni_context = context.context || context;
+    }
+
+    return this._handle.certCallbackDone();
+  });
 }
 
 export default {

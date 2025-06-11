@@ -326,6 +326,7 @@ pub const TOML = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
+                p.lexer.allow_double_bracket = true;
                 try p.lexer.expect(.t_close_brace);
                 return expr;
             },
@@ -363,8 +364,8 @@ pub const TOML = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
-                try p.lexer.expect(.t_close_bracket);
                 p.lexer.allow_double_bracket = true;
+                try p.lexer.expect(.t_close_bracket);
                 return array_;
             },
             else => {

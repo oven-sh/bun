@@ -40,3 +40,66 @@ it("via dynamic import with type attribute", async () => {
 it("empty via import statement", () => {
   expect(emptyToml).toEqual({});
 });
+
+it("inline table followed by table array", () => {
+  const tomlContent = `
+[global]
+inline_table = { q1 = 1 }
+
+[[items]]
+q1 = 1
+q2 = 2
+
+[[items]]
+q1 = 3
+q2 = 4
+`;
+
+  // Test via Bun's internal TOML parser
+  const Bun = globalThis.Bun;
+  const parsed = Bun.TOML.parse(tomlContent);
+
+  expect(parsed.global).toEqual({
+    inline_table: { q1: 1 },
+  });
+  expect(parsed.items).toEqual([
+    { q1: 1, q2: 2 },
+    { q1: 3, q2: 4 },
+  ]);
+});
+
+it("array followed by table array", () => {
+  const tomlContent = `
+[global]
+array = [1, 2, 3]
+
+[[items]]
+q1 = 1
+`;
+
+  const Bun = globalThis.Bun;
+  const parsed = Bun.TOML.parse(tomlContent);
+
+  expect(parsed.global).toEqual({
+    array: [1, 2, 3],
+  });
+  expect(parsed.items).toEqual([{ q1: 1 }]);
+});
+
+it("nested inline tables", () => {
+  const tomlContent = `
+[global]
+nested = { outer = { inner = 1 } }
+
+[[items]]
+q1 = 1
+`;
+
+  const Bun = globalThis.Bun;
+  const parsed = Bun.TOML.parse(tomlContent);
+
+  expect(parsed.global).toEqual({
+    nested: { outer: { inner: 1 } },
+  });
+  expect(parsed.items).toEqual([{ q1: 1 }]);
+});

@@ -155,25 +155,32 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     };
 
     const open_flags = bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NONBLOCK;
-    var path_buffer: bun.PathBuffer = undefined;
-    @memcpy(path_buffer[0..path.len], path);
-    path_buffer[path.len] = 0;
-    const fd_result = bun.sys.open(
-        path_buffer[0..path.len :0],
-        open_flags,
-        0,
-    );
+
+    const fd_result = brk: {
+        if (bun.Environment.isWindows) {
+            var path_buffer: bun.PathBuffer = undefined;
+            @memcpy(path_buffer[0..path.len], path);
+            path_buffer[path.len] = 0;
+            break :brk bun.sys.open(
+                path_buffer[0..path.len :0],
+                open_flags,
+                0,
+            );
+        }
+        break :brk bun.sys.openA(
+            path,
+            open_flags,
+            0,
+        );
+    };
+
     if (fd_result == .err) {
         req.setYield(true);
         this.deref();
         return;
     }
 
-    const fd = fd_result.result.makeLibUVOwned() catch {
-        req.setYield(true);
-        this.deref();
-        return;
-    };
+    const fd = fd_result.result;
 
     const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since");
 
@@ -388,7 +395,6 @@ const StreamTransfer = struct {
 
         if (this.state.has_ended_response) {
             this.state.waiting_for_readable = false;
-            this.finish();
             return false;
         }
 

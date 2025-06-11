@@ -400,7 +400,7 @@ const StreamTransfer = struct {
                     break :brk .{ chunk, .eof };
                 }
 
-                break :brk .{ chunk, state_ };
+                break :brk .{ chunk_, state_ };
             }
 
             break :brk .{ chunk_, state_ };
@@ -414,7 +414,6 @@ const StreamTransfer = struct {
             route.onResponseComplete(resp);
             resp.end(chunk, resp.shouldCloseConnection());
             log("end: {}", .{chunk.len});
-            this.finish();
             return false;
         }
 
@@ -437,7 +436,6 @@ const StreamTransfer = struct {
 
                 if (state_ == .eof) {
                     this.state.waiting_for_readable = false;
-                    this.finish();
                     return false;
                 }
 
@@ -461,8 +459,8 @@ const StreamTransfer = struct {
         this.finish();
     }
 
-    pub fn onReaderError(this: *StreamTransfer, _: bun.sys.Error) void {
-        log("onReaderError", .{});
+    pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
+        log("onReaderError {any}", .{err});
         this.state.waiting_for_readable = false;
 
         var scope: DeinitScope = undefined;

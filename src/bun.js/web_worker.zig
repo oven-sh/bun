@@ -591,9 +591,6 @@ pub fn notifyNeedTermination(this: *WebWorker) void {
             vm.jsc.notifyNeedTermination();
         }
     }
-
-    // TODO(@190n) delete
-    this.setRefInternal(false);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

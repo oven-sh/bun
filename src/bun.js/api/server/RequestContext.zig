@@ -153,6 +153,43 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
+            if(value.as(JSC.API.HTMLBundle)) |html_bundle| {
+                ctx.response_jsvalue = value;
+                ctx.response_jsvalue.ensureStillAlive();
+                ctx.flags.response_protected = false;
+
+                if(ctx.server) |server| {
+                    if(ctx.resp) |resp| {
+                        if(ctx.req) |req_ptr| {
+                            var entry = server.html_bundle_route_cache.getOrPut(html_bundle) catch bun.outOfMemory();
+
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = JSC.API.HTMLBundle.Route.init(html_bundle);
+                                entry.value_ptr.data.server = JSC.API.AnyServer.from(server);
+                            }
+                            const route = entry.value_ptr.data;
+
+                            ctx.detachResponse();
+                            ctx.endRequestStreamingAndDrain();
+
+                            const any_resp = uws.AnyResponse.init(resp);
+                            if (ctx.method == .HEAD) {
+                                route.onHEADRequest(req_ptr, any_resp);
+                            } else {
+                                route.onRequest(req_ptr, any_resp);
+                            }
+
+                            ctx.finalizeWithoutDeinit();
+                            ctx.deref();
+                            return;
+
+                        }
+                    }
+                }
+                ctx.renderMissingInvalidResponse(value);
+                return;
+            }
+
             const response = value.as(JSC.WebCore.Response) orelse {
                 ctx.renderMissingInvalidResponse(value);
                 return;
@@ -1507,8 +1544,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
                 } else {
-                    // expected a Response object but received 'HTMLBundle { index: string }'
-                    std.log.debug(">>> response error", .{});
                     ctx.renderMissingInvalidResponse(response_value);
                     return;
                 }
@@ -1568,6 +1603,40 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         }
+
+                        if (fulfilled_value.as(JSC.API.HTMLBundle)) |html_bundle| {
+                            ctx.response_jsvalue = fulfilled_value;
+                            ctx.response_jsvalue.ensureStillAlive();
+                            ctx.flags.response_protected = false;
+
+                            if (ctx.resp) |resp| {
+                                if (ctx.req) |req_ptr| {
+                                    var entry = this.html_bundle_route_cache.getOrPut(html_bundle) catch bun.outOfMemory();
+                                    if (!entry.found_existing) {
+                                        entry.value_ptr.* = JSC.API.HTMLBundle.Route.init(html_bundle);
+                                        entry.value_ptr.data.server = JSC.API.AnyServer.from(this);
+                                    }
+                                    const route = entry.value_ptr.data;
+
+                                    ctx.detachResponse();
+                                    ctx.endRequestStreamingAndDrain();
+
+                                    const any_resp = uws.AnyResponse.init(resp);
+                                    if (ctx.method == .HEAD) {
+                                        route.onHEADRequest(req_ptr, any_resp);
+                                    } else {
+                                        route.onRequest(req_ptr, any_resp);
+                                    }
+
+                                    ctx.finalizeWithoutDeinit();
+                                    ctx.deref();
+                                    return;
+                                }
+                            }
+                            ctx.renderMissingInvalidResponse(fulfilled_value);
+                            return;
+                        }
+
                         var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;

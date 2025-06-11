@@ -70,7 +70,6 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 extern "C" void WebWorkerLifecycleHandle__requestTermination(WebWorkerLifecycleHandle* worker);
-extern "C" void WebWorker__notifyNeedTermination(WebWorkerLifecycleHandle* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)

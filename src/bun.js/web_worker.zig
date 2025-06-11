@@ -77,7 +77,7 @@ pub fn setRequestedTerminate(this: *WebWorker) bool {
     return this.requested_terminate.swap(true, .release);
 }
 
-pub export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaque) bool {
+export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaque) bool {
     handle.worker.?.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
@@ -566,7 +566,7 @@ pub fn exit(this: *WebWorker) void {
 }
 
 /// Request a terminate from any thread.
-pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
+pub fn notifyNeedTermination(this: *WebWorker) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
     }
@@ -744,9 +744,7 @@ const WebWorkerLifecycleHandle = struct {
 
 comptime {
     @export(&WebWorkerLifecycleHandle.createWebWorker, .{ .name = "WebWorkerLifecycleHandle__createWebWorker" });
-    @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
-    // _ = WebWorker__updatePtr;
 }
 
 const assert = bun.assert;

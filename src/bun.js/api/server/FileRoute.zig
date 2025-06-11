@@ -475,7 +475,7 @@ const StreamTransfer = struct {
         defer scope.exit();
 
         if (!this.state.has_ended_response) {
-            // we need to signal to the client that somethig went wrong, so close the connection
+            // we need to signal to the client that something went wrong, so close the connection
             // sending the end chunk would be a lie and could cause issues
             this.state.has_ended_response = true;
             this.state.waiting_for_writable = false;

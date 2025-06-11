@@ -1090,7 +1090,7 @@ pub fn migratePnpmLockfile(
     }
 
     // Mark analytics that we attempted pnpm migration
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.Analytics.Features.lockfile_migration_from_pnpm_lock += 1;
 
     // For now, create a minimal lockfile with just a root package
     // This will make the migration succeed but the lockfile will be empty

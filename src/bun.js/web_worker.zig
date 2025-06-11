@@ -557,6 +557,11 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
+
+    if (this.vm) |vm| {
+        vm.global.requestTermination();
+    }
+
     this.notifyNeedTermination();
 }
 

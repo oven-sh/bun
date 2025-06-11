@@ -456,10 +456,9 @@ private:
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
                 /* Try to flush pending data from the socket's buffer to the network */
-                bufferedAmount -= asyncSocket->flush();
-                
+                asyncSocket->flush();
                 /* Check if there's still data waiting to be sent after flush attempt */
-                if (bufferedAmount > 0) {
+                if (asyncSocket->getBufferedAmount() > 0) {
                     /* Socket buffer is not completely empty yet
                     * - Reset the timeout to prevent premature connection closure
                     * - This allows time for another writable event or new request
@@ -498,6 +497,7 @@ private:
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (asyncSocket->getBufferedAmount() == 0) {
+                        
                         asyncSocket->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */

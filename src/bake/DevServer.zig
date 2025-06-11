@@ -4858,11 +4858,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
-                &bv2.graph.path_to_source_index_map,
-                &bv2.graph.client_path_to_source_index_map,
-                &bv2.graph.ssr_path_to_source_index_map,
-            }) |map| {
+            for (&bv2.graph.build_graphs.values) |*map| {
                 _ = map.remove(hash);
             }
         }

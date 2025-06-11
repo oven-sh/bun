@@ -1047,21 +1047,11 @@ fn getSourceCode(
     const allocator = this.allocator;
 
     var data = this.data;
-    var transpiler = &data.transpiler;
+    const transpiler = &data.transpiler;
     errdefer transpiler.resetStore();
     const resolver: *Resolver = &transpiler.resolver;
     var file_path = task.path;
     var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
-
-    // Do not process files as HTML if any of the following are true:
-    // - building for node or bun.js
-    //
-    //   We allow non-entrypoints to import HTML so that people could
-    //   potentially use an onLoad plugin that returns HTML.
-    if (task.known_target != .browser) {
-        loader = loader.disableHTML();
-        task.loader = loader;
-    }
 
     var contents_came_from_plugin: bool = false;
     return try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
@@ -1076,22 +1066,11 @@ fn runWithSourceCode(
 ) anyerror!Result.Success {
     const allocator = this.allocator;
 
-    var data = this.data;
-    var transpiler = &data.transpiler;
+    var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
     var resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
-    var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
-
-    // Do not process files as HTML if any of the following are true:
-    // - building for node or bun.js
-    //
-    //   We allow non-entrypoints to import HTML so that people could
-    //   potentially use an onLoad plugin that returns HTML.
-    if (task.known_target != .browser) {
-        loader = loader.disableHTML();
-        task.loader = loader;
-    }
+    const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
     // WARNING: Do not change the variant of `task.contents_or_fd` from
     // `.fd` to `.contents` (or back) after this point!
@@ -1154,7 +1133,7 @@ fn runWithSourceCode(
         ((transpiler.options.server_components or transpiler.options.dev_server != null) and
             task.known_target == .browser))
     {
-        transpiler = this.ctx.client_transpiler;
+        transpiler = this.ctx.client_transpiler.?;
         resolver = &transpiler.resolver;
         bun.assert(transpiler.options.target == .browser);
     }

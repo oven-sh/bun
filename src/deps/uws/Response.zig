@@ -104,6 +104,14 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_has_responded(ssl_flag, res.downcast());
         }
 
+        pub fn markWroteContentLengthHeader(res: *Response) void {
+            c.uws_res_mark_wrote_content_length_header(ssl_flag, res.downcast());
+        }
+
+        pub fn writeMark(res: *Response) void {
+            c.uws_res_write_mark(ssl_flag, res.downcast());
+        }
+
         pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
             if (comptime Environment.isWindows) {
                 // on windows uSockets exposes SOCKET
@@ -305,6 +313,30 @@ pub const TLSResponse = NewResponse(1);
 pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
+
+    pub fn markNeedsMore(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markNeedsMore(),
+        };
+    }
+
+    pub fn markWroteContentLengthHeader(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markWroteContentLengthHeader(),
+        };
+    }
+
+    pub fn writeMark(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.writeMark(),
+        };
+    }
+
+    pub fn endSendFile(this: AnyResponse, write_offset: u64, close_connection: bool) void {
+        return switch (this) {
+            inline else => |resp| resp.endSendFile(write_offset, close_connection),
+        };
+    }
 
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
@@ -576,6 +608,8 @@ pub const uws_res = c.uws_res;
 
 const c = struct {
     pub const uws_res = opaque {};
+    pub extern fn uws_res_mark_wrote_content_length_header(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;

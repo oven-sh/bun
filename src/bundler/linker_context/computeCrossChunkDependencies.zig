@@ -186,7 +186,7 @@ const CrossChunkDependencies = struct {
                             source_index = import_data.data.source_index;
                         }
 
-                        // Skip exports that are defined locally in this entry point to avoid 
+                        // Skip exports that are defined locally in this entry point to avoid
                         // duplicate exports in cross-chunk and entry point tail generation
                         if (source_index.get() == chunk.entry_point.source_index) {
                             continue;

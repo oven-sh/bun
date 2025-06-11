@@ -41,7 +41,13 @@ pub const FSWatcher = struct {
 
     /// While it's not closed, the pending activity
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
-    current_task: FSWatchTask = undefined,
+    current_task: FSWatchTask = .empty,
+
+    // NOTE: this may equal `.current_task`. do not free it!
+    // if we create multiple on the same tick we use this buffer.
+    last_task: ?*FSWatchTask = null,
+
+    js_thread: std.Thread.Id,
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
         return this.ctx.eventLoop();
@@ -60,19 +66,31 @@ pub const FSWatcher = struct {
     pub const finalize = deinit;
 
     pub const FSWatchTask = if (Environment.isWindows) FSWatchTaskWindows else FSWatchTaskPosix;
-    pub const FSWatchTaskPosix = struct {
-        pub const new = bun.TrivialNew(@This());
 
+    const FSWatchTaskPosix = struct {
+        concurrent_task: JSC.EventLoopTask = .{ .mini = .{ .callback = undefined } },
         ctx: *FSWatcher,
-        count: u8 = 0,
+        count: u8,
+        entries: [BATCH_SIZE]Entry = undefined,
+        // Track if we need to perform ref operation on main thread
+        needs_ref: bool = false,
 
-        entries: [8]Entry = undefined,
-        concurrent_task: JSC.ConcurrentTask = undefined,
+        pub const empty = FSWatchTask{
+            .concurrent_task = .{ .mini = .{ .callback = undefined } },
+            .ctx = undefined,
+            .count = 0,
+            .entries = undefined,
+            .needs_ref = false,
+        };
 
-        pub const Entry = struct {
+        const Entry = struct {
             event: Event,
             needs_free: bool,
         };
+
+        const BATCH_SIZE = 10;
+
+        pub const new = bun.TrivialNew(@This());
 
         pub fn deinit(this: *FSWatchTask) void {
             this.cleanEntries();
@@ -82,13 +100,15 @@ pub const FSWatcher = struct {
             bun.destroy(this);
         }
 
-        pub fn append(this: *FSWatchTask, event: Event, needs_free: bool) void {
-            if (this.count == 8) {
+        pub fn append(this: *FSWatchTaskPosix, event: Event, needs_free: bool) void {
+            if (this.count >= this.entries.len) {
                 this.enqueue();
                 const ctx = this.ctx;
                 this.* = .{
                     .ctx = ctx,
                     .count = 0,
+                    .concurrent_task = undefined,
+                    .needs_ref = false,
                 };
             }
 
@@ -101,25 +121,35 @@ pub const FSWatcher = struct {
 
         pub fn run(this: *FSWatchTask) void {
             // this runs on JS Context Thread
+            const ctx = this.ctx;
+
+            // Perform ref operation on main thread if needed
+            if (this.needs_ref and ctx.persistent) {
+                ctx.poll_ref.ref(ctx.ctx);
+            }
 
             for (this.entries[0..this.count]) |entry| {
                 switch (entry.event) {
                     inline .rename, .change => |file_path, t| {
-                        this.ctx.emit(file_path, t);
+                        if (comptime Environment.isWindows) {
+                            unreachable; // Windows uses FSWatchTaskWindows
+                        } else {
+                            ctx.emit(file_path, t);
+                        }
                     },
                     .@"error" => |err| {
-                        this.ctx.emitError(err);
+                        ctx.emitError(err);
                     },
                     .abort => {
-                        this.ctx.emitIfAborted();
+                        ctx.emitIfAborted();
                     },
                     .close => {
-                        this.ctx.emit("", .close);
+                        ctx.emit("", .close);
                     },
                 }
             }
 
-            this.ctx.unrefTask();
+            ctx.unrefTaskMainThread();
         }
 
         pub fn appendAbort(this: *FSWatchTask) void {
@@ -131,17 +161,33 @@ pub const FSWatcher = struct {
             if (this.count == 0)
                 return;
 
-            // if false is closed or detached (can still contain valid refs but will not create a new one)
-            if (this.ctx.refTask()) {
-                var that = FSWatchTask.new(this.*);
-                this.count = 0;
-                that.concurrent_task.task = JSC.Task.init(that);
-                this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+            // Check if we can proceed from watcher thread
+            const ctx = this.ctx;
+            ctx.mutex.lock();
+            defer ctx.mutex.unlock();
+
+            if (ctx.closed) {
+                this.cleanEntries();
                 return;
             }
-            // closed or detached so just cleanEntries
-            this.cleanEntries();
+
+            // Track pending activity
+            const current = ctx.pending_activity_count.fetchAdd(1, .monotonic);
+
+            var that = FSWatchTask.new(this.*);
+            // Clear the count before enqueueing to avoid double processing
+            const saved_count = this.count;
+            this.count = 0;
+            that.count = saved_count;
+
+            // If we went from 0 to 1, we need to ref on the main thread
+            that.needs_ref = (current == 0);
+
+            that.concurrent_task = JSC.EventLoopTask.init(.js);
+            that.concurrent_task.js.task = JSC.Task.init(that);
+            ctx.enqueueTaskConcurrent(&that.concurrent_task.js);
         }
+
         pub fn cleanEntries(this: *FSWatchTask) void {
             for (this.entries[0..this.count]) |*entry| {
                 if (entry.needs_free) {
@@ -167,6 +213,7 @@ pub const FSWatcher = struct {
         pub fn dupe(event: Event) !Event {
             return switch (event) {
                 inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
+                .@"error" => |err| @unionInit(Event, @tagName(.@"error"), try err.clone(bun.default_allocator)),
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }
@@ -177,6 +224,7 @@ pub const FSWatcher = struct {
                     else => bun.default_allocator.free(path.*),
                     .windows => path.deinit(),
                 },
+                .@"error" => |*err| err.deinit(),
                 else => {},
             }
         }
@@ -205,6 +253,10 @@ pub const FSWatcher = struct {
 
         /// Unused: To match the API of the posix version
         count: u0 = 0,
+
+        pub const empty = FSWatchTaskWindows{
+            .ctx = undefined,
+        };
 
         pub const StringOrBytesToDecode = union(enum) {
             string: bun.String,
@@ -432,9 +484,9 @@ pub const FSWatcher = struct {
     };
 
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
+        // We're on main thread during init
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = this.toJS(this.globalThis);
@@ -446,9 +498,8 @@ pub const FSWatcher = struct {
             // already aborted?
             if (s.aborted()) {
                 // safely abort next tick
-                this.current_task = .{
-                    .ctx = this,
-                };
+                this.current_task = .empty;
+                this.current_task.ctx = this;
                 this.current_task.appendAbort();
             } else {
                 // watch for abortion
@@ -554,6 +605,7 @@ pub const FSWatcher = struct {
     pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
+            // We're on main thread here
             this.poll_ref.ref(this.ctx);
         }
         return .undefined;
@@ -562,6 +614,7 @@ pub const FSWatcher = struct {
     pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
+            // We're on main thread here
             this.poll_ref.unref(this.ctx);
         }
         return .undefined;
@@ -571,13 +624,31 @@ pub const FSWatcher = struct {
         return JSC.JSValue.jsBoolean(this.persistent);
     }
 
-    // this can be called from Watcher Thread or JS Context Thread
+    // Only call from main thread
+    pub fn refTaskMainThread(this: *FSWatcher) void {
+        if (this.persistent) {
+            this.poll_ref.ref(this.ctx);
+        }
+    }
+
+    // Only call from main thread
+    pub fn unrefTaskMainThread(this: *FSWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        const current = this.pending_activity_count.fetchSub(1, .monotonic);
+        // If we went from 1 to 0, we need to unref the poll
+        if (current == 1 and this.persistent) {
+            this.poll_ref.unref(this.ctx);
+        }
+    }
+
+    // Can be called from any thread - delegates to main thread version when on JS thread
     pub fn refTask(this: *FSWatcher) bool {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
         _ = this.pending_activity_count.fetchAdd(1, .monotonic);
-
         return true;
     }
 
@@ -585,11 +656,15 @@ pub const FSWatcher = struct {
         return this.pending_activity_count.load(.acquire) > 0;
     }
 
+    // Can be called from any thread - delegates to main thread version when on JS thread
     pub fn unrefTask(this: *FSWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .monotonic);
+        // If we're on the JS thread (where we have access to the VM), use the main thread version
+        // Otherwise just decrement the count
+        if (this.js_thread == std.Thread.getCurrentId()) {
+            this.unrefTaskMainThread();
+        } else {
+            _ = this.pending_activity_count.fetchSub(1, .monotonic);
+        }
     }
 
     pub fn close(this: *FSWatcher) void {
@@ -602,14 +677,18 @@ pub const FSWatcher = struct {
 
             if (js_this != .zero) {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
-                    _ = this.refTask();
+                    // We're on main thread during close
+                    const current = this.pending_activity_count.fetchAdd(1, .monotonic);
+                    if (current == 0 and this.persistent) {
+                        this.poll_ref.ref(this.ctx);
+                    }
                     log("emit('close')", .{});
                     emitJS(listener, this.globalThis, .undefined, .close);
-                    this.unrefTask();
+                    this.unrefTaskMainThread();
                 }
             }
 
-            this.unrefTask();
+            this.unrefTaskMainThread();
         } else {
             this.mutex.unlock();
         }
@@ -624,7 +703,7 @@ pub const FSWatcher = struct {
 
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
+            this.poll_ref.disable();
         }
 
         if (this.signal) |signal| {
@@ -641,29 +720,33 @@ pub const FSWatcher = struct {
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        var buf: bun.PathBuffer = undefined;
-        var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
-        }
+        var joined_buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(joined_buf);
+        const file_path = brk: {
+            var buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
 
-        var parts = [_]string{
-            slice,
+            var slice = args.path.slice();
+            if (bun.strings.startsWith(slice, "file://")) {
+                slice = slice[6..];
+            }
+
+            var parts = [_]string{
+                slice,
+            };
+
+            const cwd = switch (bun.sys.getcwd(buf)) {
+                .result => |r| r,
+                .err => |err| return .{ .err = err },
+            };
+            buf[cwd.len] = std.fs.path.sep;
+            break :brk Path.joinAbsStringBuf(
+                buf[0 .. cwd.len + 1],
+                joined_buf,
+                &parts,
+                .auto,
+            );
         };
-
-        const cwd = switch (bun.sys.getcwd(&buf)) {
-            .result => |r| r,
-            .err => |err| return .{ .err = err },
-        };
-        buf[cwd.len] = std.fs.path.sep;
-
-        var joined_buf: bun.PathBuffer = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .auto,
-        );
 
         joined_buf[file_path.len] = 0;
         const file_path_z = joined_buf[0..file_path.len :0];
@@ -672,19 +755,16 @@ pub const FSWatcher = struct {
 
         const ctx = bun.new(FSWatcher, .{
             .ctx = vm,
-            .current_task = .{
-                .ctx = undefined,
-                .count = 0,
-            },
             .mutex = .{},
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
+            .closed = false,
             .path_watcher = null,
             .globalThis = args.global_this,
             .js_this = .zero,
-            .encoding = args.encoding,
-            .closed = false,
             .verbose = args.verbose,
+            .encoding = args.encoding,
+            .js_thread = std.Thread.getCurrentId(),
         });
         ctx.current_task.ctx = ctx;
 
@@ -692,6 +772,8 @@ pub const FSWatcher = struct {
             switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
                 .result => |r| r,
                 .err => |err| {
+                    var err2 = err;
+                    defer err2.deinit();
                     ctx.deinit();
                     return .{ .err = .{
                         .errno = err.errno,

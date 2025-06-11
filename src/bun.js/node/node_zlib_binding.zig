@@ -1023,9 +1023,9 @@ pub const SNativeZstd = struct {
     }
 
     pub fn estimatedSize(this: *const @This()) usize {
-        return @sizeOf(SNativeZstd) + @sizeOf(ZstdContext) + switch (this.stream.mode_) {
-            .ZSTD_COMPRESS => bun.zstd.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
-            .ZSTD_DECOMPRESS => bun.zstd.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
+        return @sizeOf(SNativeZstd) + switch (this.stream.mode_) {
+            .ZSTD_COMPRESS => bun.c.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
+            .ZSTD_DECOMPRESS => bun.c.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
             else => 0,
         };
     }
@@ -1088,7 +1088,7 @@ pub const SNativeZstd = struct {
 };
 
 const ZstdContext = struct {
-    const c = bun.zstd;
+    const c = bun.c;
 
     mode: bun.zlib.NodeMode = .NONE,
     mode_: bun.zlib.NodeMode = .NONE,
@@ -1155,7 +1155,7 @@ const ZstdContext = struct {
 
     pub fn doWork(this: *ZstdContext) void {
         this.remaining = switch (this.mode_) {
-            .ZSTD_COMPRESS => c.ZSTD_compressStream2(@ptrCast(this.state), &this.output, &this.input, this.flush),
+            .ZSTD_COMPRESS => c.ZSTD_compressStream2(@ptrCast(this.state), &this.output, &this.input, @intCast(this.flush)),
             .ZSTD_DECOMPRESS => c.ZSTD_decompressStream(@ptrCast(this.state), &this.output, &this.input),
             else => @panic("unreachable"),
         };
@@ -1173,7 +1173,7 @@ const ZstdContext = struct {
             return .ok;
         }
         return Error{
-            .err = err,
+            .err = @intCast(err),
             .msg = c.ZSTD_getErrorString(err),
             .code = switch (err) {
                 c.ZSTD_error_no_error => "ZSTD_error_no_error",

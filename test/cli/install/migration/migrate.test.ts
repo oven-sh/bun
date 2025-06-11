@@ -143,9 +143,13 @@ test("migrate from pnpm lockfile", async () => {
   });
 
   const err = stderr.toString();
+  // Should successfully migrate from pnpm-lock.yaml
   expect(err).toContain("migrated lockfile from pnpm-lock.yaml");
 
+  // Should not show error messages
   expect(err).not.toContain("InvalidPnpmLockfile");
+  
+  // Should create a bun lockfile
   expect(fs.existsSync(join(testDir, "bun.lockb"))).toBeTrue();
 
   expect(exitCode).toBe(0);

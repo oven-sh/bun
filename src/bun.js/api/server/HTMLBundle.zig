@@ -135,6 +135,32 @@ pub const Route = struct {
         this.onAnyRequest(req, resp, true);
     }
 
+    pub fn respond(this: *Route, resp: HTTPResponse, is_head: bool) void{
+        this.ref();
+        defer this.deref();
+
+        const server: AnyServer = this.server orelse {
+            resp.endWithoutBody(true);
+            return;
+        };
+        _ = server; // autofix
+
+        switch (this.state) {
+            .html => |html| {
+                if(is_head){
+                    html.onHEAD(resp);
+                }
+                else {
+                    html.on(resp);
+                }
+            },
+            else => {
+                resp.writeStatus("500 Internal Server Error");
+                resp.endWithoutBody(true);
+            }
+        }
+    }
+
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
         this.ref();
         defer this.deref();

@@ -130,7 +130,7 @@ pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *a
 
 pub const HashTable = std.HashMap(u64, *anyopaque, bun.IdentityContext(u64), 80);
 
-pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
     try this.putMappings(source, chunk.buffer);
 }
 
@@ -159,7 +159,7 @@ pub fn deinit(this: *SavedSourceMap) void {
     this.map.deinit();
 }
 
-pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
     try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
 }
 

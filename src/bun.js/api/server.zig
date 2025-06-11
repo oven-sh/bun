@@ -1754,12 +1754,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);
             defer writer.ctx.buffer.deinit();
-            var source = logger.Source.initEmptyFile("info.json");
+            const source = &logger.Source.initEmptyFile("info.json");
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
                 bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
-                &source,
+                source,
                 .{ .mangled_props = null },
             ) catch unreachable;
 

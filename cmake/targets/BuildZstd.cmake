@@ -23,4 +23,6 @@ register_cmake_command(
   LIBRARIES
     zstd_static WIN32
     zstd UNIX
+  INCLUDES
+    lib
 )

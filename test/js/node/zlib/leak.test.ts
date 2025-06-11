@@ -93,4 +93,38 @@ describe("zlib compression does not leak memory", () => {
     console.log("-", 1024 * 1024 * 10);
     expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
   }, 0);
+
+  test("zstdCompress", async () => {
+    for (let index = 0; index < 1_000; index++) {
+      await promisify(zlib.zstdCompress)(input);
+    }
+    const baseline = process.memoryUsage.rss();
+    console.log(baseline);
+    for (let index = 0; index < 1_000; index++) {
+      await promisify(zlib.zstdCompress)(input);
+    }
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(after);
+    console.log("-", after - baseline);
+    console.log("-", 1024 * 1024 * 10);
+    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+  }, 0);
+
+  test("zstdCompressSync", async () => {
+    for (let index = 0; index < 1_000; index++) {
+      zlib.zstdCompressSync(input);
+    }
+    const baseline = process.memoryUsage.rss();
+    console.log(baseline);
+    for (let index = 0; index < 1_000; index++) {
+      zlib.zstdCompressSync(input);
+    }
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(after);
+    console.log("-", after - baseline);
+    console.log("-", 1024 * 1024 * 10);
+    expect(after - baseline).toBeLessThan(1024 * 1024 * 10);
+  }, 0);
 });

@@ -51,6 +51,26 @@ describe("prototype and name and constructor", () => {
       });
     });
   }
+
+  for (let [name, Class] of [
+    ["ZstdCompress", zlib.ZstdCompress],
+    ["ZstdDecompress", zlib.ZstdDecompress],
+  ]) {
+    describe(`${name}`, () => {
+      it(`${name}.prototype should be instanceof ${name}.__proto__`, () => {
+        expect(Class.prototype).toBeInstanceOf(Class.__proto__);
+      });
+      it(`${name}.prototype.constructor should be ${name}`, () => {
+        expect(Class.prototype.constructor).toBe(Class);
+      });
+      it(`${name}.name should be ${name}`, () => {
+        expect(Class.name).toBe(name);
+      });
+      it(`${name}.prototype.__proto__.constructor.name should be Zstd`, () => {
+        expect(Class.prototype.__proto__.constructor.name).toBe("Zstd");
+      });
+    });
+  }
 });
 
 describe("zlib", () => {
@@ -337,6 +357,7 @@ for (const [compress, decompressor] of [
   [zlib.deflateRawSync, zlib.createInflateRaw],
   [zlib.deflateSync, zlib.createInflate],
   [zlib.brotliCompressSync, zlib.createBrotliDecompress],
+  [zlib.zstdCompressSync, zlib.createZstdDecompress],
   // [zlib.gzipSync, zlib.createGunzip],
   // [zlib.gzipSync, zlib.createUnzip],
 ]) {
@@ -364,7 +385,11 @@ for (const [compress, decompressor] of [
     },
   ];
   for (const i in variants) {
-    it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
+    let should_skip = false;
+    if (decompressor === zlib.createZstdDecompress && i == 1) should_skip = true; // fails in node too
+    if (decompressor === zlib.createZstdDecompress && i == 2) should_skip = true; // fails in node too
+    // prettier-ignore
+    it.skipIf(should_skip)(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
       const variant = variants[i];
       const { promise, resolve, reject } = Promise.withResolvers();
       let output = "";
@@ -469,3 +494,131 @@ for (const C of [zlib.BrotliCompress, zlib.BrotliDecompress]) {
     });
   }
 }
+
+describe("zlib.zstd", () => {
+  const inputString =
+    "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
+    "t. Morbi faucibus, purus at gravida dictum, libero arcu " +
+    "convallis lacus, in commodo libero metus eu nisi. Nullam" +
+    " commodo, neque nec porta placerat, nisi est fermentum a" +
+    "ugue, vitae gravida tellus sapien sit amet tellus. Aenea" +
+    "n non diam orci. Proin quis elit turpis. Suspendisse non" +
+    " diam ipsum. Suspendisse nec ullamcorper odio. Vestibulu" +
+    "m arcu mi, sodales non suscipit id, ultrices ut massa. S" +
+    "ed ac sem sit amet arcu malesuada fermentum. Nunc sed. ";
+  const compressedString =
+    "KLUv/WD5AF0JAGbXPCCgJUkH/8+rqgA3KaVsW+6LfK3JLcnP+I/" +
+    "Gy1/3Qv9XDTQAMwA0AK+Ch9LCub6tnT62C7QuwrHQHDhhNPcCQl" +
+    "tMWOrafGy3KO2D79QZ95omy09vwp/TFEAkEIlHOO99cOlZmfRiz" +
+    "XQ79GvDoY9TxrTgBBfR+77Nd7LkOWlHaGW+aEwd2rSeegWaj9Ns" +
+    "WAJJ0253u1jQpe3ByWLS5i+24QhTAZygaf4UlqNER3XoAk7QYar" +
+    "9tjHHV4yHj+tC108zuqMBJ+X2hlpwUqX6vE3r3N7q5QYntVvn3N" +
+    "8zVDb9UfCMCW1790yV3A88pgvkvQAniSWvFxMAELvECFu0tC1R9" +
+    "Ijsri5bt2kE/2mLoi2wCpkElnidDMS//DemxlNdHClyl6KeNTCugmAG";
+  const compressedBuffer = Buffer.from(compressedString, "base64");
+
+  it("zstdDecompress", async () => {
+    const roundtrip = await util.promisify(zlib.zstdDecompress)(compressedBuffer);
+    expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("zstdCompressSync", () => {
+    const compressed = zlib.zstdCompressSync(inputString);
+    expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
+  it("zstdDecompressSync", () => {
+    const roundtrip = zlib.zstdDecompressSync(compressedBuffer);
+    expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("can compress streaming", async () => {
+    const encoder = zlib.createZstdCompress();
+    for (const chunk of window(inputString, 55)) {
+      encoder.push(chunk);
+    }
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(inputString);
+  });
+
+  it("can decompress streaming", async () => {
+    const decoder = zlib.createZstdDecompress();
+    for (const chunk of window(compressedBuffer, 10)) {
+      decoder.push(chunk);
+    }
+    decoder.push(null);
+    const buf = await new Response(decoder).bytes();
+    expect(buf).toEqual(compressedBuffer);
+  });
+
+  it("can roundtrip an empty string", async () => {
+    const input = "";
+    const compressed = await util.promisify(zlib.zstdCompress)(input);
+    const roundtrip = await util.promisify(zlib.zstdDecompress)(compressed);
+    expect(roundtrip.toString()).toEqual(input);
+  });
+
+  it("can compress streaming big", async () => {
+    const encoder = zlib.createZstdCompress();
+    const input = inputString + inputString + inputString + inputString;
+    for (const chunk of window(input, 65)) {
+      encoder.push(chunk);
+    }
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(input);
+  });
+
+  it("fully works as a stream.Transform", async () => {
+    const x_dir = tmpdirSync();
+    const out_path_c = resolve(x_dir, "this.js.br");
+    const out_path_d = resolve(x_dir, "this.js");
+
+    {
+      const { resolve, promise } = Promise.withResolvers();
+      const readStream = fs.createReadStream(import.meta.filename);
+      const writeStream = fs.createWriteStream(out_path_c);
+      const brStream = zlib.createZstdCompress();
+      const the_stream = readStream.pipe(brStream).pipe(writeStream);
+      the_stream.on("finish", resolve);
+      await promise;
+    }
+    {
+      const { resolve, promise } = Promise.withResolvers();
+      const readStream = fs.createReadStream(out_path_c);
+      const writeStream = fs.createWriteStream(out_path_d);
+      const brStream = zlib.createZstdDecompress();
+      const the_stream = readStream.pipe(brStream).pipe(writeStream);
+      the_stream.on("finish", resolve);
+      await promise;
+    }
+    {
+      const expected = await Bun.file(import.meta.filename).text();
+      const actual = await Bun.file(out_path_d).text();
+      expect(actual).toEqual(expected);
+    }
+  });
+
+  it("streaming encode doesn't wait for entire input", async () => {
+    const createPRNG = seed => {
+      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+    };
+    const readStream = new stream.Readable();
+    const zstdStream = zlib.createZstdCompress();
+    const rand = createPRNG(1);
+    let all = [];
+
+    zstdStream.on("data", chunk => all.push(chunk.length));
+    zstdStream.on("end", () => expect(all).toEqual([11180, 13, 14, 13, 13, 13, 14]));
+
+    for (let i = 0; i < 50; i++) {
+      let buf = Buffer.alloc(1024 * 1024);
+      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+      readStream.push(buf);
+    }
+    readStream.push(null);
+    readStream.pipe(zstdStream);
+  }, 15_000);
+});

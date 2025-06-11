@@ -42,6 +42,7 @@ pub const Task = TaggedPointerUnion(.{
     NapiFinalizerTask,
     NativeBrotli,
     NativeZlib,
+    NativeZstd,
     Open,
     PollPendingModulesTask,
     PosixSignalTask,
@@ -448,6 +449,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *NativeBrotli = task.get(NativeBrotli).?;
                 any.runFromJSThread();
             },
+            @field(Task.Tag, @typeName(NativeZstd)) => {
+                var any: *NativeZstd = task.get(NativeZstd).?;
+                any.runFromJSThread();
+            },
             @field(Task.Tag, @typeName(ProcessWaiterThreadTask)) => {
                 bun.markPosixOnly();
                 var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
@@ -558,6 +563,7 @@ const StatFS = AsyncFS.statfs;
 const Unlink = AsyncFS.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
+const NativeZstd = JSC.API.NativeZstd;
 
 const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;

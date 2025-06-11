@@ -44,6 +44,7 @@ pub const SocketHandlers = @import("api/bun/socket.zig").Handlers;
 pub const UDPSocket = @import("api/bun/udp_socket.zig").UDPSocket;
 pub const Valkey = @import("../valkey/js_valkey.zig").JSValkeyClient;
 pub const BlockList = @import("./node/net/BlockList.zig");
+pub const NativeZstd = @import("node/node_zlib_binding.zig").SNativeZstd;
 
 pub const napi = @import("../napi/napi.zig");
 

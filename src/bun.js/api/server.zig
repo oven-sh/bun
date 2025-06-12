@@ -490,7 +490,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
         // cache HTMLBundle routes returned by handlers at runtime.
-        html_bundle_route_cache: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)) = undefined,
+        html_bundle_route_cache: bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)) = undefined,
         
         on_clienterror: JSC.Strong.Optional = .empty,
 
@@ -1598,7 +1598,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .dev_server = dev_server,
             });
             
-            server.html_bundle_route_cache = std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)).init(bun.default_allocator);
+            server.html_bundle_route_cache = bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)).init(bun.default_allocator);
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(

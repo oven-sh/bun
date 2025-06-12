@@ -305,16 +305,13 @@ const StreamTransfer = struct {
     resp: AnyResponse,
     route: *FileRoute,
 
-    defer_deinit: ?*bool = null,
     max_size: ?u64 = null,
 
     eof_task: ?JSC.AnyTask = null,
 
     state: packed struct(u8) {
-        waiting_for_readable: bool = false,
-        waiting_for_writable: bool = false,
         has_ended_response: bool = false,
-        _: u5 = 0,
+        _: u7 = 0,
     } = .{},
     const log = Output.scoped(.StreamTransfer, false);
 
@@ -347,12 +344,9 @@ const StreamTransfer = struct {
     fn start(this: *StreamTransfer, start_offset: usize, size: ?usize) void {
         log("start", .{});
 
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
+        this.ref();
+        defer this.deref();
 
-        this.state.waiting_for_readable = true;
-        this.state.waiting_for_writable = true;
         this.max_size = size;
 
         switch (if (start_offset > 0)
@@ -385,25 +379,21 @@ const StreamTransfer = struct {
         if (this.route.server) |server| {
             this.resp.timeout(server.config().idleTimeout);
         }
+        // we connection aborts/closes so we need to be notified
+        this.resp.onAborted(*StreamTransfer, onAborted, this);
+
         // we are reading so increase the ref count until onReaderDone/onReaderError
         this.ref();
         this.reader.read();
-
-        if (!scope.deinit_called) {
-            // This clones some data so we could avoid that if we're already done.
-            this.resp.onAborted(*StreamTransfer, onAborted, this);
-        }
     }
 
     pub fn onReadChunk(this: *StreamTransfer, chunk_: []const u8, state_: bun.io.ReadState) bool {
         log("onReadChunk", .{});
 
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
+        this.ref();
+        defer this.deref();
 
         if (this.state.has_ended_response) {
-            this.state.waiting_for_readable = false;
             return false;
         }
 
@@ -435,7 +425,6 @@ const StreamTransfer = struct {
         }
 
         if (state == .eof) {
-            this.state.waiting_for_readable = false;
             this.state.has_ended_response = true;
             const resp = this.resp;
             const route = this.route;
@@ -451,14 +440,9 @@ const StreamTransfer = struct {
                 defer this.deref();
                 this.resp.onWritable(*StreamTransfer, onWritable, this);
                 this.reader.pause();
-                this.state.waiting_for_writable = true;
-                this.state.waiting_for_readable = false;
                 return false;
             },
             .want_more => {
-                this.state.waiting_for_readable = true;
-                this.state.waiting_for_writable = false;
-
                 return true;
             },
         }
@@ -468,28 +452,18 @@ const StreamTransfer = struct {
         log("onReaderDone", .{});
         // deref the ref because reader is done
         defer this.deref();
-        this.state.waiting_for_readable = false;
-
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
 
         this.finish();
     }
 
     pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
         log("onReaderError {any}", .{err});
-        this.state.waiting_for_readable = false;
         defer this.deref(); // deref the ref because reader is done
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
 
         if (!this.state.has_ended_response) {
             // we need to signal to the client that something went wrong, so close the connection
             // sending the end chunk would be a lie and could cause issues
             this.state.has_ended_response = true;
-            this.state.waiting_for_writable = false;
             const resp = this.resp;
             const route = this.route;
             route.onResponseComplete(resp);
@@ -509,9 +483,8 @@ const StreamTransfer = struct {
     fn onWritable(this: *StreamTransfer, _: u64, _: AnyResponse) bool {
         log("onWritable", .{});
 
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
+        this.ref();
+        defer this.deref();
 
         if (this.reader.isDone()) {
             @branchHint(.unlikely);
@@ -525,8 +498,6 @@ const StreamTransfer = struct {
             this.resp.timeout(server.config().idleTimeout);
         }
 
-        this.state.waiting_for_writable = false;
-        this.state.waiting_for_readable = true;
         // we are reading so increase the ref count until onReaderDone/onReaderError
         this.ref();
         this.reader.read();
@@ -542,7 +513,6 @@ const StreamTransfer = struct {
 
         if (!this.state.has_ended_response) {
             this.state.has_ended_response = true;
-            this.state.waiting_for_writable = false;
             const resp = this.resp;
             const route = this.route;
             route.onResponseComplete(resp);
@@ -555,50 +525,15 @@ const StreamTransfer = struct {
 
     fn onAborted(this: *StreamTransfer, _: AnyResponse) void {
         log("onAborted", .{});
-        var scope: DeinitScope = undefined;
-        scope.enter(this);
-        defer scope.exit();
-
+        this.state.has_ended_response = true;
         this.finish();
     }
 
     pub fn deinit(this: *StreamTransfer) void {
-        if (this.defer_deinit) |defer_deinit| {
-            defer_deinit.* = true;
-            log("deinit deferred", .{});
-            return;
-        }
-
         log("deinit", .{});
         // deinit will close the reader if it is not already closed (this will not trigger onReaderDone/onReaderError)
         this.reader.deinit();
         bun.destroy(this);
-    }
-};
-
-const DeinitScope = struct {
-    stream: *StreamTransfer,
-    prev_defer_deinit: ?*bool,
-    deinit_called: bool = false,
-
-    /// This has to be an instance method to avoid a use-after-stack.
-    pub fn enter(this: *DeinitScope, stream: *StreamTransfer) void {
-        this.stream = stream;
-        this.deinit_called = false;
-        this.prev_defer_deinit = this.stream.defer_deinit;
-        if (this.prev_defer_deinit == null) {
-            this.stream.defer_deinit = &this.deinit_called;
-        }
-    }
-
-    pub fn exit(this: *DeinitScope) void {
-        if (this.prev_defer_deinit == null and &this.deinit_called == this.stream.defer_deinit) {
-            this.stream.defer_deinit = this.prev_defer_deinit;
-
-            if (this.deinit_called) {
-                this.stream.deinit();
-            }
-        }
     }
 };
 

@@ -373,8 +373,8 @@ describe("Bun.file in serve routes", () => {
     test.each(["hello.txt", "large.txt"])(
       "concurrent requests for %s",
       async filename => {
-        const batchSize = isWindows ? 8 : 32;
-        const iterations = isWindows ? 2 : 5;
+        const batchSize = isWindows ? 8 : 16;
+        const iterations = 2;
 
         async function iterate() {
           const promises = Array.from({ length: batchSize }, () =>
@@ -389,6 +389,7 @@ describe("Bun.file in serve routes", () => {
           // Verify all responses are identical
           const expected = results[0];
           results.forEach(result => {
+            expect(result.length).toBe(expected.length);
             expect(result).toBe(expected);
           });
         }

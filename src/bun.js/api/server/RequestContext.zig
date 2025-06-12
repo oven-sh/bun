@@ -153,51 +153,46 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (value.as(JSC.API.HTMLBundle)) |html_bundle| {
-                ctx.response_jsvalue = value;
-                ctx.response_jsvalue.ensureStillAlive();
-                ctx.flags.response_protected = false;
-
-                if (ctx.server) |server| {
-                    if (ctx.resp) |resp| {
-                        var entry = server.html_bundle_route_cache.getOrPut(html_bundle) catch bun.outOfMemory();
-                        if (!entry.found_existing) {
-                            entry.value_ptr.* = JSC.API.HTMLBundle.Route.init(html_bundle);
-                            entry.value_ptr.data.server = JSC.API.AnyServer.from(server);
-                        }
-                        const route = entry.value_ptr.data;
-
-                        ctx.detachResponse();
-                        ctx.endRequestStreamingAndDrain();
-
-                        const any_resp = uws.AnyResponse.init(resp);
-                        if (ctx.req) |req_ptr| {
-                            if (ctx.method == .HEAD) {
-                                route.onHEADRequest(req_ptr, any_resp);
-                            } else {
-                                route.onRequest(req_ptr, any_resp);
-                            }
-                        } else {
-                            route.respond(any_resp, ctx.method == .HEAD);
-                        }
-
-                        ctx.finalizeWithoutDeinit();
-                        ctx.deref();
-                        return;
-                    }
-                }
-                ctx.renderMissingInvalidResponse(value);
-                return;
-            }
-
             const response = value.as(JSC.WebCore.Response) orelse {
                 ctx.renderMissingInvalidResponse(value);
                 return;
             };
+
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
             value.protect();
+
+            // "/" => async () => { await sleep(1); return new Response(HTMLBundle); }
+            if (response.html_bundle_route) |route_ref| {
+                if(ctx.resp) |resp| {
+                    var route = route_ref.data;
+                    if(route.server == null){
+                        if(ctx.server) |server| {
+                            route.server = JSC.API.AnyServer.from(server);
+                        }
+                    }
+
+                    ctx.detachResponse();
+                    ctx.endRequestStreamingAndDrain();
+
+                    const any_resp = uws.AnyResponse.init(resp);
+                    if(ctx.req)|req_ptr|{
+                        if(ctx.method == .HEAD){
+                            route.onHEADRequest(req_ptr, any_resp);
+                        }
+                        else {
+                            route.onRequest(req_ptr, any_resp);
+                        }
+                    }
+                    else {
+                        route.respond(any_resp, ctx.method == .HEAD);
+                    }
+                    ctx.finalizeWithoutDeinit();
+                    ctx.deref();
+                    return;
+                }
+            }
 
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
@@ -1511,47 +1506,45 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            // if your return a HTMLBundle instead of a Response
-            if (response_value.as(JSC.API.HTMLBundle)) |html_bundle| {
-                ctx.response_jsvalue = response_value;
-                ctx.response_jsvalue.ensureStillAlive();
-                ctx.flags.response_protected = false;
-
-                if (ctx.resp) |resp| {
-                    var entry = this.html_bundle_route_cache.getOrPut(html_bundle) catch bun.outOfMemory();
-                    if (!entry.found_existing) {
-                        entry.value_ptr.* = JSC.API.HTMLBundle.Route.init(html_bundle);
-                        entry.value_ptr.data.server = JSC.API.AnyServer.from(this);
-                    }
-                    const route = entry.value_ptr.data;
-
-                    ctx.detachResponse();
-                    ctx.endRequestStreamingAndDrain();
-
-                    const any_resp = uws.AnyResponse.init(resp);
-
-                    if (ctx.req) |req_ptr| {
-                        if (ctx.method == .HEAD) {
-                            route.onHEADRequest(req_ptr, any_resp);
-                        } else {
-                            route.onRequest(req_ptr, any_resp);
-                        }
-                    } else {
-                        route.respond(any_resp, ctx.method == .HEAD);
-                    }
-                    ctx.finalizeWithoutDeinit();
-                    ctx.deref();
-                    return;
-                } else {
-                    ctx.renderMissingInvalidResponse(response_value);
-                    return;
-                }
-            }
-
+            
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
+
+                // () => new Response(HTMLBundle)
+                if(response.html_bundle_route) |route_ref| {
+                    if(ctx.resp) |resp| {
+                        var route = route_ref.data;
+                        if(route.server == null){
+                            if(ctx.server) |server| {
+                                route.server = JSC.API.AnyServer.from(server);
+                            }
+                        }
+
+                        ctx.detachResponse();
+                        ctx.endRequestStreamingAndDrain();
+
+                        const any_resp = uws.AnyResponse.init(resp);
+                        if(ctx.req) |req_ptr| {
+                            if(ctx.method == .HEAD){
+                                route.onHEADRequest(req_ptr, any_resp);
+                            }
+                            else {
+                                route.onRequest(req_ptr, any_resp);
+                            }
+                        } else {
+                            route.respond(any_resp, ctx.method == .HEAD);
+                        }
+                        ctx.finalizeWithoutDeinit();
+                        ctx.deref();
+                        return;
+                    }
+                    else {
+                        ctx.renderMissingInvalidResponse(response_value);
+                        return;
+                    }
+                }
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
                         var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1603,22 +1596,26 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             return;
                         }
 
-                        if (fulfilled_value.as(JSC.API.HTMLBundle)) |html_bundle| {
-                             ctx.response_jsvalue = fulfilled_value;
-                            ctx.response_jsvalue.ensureStillAlive();
-                            ctx.flags.response_protected = false;
+                        var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                            ctx.renderMissingInvalidResponse(fulfilled_value);
+                            return;
+                        };
 
-                            if (ctx.resp) |resp| {
-                                var entry = this.html_bundle_route_cache.getOrPut(html_bundle) catch bun.outOfMemory();
-                                if (!entry.found_existing) {
-                                    entry.value_ptr.* = JSC.API.HTMLBundle.Route.init(html_bundle);
-                                    entry.value_ptr.data.server = JSC.API.AnyServer.from(this);
+                        ctx.response_jsvalue = fulfilled_value;
+                        ctx.response_jsvalue.ensureStillAlive();
+                        ctx.flags.response_protected = false;
+
+                        // async () => new Response(HTMLBundle)
+                        if(response.html_bundle_route) |route_ref| {
+                            if(ctx.resp) |resp| {
+                                var route = route_ref.data;
+                                if (route.server == null) {
+                                    if(ctx.server) |server| {
+                                        route.server = JSC.API.AnyServer.from(server);
+                                    }
                                 }
-                                const route = entry.value_ptr.data;
-
                                 ctx.detachResponse();
                                 ctx.endRequestStreamingAndDrain();
-
                                 const any_resp = uws.AnyResponse.init(resp);
                                 if (ctx.req) |req_ptr| {
                                     if (ctx.method == .HEAD) {
@@ -1634,18 +1631,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 ctx.deref();
                                 return;
                             }
-                            ctx.renderMissingInvalidResponse(fulfilled_value);
-                            return;
+                            else {
+                                ctx.renderMissingInvalidResponse(fulfilled_value);
+                                return;
+                            }
                         }
 
-                        var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
-                            ctx.renderMissingInvalidResponse(fulfilled_value);
-                            return;
-                        };
-
-                        ctx.response_jsvalue = fulfilled_value;
-                        ctx.response_jsvalue.ensureStillAlive();
-                        ctx.flags.response_protected = false;
                         ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {

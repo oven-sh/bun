@@ -134,16 +134,10 @@ pub const Route = struct {
     pub fn onHEADRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, true);
     }
-
+    
     pub fn respond(this: *Route, resp: HTTPResponse, is_head: bool) void{
         this.ref();
         defer this.deref();
-
-        const server: AnyServer = this.server orelse {
-            resp.endWithoutBody(true);
-            return;
-        };
-        _ = server; // autofix
 
         switch (this.state) {
             .html => |html| {

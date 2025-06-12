@@ -520,6 +520,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
         /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
         pub fn getOrLoadPlugins(server: *ThisServer, callback: ServePlugins.Callback) ServePlugins.GetOrStartLoadResult {
+            if (server.plugins == null) {
+                if (server.vm.transpiler.options.serve_plugins) |serve_plugins_config| {
+                    if (serve_plugins_config.len > 0) {
+                        server.plugins = ServePlugins.init(serve_plugins_config);
+                    }
+                }
+            }
+            
             if (server.plugins) |p| {
                 return p.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
             }

@@ -1,3 +1,5 @@
+#include "/Users/kai/Code/BF.h"
+
 #include "config.h"
 #include "NodeTLS.h"
 
@@ -236,15 +238,11 @@ int NodeTLSSecureContext::ticketCompatibilityCallback(SSL* ssl, unsigned char* n
 }
 
 // https://github.com/190n/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L112
-static int useCertificateChain(SSL_CTX* ctx,
-    ncrypto::X509Pointer&& x,
-    STACK_OF(X509) * extra_certs,
-    ncrypto::X509Pointer* cert,
-    ncrypto::X509Pointer* issuer_)
+static int useCertificateChain(SSL_CTX* ctx, ncrypto::X509Pointer&& x, STACK_OF(X509) * extra_certs, ncrypto::X509Pointer* cert, ncrypto::X509Pointer* issuer_)
 {
     RELEASE_ASSERT(!*issuer_);
     RELEASE_ASSERT(!*cert);
-    ncrypto::X509Pointer issuer {};
+    X509* issuer = nullptr;
 
     int ret = SSL_CTX_use_certificate(ctx, x.get());
 
@@ -256,7 +254,7 @@ static int useCertificateChain(SSL_CTX* ctx,
 
             if (!SSL_CTX_add1_chain_cert(ctx, ca)) {
                 ret = 0;
-                issuer = {};
+                issuer = nullptr;
                 break;
             }
 
@@ -264,7 +262,7 @@ static int useCertificateChain(SSL_CTX* ctx,
                 continue;
             }
 
-            issuer = ncrypto::X509Pointer { ca };
+            issuer = ca;
         }
     }
 
@@ -272,8 +270,8 @@ static int useCertificateChain(SSL_CTX* ctx,
         if (issuer == nullptr) {
             *issuer_ = ncrypto::X509Pointer::IssuerFrom(ctx, x.view());
         } else {
-            issuer.reset(X509_dup(issuer.get()));
-            if (!issuer) {
+            issuer_->reset(X509_dup(issuer));
+            if (!issuer_) {
                 ret = 0;
             }
         }
@@ -598,12 +596,44 @@ JSC_DEFINE_HOST_FUNCTION(secureContextSetCert, (JSGlobalObject * globalObject, C
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
 
     ncrypto::BIOPointer bio = thisObject->loadBIO(globalObject, callFrame->argument(0));
     thisObject->addCert(globalObject, scope, std::move(bio));
     RETURN_IF_EXCEPTION(scope, {});
+    return JSC::encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(secureContextSetKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+
+    ncrypto::BIOPointer bio = thisObject->loadBIO(globalObject, callFrame->argument(0));
+
+    if (!bio) {
+        return JSC::encodedJSUndefined();
+    }
+
+    ncrypto::Buffer<const LChar> passphrase;
+    String string;
+
+    if (callFrame->argument(1).isString()) {
+        string = callFrame->argument(1).toWTFString(globalObject);
+        passphrase = ncrypto::Buffer<const LChar>::from(string.span8());
+    }
+
+    ncrypto::EVPKeyPointer key { PEM_read_bio_PrivateKey(bio.get(), nullptr, ncrypto::PasswordCallback, &passphrase) };
+
+    if (!key) {
+        return throwCryptoError(globalObject, scope, ERR_get_error(), "PEM_read_bio_PrivateKey");
+    }
+
+    if (!SSL_CTX_use_PrivateKey(thisObject->context(), key.get())) {
+        return throwCryptoError(globalObject, scope, ERR_get_error(), "SSL_CTX_use_PrivateKey");
+    }
+
     return JSC::encodedJSUndefined();
 }
 
@@ -613,7 +643,8 @@ static const HashTableValue NodeTLSSecureContextPrototypeTableValues[] = {
     { "addCACert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddCACert, 1 } },
     { "setECDHCurve"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetECDHCurve, 1 } },
     { "addRootCerts"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddRootCerts, 0 } },
-    { "setCert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCert, 0 } },
+    { "setCert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCert, 1 } },
+    { "setKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetKey, 2 } },
 };
 
 static EncodedJSValue constructSecureContext(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = {})

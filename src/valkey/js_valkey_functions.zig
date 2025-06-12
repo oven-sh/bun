@@ -838,7 +838,7 @@ const Slice = JSC.ZigString.Slice;
 const JSArgument = JSC.Node.BlobOrStringOrBuffer;
 
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
-    if (value == .undefined or value == .null) {
+    if (value.isUndefinedOrNull()) {
         return null;
     }
 

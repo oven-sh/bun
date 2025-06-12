@@ -1,7 +1,6 @@
 /// ABI-compatible with EncodedJSValue
 /// In the future, this type will exclude `zero`, encoding it as `error.JSError` instead.
 pub const JSValue = enum(i64) {
-    undefined = 0xa,
     null = 0x2,
     true = FFI.TrueI64,
     false = 0x6,
@@ -20,6 +19,10 @@ pub const JSValue = enum(i64) {
     /// in `JSC__JSValue__getIfPropertyExistsImpl`
     property_does_not_exist_on_object = 0x4,
     _,
+
+    /// not `pub` on purpose.
+    /// use .jsUndefined() so as to not be accidentally confused/typo'd with Zig undefined.
+    const @"undefined": JSValue = @enumFromInt(0xa);
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
@@ -700,7 +703,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn jsUndefined() JSValue {
-        return JSValue.undefined;
+        return @enumFromInt(0xa);
     }
 
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
@@ -891,7 +894,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
-        return this == .undefined;
+        return @intFromEnum(this) == 0xa;
     }
     pub inline fn isNull(this: JSValue) bool {
         return this == .null;
@@ -1094,7 +1097,7 @@ pub const JSValue = enum(i64) {
 
     pub inline fn isCell(this: JSValue) bool {
         return switch (this) {
-            .zero, .undefined, .null, .true, .false => false,
+            .zero, JSValue.undefined, .null, .true, .false => false,
             else => (@as(u64, @bitCast(@intFromEnum(this))) & FFI.NotCellMask) == 0,
         };
     }
@@ -1370,7 +1373,7 @@ pub const JSValue = enum(i64) {
 
         return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
             .zero => error.JSError,
-            .undefined, .property_does_not_exist_on_object => null,
+            JSValue.undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1455,7 +1458,7 @@ pub const JSValue = enum(i64) {
         }
 
         return switch (JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len))) {
-            .undefined, .zero, .property_does_not_exist_on_object => null,
+            JSValue.undefined, .zero, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1491,7 +1494,7 @@ pub const JSValue = enum(i64) {
             // since there are false positives, the better path is to make them
             // negatives, as the number of places that desire throwing on
             // existing undefined is extremely small, but non-zero.
-            .undefined => null,
+            JSValue.undefined => null,
             else => |val| val,
         };
     }
@@ -1511,7 +1514,7 @@ pub const JSValue = enum(i64) {
         return switch (JSC__JSValue__getPropertyValue(target, global, property_name.ptr, @intCast(property_name.len))) {
             .zero => error.JSError,
             .property_does_not_exist_on_object => null,
-            .undefined => null,
+            JSValue.undefined => null,
             else => |val| val,
         };
     }
@@ -1534,7 +1537,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         if (getOwn(this, global, property_name)) |prop| {
-            if (prop == .undefined) return null;
+            if (prop.isUndefined()) return null;
             return prop;
         }
 
@@ -1564,7 +1567,7 @@ pub const JSValue = enum(i64) {
             .zero => unreachable,
 
             // Treat undefined and null as unspecified
-            .null, .undefined => null,
+            .null, JSValue.undefined => null,
 
             // false, 0, are deliberately not included in this list.
             // That would prevent you from passing `0` or `false` to various Bun APIs.
@@ -1810,7 +1813,7 @@ pub const JSValue = enum(i64) {
         const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
-            .undefined => null,
+            JSValue.undefined => null,
             .false, .true => prop == .true,
             else => {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);
@@ -2346,7 +2349,7 @@ pub const JSValue = enum(i64) {
         }
 
         switch (comptime Type) {
-            void => return .undefined,
+            void => return .jsUndefined(),
             bool => return JSC.JSValue.jsBoolean(if (comptime Type != T) value.* else value),
             *JSC.JSGlobalObject => return value.toJSValue(),
             []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {

@@ -611,7 +611,7 @@ pub fn onReaderDone(this: *FileReader) void {
                     this.eventLoop().js.runCallback(
                         cb,
                         globalThis,
-                        .undefined,
+                        .jsUndefined(),
                         &.{
                             JSC.ArrayBuffer.fromBytes(
                                 buffered.items,

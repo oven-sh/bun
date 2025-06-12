@@ -555,10 +555,10 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (arguments.len > 1 and arguments[1].isObject())
             arguments[1]
         else if (is_first_argument_a_url)
-            JSValue.undefined
+            .jsUndefined()
         else
             url_or_object,
-        if (is_first_argument_a_url) JSValue.undefined else url_or_object,
+        if (is_first_argument_a_url) .jsUndefined() else url_or_object,
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];

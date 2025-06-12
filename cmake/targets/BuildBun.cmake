@@ -42,6 +42,29 @@ else()
   set(CONFIGURE_DEPENDS "")
 endif()
 
+# --- Dependencies ---
+
+set(BUN_DEPENDENCIES
+  BoringSSL
+  Brotli
+  Cares
+  Highway
+  LibDeflate
+  LolHtml
+  Lshpack
+  Mimalloc
+  TinyCC
+  Zlib
+  LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
+  Zstd
+)
+
+include(CloneZstd)
+# foreach(dependency ${BUN_DEPENDENCIES})
+#   include(Clone${dependency})
+# endforeach()
+
 # --- Codegen ---
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -582,6 +605,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   TARGETS
     clone-zig
+    clone-zstd
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -1053,22 +1077,6 @@ if(NOT WEBKIT_LOCAL AND NOT APPLE)
 endif()
 
 # --- Dependencies ---
-
-set(BUN_DEPENDENCIES
-  BoringSSL
-  Brotli
-  Cares
-  Highway
-  LibDeflate
-  LolHtml
-  Lshpack
-  Mimalloc
-  TinyCC
-  Zlib
-  LibArchive # must be loaded after zlib
-  HdrHistogram # must be loaded after zlib
-  Zstd
-)
 
 if(WIN32)
   list(APPEND BUN_DEPENDENCIES Libuv)

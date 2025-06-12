@@ -330,8 +330,8 @@ pub const All = struct {
         globalThis.emitWarning(
             warning_string.transferToJS(globalThis),
             warning_type_string.transferToJS(globalThis),
-            .undefined,
-            .undefined,
+            .jsUndefined(),
+            .jsUndefined(),
         ) catch unreachable;
     }
 
@@ -390,7 +390,7 @@ pub const All = struct {
 
         const countdown_int = try vm.timer.jsValueToCountdown(global, countdown, .clamp, true);
         const wrapped_promise = promise.withAsyncContextIfNeeded(global);
-        return TimeoutObject.init(global, id, .setTimeout, countdown_int, wrapped_promise, .undefined);
+        return TimeoutObject.init(global, id, .setTimeout, countdown_int, wrapped_promise, .jsUndefined());
     }
 
     pub fn setImmediate(
@@ -671,7 +671,7 @@ pub const TimeoutObject = struct {
 
     pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.internals.cancel(globalThis.bunVM());
-        return .undefined;
+        return .jsUndefined();
     }
 };
 
@@ -766,7 +766,7 @@ pub const ImmediateObject = struct {
 
     pub fn dispose(this: *ImmediateObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.internals.cancel(globalThis.bunVM());
-        return .undefined;
+        return .jsUndefined();
     }
 };
 
@@ -887,13 +887,12 @@ pub const TimerObjectInternals = struct {
         const globalThis = vm.global;
         const this_object = this.strong_this.get().?;
 
-        const callback, const arguments, var idle_timeout, var repeat = switch (kind) {
+        const callback: JSValue, const arguments: JSValue, var idle_timeout: JSValue, var repeat: JSValue = switch (kind) {
             .setImmediate => .{
                 ImmediateObject.js.callbackGetCached(this_object).?,
                 ImmediateObject.js.argumentsGetCached(this_object).?,
-
-                .undefined,
-                .undefined,
+                .jsUndefined(),
+                .jsUndefined(),
             },
             .setTimeout, .setInterval => .{
                 TimeoutObject.js.callbackGetCached(this_object).?,

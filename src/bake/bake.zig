@@ -391,7 +391,7 @@ pub const Framework = struct {
                 break :brk null;
 
             if (rfr == .true) break :brk .{};
-            if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+            if (rfr == .false or rfr.isUndefinedOrNull()) break :brk null;
 
             if (!rfr.isObject()) {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
@@ -411,7 +411,7 @@ pub const Framework = struct {
         const server_components: ?ServerComponents = sc: {
             const sc: JSValue = try opts.get(global, "serverComponents") orelse
                 break :sc null;
-            if (sc == .false or sc == .null or sc == .undefined) break :sc null;
+            if (sc == .false or sc.isUndefinedOrNull()) break :sc null;
 
             if (!sc.isObject()) {
                 return global.throwInvalidArguments("'framework.serverComponents' must be an object or 'undefined'", .{});
@@ -719,7 +719,7 @@ fn getOptionalString(
 ) !?[]const u8 {
     const value = try target.get(global, property) orelse
         return null;
-    if (value == .undefined or value == .null)
+    if (value.isUndefinedOrNull())
         return null;
     const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));

@@ -29,7 +29,7 @@ pub const Repository = @import("./repository.zig").Repository;
 const FileSystem = Fs.FileSystem;
 const DotEnv = @import("../env_loader.zig");
 const invalid_package_id = install.invalid_package_id;
-const DependencyID = @import("./install/types.zig").DependencyID;
+const DependencyID = @import("./install.zig").DependencyID;
 const Resolution = @import("./resolution.zig").Resolution;
 
 pub const NetworkTask = struct {

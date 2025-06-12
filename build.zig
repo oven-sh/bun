@@ -513,6 +513,8 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
 
+    translate_c.addIncludePath(b.path("vendor/zstd/lib"));
+
     if (target.result.os.tag == .windows) {
         // translate-c is unable to translate the unsuffixed windows functions
         // like `SetCurrentDirectory` since they are defined with an odd macro

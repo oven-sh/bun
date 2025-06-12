@@ -264,7 +264,7 @@ pub fn CompressionStream(comptime T: type) type {
             return false;
         }
 
-        fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) !void {
+        pub fn emitError(this: *T, globalThis: *JSC.JSGlobalObject, this_value: JSC.JSValue, err_: Error) !void {
             var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
             const msg_value = msg_str.transferToJS(globalThis);
             const err_value = JSC.jsNumber(err_.err);
@@ -287,7 +287,7 @@ pub fn CompressionStream(comptime T: type) type {
 
 pub const NativeZlib = JSC.Codegen.JSNativeZlib.getConstructor;
 
-const CountedKeepAlive = struct {
+pub const CountedKeepAlive = struct {
     keep_alive: bun.Async.KeepAlive = .{},
     ref_count: u32 = 0,
 
@@ -428,7 +428,7 @@ pub const SNativeZlib = struct {
     }
 };
 
-const Error = struct {
+pub const Error = struct {
     msg: ?[*:0]const u8,
     err: c_int,
     code: ?[*:0]const u8,
@@ -471,6 +471,7 @@ const ZlibContext = struct {
             .UNZIP => windowBits + 32,
             .DEFLATERAW, .INFLATERAW => windowBits * -1,
             .BROTLI_DECODE, .BROTLI_ENCODE => unreachable,
+            .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => unreachable,
         };
 
         this.dictionary = dictionary orelse "";
@@ -479,8 +480,8 @@ const ZlibContext = struct {
             .NONE => unreachable,
             .DEFLATE, .GZIP, .DEFLATERAW => this.err = c.deflateInit2_(&this.state, level, 8, windowBitsActual, memLevel, strategy, c.zlibVersion(), @sizeOf(c.z_stream)),
             .INFLATE, .GUNZIP, .UNZIP, .INFLATERAW => this.err = c.inflateInit2_(&this.state, windowBitsActual, c.zlibVersion(), @sizeOf(c.z_stream)),
-            .BROTLI_DECODE => @panic("TODO"),
-            .BROTLI_ENCODE => @panic("TODO"),
+            .BROTLI_DECODE, .BROTLI_ENCODE => unreachable,
+            .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => unreachable,
         }
         if (this.err != .Ok) {
             this.mode = .NONE;
@@ -619,6 +620,7 @@ const ZlibContext = struct {
             },
             .NONE => {},
             .BROTLI_ENCODE, .BROTLI_DECODE => {},
+            .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => {},
         }
     }
 
@@ -684,6 +686,7 @@ const ZlibContext = struct {
             },
             .NONE => {},
             .BROTLI_ENCODE, .BROTLI_DECODE => {},
+            .ZSTD_COMPRESS, .ZSTD_DECOMPRESS => {},
         }
         bun.assert(status == .Ok or status == .DataError);
         this.mode = .NONE;
@@ -722,9 +725,7 @@ pub const SNativeBrotli = struct {
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,
-    task: JSC.WorkPoolTask = .{
-        .callback = undefined,
-    },
+    task: JSC.WorkPoolTask = .{ .callback = undefined },
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;
@@ -960,3 +961,5 @@ const BrotliContext = struct {
         unreachable;
     }
 };
+
+pub const NativeZstd = JSC.Codegen.JSNativeZstd.getConstructor;

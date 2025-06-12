@@ -634,13 +634,6 @@ function TLSSocket(socket?, options?) {
 
   this.once("connect", socket => {
     if (socket?.isServer) {
-      this._handle.SNICallback = (_socket, servername) => {
-        if (!servername || !this._SNICallback) {
-          // return requestOCSP(
-        }
-        console.trace("SNICallback", { servername }, this._SNICallback);
-      };
-
       this._handle.certCallback = loadSNI.bind(this);
       this._handle.enableCertCallback();
     }
@@ -1064,17 +1057,20 @@ function loadSNI(servername) {
   let once = false;
   this._SNICallback(servername, (err, context) => {
     if (once) {
-      return this.destroy($ERR_MULTIPLE_CALLBACK());
+      this.destroySoon($ERR_MULTIPLE_CALLBACK());
+      return this;
     }
 
     once = true;
 
     if (err) {
-      return this.destroy(err);
+      this.destroySoon(err);
+      return this;
     }
 
     if (this._handle === null) {
-      return this.destroy($ERR_SOCKET_CLOSED());
+      this.destroySoon($ERR_SOCKET_CLOSED());
+      return this;
     }
 
     if (context) {

@@ -1972,7 +1972,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
-            log("onClose {s}", .{if (this.handlers.is_server) "S" else "C"});
+            log("onClose {s} {*}", .{ if (this.handlers.is_server) "S" else "C", this });
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -2066,7 +2066,6 @@ fn NewSocket(comptime ssl: bool) type {
             const this_value = this.getThisValue(globalObject);
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
                 ZigString.init(servername).toJS(globalObject),
             }) catch |err| {
                 _ = this.handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });

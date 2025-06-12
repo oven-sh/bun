@@ -31,22 +31,22 @@ pub const us_socket_t = opaque {
     }
 
     pub fn pause(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_pause({d})", .{@intFromPtr(this)});
+        debug("us_socket_pause({*})", .{this});
         c.us_socket_pause(@intFromBool(ssl), this);
     }
 
     pub fn @"resume"(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_resume({d})", .{@intFromPtr(this)});
+        debug("us_socket_resume({*})", .{this});
         c.us_socket_resume(@intFromBool(ssl), this);
     }
 
     pub fn close(this: *us_socket_t, ssl: bool, code: CloseCode) void {
-        debug("us_socket_close({d}, {s})", .{ @intFromPtr(this), @tagName(code) });
+        debug("us_socket_close({*}, {s})", .{ this, @tagName(code) });
         _ = c.us_socket_close(@intFromBool(ssl), this, code, null);
     }
 
     pub fn shutdown(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_shutdown({d})", .{@intFromPtr(this)});
+        debug("us_socket_shutdown({*})", .{this});
         c.us_socket_shutdown(@intFromBool(ssl), this);
     }
 

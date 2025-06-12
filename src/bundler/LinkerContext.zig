@@ -971,7 +971,7 @@ pub const LinkerContext = struct {
                             });
                         }
 
-                        const source: *const Logger.Source = &input_files[record.source_index.get()];
+                        const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
                             try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})

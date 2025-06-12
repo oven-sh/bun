@@ -243,7 +243,7 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
 
     _ = cb.call(
         globalThis,
-        .undefined,
+        .jsUndefined(),
         &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
     ) catch |e| {
         const err = globalThis.takeException(e);
@@ -271,7 +271,7 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
 
     _ = cb.call(
         globalThis,
-        .undefined,
+        .jsUndefined(),
         &[_]JSC.JSValue{ this.getThisValue(), this.binaryToJS(globalThis, data) },
     ) catch |e| {
         const err = globalThis.takeException(e);
@@ -324,7 +324,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         _ = handler.onClose.call(
             globalObject,
-            .undefined,
+            .jsUndefined(),
             &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
         ) catch |e| {
             const err = globalObject.takeException(e);
@@ -1064,7 +1064,7 @@ pub fn close(
     this.this_value = this_value;
 
     if (this.isClosed()) {
-        return .undefined;
+        return .jsUndefined();
     }
 
     const code = brk: {
@@ -1089,7 +1089,7 @@ pub fn close(
 
     this.flags.closed = true;
     this.websocket().end(code, message_value.slice());
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn terminate(
@@ -1107,14 +1107,14 @@ pub fn terminate(
     this.this_value = this_value;
 
     if (this.isClosed()) {
-        return .undefined;
+        return .jsUndefined();
     }
 
     this.flags.closed = true;
     this.this_value.unprotect();
     this.websocket().close();
 
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn getBinaryType(
@@ -1272,7 +1272,7 @@ const Corker = struct {
         const this_value = this.this_value;
         this.result = this.callback.call(
             this.globalObject,
-            if (this_value == .zero) .undefined else this_value,
+            if (this_value == .zero) .jsUndefined() else this_value,
             this.args,
         ) catch |err| this.globalObject.takeException(err);
     }

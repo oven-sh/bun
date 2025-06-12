@@ -1137,7 +1137,7 @@ pub const Interpreter = struct {
         root.start();
         if (globalThis.hasException()) return error.JSError;
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
@@ -1185,13 +1185,13 @@ pub const Interpreter = struct {
                     const loop = this.event_loop.js;
                     this.keep_alive.disable();
                     loop.enter();
-                    _ = resolve.call(globalThis, .undefined, &.{
+                    _ = resolve.call(globalThis, .jsUndefined(), &.{
                         JSValue.jsNumberFromU16(exit_code),
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .jsUndefined());
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .jsUndefined());
                     loop.exit();
                 }
             }
@@ -1220,8 +1220,8 @@ pub const Interpreter = struct {
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .jsUndefined());
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .jsUndefined());
 
                     loop.exit();
                 }
@@ -1269,7 +1269,7 @@ pub const Interpreter = struct {
     pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1284,7 +1284,7 @@ pub const Interpreter = struct {
             },
             .result => {},
         }
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1308,7 +1308,7 @@ pub const Interpreter = struct {
         while (object_iter.next()) |key| {
             const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             var value = object_iter.value;
-            if (value == .undefined) continue;
+            if (value.isUndefined()) continue;
 
             const value_str = value.getZigString(globalThis);
             const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
@@ -1320,7 +1320,7 @@ pub const Interpreter = struct {
             this.root_shell.export_env.insert(keyref, valueref);
         }
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn isRunning(

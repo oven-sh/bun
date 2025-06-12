@@ -8267,11 +8267,11 @@ pub const PackageManager = struct {
                 }
                 if (globalThis.hasException()) return .zero;
             } else {
-                return .undefined;
+                return .jsUndefined();
             }
 
             if (all_positionals.items.len == 0) {
-                return .undefined;
+                return .jsUndefined();
             }
 
             var array = Array{};
@@ -8279,7 +8279,7 @@ pub const PackageManager = struct {
             const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
                 return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
-            if (update_requests.len == 0) return .undefined;
+            if (update_requests.len == 0) return .jsUndefined();
 
             if (log.msgs.items.len > 0) {
                 return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));

@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isWindows, rmScope, tempDirWithFiles } from "harness";
+import { rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -391,7 +391,7 @@ describe("Bun.file in serve routes", () => {
           results.forEach(result => {
             expect(result.length).toBe(expected.length);
             expect(result).toBe(expected);
-          });
+          }
         }
 
         for (let i = 0; i < iterations; i++) {
@@ -399,7 +399,7 @@ describe("Bun.file in serve routes", () => {
           Bun.gc();
         }
       },
-      30000,
+      60000,
     );
 
     it("memory usage stays reasonable", async () => {

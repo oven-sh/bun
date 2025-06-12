@@ -4806,6 +4806,9 @@ pub const Headers = struct {
 
         return null;
     }
+    pub inline fn contains(this: *const Headers, name: []const u8) bool {
+        return this.get(name) != null;
+    }
 
     pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
         var offset: u32 = @truncate(this.buf.items.len);

@@ -118,7 +118,91 @@ pub const AnyRoute = union(enum) {
         }
     }
 
-    pub fn htmlRouteFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext) ?AnyRoute {
+    fn htmlManifestEntryFromJS(entry: JSC.JSValue, global: *JSC.JSGlobalObject, index_route: *?AnyRoute, index_route_path: []const u8, user_routes_to_build: *std.ArrayList(ServerConfig.StaticRouteEntry)) bun.JSError!void {
+        var path: JSC.Node.PathOrFileDescriptor = .{
+            .path = .{ .encoded_slice = try entry.getOptional(global, "path", ZigString.Slice) orelse return },
+        };
+        defer path.deinit();
+        const headers: ?*JSC.WebCore.FetchHeaders = if (try entry.getOptional(global, "headers", JSValue)) |headers_value|
+            JSC.WebCore.FetchHeaders.createFromJS(global, headers_value)
+        else
+            null;
+
+        defer {
+            if (headers) |h| h.deref();
+        }
+
+        if (global.hasException()) return error.JSError;
+
+        var blob = Blob.findOrCreateFileFromPath(
+            &path,
+            global,
+            true,
+        );
+
+        var path_segment = std.ArrayList(u8).init(bun.default_allocator);
+        errdefer path_segment.deinit();
+
+        var path_relative_to_cwd = bun.path.relativeNormalized(bun.fs.FileSystem.instance.top_level_dir, path.slice(), .posix, true);
+        if (strings.hasPrefix(path_relative_to_cwd, "./")) {
+            path_relative_to_cwd = path_relative_to_cwd[1..];
+        }
+
+        if (!strings.hasPrefix(path_relative_to_cwd, "/")) {
+            try path_segment.append('/');
+        }
+
+        try path_segment.appendSlice(path_relative_to_cwd);
+
+        const any_route: AnyRoute = if (blob.needsToReadFile())
+            .{
+                .file = FileRoute.initFromBlob(blob, .{
+                    .headers = headers,
+                    .server = null,
+                }),
+            }
+        else
+            .{
+                .static = StaticRoute.initFromAnyBlob(&.{ .Blob = blob }, .{
+                    .headers = headers,
+                    .server = null,
+                }),
+            };
+
+        if (index_route.* == null and strings.eql(path.slice(), index_route_path)) {
+            index_route.* = any_route;
+        } else {
+            var methods = HTTP.Method.Optional{
+                .method = .{},
+            };
+            methods.insert(.GET);
+            methods.insert(.HEAD);
+
+            try user_routes_to_build.append(.{
+                .path = path_segment.items,
+                .route = any_route,
+                .method = methods,
+            });
+        }
+    }
+
+    fn htmlManifestObjectFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext, global: *JSC.JSGlobalObject) bun.JSError!?AnyRoute {
+        const index: ZigString.Slice = try (argument.getOptional(global, "index", ZigString.Slice)) orelse return null;
+        defer index.deinit();
+
+        const files: JSValue = (try argument.getOwnArray(global, "files")) orelse return null;
+        var array_iter = files.arrayIterator(global);
+        var index_route: ?AnyRoute = null;
+        const index_route_ptr: *?AnyRoute = &index_route;
+
+        while (array_iter.next()) |entry| {
+            try htmlManifestEntryFromJS(entry, global, index_route_ptr, index.slice(), init_ctx.static_routes);
+        }
+
+        return index_route;
+    }
+
+    pub fn htmlRouteFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext, global: *JSC.JSGlobalObject) bun.JSError!?AnyRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
             const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
             if (!entry.found_existing) {
@@ -129,6 +213,10 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (argument.isObject()) {
+            return htmlManifestObjectFromJS(argument, init_ctx, global);
+        }
+
         return null;
     }
 
@@ -137,6 +225,7 @@ pub const AnyRoute = union(enum) {
         dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
         js_string_allocations: bun.bake.StringRefList,
         framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
+        static_routes: *std.ArrayList(ServerConfig.StaticRouteEntry),
     };
 
     pub fn fromJS(
@@ -145,7 +234,7 @@ pub const AnyRoute = union(enum) {
         argument: JSC.JSValue,
         init_ctx: *ServerInitContext,
     ) bun.JSError!?AnyRoute {
-        if (AnyRoute.htmlRouteFromJS(argument, init_ctx)) |html_route| {
+        if (try AnyRoute.htmlRouteFromJS(argument, init_ctx, global)) |html_route| {
             return html_route;
         }
 

@@ -871,6 +871,13 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
+    pub fn slice(this: *const PathOrFileDescriptor) []const u8 {
+        return switch (this.*) {
+            .path => this.path.slice(),
+            .fd => @panic("slice not supported for file descriptors"),
+        };
+    }
+
     pub fn estimatedSize(this: *const PathOrFileDescriptor) usize {
         return switch (this.*) {
             .path => this.path.estimatedSize(),

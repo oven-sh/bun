@@ -511,6 +511,7 @@ pub fn fromJS(
                 .dedupe_html_bundle_map = .init(bun.default_allocator),
                 .framework_router_list = .init(bun.default_allocator),
                 .js_string_allocations = .empty,
+                .static_routes = &args.static_routes,
             };
             errdefer {
                 init_ctx.arena.deinit();
@@ -1067,7 +1068,7 @@ pub fn fromJS(
     return;
 }
 
-const UserRouteBuilder = struct {
+pub const UserRouteBuilder = struct {
     route: ServerConfig.RouteDeclaration,
     callback: JSC.Strong.Optional = .empty,
 

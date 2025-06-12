@@ -1148,9 +1148,11 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
         return JSC::JSValue::encode(vm.smallStrings.undefinedString());
     if (decodedReason.isString())
         return JSC::JSValue::encode(decodedReason);
+    if (decodedReason.isBigInt())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
     if (decodedReason.isObject())
         return JSC::JSValue::encode(objectPrototypeToString(globalObject, decodedReason.getObject()));
-    return JSC::JSValue::encode(vm.smallStrings.objectObjectString());
+    return JSC::JSValue::encode(jsString(vm, "#<Object>"_str));
 }
 
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)

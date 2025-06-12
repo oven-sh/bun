@@ -1,4 +1,4 @@
-import { CString, dlopen, FFIType, type Pointer } from "bun:ffi";
+import { CString, dlopen, FFIType } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { join } from "node:path";

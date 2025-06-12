@@ -295,7 +295,12 @@ const FileType = bun.io.FileType;
 const Output = bun.Output;
 
 const StreamTransfer = struct {
+    const StreamTransferRefCount = bun.ptr.RefCount(@This(), "ref_count", StreamTransfer.deinit, .{});
+    pub const ref = StreamTransferRefCount.ref;
+    pub const deref = StreamTransferRefCount.deref;
+
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(StreamTransfer),
+    ref_count: StreamTransferRefCount,
     fd: bun.FileDescriptor,
     resp: AnyResponse,
     route: *FileRoute,
@@ -309,8 +314,7 @@ const StreamTransfer = struct {
         waiting_for_readable: bool = false,
         waiting_for_writable: bool = false,
         has_ended_response: bool = false,
-        has_reader_closed: bool = false,
-        _: u4 = 0,
+        _: u5 = 0,
     } = .{},
     const log = Output.scoped(.StreamTransfer, false);
 
@@ -323,6 +327,7 @@ const StreamTransfer = struct {
         file_type: FileType,
     ) *StreamTransfer {
         var t = bun.new(StreamTransfer, .{
+            .ref_count = .init(),
             .fd = fd,
             .resp = resp,
             .route = route,
@@ -380,6 +385,8 @@ const StreamTransfer = struct {
         if (this.route.server) |server| {
             this.resp.timeout(server.config().idleTimeout);
         }
+        // we are reading so increase the ref count until onReaderDone/onReaderError
+        this.ref();
         this.reader.read();
 
         if (!scope.deinit_called) {
@@ -408,8 +415,9 @@ const StreamTransfer = struct {
                     // artificially end the stream aka max_size reached
                     log("max_size reached, ending stream", .{});
                     if (this.route.server) |server| {
+                        // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
                         this.reader.pause();
-                        // we cannot end inside onReadChunk so we schedule it to be done in the next event loop tick
+                        // we cannot free inside onReadChunk other would be UAF so we schedule it to be done in the next event loop tick
                         this.eof_task = JSC.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
                         server.vm().enqueueTask(JSC.Task.init(&this.eof_task.?));
                     }
@@ -439,6 +447,8 @@ const StreamTransfer = struct {
 
         switch (this.resp.write(chunk)) {
             .backpressure => {
+                // pause the reader so deref the ref
+                defer this.deref();
                 this.resp.onWritable(*StreamTransfer, onWritable, this);
                 this.reader.pause();
                 this.state.waiting_for_writable = true;
@@ -456,8 +466,9 @@ const StreamTransfer = struct {
 
     pub fn onReaderDone(this: *StreamTransfer) void {
         log("onReaderDone", .{});
+        // deref the ref because reader is done
+        defer this.deref();
         this.state.waiting_for_readable = false;
-        this.state.has_reader_closed = true;
 
         var scope: DeinitScope = undefined;
         scope.enter(this);
@@ -469,7 +480,7 @@ const StreamTransfer = struct {
     pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
         log("onReaderError {any}", .{err});
         this.state.waiting_for_readable = false;
-
+        defer this.deref(); // deref the ref because reader is done
         var scope: DeinitScope = undefined;
         scope.enter(this);
         defer scope.exit();
@@ -516,12 +527,15 @@ const StreamTransfer = struct {
 
         this.state.waiting_for_writable = false;
         this.state.waiting_for_readable = true;
+        // we are reading so increase the ref count until onReaderDone/onReaderError
+        this.ref();
         this.reader.read();
         return true;
     }
 
     fn finish(this: *StreamTransfer) void {
         log("finish", .{});
+        // lets make sure that we detach the response
         this.resp.clearOnWritable();
         this.resp.clearAborted();
         this.resp.clearTimeout();
@@ -535,13 +549,8 @@ const StreamTransfer = struct {
             log("endWithoutBody", .{});
             resp.endWithoutBody(resp.shouldCloseConnection());
         }
-
-        if (!this.state.has_reader_closed) {
-            this.reader.close();
-            return;
-        }
-
-        this.deinit();
+        // deref this indicates the main thing is done, the reader may be holding a ref and will be derefed in onReaderDone/onReaderError
+        this.deref();
     }
 
     fn onAborted(this: *StreamTransfer, _: AnyResponse) void {
@@ -553,7 +562,7 @@ const StreamTransfer = struct {
         this.finish();
     }
 
-    fn deinit(this: *StreamTransfer) void {
+    pub fn deinit(this: *StreamTransfer) void {
         if (this.defer_deinit) |defer_deinit| {
             defer_deinit.* = true;
             log("deinit deferred", .{});
@@ -561,6 +570,7 @@ const StreamTransfer = struct {
         }
 
         log("deinit", .{});
+        // deinit will close the reader if it is not already closed (this will not trigger onReaderDone/onReaderError)
         this.reader.deinit();
         bun.destroy(this);
     }

@@ -397,7 +397,6 @@ describe("Bun.file in serve routes", () => {
         for (let i = 0; i < iterations; i++) {
           await iterate();
           Bun.gc();
-         
         }
       },
       60000,

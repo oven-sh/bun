@@ -24,6 +24,10 @@ pub fn NewResponse(ssl_flag: i32) type {
             return @as(*c.uws_res, @ptrCast(@alignCast(res)));
         }
 
+        pub inline fn downcastSocket(res: *Response) *bun.uws.us_socket_t {
+            return @as(*bun.uws.us_socket_t, @ptrCast(@alignCast(res)));
+        }
+
         pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
             c.uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
         }
@@ -458,6 +462,13 @@ pub const AnyResponse = union(enum) {
     pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
         switch (this) {
             inline else => |resp| resp.endWithoutBody(close_connection),
+        }
+    }
+
+    pub fn forceClose(this: AnyResponse) void {
+        switch (this) {
+            .SSL => |resp| resp.downcastSocket().close(true, .failure),
+            .TCP => |resp| resp.downcastSocket().close(false, .failure),
         }
     }
 

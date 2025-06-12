@@ -219,21 +219,15 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
-#if ASSERT_ENABLED
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
-#if ASSERT_ENABLED
-    if (!uint8Array) [[unlikely]] {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !uint8Array);
 
     return uint8Array;
 }
@@ -241,19 +235,13 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_
 static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
 
-#if ASSERT_ENABLED
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
     auto* result = createUninitializedBuffer(lexicalGlobalObject, byteLength);
 
-#if ASSERT_ENABLED
-    if (!result) [[unlikely]] {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !result);
 
     return result;
 }

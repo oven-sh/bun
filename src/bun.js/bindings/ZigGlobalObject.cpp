@@ -2928,16 +2928,20 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
+            auto scope = DECLARE_CATCH_SCOPE(init.vm);
             auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
             auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+            scope.assertNoExceptionExceptTermination();
             init.set(subclassStructure);
         });
     m_JSResizableOrGrowableSharedBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
+            auto scope = DECLARE_CATCH_SCOPE(init.vm);
             auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
             auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+            scope.assertNoExceptionExceptTermination();
             init.set(subclassStructure);
         });
     m_performMicrotaskFunction.initLater(

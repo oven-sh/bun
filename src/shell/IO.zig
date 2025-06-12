@@ -139,4 +139,4 @@ const shell = bun.shell;
 const Interpreter = bun.shell.Interpreter;
 const OutputNeedsIOSafeGuard = bun.shell.interpret.OutputNeedsIOSafeGuard;
 const stdout_no = bun.shell.interpret.stdout_no;
-const stderr_no = bun.shell.interpret.stdout_no;
+const stderr_no = bun.shell.interpret.stderr_no;

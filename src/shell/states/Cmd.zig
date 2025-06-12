@@ -860,6 +860,6 @@ const uv = windows.libuv;
 
 const stdin_no = bun.shell.interpret.stdin_no;
 const stdout_no = bun.shell.interpret.stdout_no;
-const stderr_no = bun.shell.interpret.stdout_no;
+const stderr_no = bun.shell.interpret.stderr_no;
 
 const which = bun.which;

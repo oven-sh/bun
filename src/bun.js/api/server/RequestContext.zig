@@ -186,7 +186,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         }
                     }
                     else {
-                        route.respond(any_resp, ctx.method == .HEAD);
+                        route.respond(any_resp, ctx.method);
                     }
                     ctx.finalizeWithoutDeinit();
                     ctx.deref();
@@ -1534,7 +1534,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 route.onRequest(req_ptr, any_resp);
                             }
                         } else {
-                            route.respond(any_resp, ctx.method == .HEAD);
+                            route.respond(any_resp, ctx.method);
                         }
                         ctx.finalizeWithoutDeinit();
                         ctx.deref();
@@ -1624,7 +1624,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                         route.onRequest(req_ptr, any_resp);
                                     }
                                 } else {
-                                    route.respond(any_resp, ctx.method == .HEAD);
+                                    route.respond(any_resp, ctx.method);
                                 }
 
                                 ctx.finalizeWithoutDeinit();

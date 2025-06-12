@@ -135,24 +135,54 @@ pub const Route = struct {
         this.onAnyRequest(req, resp, true);
     }
     
-    pub fn respond(this: *Route, resp: HTTPResponse, is_head: bool) void{
+    pub fn respond(this: *Route, resp: HTTPResponse, method: HTTP.Method) void{
         this.ref();
         defer this.deref();
 
-        switch (this.state) {
-            .html => |html| {
-                if(is_head){
-                    html.onHEAD(resp);
+        const server: AnyServer = this.server orelse {
+            resp.writeStatus("500 Internal Server Error");
+            resp.endWithoutBody(true);
+            return;
+        };
+
+        const is_head = method == .HEAD;
+
+        state: while(true) 
+            switch (this.state) {
+                .pending => {
+                    this.scheduleBundle(server) catch bun.outOfMemory();
+                    continue :state;
+                },
+                .building => {
+                    const pending = bun.new(PendingResponse, .{
+                        .method = method,
+                        .resp = resp,
+                        .server = this.server,
+                        .route = this
+                    });
+
+                    this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+
+                    this.ref();
+                    resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
+                    return;
+                },
+                .err => |log| {
+                    _ = log; // TODO: Surface build errors
+                    resp.writeStatus("500 Build Failed");
+                    resp.endWithoutBody(false);
+                    return;
+                },
+                .html => |html| {
+                    if(is_head) {
+                        html.onHEAD(resp);
+                    }
+                    else {
+                        html.on(resp);
+                    }
+                    return;
                 }
-                else {
-                    html.on(resp);
-                }
-            },
-            else => {
-                resp.writeStatus("500 Internal Server Error");
-                resp.endWithoutBody(true);
-            }
-        }
+            };
     }
 
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
@@ -531,6 +561,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
+const HTTP = bun.http;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
 const StaticRoute = @import("./StaticRoute.zig");

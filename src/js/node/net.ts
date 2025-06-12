@@ -2073,10 +2073,12 @@ function Server(options?, connectionListener?) {
   if (typeof options === "function") {
     connectionListener = options;
     options = {};
+    this.on("connection", connectionListener);
   } else if (options == null || typeof options === "object") {
     options = { ...options };
+    if (typeof connectionListener === "function") this.on("connection", connectionListener);
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener

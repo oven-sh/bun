@@ -805,7 +805,7 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function = ctx.asPtr(Function);
+        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
         return JSValue.jsUndefined();
     }

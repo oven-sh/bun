@@ -473,7 +473,7 @@ pub const AsyncModule = struct {
         var specifier = specifier_;
         var referrer = referrer_;
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src());
+        scope.init(globalThis.vm(), @src(), true);
         defer {
             specifier.deref();
             referrer.deref();

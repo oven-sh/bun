@@ -26,19 +26,35 @@ bytes: [size]u8 align(alignment),
 vm: *jsc.VM,
 /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
 location: if (Environment.allow_assert) *u8 else void,
+enabled: bool,
 
-pub fn init(self: *CatchScope, vm: *jsc.VM, src: std.builtin.SourceLocation) void {
-    CatchScope__construct(
-        &self.bytes,
-        vm,
-        src.fn_name,
-        src.file,
-        src.line,
-        @sizeOf(@TypeOf(self.bytes)),
-        @typeInfo(CatchScope).@"struct".fields[0].alignment,
-    );
-    self.vm = vm;
-    if (Environment.allow_assert) self.location = &self.bytes[0];
+pub fn init(
+    self: *CatchScope,
+    vm: *jsc.VM,
+    src: std.builtin.SourceLocation,
+    /// If not enabled, the scope does nothing (it never has an exception).
+    /// If you need to do something different when there is an exception, leave enabled.
+    /// If you are only using the scope to prove you handle exceptions correctly, you can pass
+    /// `Environment.allow_assert` as `enabled`.
+    enabled: bool,
+) void {
+    if (enabled) {
+        CatchScope__construct(
+            &self.bytes,
+            vm,
+            src.fn_name,
+            src.file,
+            src.line,
+            @sizeOf(@TypeOf(self.bytes)),
+            @typeInfo(CatchScope).@"struct".fields[0].alignment,
+        );
+    }
+    self.* = .{
+        .bytes = self.bytes,
+        .vm = vm,
+        .location = if (Environment.allow_assert) &self.bytes[0],
+        .enabled = enabled,
+    };
 }
 
 /// Generate a useful message including where the exception was thrown.
@@ -56,6 +72,7 @@ pub fn hasException(self: *CatchScope) bool {
 
 pub fn exception(self: *CatchScope) ?*jsc.Exception {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (!self.enabled) return null;
     return CatchScope__exception(&self.bytes);
 }
 
@@ -77,6 +94,7 @@ pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerm
 
 pub fn deinit(self: *CatchScope) void {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (!self.enabled) return;
     CatchScope__destruct(&self.bytes);
     self.bytes = undefined;
 }

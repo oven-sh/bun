@@ -403,7 +403,7 @@ const StreamTransfer = struct {
                 const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
                 max_size.* -|= chunk.len;
                 if (state_ != .eof and max_size.* == 0) {
-                    break :brk .{ chunk, state_ };
+                    break :brk .{ chunk, .eof };
                 }
 
                 break :brk .{ chunk, state_ };

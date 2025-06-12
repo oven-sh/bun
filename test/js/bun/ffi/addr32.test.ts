@@ -18,5 +18,6 @@ test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {
   expect(addr).toBeLessThan(2 ** 31);
   const addrIntEncoded = addr | 0;
   expect(jscDescribe(addrIntEncoded)).toContain("Int32");
-  expect(new CString(addrIntEncoded as Pointer).toString()).toBe("hello world");
+  // @ts-expect-error
+  expect(new CString(addrIntEncoded).toString()).toBe("hello world");
 });

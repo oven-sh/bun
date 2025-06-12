@@ -417,7 +417,7 @@ const StreamTransfer = struct {
                     if (this.route.server) |server| {
                         // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
                         this.reader.pause();
-                        // we cannot free inside onReadChunk other would be UAF so we schedule it to be done in the next event loop tick
+                        // we cannot free inside onReadChunk this would be UAF so we schedule it to be done in the next event loop tick
                         this.eof_task = JSC.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
                         server.vm().enqueueTask(JSC.Task.init(&this.eof_task.?));
                     }
@@ -447,7 +447,7 @@ const StreamTransfer = struct {
 
         switch (this.resp.write(chunk)) {
             .backpressure => {
-                // pause the reader so deref the ref
+                // pause the reader so deref until onWritable
                 defer this.deref();
                 this.resp.onWritable(*StreamTransfer, onWritable, this);
                 this.reader.pause();

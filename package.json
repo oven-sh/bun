@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.16",
+  "version": "1.2.17",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "bun run build:debug",
-    "watch": "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
+    "watch": "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib -Doverride-no-export-cpp-apis=true",
     "watch-windows": "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "bd:v": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
     "bd": "BUN_DEBUG_QUIET_LOGS=1 bun bd:v",

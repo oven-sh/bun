@@ -470,6 +470,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
+        pub fn forceClose(this: *RequestContext) void {
+            if (this.resp) |resp| {
+                defer this.deref();
+                this.detachResponse();
+                this.endRequestStreamingAndDrain();
+                resp.forceClose();
+            }
+        }
+
         pub fn onWritableResponseBuffer(this: *RequestContext, _: u64, resp: *App.Response) bool {
             ctxLog("onWritableResponseBuffer", .{});
 

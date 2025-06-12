@@ -4845,7 +4845,7 @@ pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: c
             unreachable;
         }
 
-        pub inline fn next(it: *const Iterator, cursor: *Cursor) bool {
+        pub inline fn next(noalias it: *const Iterator, noalias cursor: *Cursor) bool {
             const pos: u32 = @as(u32, cursor.width) + cursor.i;
             if (pos >= it.bytes.len) {
                 return false;

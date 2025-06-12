@@ -24,6 +24,10 @@ pub fn NewResponse(ssl_flag: i32) type {
             return @as(*c.uws_res, @ptrCast(@alignCast(res)));
         }
 
+        pub inline fn downcastSocket(res: *Response) *bun.uws.us_socket_t {
+            return @as(*bun.uws.us_socket_t, @ptrCast(@alignCast(res)));
+        }
+
         pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
             c.uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
         }
@@ -102,6 +106,14 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn hasResponded(res: *Response) bool {
             return c.uws_res_has_responded(ssl_flag, res.downcast());
+        }
+
+        pub fn markWroteContentLengthHeader(res: *Response) void {
+            c.uws_res_mark_wrote_content_length_header(ssl_flag, res.downcast());
+        }
+
+        pub fn writeMark(res: *Response) void {
+            c.uws_res_write_mark(ssl_flag, res.downcast());
         }
 
         pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
@@ -306,6 +318,30 @@ pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
 
+    pub fn markNeedsMore(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markNeedsMore(),
+        };
+    }
+
+    pub fn markWroteContentLengthHeader(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markWroteContentLengthHeader(),
+        };
+    }
+
+    pub fn writeMark(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.writeMark(),
+        };
+    }
+
+    pub fn endSendFile(this: AnyResponse, write_offset: u64, close_connection: bool) void {
+        return switch (this) {
+            inline else => |resp| resp.endSendFile(write_offset, close_connection),
+        };
+    }
+
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
             inline else => |resp| resp.downcast(),
@@ -426,6 +462,13 @@ pub const AnyResponse = union(enum) {
     pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
         switch (this) {
             inline else => |resp| resp.endWithoutBody(close_connection),
+        }
+    }
+
+    pub fn forceClose(this: AnyResponse) void {
+        switch (this) {
+            .SSL => |resp| resp.downcastSocket().close(true, .failure),
+            .TCP => |resp| resp.downcastSocket().close(false, .failure),
         }
     }
 
@@ -576,6 +619,8 @@ pub const uws_res = c.uws_res;
 
 const c = struct {
     pub const uws_res = opaque {};
+    pub extern fn uws_res_mark_wrote_content_length_header(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;

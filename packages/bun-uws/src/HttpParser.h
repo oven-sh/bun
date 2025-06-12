@@ -618,17 +618,20 @@ namespace uWS
                 isAncientHTTP = true;
             }
             /* No request headers found */
-            size_t buffer_size = end - postPaddedBuffer;
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
                 
-            if(buffer_size < 2) {
-                /* Fragmented request */
-                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+            /* Check if we can see if headers follow or not */
+            if (postPaddedBuffer + 2 > end) {
+                /* Not enough data to check for \r\n */
+                return HttpParserResult::shortRead();
             }
-            if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
-                /* No headers found */
+
+            /* Check for empty headers (no headers, just \r\n) */
+            if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
+                /* Valid request with no headers */
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
+
             headers++;
 
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {

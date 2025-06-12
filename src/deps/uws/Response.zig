@@ -249,7 +249,7 @@ pub fn NewResponse(ssl_flag: i32) type {
         pub fn corked(
             res: *Response,
             comptime handler: anytype,
-            args_tuple: anytype,
+            args_tuple: std.meta.ArgsTuple(@TypeOf(handler)),
         ) void {
             const Wrapper = struct {
                 const handler_fn = handler;
@@ -548,7 +548,7 @@ pub const AnyResponse = union(enum) {
         }
     }
 
-    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
+    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: std.meta.ArgsTuple(@TypeOf(handler))) void {
         switch (this) {
             inline else => |resp| resp.corked(handler, args_tuple),
         }
@@ -680,6 +680,7 @@ const c = struct {
     pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
 };
 
+const std = @import("std");
 const bun = @import("bun");
 const uws = bun.uws;
 const Socket = uws.Socket;

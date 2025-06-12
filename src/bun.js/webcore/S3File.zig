@@ -538,14 +538,11 @@ pub fn getBucketName(
     return bucket;
 }
 
-pub fn getBucket(
-    this: *Blob,
-    globalThis: *JSC.JSGlobalObject,
-) callconv(JSC.conv) JSValue {
+pub fn getBucket(this: *Blob, globalThis: *JSC.JSGlobalObject) callconv(JSC.conv) JSValue {
     if (getBucketName(this)) |name| {
         return bun.String.createUTF8ForJS(globalThis, name);
     }
-    return .undefined;
+    return .jsUndefined();
 }
 pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1);

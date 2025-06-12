@@ -211,7 +211,7 @@ const random = struct {
 
         fn runFromJS(this: *JobCtx, global: *JSGlobalObject, callback: JSValue) void {
             const vm = global.bunVM();
-            vm.eventLoop().runCallback(callback, global, .undefined, &.{ .null, this.value });
+            vm.eventLoop().runCallback(callback, global, .jsUndefined(), &.{ .null, this.value });
         }
 
         fn deinit(this: *JobCtx) void {
@@ -266,7 +266,7 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
-            callback.callNextTick(global, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
+            callback.callNextTick(global, [2]JSValue{ .jsUndefined(), JSValue.jsNumber(res) });
             return JSValue.jsUndefined();
         }
 
@@ -279,7 +279,7 @@ const random = struct {
         var disable_entropy_cache = false;
         if (args.len > 0) {
             const options = args[0];
-            if (options != .undefined) {
+            if (!options.isUndefined()) {
                 try validators.validateObject(global, options, "options", .{}, .{});
                 if (try options.get(global, "disableEntropyCache")) |disable_entropy_cache_value| {
                     disable_entropy_cache = try validators.validateBoolean(global, disable_entropy_cache_value, "options.disableEntropyCache", .{});
@@ -351,7 +351,7 @@ const random = struct {
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     fn randomFillSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
@@ -414,8 +414,8 @@ const random = struct {
             try assertSize(global, size_value, element_size, offset, buf.byte_len);
 
         if (size == 0) {
-            _ = try callback.call(global, .undefined, &.{ .null, JSValue.jsNumber(0) });
-            return .undefined;
+            _ = try callback.call(global, .jsUndefined(), &.{ .null, JSValue.jsNumber(0) });
+            return .jsUndefined();
         }
 
         const ctx: JobCtx = .{
@@ -426,7 +426,7 @@ const random = struct {
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
-        return .undefined;
+        return .jsUndefined();
     }
 };
 
@@ -481,7 +481,7 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
 }
 
 pub fn secureHeapUsed(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
@@ -489,7 +489,7 @@ pub fn getFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 }
 
 pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
@@ -540,7 +540,7 @@ const Scrypt = struct {
             callFrame.argumentsAsArray(5);
 
         if (is_async) {
-            if (callback == .undefined) {
+            if (callback.isUndefined()) {
                 callback = maybe_options_value.?;
                 maybe_options_value = null;
             }
@@ -718,17 +718,17 @@ const Scrypt = struct {
                 var buf: [256]u8 = undefined;
                 const msg = BoringSSL.ERR_error_string_n(err, &buf, buf.len);
                 const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed: {s}", .{msg}).toJS();
-                vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+                vm.eventLoop().runCallback(callback, global, .jsUndefined(), &.{exception});
                 return;
             }
 
             const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed", .{}).toJS();
-            vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
+            vm.eventLoop().runCallback(callback, global, .jsUndefined(), &.{exception});
             return;
         }
 
         const buf = this.buf.swap();
-        vm.eventLoop().runCallback(callback, global, .undefined, &.{ .undefined, buf });
+        vm.eventLoop().runCallback(callback, global, .jsUndefined(), &.{ .jsUndefined(), buf });
     }
 
     fn deinit(this: *Scrypt) void {
@@ -739,7 +739,7 @@ const Scrypt = struct {
 fn scrypt(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
     const ctx, const callback = try Scrypt.fromJS(global, callFrame, true);
     try Scrypt.Job.initAndSchedule(global, callback, &ctx);
-    return .undefined;
+    return .jsUndefined();
 }
 
 fn scryptSync(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {

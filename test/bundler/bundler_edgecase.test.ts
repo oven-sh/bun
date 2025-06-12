@@ -1805,7 +1805,7 @@ describe("bundler", () => {
         import {other} from './other';
         console.log(capture(import.meta.main), capture(require.main === module), ...other);
       `,
-      "/other.ts": /* js */`
+      "/other.ts": /* js */ `
         globalThis['ca' + 'pture'] = x => x;
 
         export const other = [capture(require.main === module), capture(import.meta.main)];

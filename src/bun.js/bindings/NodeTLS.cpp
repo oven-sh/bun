@@ -614,12 +614,12 @@ JSC_DEFINE_HOST_FUNCTION(secureContextSetKey, (JSGlobalObject * globalObject, Ca
         return JSC::encodedJSUndefined();
     }
 
-    ncrypto::Buffer<const LChar> passphrase;
-    String string;
+    ncrypto::Buffer<const char> passphrase;
+    CString string;
 
     if (callFrame->argument(1).isString()) {
-        string = callFrame->argument(1).toWTFString(globalObject);
-        passphrase = ncrypto::Buffer<const LChar>::from(string.span8());
+        string = callFrame->argument(1).toWTFString(globalObject).utf8();
+        passphrase = ncrypto::Buffer<const char>::from(string.span());
     }
 
     ncrypto::EVPKeyPointer key { PEM_read_bio_PrivateKey(bio.get(), nullptr, ncrypto::PasswordCallback, &passphrase) };

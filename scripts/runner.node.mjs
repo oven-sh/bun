@@ -338,20 +338,13 @@ async function runTests() {
       );
 
       const { ok, stdoutPreview, error } = result;
-      // TODO revert before merging!!!
-      if (basename(execPath).includes("asan")) {
-        if (ok) {
-          failedResults.push(result);
+      if (ok) {
+        if (failure) {
+          flakyResults.push(failure);
+        } else {
+          okResults.push(result);
         }
-      } else {
-        if (ok) {
-          if (failure) {
-            flakyResults.push(failure);
-          } else {
-            okResults.push(result);
-          }
-          break;
-        }
+        break;
       }
 
       const color = attempt >= maxAttempts ? "red" : "yellow";
@@ -365,12 +358,7 @@ async function runTests() {
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
-        // TODO revert before merging!!!
-        if (basename(execPath).includes("asan")) {
-          okResults.push(failure);
-        } else {
-          failedResults.push(failure);
-        }
+        failedResults.push(failure);
       }
     }
 

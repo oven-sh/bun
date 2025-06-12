@@ -1764,7 +1764,7 @@ pub const JestPrettyFormat = struct {
                         .parent = value,
                     };
 
-                    value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+                    try value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
 
                     if (iter.i == 0) {
                         var object_name = ZigString.Empty;

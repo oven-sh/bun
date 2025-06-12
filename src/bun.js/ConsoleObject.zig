@@ -2534,10 +2534,7 @@ pub const Formatter = struct {
                             .parent = value,
                             .i = i,
                         };
-                        value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
-                        if (this.globalThis.hasException()) {
-                            return error.JSError;
-                        }
+                        try value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
                         if (this.failed) return;
                     }
                 }
@@ -3304,14 +3301,11 @@ pub const Formatter = struct {
                     });
                     return;
                 } else if (this.ordered_properties) {
-                    value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+                    try value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
                 } else {
-                    value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+                    try value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
                 }
 
-                if (this.globalThis.hasException()) {
-                    return error.JSError;
-                }
                 if (this.failed) return;
 
                 if (iter.i == 0) {

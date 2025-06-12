@@ -90,8 +90,12 @@ pub const JSValue = enum(i64) {
         globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
-    ) void {
+    ) JSError!void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis.vm(), @src(), true);
+        defer scope.deinit();
         JSC__JSValue__forEachPropertyNonIndexed(this, globalThis, ctx, callback);
+        try scope.returnIfException({});
     }
 
     pub fn forEachProperty(
@@ -99,17 +103,25 @@ pub const JSValue = enum(i64) {
         globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
-    ) void {
+    ) JSError!void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis.vm(), @src(), true);
+        defer scope.deinit();
         JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
+        try scope.returnIfException({});
     }
 
     pub fn forEachPropertyOrdered(
         this: JSValue,
-        globalObject: *JSC.JSGlobalObject,
+        globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
-    ) void {
-        JSC__JSValue__forEachPropertyOrdered(this, globalObject, ctx, callback);
+    ) JSError!void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis.vm(), @src(), true);
+        defer scope.deinit();
+        JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
+        try scope.returnIfException({});
     }
 
     extern fn JSC__JSValue__coerceToDouble(this: JSValue, globalObject: *JSC.JSGlobalObject) f64;

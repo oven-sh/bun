@@ -76,8 +76,8 @@ pub fn exception(self: *CatchScope) ?*jsc.Exception {
     return CatchScope__exception(&self.bytes);
 }
 
-pub fn zigError(self: *CatchScope) ?bun.JSError {
-    return if (self.hasException()) error.JSError else null;
+pub fn returnIfException(self: *CatchScope, value: anytype) bun.JSError!@TypeOf(value) {
+    return if (self.hasException()) error.JSError else value;
 }
 
 /// If no exception, returns.

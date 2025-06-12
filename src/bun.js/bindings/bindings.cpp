@@ -5538,10 +5538,10 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto throwScopeForStackOverflowException = DECLARE_THROW_SCOPE(vm);
 
     if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, throwScope);
+        throwStackOverflowError(globalObject, throwScopeForStackOverflowException);
         return;
     }
 

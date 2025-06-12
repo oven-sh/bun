@@ -5,6 +5,7 @@ const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -731,6 +732,34 @@ function cacheBundledRootCertificates() {
 
   return bundledRootCertificates;
 }
+function cacheDefaultCACertificates() {
+  throw new Error("getCACertificates 'default' is not yet implemented in Bun");
+}
+
+function cacheSystemCACertificates() {
+  throw new Error("getCACertificates 'system' is not yet implemented in Bun");
+}
+
+function cacheExtraCACertificates() {
+  throw new Error("getCACertificates 'extra' is not yet implemented in Bun");
+}
+
+function getCACertificates(type = "default") {
+  validateString(type, "type");
+
+  switch (type) {
+    case "default":
+      return cacheDefaultCACertificates();
+    case "bundled":
+      return cacheBundledRootCertificates();
+    case "system":
+      return cacheSystemCACertificates();
+    case "extra":
+      return cacheExtraCACertificates();
+    default:
+      throw $ERR_INVALID_ARG_VALUE("type", type);
+  }
+}
 
 export default {
   CLIENT_RENEG_LIMIT,
@@ -752,4 +781,5 @@ export default {
   get rootCertificates() {
     return cacheBundledRootCertificates();
   },
+  getCACertificates,
 } as any as typeof import("node:tls");

@@ -1581,7 +1581,7 @@ describe("bundler", () => {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
   });
-  itBundled.only("default/CircularTLADependency", {
+  itBundled("default/CircularTLADependency", {
     files: {
       "/entry.js": /* js */ `
         const { A } = await import('./a.js');

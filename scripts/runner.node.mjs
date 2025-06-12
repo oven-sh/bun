@@ -132,7 +132,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      default: isCI ? (getEnv("BUILDKITE_STEP_KEY")?.includes("asan") ? "0" : "3") : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",

@@ -303,6 +303,8 @@ const StreamTransfer = struct {
     defer_deinit: ?*bool = null,
     max_size: ?u64 = null,
 
+    delay_eof: ?JSC.AnyTask = null,
+
     state: packed struct(u8) {
         waiting_for_readable: bool = false,
         waiting_for_writable: bool = false,
@@ -403,7 +405,14 @@ const StreamTransfer = struct {
                 const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
                 max_size.* -|= chunk.len;
                 if (state_ != .eof and max_size.* == 0) {
-                    this.reader.pause();
+                    // artificially end the stream aka max_size reached
+                    log("max_size reached, ending stream", .{});
+                    if (this.route.server) |server| {
+                        this.reader.pause();
+                        // we cannot end inside onReadChunk so we schedule it to be done in the next event loop tick
+                        this.delay_eof = JSC.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
+                        server.vm().enqueueTask(JSC.Task.init(&this.delay_eof.?));
+                    }
                     break :brk .{ chunk, .eof };
                 }
 

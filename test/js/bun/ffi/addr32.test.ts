@@ -1,8 +1,8 @@
 import { CString, dlopen, FFIType, type Pointer } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { isLinux } from "../../../harness";
 import { join } from "node:path";
+import { isLinux } from "../../../harness";
 
 // Only runs on Linux because that is where we can most reliably allocate a 32-bit pointer.
 test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {

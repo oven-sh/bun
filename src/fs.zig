@@ -1974,3 +1974,4 @@ pub const Path = struct {
 //     defer std.posix.close(opened);
 
 // }
+pub const StatHash = @import("./fs/stat_hash.zig");

@@ -271,6 +271,7 @@ pub const Tag = enum(u8) {
     futime,
     pidfd_open,
     poll,
+    ppoll,
     watch,
     scandir,
 
@@ -421,6 +422,18 @@ pub const Error = struct {
             .syscall = syscall_,
             .path = bun.span(path),
         };
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinit(this: *Error) void {
+        if (this.path.len > 0) {
+            bun.default_allocator.free(this.path);
+            this.path = "";
+        }
+        if (this.dest.len > 0) {
+            bun.default_allocator.free(this.dest);
+            this.dest = "";
+        }
     }
 
     pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
@@ -2202,6 +2215,36 @@ pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return recv(fd, buf, socket_flags_nonblock);
 }
 
+pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
+            .linux => linux.poll(fds.ptr, fds.len, timeout),
+            else => @compileError("poll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .poll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+}
+
+pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
+    while (true) {
+        const rc = switch (Environment.os) {
+            .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
+            .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
+            else => @compileError("ppoll is not implemented on this platform"),
+        };
+        if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+}
+
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     const debug_timer = bun.Output.DebugTimer.start();
@@ -2235,6 +2278,18 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
+}
+
+pub fn kevent(fd: bun.FileDescriptor, changelist: []const std.c.Kevent, eventlist: []std.c.Kevent, timeout: ?*std.posix.timespec) Maybe(usize) {
+    while (true) {
+        const rc = std.c.kevent(fd.cast(), changelist.ptr, @intCast(changelist.len), eventlist.ptr, @intCast(eventlist.len), timeout);
+        if (Maybe(usize).errnoSysFd(rc, .kevent, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return .{ .result = @as(usize, @intCast(rc)) };
+    }
+    unreachable;
 }
 
 pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
@@ -2852,7 +2907,7 @@ pub fn setCloseOnExec(fd: bun.FileDescriptor) Maybe(void) {
 
 pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32) Maybe(i32) {
     while (true) {
-        const rc = syscall.setsockopt(fd.cast(), level, optname, &value, @sizeOf(i32));
+        const rc = syscall.setsockopt(fd.cast(), level, optname, std.mem.asBytes(&value), @sizeOf(i32));
         if (Maybe(i32).errnoSysFd(rc, .setsockopt, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             log("setsockopt() = {d} {s}", .{ err.err.errno, err.err.name() });

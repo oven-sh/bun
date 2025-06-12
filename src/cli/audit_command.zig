@@ -113,11 +113,11 @@ pub const AuditCommand = struct {
             Output.writer().writeByte('\n') catch {};
 
             if (response_text.len > 0) {
-                const source = logger.Source.initPathString("audit-response.json", response_text);
+                const source = &logger.Source.initPathString("audit-response.json", response_text);
                 var log = logger.Log.init(ctx.allocator);
                 defer log.deinit();
 
-                const expr = @import("../json_parser.zig").parse(&source, &log, ctx.allocator, true) catch {
+                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
                     Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
                     return 1; // If we can't parse then safe to assume a similar failure
                 };
@@ -543,11 +543,11 @@ fn printEnhancedAuditReport(
     pm: *PackageManager,
     dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
 ) bun.OOM!u32 {
-    const source = logger.Source.initPathString("audit-response.json", response_text);
+    const source = &logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(&source, &log, allocator, true) catch {
+    const expr = @import("../json_parser.zig").parse(source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return 1;

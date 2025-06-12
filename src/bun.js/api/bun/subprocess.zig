@@ -179,7 +179,7 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: *JSC.JSObject, 
         2);
     while (try object_iter.next()) |key| {
         var value = object_iter.value;
-        if (value == .undefined) continue;
+        if (value.isUndefined()) continue;
 
         const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
 
@@ -591,7 +591,7 @@ pub fn asyncDispose(
 ) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
-        return .undefined;
+        return .jsUndefined();
     }
 
     const this_jsvalue = callframe.this();
@@ -726,12 +726,12 @@ fn closeProcess(this: *Subprocess) void {
 
 pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsRef();
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsUnref();
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn onStdinDestroyed(this: *Subprocess) void {
@@ -761,7 +761,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
     _ = globalThis;
     _ = callframe;
     this.disconnectIPC(true);
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
@@ -1133,7 +1133,7 @@ pub const PipeReader = struct {
                 return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSC.JSValue.undefined;
+                return .jsUndefined();
             },
         }
     }
@@ -1597,9 +1597,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     if (status == .err)
                         status.err.toJSC(globalThis)
                     else
-                        .undefined;
+                        .jsUndefined();
 
-                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
+                const this_value: JSValue = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .jsUndefined() else this_jsvalue;
                 this_value.ensureStillAlive();
 
                 const args = [_]JSValue{

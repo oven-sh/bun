@@ -114,11 +114,11 @@ comptime {
 pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.argumentsUndef(2).slice();
 
-    var encoding_value: JSC.JSValue = .undefined;
+    var encoding_value: JSC.JSValue = .jsUndefined();
 
     const encoding: JSC.Node.Encoding = brk: {
         if (arguments.len > 0) {
-            if (arguments[0] != .undefined) {
+            if (!arguments[0].isUndefined()) {
                 if (arguments[0].isString()) {
                     encoding_value = arguments[0];
                     break :brk try JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
@@ -132,14 +132,14 @@ pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     };
 
     const timestamp: u64 = brk: {
-        const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1)
+        const timestamp_value: JSC.JSValue = if (!encoding_value.isUndefined() and arguments.len > 1)
             arguments[1]
-        else if (arguments.len == 1 and encoding_value == .undefined)
+        else if (arguments.len == 1 and encoding_value.isUndefined())
             arguments[0]
         else
-            .undefined;
+            .jsUndefined();
 
-        if (timestamp_value != .undefined) {
+        if (!timestamp_value.isUndefined()) {
             if (timestamp_value.isDate()) {
                 const date = timestamp_value.getUnixTimestamp();
                 break :brk @intFromFloat(@max(0, date));

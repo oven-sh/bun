@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import { isLinux } from "../../../harness";
-import { dlopen, CString, FFIType } from "bun:ffi";
+import { CString, dlopen, FFIType } from "bun:ffi";
 import { describe } from "bun:jsc";
+import { expect, test } from "bun:test";
+import { isLinux } from "../../../harness";
 
 // Only runs on Linux because that is where we can most reliably allocate a 32-bit pointer.
 test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {

@@ -3554,11 +3554,6 @@ JSC::JSCell* JSC__JSValue__asCell(JSC::EncodedJSValue JSValue0)
     auto value = JSC::JSValue::decode(JSValue0);
     return value.asCell();
 }
-double JSC__JSValue__asNumber(JSC::EncodedJSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    return value.asNumber();
-};
 
 JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)
 {

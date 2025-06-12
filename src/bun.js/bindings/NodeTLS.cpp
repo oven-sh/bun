@@ -235,6 +235,148 @@ int NodeTLSSecureContext::ticketCompatibilityCallback(SSL* ssl, unsigned char* n
     return 1;
 }
 
+// https://github.com/190n/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L112
+static int useCertificateChain(SSL_CTX* ctx,
+    ncrypto::X509Pointer&& x,
+    STACK_OF(X509) * extra_certs,
+    ncrypto::X509Pointer* cert,
+    ncrypto::X509Pointer* issuer_)
+{
+    RELEASE_ASSERT(!*issuer_);
+    RELEASE_ASSERT(!*cert);
+    ncrypto::X509Pointer issuer {};
+
+    int ret = SSL_CTX_use_certificate(ctx, x.get());
+
+    if (ret) {
+        SSL_CTX_clear_extra_chain_certs(ctx);
+
+        for (int i = 0; i < sk_X509_num(extra_certs); i++) {
+            X509* ca = sk_X509_value(extra_certs, i);
+
+            if (!SSL_CTX_add1_chain_cert(ctx, ca)) {
+                ret = 0;
+                issuer = {};
+                break;
+            }
+
+            if (issuer != nullptr || X509_check_issued(ca, x.get()) != X509_V_OK) {
+                continue;
+            }
+
+            issuer = ncrypto::X509Pointer { ca };
+        }
+    }
+
+    if (ret) {
+        if (issuer == nullptr) {
+            *issuer_ = ncrypto::X509Pointer::IssuerFrom(ctx, x.view());
+        } else {
+            issuer.reset(X509_dup(issuer.get()));
+            if (!issuer) {
+                ret = 0;
+            }
+        }
+    }
+
+    if (ret && x != nullptr) {
+        cert->reset(X509_dup(x.get()));
+        if (!*cert) {
+            ret = 0;
+        }
+    }
+
+    return ret;
+}
+
+// https://github.com/190n/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L183
+static int useCertificateChain(SSL_CTX* ctx, ncrypto::BIOPointer&& in, ncrypto::X509Pointer* cert, ncrypto::X509Pointer* issuer)
+{
+    ERR_clear_error();
+
+    ncrypto::X509Pointer x(PEM_read_bio_X509_AUX(in.get(), nullptr, ncrypto::NoPasswordCallback, nullptr));
+
+    if (!x) {
+        return 0;
+    }
+
+    ncrypto::StackOfX509 extra_certs(sk_X509_new_null());
+
+    if (!extra_certs) {
+        return 0;
+    }
+
+    while (ncrypto::X509Pointer extra { PEM_read_bio_X509(in.get(), nullptr, ncrypto::NoPasswordCallback, nullptr) }) {
+        if (sk_X509_push(extra_certs.get(), extra.get())) {
+            extra.release();
+            continue;
+        }
+
+        return 0;
+    }
+
+    // When the while loop ends, it's usually just EOF.
+    uint32_t err = ERR_peek_last_error();
+    if (ERR_GET_LIB(err) == ERR_LIB_PEM && ERR_GET_REASON(err) == PEM_R_NO_START_LINE) {
+        ERR_clear_error();
+    } else {
+        // some real error
+        return 0;
+    }
+
+    return useCertificateChain(ctx, std::move(x), extra_certs.get(), cert, issuer);
+}
+
+ncrypto::BIOPointer NodeTLSSecureContext::loadBIO(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ncrypto::BIOPointer bio = ncrypto::BIOPointer::NewSecMem();
+
+    if (!bio) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Error creating BIO"_s));
+        return {};
+    }
+
+    int written {};
+    size_t expected {};
+
+    if (value.isString()) {
+        String string = value.toWTFString(globalObject);
+        expected = string.length();
+        written = ncrypto::BIOPointer::Write(&bio, string);
+    } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
+        written = ncrypto::BIOPointer::Write(&bio, view->span());
+        expected = view->byteLength();
+    } else {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, "Invalid certificate"_s));
+        return {};
+    }
+
+    if (written < 0 || static_cast<size_t>(written) != expected) {
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Error writing to BIO"_s));
+        return {};
+    }
+
+    return bio;
+}
+
+bool NodeTLSSecureContext::addCert(JSGlobalObject* globalObject, ThrowScope& scope, ncrypto::BIOPointer bio)
+{
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    if (!bio) {
+        return false;
+    }
+
+    if (useCertificateChain(context(), std::move(bio), &m_cert, &m_issuer) == 0) {
+        return throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set certificate");
+        return false;
+    }
+
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(secureContextInit, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -452,12 +594,26 @@ JSC_DEFINE_HOST_FUNCTION(secureContextAddRootCerts, (JSGlobalObject * globalObje
     return JSC::encodedJSUndefined();
 }
 
+JSC_DEFINE_HOST_FUNCTION(secureContextSetCert, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsCast<NodeTLSSecureContext*>(callFrame->thisValue());
+
+    ncrypto::BIOPointer bio = thisObject->loadBIO(globalObject, callFrame->argument(0));
+    thisObject->addCert(globalObject, scope, std::move(bio));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::encodedJSUndefined();
+}
+
 static const HashTableValue NodeTLSSecureContextPrototypeTableValues[] = {
     { "init"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextInit, 3 } },
     { "setCiphers"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCiphers, 1 } },
     { "addCACert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddCACert, 1 } },
     { "setECDHCurve"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetECDHCurve, 1 } },
     { "addRootCerts"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextAddRootCerts, 0 } },
+    { "setCert"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, secureContextSetCert, 0 } },
 };
 
 static EncodedJSValue constructSecureContext(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = {})

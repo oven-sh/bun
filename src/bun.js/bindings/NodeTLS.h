@@ -110,12 +110,16 @@ public:
     void setRootCerts();
     bool applySNI(SSL* ssl);
     int setCACerts(SSL* ssl);
+    ncrypto::BIOPointer loadBIO(JSGlobalObject*, JSValue);
+    bool addCert(JSGlobalObject* globalObject, ThrowScope& scope, ncrypto::BIOPointer);
 
 private:
     WriteBarrier<Unknown> m_wrapper;
     WriteBarrier<Unknown> m_certCallback;
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> m_context { nullptr, nullptr };
     mutable std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)> m_certStore { nullptr, nullptr };
+    ncrypto::X509Pointer m_cert;
+    ncrypto::X509Pointer m_issuer;
     unsigned char m_ticketKeyName[16] {};
     unsigned char m_ticketKeyAES[16] {};
     unsigned char m_ticketKeyHMAC[16] {};

@@ -8,7 +8,8 @@ const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("in
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
-const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
+const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -724,6 +725,13 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
+let bundledRootCertificates: string[] | undefined;
+function cacheBundledRootCertificates() {
+  bundledRootCertificates ||= getBundledRootCertificates();
+
+  return bundledRootCertificates;
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -742,6 +750,6 @@ export default {
   TLSSocket,
   checkServerIdentity,
   get rootCertificates() {
-    return rootCertificates;
+    return cacheBundledRootCertificates();
   },
 } as any as typeof import("node:tls");

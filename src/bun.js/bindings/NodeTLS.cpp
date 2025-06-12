@@ -11,17 +11,14 @@ namespace Bun {
 
 using namespace JSC;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__canonicalizeIP);
-
-JSC::JSValue createNodeTLSBinding(Zig::GlobalObject* globalObject)
+JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    auto* obj = constructEmptyObject(globalObject);
 
     struct us_cert_string_t* out;
     auto size = us_raw_root_certs(&out);
     if (size < 0) {
-        return jsUndefined();
+        return JSValue::encode(jsUndefined());
     }
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
     for (auto i = 0; i < size; i++) {
@@ -29,12 +26,8 @@ JSC::JSValue createNodeTLSBinding(Zig::GlobalObject* globalObject)
         auto str = WTF::String::fromUTF8(std::span { raw.str, raw.len });
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
     }
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), JSC::objectConstructorFreeze(globalObject, rootCertificates), 0);
 
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
-    return obj;
+    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
 }
 
 } // namespace Bun

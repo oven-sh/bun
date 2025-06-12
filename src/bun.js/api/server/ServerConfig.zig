@@ -614,18 +614,11 @@ pub fn fromJS(
 
                 // Check if this is a pre-bundled HTML import manifest
                 if (value.isObject()) {
-                    if (bun.Environment.enable_logs) {
-                        bun.Output.prettyErrorln("Checking if object is HTML import manifest for path: {s}", .{path});
-                    }
-                    if (try value.getOptional(global, "index", JSC.JSValue)) |_| {
-                        if (bun.Environment.enable_logs) {
-                            bun.Output.prettyErrorln("Found 'index' property", .{});
-                        }
+                    if (try value.getOptional(global, "index", bun.String.Slice)) |index_value| {
+                        defer index_value.deinit();
+
                         if (try value.getOptional(global, "files", JSC.JSValue)) |files_value| {
                             if (files_value.isArray()) {
-                                if (bun.Environment.enable_logs) {
-                                    bun.Output.prettyErrorln("Found 'files' array - this is an HTML import manifest", .{});
-                                }
                                 // This is an HTML import manifest - expand it into multiple routes
                                 const files_array = files_value.asArray(global);
                                 const len = files_array.getLength();
@@ -634,73 +627,80 @@ pub fn fromJS(
                                     return global.throwInvalidArguments("HTML import manifest 'files' array is empty", .{});
                                 }
 
+                                const index_str = index_value.slice();
                                 var index_route: ?*FileRoute = null;
+                                var added_count: u32 = 0;
+
                                 var i: u32 = 0;
                                 while (i < len) : (i += 1) {
                                     const file = files_array.getIndex(global, i);
-                                    if (try file.getOptional(global, "path", bun.String.Slice)) |file_path| {
-                                        defer file_path.deinit();
+                                    if (!file.isObject()) continue;
 
-                                        const path_str = file_path.slice();
+                                    const file_path = try file.getOptional(global, "path", bun.String.Slice) orelse continue;
+                                    defer file_path.deinit();
 
-                                        // Skip empty paths
-                                        if (path_str.len == 0) continue;
+                                    const path_str = file_path.slice();
+                                    if (path_str.len == 0) continue;
 
-                                        // Create a Blob for this file
-                                        var blob_path_buf: bun.PathBuffer = undefined;
-                                        const full_path = if (std.fs.path.isAbsolute(path_str))
-                                            path_str
-                                        else brk: {
-                                            const root = if (vm.transpiler.options.root_dir.len > 0)
-                                                vm.transpiler.options.root_dir
-                                            else
-                                                bun.fs.FileSystem.instance.top_level_dir;
-                                            break :brk bun.path.joinAbsBuf(root, &blob_path_buf, &.{path_str}, .auto);
-                                        };
+                                    // Create a Blob - let it handle file resolution and existence checking
+                                    const blob = JSC.WebCore.Blob.Blob.initFile(path_str, null, global);
+                                    blob.allocator = null;
 
-                                        const blob = JSC.WebCore.Blob.Blob.initFile(full_path, null, global);
-                                        blob.allocator = null;
+                                    // Create the FileRoute
+                                    const file_route = bun.new(FileRoute, .{
+                                        .ref_count = .init(),
+                                        .server = null,
+                                        .blob = blob,
+                                        .headers = .{ .allocator = bun.default_allocator },
+                                        .has_last_modified_header = false,
+                                        .has_content_length_header = false,
+                                        .status_code = 200,
+                                    });
 
-                                        const file_route = bun.new(FileRoute, .{
-                                            .ref_count = .init(),
-                                            .server = null,
-                                            .blob = blob,
-                                            .headers = .{ .allocator = bun.default_allocator },
-                                            .has_last_modified_header = false,
-                                            .has_content_length_header = false,
-                                            .status_code = 200,
-                                        });
+                                    // Copy ALL headers from the manifest
+                                    if (try file.getOptional(global, "headers", JSC.JSValue)) |headers_obj| {
+                                        if (headers_obj.isObject()) {
+                                            var header_iter = JSC.JSPropertyIterator(.{
+                                                .skip_empty_name = true,
+                                                .include_value = true,
+                                            }).init(global, headers_obj.toObject()) catch bun.outOfMemory();
+                                            defer header_iter.deinit();
 
-                                        // Copy headers from the manifest if available
-                                        if (try file.getOptional(global, "headers", JSC.JSValue)) |headers_value| {
-                                            if (headers_value.isObject()) {
-                                                if (try headers_value.getOptional(global, "content-type", bun.String.Slice)) |content_type| {
-                                                    defer content_type.deinit();
-                                                    file_route.headers.append("Content-Type", content_type.slice()) catch bun.outOfMemory();
-                                                }
-                                                if (try headers_value.getOptional(global, "etag", bun.String.Slice)) |etag| {
-                                                    defer etag.deinit();
-                                                    file_route.headers.append("ETag", etag.slice()) catch bun.outOfMemory();
+                                            while (try header_iter.next()) |header_key| {
+                                                const key_str = try header_key.toOwnedSlice(global);
+                                                defer global.allocator().free(key_str);
+
+                                                const value_str = try header_iter.value.toSlice(global, bun.default_allocator);
+                                                defer value_str.deinit();
+
+                                                file_route.headers.append(key_str, value_str.slice()) catch bun.outOfMemory();
+
+                                                // Track special headers
+                                                if (strings.eqlCaseInsensitiveASCIIICheckLength(key_str, "last-modified")) {
+                                                    file_route.has_last_modified_header = true;
+                                                } else if (strings.eqlCaseInsensitiveASCIIICheckLength(key_str, "content-length")) {
+                                                    file_route.has_content_length_header = true;
                                                 }
                                             }
                                         }
+                                    }
 
-                                        // Check if this is the index file
-                                        if (strings.eqlComptime(path_str, "./index.html") or
-                                            strings.eqlComptime(path_str, "index.html") or
-                                            strings.endsWith(path_str, "/index.html"))
-                                        {
-                                            index_route = file_route;
-                                            continue; // Don't add the index as a separate route
-                                        }
-
+                                    // Check if this file's path matches the manifest's index
+                                    if (strings.eql(path_str, index_str)) {
+                                        index_route = file_route;
+                                    } else {
                                         // Normalize the path for the route
-                                        const normalized_path = if (path_str[0] == '.')
-                                            path_str[1..]
-                                        else if (path_str[0] != '/')
-                                            try std.fmt.allocPrint(bun.default_allocator, "/{s}", .{path_str})
-                                        else
-                                            bun.default_allocator.dupe(u8, path_str) catch bun.outOfMemory();
+                                        const normalized_path = brk: {
+                                            if (path_str[0] == '.') {
+                                                if (path_str.len > 1 and path_str[1] == '/') {
+                                                    break :brk path_str[1..];
+                                                }
+                                            }
+                                            if (path_str[0] != '/') {
+                                                break :brk try std.fmt.allocPrint(bun.default_allocator, "/{s}", .{path_str});
+                                            }
+                                            break :brk bun.default_allocator.dupe(u8, path_str) catch bun.outOfMemory();
+                                        };
 
                                         // Add this file as a static route
                                         args.static_routes.append(.{
@@ -708,6 +708,7 @@ pub fn fromJS(
                                             .route = .{ .file = file_route },
                                             .method = .any,
                                         }) catch bun.outOfMemory();
+                                        added_count += 1;
                                     }
                                 }
 
@@ -719,8 +720,10 @@ pub fn fromJS(
                                         .method = .any,
                                     }) catch bun.outOfMemory();
                                     continue;
+                                } else if (added_count == 0) {
+                                    return global.throwInvalidArguments("HTML import manifest has no valid files", .{});
                                 } else {
-                                    return global.throwInvalidArguments("HTML import manifest missing index.html file", .{});
+                                    return global.throwInvalidArguments("HTML import manifest index file '{}' not found in files array", .{bun.fmt.quote(index_str)});
                                 }
                             }
                         }

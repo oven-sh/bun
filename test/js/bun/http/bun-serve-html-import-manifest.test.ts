@@ -8,18 +8,18 @@ describe("HTML import manifest", () => {
   test("serves files from pre-bundled HTML import manifest", async () => {
     // Create a temporary directory with test files
     const dir = await mkdtemp(join(tmpdir(), "bun-test-"));
-    await writeFile(join(dir, "index.html"), "<html><body>Hello World</body></html>");
-    await writeFile(join(dir, "index.js"), "console.log('hello');");
-    await writeFile(join(dir, "index.css"), "body { margin: 0; }");
+    await writeFile(join(dir, "main.html"), "<html><body>Hello World</body></html>");
+    await writeFile(join(dir, "app.js"), "console.log('hello');");
+    await writeFile(join(dir, "styles.css"), "body { margin: 0; }");
     await writeFile(join(dir, "logo.svg"), "<svg></svg>");
 
     // Create a manifest object that mimics the output of HTMLImportManifest
     const manifest = {
-      index: "./index.html",
+      index: join(dir, "main.html"),
       files: [
         {
-          input: "index.html",
-          path: join(dir, "index.html"),
+          input: "main.html",
+          path: join(dir, "main.html"),
           loader: "html",
           isEntry: true,
           headers: {
@@ -28,8 +28,8 @@ describe("HTML import manifest", () => {
           },
         },
         {
-          input: "index.html",
-          path: join(dir, "index.js"),
+          input: "app.js",
+          path: join(dir, "app.js"),
           loader: "js",
           isEntry: true,
           headers: {
@@ -38,8 +38,8 @@ describe("HTML import manifest", () => {
           },
         },
         {
-          input: "index.html",
-          path: join(dir, "index.css"),
+          input: "styles.css",
+          path: join(dir, "styles.css"),
           loader: "css",
           isEntry: true,
           headers: {
@@ -79,14 +79,14 @@ describe("HTML import manifest", () => {
       expect(await indexRes.text()).toBe("<html><body>Hello World</body></html>");
 
       // Test that the JS file is served at its path
-      const jsRes = await fetch(`${server.url}${join(dir, "index.js")}`);
+      const jsRes = await fetch(`${server.url}${join(dir, "app.js")}`);
       expect(jsRes.status).toBe(200);
       expect(jsRes.headers.get("content-type")).toBe("text/javascript;charset=utf-8");
       expect(jsRes.headers.get("etag")).toBe("test456");
       expect(await jsRes.text()).toBe("console.log('hello');");
 
       // Test that the CSS file is served
-      const cssRes = await fetch(`${server.url}${join(dir, "index.css")}`);
+      const cssRes = await fetch(`${server.url}${join(dir, "styles.css")}`);
       expect(cssRes.status).toBe(200);
       expect(cssRes.headers.get("content-type")).toBe("text/css;charset=utf-8");
       expect(cssRes.headers.get("etag")).toBe("test789");
@@ -110,15 +110,15 @@ describe("HTML import manifest", () => {
 
   test("supports relative paths in manifest", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bun-test-"));
-    await writeFile(join(dir, "index.html"), "<html><body>Relative paths</body></html>");
+    await writeFile(join(dir, "home.html"), "<html><body>Relative paths</body></html>");
     await writeFile(join(dir, "app.js"), "export default 'app';");
 
     const manifest = {
-      index: "./index.html",
+      index: "./home.html",
       files: [
         {
-          input: "index.html",
-          path: "./index.html",
+          input: "home.html",
+          path: "./home.html",
           loader: "html",
           isEntry: true,
           headers: {
@@ -192,7 +192,7 @@ describe("HTML import manifest", () => {
     await writeFile(join(dir, "app.js"), "console.log('app');");
 
     const manifest = {
-      index: "./index.html",
+      index: "./missing-file.html", // This file doesn't exist in the files array
       files: [
         {
           input: "app.js",
@@ -216,22 +216,46 @@ describe("HTML import manifest", () => {
           return new Response("Not found", { status: 404 });
         },
       });
-    }).toThrow("HTML import manifest missing index.html file");
+    }).toThrow("HTML import manifest index file './missing-file.html' not found in files array");
   });
 
-  test("handles manifest with different index file paths", async () => {
+  test("handles manifest with different index file names", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bun-test-"));
-    await writeFile(join(dir, "index.html"), "<html>Index</html>");
+    await writeFile(join(dir, "home.html"), "<html>Home page</html>");
+    await writeFile(join(dir, "about.html"), "<html>About page</html>");
+    await writeFile(join(dir, "contact.html"), "<html>Contact page</html>");
 
-    const testCases = ["./index.html", "index.html", join(dir, "index.html")];
+    const testCases = [
+      { index: join(dir, "home.html"), expected: "<html>Home page</html>" },
+      { index: join(dir, "about.html"), expected: "<html>About page</html>" },
+      { index: join(dir, "contact.html"), expected: "<html>Contact page</html>" },
+    ];
 
-    for (const indexPath of testCases) {
+    for (const { index, expected } of testCases) {
       const manifest = {
-        index: indexPath,
+        index: index,
         files: [
           {
-            input: "index.html",
-            path: indexPath,
+            input: "home.html",
+            path: join(dir, "home.html"),
+            loader: "html",
+            isEntry: true,
+            headers: {
+              "content-type": "text/html",
+            },
+          },
+          {
+            input: "about.html",
+            path: join(dir, "about.html"),
+            loader: "html",
+            isEntry: true,
+            headers: {
+              "content-type": "text/html",
+            },
+          },
+          {
+            input: "contact.html",
+            path: join(dir, "contact.html"),
             loader: "html",
             isEntry: true,
             headers: {
@@ -254,7 +278,7 @@ describe("HTML import manifest", () => {
       try {
         const res = await fetch(`${server.url}test`);
         expect(res.status).toBe(200);
-        expect(await res.text()).toBe("<html>Index</html>");
+        expect(await res.text()).toBe(expected);
       } finally {
         server.stop(true);
       }
@@ -288,6 +312,72 @@ describe("HTML import manifest", () => {
       const res = await fetch(`${server.url}`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Fallback");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("copies all headers from manifest", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bun-test-"));
+    await writeFile(join(dir, "page.html"), "<html>Test headers</html>");
+    await writeFile(join(dir, "script.js"), "console.log('test');");
+
+    const manifest = {
+      index: join(dir, "page.html"),
+      files: [
+        {
+          input: "page.html",
+          path: join(dir, "page.html"),
+          loader: "html",
+          isEntry: true,
+          headers: {
+            "content-type": "text/html;charset=utf-8",
+            "etag": 'w/"abc123"',
+            "cache-control": "public, max-age=3600",
+            "x-custom-header": "custom-value",
+            "last-modified": "Wed, 21 Oct 2015 07:28:00 GMT",
+          },
+        },
+        {
+          input: "script.js",
+          path: join(dir, "script.js"),
+          loader: "js",
+          isEntry: true,
+          headers: {
+            "content-type": "application/javascript",
+            "content-encoding": "gzip",
+            "vary": "Accept-Encoding",
+          },
+        },
+      ],
+    };
+
+    const server = serve({
+      port: 0,
+      routes: {
+        "/": manifest as any,
+      },
+      fetch() {
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    try {
+      // Test that all headers are copied for the HTML file
+      const htmlRes = await fetch(`${server.url}`);
+      expect(htmlRes.status).toBe(200);
+      expect(htmlRes.headers.get("content-type")).toBe("text/html;charset=utf-8");
+      expect(htmlRes.headers.get("etag")).toBe('w/"abc123"');
+      expect(htmlRes.headers.get("cache-control")).toBe("public, max-age=3600");
+      expect(htmlRes.headers.get("x-custom-header")).toBe("custom-value");
+      expect(htmlRes.headers.get("last-modified")).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+
+      // Test headers for JS file
+      const jsRes = await fetch(`${server.url}${join(dir, "script.js")}`);
+      expect(jsRes.status).toBe(200);
+      expect(jsRes.headers.get("content-type")).toBe("application/javascript");
+      expect(jsRes.headers.get("content-encoding")).toBe("gzip");
+      expect(jsRes.headers.get("vary")).toBe("Accept-Encoding");
     } finally {
       server.stop(true);
     }

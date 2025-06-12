@@ -579,7 +579,7 @@ pub fn fromJS(
                     };
                     var found = false;
                     inline for (methods) |method| {
-                        if (value.getOwn(global, @tagName(method))) |function| {
+                        if (try value.getOwn(global, @tagName(method))) |function| {
                             if (!found) {
                                 try validateRouteName(global, path);
                             }

@@ -81,7 +81,7 @@ pub const Start = union(Tag) {
                 var chunk_size: Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.getOwn(globalThis, "asUint8Array")) |val| {
+                if (try value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;

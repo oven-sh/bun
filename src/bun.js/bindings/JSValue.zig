@@ -1533,10 +1533,18 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: *const bun.String) JSValue;
 
     /// Get *own* property value (i.e. does not resolve property in the prototype chain)
-    pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+    pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         var property_name_str = bun.String.init(property_name);
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), true);
+        defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
-        return if (@intFromEnum(value) != 0) value else return null;
+        return if (scope.hasException())
+            error.JSError
+        else if (value == .zero)
+            null
+        else
+            value;
     }
 
     extern fn JSC__JSValue__getOwnByValue(value: JSValue, globalObject: *JSGlobalObject, propertyValue: JSValue) JSValue;
@@ -1546,8 +1554,8 @@ pub const JSValue = enum(i64) {
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
-    pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
-        if (getOwn(this, global, property_name)) |prop| {
+    pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
+        if (try getOwn(this, global, property_name)) |prop| {
             if (prop == .undefined) return null;
             return prop;
         }
@@ -1752,7 +1760,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn getOwnArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (getOwnTruthy(this, globalThis, property_name)) |prop| {
+        if (try getOwnTruthy(this, globalThis, property_name)) |prop| {
             return coerceToArray(prop, globalThis, property_name);
         }
 
@@ -1760,7 +1768,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?*JSC.JSObject {
-        if (getOwnTruthy(this, globalThis, property_name)) |prop| {
+        if (try getOwnTruthy(this, globalThis, property_name)) |prop| {
             const obj = prop.getObject() orelse {
                 return globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
             };

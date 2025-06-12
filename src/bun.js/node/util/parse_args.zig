@@ -285,7 +285,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         // values[long_option] starts out not present,
         // first value is added as new array [new_value],
         // subsequent values are pushed to existing array.
-        if (values.getOwn(globalThis, key)) |value_list| {
+        if (try values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
@@ -316,10 +316,10 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         try validators.validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
 
         // type field is required
-        const option_type = obj.getOwn(globalThis, "type") orelse JSValue.undefined;
+        const option_type = try obj.getOwn(globalThis, "type") orelse JSValue.undefined;
         option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
 
-        if (obj.getOwn(globalThis, "short")) |short_option| {
+        if (try obj.getOwn(globalThis, "short")) |short_option| {
             try validators.validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
@@ -329,13 +329,13 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             option.short_name = short_option_str;
         }
 
-        if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
+        if (try obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
                 option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
             }
         }
 
-        if (obj.getOwn(globalThis, "default")) |default_value| {
+        if (try obj.getOwn(globalThis, "default")) |default_value| {
             if (!default_value.isUndefined()) {
                 switch (option.type) {
                     .string => {
@@ -665,7 +665,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const config = if (config_value.isUndefined()) null else config_value;
 
     // Phase 0.A: Get and validate type of input args
-    const config_args: JSValue = if (config) |c| c.getOwn(globalThis, "args") orelse .undefined else .undefined;
+    const config_args: JSValue = if (config) |c| try c.getOwn(globalThis, "args") orelse .undefined else .undefined;
     const args: ArgsSlice = if (!config_args.isUndefinedOrNull()) args: {
         try validators.validateArray(globalThis, config_args, "args", .{}, null);
         break :args .{
@@ -677,11 +677,11 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     // Phase 0.B: Parse and validate config
 
-    const config_strict: JSValue = (if (config) |c| c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
-    var config_allow_positionals: JSValue = if (config) |c| c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
-    const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
-    const config_allow_negative: JSValue = if (config) |c| c.getOwn(globalThis, "allowNegative") orelse .false else .false;
-    const config_options: JSValue = if (config) |c| c.getOwn(globalThis, "options") orelse .undefined else .undefined;
+    const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
+    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
+    const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
+    const config_allow_negative: JSValue = if (config) |c| try c.getOwn(globalThis, "allowNegative") orelse .false else .false;
+    const config_options: JSValue = if (config) |c| try c.getOwn(globalThis, "options") orelse .undefined else .undefined;
 
     const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
@@ -739,7 +739,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     for (option_defs.items) |option| {
         if (option.default_value) |default_value| {
             if (!option.long_name.eqlComptime("__proto__")) {
-                if (state.values.getOwn(globalThis, option.long_name) == null) {
+                if (try state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{}\" to default value", .{option.long_name});
                     state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }

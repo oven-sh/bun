@@ -3009,7 +3009,7 @@ fn printErrorInstance(
                 }
 
                 formatter.format(
-                    JSC.Formatter.Tag.getAdvanced(
+                    try JSC.Formatter.Tag.getAdvanced(
                         value,
                         this.global,
                         .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3050,7 +3050,7 @@ fn printErrorInstance(
 
         // "cause" is not enumerable, so the above loop won't see it.
         if (!saw_cause) {
-            if (error_instance.getOwn(this.global, "cause")) |cause| {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
                     try errors_to_append.append(cause);
@@ -3059,7 +3059,7 @@ fn printErrorInstance(
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
-        const tag = JSC.Formatter.Tag.getAdvanced(
+        const tag = try JSC.Formatter.Tag.getAdvanced(
             error_instance,
             this.global,
             .{ .disable_inspect_custom = true, .hide_global = true },

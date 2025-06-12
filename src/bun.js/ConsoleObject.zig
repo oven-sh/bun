@@ -324,7 +324,7 @@ pub const TablePrinter = struct {
         var width: usize = 0;
         var value_formatter = this.value_formatter;
 
-        const tag = ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+        const tag = ConsoleObject.Formatter.Tag.get(value, this.globalObject) catch return 0; // TODO
         value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
         value_formatter.format(
             tag,
@@ -366,7 +366,7 @@ pub const TablePrinter = struct {
             //  - otherwise: iterate the object properties, and create the columns on-demand
             if (!this.properties.isUndefined()) {
                 for (columns.items[1..]) |*column| {
-                    if (row_value.getOwn(this.globalObject, column.name)) |value| {
+                    if (try row_value.getOwn(this.globalObject, column.name)) |value| {
                         column.width = @max(column.width, this.getWidthForValue(value));
                     }
                 }
@@ -460,7 +460,7 @@ pub const TablePrinter = struct {
                     value = row_value;
                 }
             } else if (row_value.isObject()) {
-                value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
+                value = try row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
             if (value == .zero) {
@@ -469,7 +469,7 @@ pub const TablePrinter = struct {
                 const len: u32 = this.getWidthForValue(value);
                 const needed = col.width -| len;
                 try writer.writeByteNTimes(' ', PADDING);
-                const tag = ConsoleObject.Formatter.Tag.get(value, this.globalObject);
+                const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
                 value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
@@ -838,7 +838,7 @@ pub fn format2(
             .error_display_level = options.error_display_level,
         };
         defer fmt.deinit();
-        const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
+        const tag = try ConsoleObject.Formatter.Tag.get(vals[0], global);
         fmt.writeIndent(Writer, writer) catch return;
 
         if (tag.tag == .String) {
@@ -937,7 +937,7 @@ pub fn format2(
             }
             any = true;
 
-            tag = ConsoleObject.Formatter.Tag.get(this_value, global);
+            tag = try ConsoleObject.Formatter.Tag.get(this_value, global);
             if (tag.tag == .String and fmt.remaining_values.len > 0) {
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
@@ -959,7 +959,7 @@ pub fn format2(
                 _ = writer.write(" ") catch 0;
             }
             any = true;
-            tag = ConsoleObject.Formatter.Tag.get(this_value, global);
+            tag = try ConsoleObject.Formatter.Tag.get(this_value, global);
             if (tag.tag == .String and fmt.remaining_values.len > 0) {
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
@@ -1046,7 +1046,7 @@ pub const Formatter = struct {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
             try self.formatter.format(
-                Tag.get(self.value, self.formatter.globalThis),
+                try Tag.get(self.value, self.formatter.globalThis),
                 @TypeOf(writer),
                 writer,
                 self.value,
@@ -1181,7 +1181,7 @@ pub const Formatter = struct {
             cell: JSValue.JSType = JSValue.JSType.Cell,
         };
 
-        pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
+        pub fn get(value: JSValue, globalThis: *JSGlobalObject) !Result {
             return getAdvanced(value, globalThis, .{ .hide_global = false });
         }
 
@@ -1191,12 +1191,12 @@ pub const Formatter = struct {
             disable_inspect_custom: bool = false,
         };
 
-        pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
-            switch (@intFromEnum(value)) {
-                0, 0xa => return Result{
+        pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) bun.JSError!Result {
+            switch (value) {
+                .zero, .undefined => return Result{
                     .tag = .{ .Undefined = {} },
                 },
-                0x2 => return Result{
+                .null => return Result{
                     .tag = .{ .Null = {} },
                 },
                 else => {},
@@ -1294,7 +1294,7 @@ pub const Formatter = struct {
 
             // Is this a react element?
             if (js_type.isObject() and js_type != .ProxyObject) {
-                if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
+                if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     // React 18 and below
                     var react_element_legacy = ZigString.init("react.element");
                     // For React 19 - https://github.com/oven-sh/bun/issues/17223
@@ -1613,7 +1613,7 @@ pub const Formatter = struct {
                                 // > implementation-specific, potentially-interactive representation
                                 // > of an object judged to be maximally useful and informative.
                             }
-                            try this.format(Tag.get(next_value, global), Writer, writer_, next_value, global, enable_ansi_colors);
+                            try this.format(try Tag.get(next_value, global), Writer, writer_, next_value, global, enable_ansi_colors);
                         },
 
                         .c => {
@@ -1775,7 +1775,7 @@ pub const Formatter = struct {
                     const key_tag = Tag.getAdvanced(key, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    });
+                    }) catch return;
 
                     this.formatter.format(
                         key_tag,
@@ -1789,7 +1789,7 @@ pub const Formatter = struct {
                     const value_tag = Tag.getAdvanced(value, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    });
+                    }) catch return;
                     this.formatter.format(
                         value_tag,
                         Writer,
@@ -1806,7 +1806,7 @@ pub const Formatter = struct {
                     const tag = Tag.getAdvanced(nextValue, globalObject, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                    });
+                    }) catch return;
                     this.formatter.format(
                         tag,
                         Writer,
@@ -1847,7 +1847,7 @@ pub const Formatter = struct {
                 const key_tag = Tag.getAdvanced(nextValue, globalObject, .{
                     .hide_global = true,
                     .disable_inspect_custom = this.formatter.disable_inspect_custom,
-                });
+                }) catch return;
                 this.formatter.format(
                     key_tag,
                     Writer,
@@ -1924,7 +1924,7 @@ pub const Formatter = struct {
                 const tag = Tag.getAdvanced(value, globalThis, .{
                     .hide_global = true,
                     .disable_inspect_custom = this.disable_inspect_custom,
-                });
+                }) catch return;
 
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
@@ -2270,7 +2270,7 @@ pub const Formatter = struct {
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
-                    try this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    try this.format(try ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }
             },
             .Symbol => {
@@ -2404,7 +2404,7 @@ pub const Formatter = struct {
                     first: {
                         const element = value.getDirectIndex(this.globalThis, 0);
 
-                        const tag = Tag.getAdvanced(element, this.globalThis, .{
+                        const tag = try Tag.getAdvanced(element, this.globalThis, .{
                             .hide_global = true,
                             .disable_inspect_custom = this.disable_inspect_custom,
                         });
@@ -2487,7 +2487,7 @@ pub const Formatter = struct {
                             writer.space();
                         }
 
-                        const tag = Tag.getAdvanced(element, this.globalThis, .{
+                        const tag = try Tag.getAdvanced(element, this.globalThis, .{
                             .hide_global = true,
                             .disable_inspect_custom = this.disable_inspect_custom,
                         });
@@ -2863,7 +2863,7 @@ pub const Formatter = struct {
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    const tag = ConsoleObject.Formatter.Tag.get(result, this.globalThis);
+                    const tag = try ConsoleObject.Formatter.Tag.get(result, this.globalThis);
                     try this.format(tag, Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     return;
                 }
@@ -2949,7 +2949,7 @@ pub const Formatter = struct {
                                 .{},
                             );
 
-                            const tag = Tag.getAdvanced(message_value, this.globalThis, .{
+                            const tag = try Tag.getAdvanced(message_value, this.globalThis, .{
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
@@ -2973,7 +2973,7 @@ pub const Formatter = struct {
                                 .{},
                             );
                             const data = (try value.fastGet(this.globalThis, .data)) orelse JSValue.undefined;
-                            const tag = Tag.getAdvanced(data, this.globalThis, .{
+                            const tag = try Tag.getAdvanced(data, this.globalThis, .{
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,
                             });
@@ -2995,7 +2995,7 @@ pub const Formatter = struct {
                                     .{},
                                 );
 
-                                const tag = Tag.getAdvanced(error_value, this.globalThis, .{
+                                const tag = try Tag.getAdvanced(error_value, this.globalThis, .{
                                     .hide_global = true,
                                     .disable_inspect_custom = this.disable_inspect_custom,
                                 });
@@ -3030,7 +3030,7 @@ pub const Formatter = struct {
                 defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
                 if (value.get_unsafe(this.globalThis, "type")) |type_value| {
-                    const _tag = Tag.getAdvanced(type_value, this.globalThis, .{
+                    const _tag = try Tag.getAdvanced(type_value, this.globalThis, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.disable_inspect_custom,
                     });
@@ -3073,7 +3073,7 @@ pub const Formatter = struct {
                         this.quote_strings = true;
                         defer this.quote_strings = old_quote_strings;
 
-                        try this.format(Tag.getAdvanced(key_value, this.globalThis, .{
+                        try this.format(try Tag.getAdvanced(key_value, this.globalThis, .{
                             .hide_global = true,
                             .disable_inspect_custom = this.disable_inspect_custom,
                         }), Writer, writer_, key_value, this.globalThis, enable_ansi_colors);
@@ -3107,7 +3107,7 @@ pub const Formatter = struct {
                                     continue;
 
                                 const property_value = props_iter.value;
-                                const tag = Tag.getAdvanced(property_value, this.globalThis, .{
+                                const tag = try Tag.getAdvanced(property_value, this.globalThis, .{
                                     .hide_global = true,
                                     .disable_inspect_custom = this.disable_inspect_custom,
                                 });
@@ -3156,7 +3156,7 @@ pub const Formatter = struct {
                         }
 
                         if (children_prop) |children| {
-                            const tag = Tag.get(children, this.globalThis);
+                            const tag = try Tag.get(children, this.globalThis);
 
                             const print_children = switch (tag.tag) {
                                 .String, .JSX, .Array => true,
@@ -3191,7 +3191,7 @@ pub const Formatter = struct {
                                                 this.indent += 1;
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                                 defer this.indent -|= 1;
-                                                try this.format(Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
+                                                try this.format(try Tag.get(children, this.globalThis), Writer, writer_, children, this.globalThis, enable_ansi_colors);
                                             }
 
                                             writer.writeAll("\n");
@@ -3214,7 +3214,7 @@ pub const Formatter = struct {
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
                                                     const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
-                                                    try this.format(Tag.getAdvanced(child, this.globalThis, .{
+                                                    try this.format(try Tag.getAdvanced(child, this.globalThis, .{
                                                         .hide_global = true,
                                                         .disable_inspect_custom = this.disable_inspect_custom,
                                                     }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
@@ -3464,7 +3464,7 @@ pub const Formatter = struct {
                 }
                 // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
                 // this is default off so it is not used.
-                try this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
+                try this.format(try ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
             },
         }
     }
@@ -3654,7 +3654,7 @@ pub fn timeLog(
     var writer = console.error_writer.writer();
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {
-        const tag = ConsoleObject.Formatter.Tag.get(arg, global);
+        const tag = ConsoleObject.Formatter.Tag.get(arg, global) catch return;
         _ = writer.write(" ") catch 0;
         if (Output.enable_ansi_colors_stderr) {
             fmt.format(tag, Writer, writer, arg, global, true) catch {}; // TODO:

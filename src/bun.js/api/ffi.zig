@@ -595,7 +595,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
+        const symbols_object = try object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -615,7 +615,7 @@ pub const FFI = struct {
             return globalThis.throw("Expected at least one exported symbol", .{});
         }
 
-        if (object.getOwn(globalThis, "library")) |library_value| {
+        if (try object.getOwn(globalThis, "library")) |library_value| {
             compile_c.libraries = try StringArray.fromJS(globalThis, library_value, "library");
         }
 
@@ -698,7 +698,7 @@ pub const FFI = struct {
             return error.JSError;
         }
 
-        if (object.getOwn(globalThis, "source")) |source_value| {
+        if (try object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = source_value.arrayIterator(globalThis);
@@ -1249,7 +1249,7 @@ pub const FFI = struct {
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
-        if (value.getOwn(global, "args")) |args| {
+        if (try value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }

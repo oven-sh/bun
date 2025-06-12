@@ -8303,7 +8303,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch ((try JSC.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),

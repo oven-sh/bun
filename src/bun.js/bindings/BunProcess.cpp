@@ -1126,15 +1126,31 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, result);
 }
 
-extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue str)
+extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto decodedReason = JSValue::decode(str);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto decodedReason = JSValue::decode(reason);
     if (decodedReason.isSymbol()) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString())));
-    } else {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(decodedReason.toStringOrNull(globalObject)));
     }
+
+    if (decodedReason.isInt32())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+    if (decodedReason.isDouble())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+    if (decodedReason.isTrue())
+        return JSC::JSValue::encode(vm.smallStrings.trueString());
+    if (decodedReason.isFalse())
+        return JSC::JSValue::encode(vm.smallStrings.falseString());
+    if (decodedReason.isNull())
+        return JSC::JSValue::encode(vm.smallStrings.nullString());
+    if (decodedReason.isUndefined())
+        return JSC::JSValue::encode(vm.smallStrings.undefinedString());
+    if (decodedReason.isString())
+        return JSC::JSValue::encode(decodedReason);
+    if (decodedReason.isObject())
+        return JSC::JSValue::encode(objectPrototypeToString(globalObject, decodedReason.getObject()));
+    return JSC::JSValue::encode(vm.smallStrings.objectObjectString());
 }
 
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
@@ -1155,7 +1171,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
-        reasonStack = JSValue::decode(Bun__noSideEffectsToString(globalObject, reason));
+        reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
         if (scope.exception()) scope.clearException();
     }
     if (!reasonStack) reasonStack = jsUndefined();

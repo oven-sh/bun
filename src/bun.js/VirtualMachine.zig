@@ -507,6 +507,7 @@ extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, 
 extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) bool;
 extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
 extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
+extern fn Bun__noSideEffectsToString(vm: *JSC.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
 fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
     const result = Bun__promises__isErrorLike(globalObject, reason);
@@ -519,12 +520,16 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         if (globalObject.hasException()) globalObject.clearException();
         break :blk false;
     }) return reason;
-    const reasonStr = reason.toString(globalObject);
+    const reasonStr = Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
     if (globalObject.hasException()) globalObject.clearException();
-    return globalObject.ERR(.UNHANDLED_REJECTION, "This error originated either by throwing inside of an async function without a catch block, " ++
+    const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
         "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
         "{s}" ++
-        "\".", .{reasonStr.view(globalObject)}).toJS();
+        "\".";
+    if (reasonStr.isString()) {
+        return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{reasonStr.asString().view(globalObject)}).toJS();
+    }
+    return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{"undefined"}).toJS();
 }
 
 pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {

@@ -665,7 +665,9 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    if (auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res)) {
+    auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (builtin) {
         if (!res->success) {
             RELEASE_AND_RETURN(scope, builtin);
         }
@@ -714,18 +716,22 @@ JSValue fetchCommonJSModule(
 
     JSMap* registry = globalObject->esmRegistryMap();
 
-    const auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
+    bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);
 
         if (!entry || !entry.isObject()) {
             return false;
         }
+        // return value doesn't matter since we check for exceptions after calling this lambda and
+        // before checking the returned bool
+        RETURN_IF_EXCEPTION(scope, false);
 
         int status = entry.getObject()->getDirect(vm, WebCore::clientData(vm)->builtinNames().statePublicName()).asInt32();
         return status > JSModuleLoader::Status::Fetch;
-    };
+    }();
+    RETURN_IF_EXCEPTION(scope, {});
 
-    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice()) {
+    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);

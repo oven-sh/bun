@@ -1376,8 +1376,14 @@ pub const JSValue = enum(i64) {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
 
-        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
-            .zero => error.JSError,
+        const value = try JSC.host_fn.fromJSHostCall(
+            global,
+            @src(),
+            JSC__JSValue__fastGet,
+            .{ this, global, @intFromEnum(builtin_name) },
+        );
+        return switch (value) {
+            .zero => unreachable, // handled by fromJSHostCall
             .undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };

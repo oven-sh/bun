@@ -662,7 +662,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     String& sourceURL,
     JSObject* errorInstance)
 {
-
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
     WTF::String message;
 
@@ -673,7 +673,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(
                 lexicalGlobalObject = errorInstance->globalObject();
             }
             name = instance->sanitizedNameString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -752,7 +754,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace);
+    RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
 static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)

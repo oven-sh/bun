@@ -3279,12 +3279,12 @@ declare module "bun" {
           ? {}
           : {};
 
-    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | HTMLBundle | Promise<Response | HTMLBundle>;
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
 
     type RouteHandlerWithWebSocketUpgrade<T extends string> = (
       req: BunRequest<T>,
       server: Server,
-    ) => Response | HTMLBundle | undefined | void | Promise<Response | HTMLBundle | undefined | void>;
+    ) => Response | undefined | void | Promise<Response | undefined | void>;
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
@@ -3466,7 +3466,7 @@ declare module "bun" {
      *
      * Respond to {@link Request} objects with a {@link Response} object.
      */
-    fetch(this: Server, request: Request, server: Server): Response | HTMLBundle | Promise<Response | HTMLBundle>;
+    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
   }
 
   interface UnixServeOptions extends GenericServeOptions {
@@ -3480,7 +3480,7 @@ declare module "bun" {
      *
      * Respond to {@link Request} objects with a {@link Response} object.
      */
-    fetch(this: Server, request: Request, server: Server): Response | HTMLBundle | Promise<Response | HTMLBundle>;
+    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
   }
 
   interface WebSocketServeOptions<WebSocketDataType = undefined> extends GenericServeOptions {
@@ -3556,7 +3556,7 @@ declare module "bun" {
       this: Server,
       request: Request,
       server: Server,
-    ): Response | HTMLBundle | undefined | void | Promise<Response | HTMLBundle | undefined | void>;
+    ): Response | undefined | void | Promise<Response | undefined | void>;
   }
 
   interface UnixWebSocketServeOptions<WebSocketDataType = undefined> extends GenericServeOptions {
@@ -3609,7 +3609,7 @@ declare module "bun" {
      *
      * Respond to {@link Request} objects with a {@link Response} object.
      */
-    fetch(this: Server, request: Request, server: Server): Response | HTMLBundle | undefined | Promise<Response | HTMLBundle | undefined>;
+    fetch(this: Server, request: Request, server: Server): Response | undefined | Promise<Response | undefined>;
   }
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
@@ -3931,7 +3931,7 @@ declare module "bun" {
      * consistently in all cases and it doesn't yet call the `error` handler
      * consistently. This needs to be fixed
      */
-    fetch(request: Request | string): Response | HTMLBundle | Promise<Response | HTMLBundle>;
+    fetch(request: Request | string): Response | Promise<Response>;
 
     /**
      * Upgrade a {@link Request} to a {@link ServerWebSocket}
@@ -4154,11 +4154,11 @@ declare module "bun" {
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
-        fetch?: (this: Server, request: Request, server: Server) => Response | HTMLBundle | Promise<Response | HTMLBundle>;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
-        fetch: (this: Server, request: Request, server: Server) => Response | HTMLBundle | Promise<Response | HTMLBundle>;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
     | (Omit<WebSocketServeOptions<T>, "fetch"> & {
         routes: {
@@ -4168,7 +4168,7 @@ declare module "bun" {
           this: Server,
           request: Request,
           server: Server,
-        ) => Response | HTMLBundle | Promise<Response | HTMLBundle | void | undefined> | void | undefined;
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
       })
     | (Omit<WebSocketServeOptions<T>, "fetch"> & {
         routes?: never;
@@ -4176,7 +4176,7 @@ declare module "bun" {
           this: Server,
           request: Request,
           server: Server,
-        ) => Response | HTMLBundle | Promise<Response | HTMLBundle | void | undefined> | void | undefined;
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
       });
 
   /**

@@ -896,7 +896,8 @@ pub const LinkerContext = struct {
         import_records: []ImportRecord,
         meta_flags: []JSMeta.Flags,
         ast_import_records: []bun.BabyList(ImportRecord),
-    ) js_ast.TlaCheck {
+        parents_to_revisit_buf: *std.ArrayListUnmanaged(Index.Int),
+    ) bun.OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -907,7 +908,16 @@ pub const LinkerContext = struct {
 
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags, ast_import_records);
+                    const parent = try c.validateTLA(
+                        record.source_index.get(),
+                        tla_keywords,
+                        tla_checks,
+                        input_files,
+                        import_records,
+                        meta_flags,
+                        ast_import_records,
+                        parents_to_revisit_buf,
+                    );
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
                     }
@@ -944,31 +954,31 @@ pub const LinkerContext = struct {
                             }
 
                             if (!Index.isValid(Index.init(parent_tla_check.parent))) {
-                                notes.append(Logger.Data{
+                                try notes.append(Logger.Data{
                                     .text = "unexpected invalid index",
-                                }) catch bun.outOfMemory();
+                                });
                                 break;
                             }
 
                             other_source_index = parent_tla_check.parent;
 
-                            notes.append(Logger.Data{
-                                .text = std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
+                            try notes.append(Logger.Data{
+                                .text = try std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
-                                }) catch bun.outOfMemory(),
+                                }),
                                 .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
-                            }) catch bun.outOfMemory();
+                            });
                         }
 
-                        const source: *const Logger.Source = &input_files[source_index];
+                        const source: *const Logger.Source = &input_files[record.source_index.get()];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
                         else
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
 
-                        c.log.addRangeErrorWithNotes(source, record.range, text, notes.items) catch bun.outOfMemory();
+                        try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
                     }
                 }
             }
@@ -977,7 +987,51 @@ pub const LinkerContext = struct {
             // async. This happens when you call "import()" on this module and code
             // splitting is off.
             if (Index.isValid(Index.init(result_tla_check.parent))) {
+                const was_async = meta_flags[source_index].is_async_or_has_async_dependency;
                 meta_flags[source_index].is_async_or_has_async_dependency = true;
+
+                // If we just marked this file as async, we need to propagate to parents
+                if (!was_async) {
+                    parents_to_revisit_buf.clearRetainingCapacity();
+
+                    // Find all files that import this file and mark them for revisiting
+                    for (ast_import_records, 0..) |records, _parent_index| {
+                        const parent_index: Index.Int = @intCast(_parent_index);
+                        for (records.slice()) |record| {
+                            if (Index.isValid(record.source_index) and
+                                record.source_index.get() == source_index and
+                                (record.kind == .stmt or record.kind == .dynamic))
+                            {
+                                // Mark the parent as async if it imports us
+                                if (!meta_flags[parent_index].is_async_or_has_async_dependency) {
+                                    meta_flags[parent_index].is_async_or_has_async_dependency = true;
+                                    // Recursively check this parent's parents
+                                    try parents_to_revisit_buf.append(c.allocator, parent_index);
+                                }
+                            }
+                        }
+                    }
+
+                    // Process all parents that need revisiting
+                    while (parents_to_revisit_buf.items.len > 0) {
+                        const parent_to_check = parents_to_revisit_buf.pop();
+                        // Find files that import this parent
+                        for (ast_import_records, 0..) |records, _grandparent_index| {
+                            const grandparent_index: Index.Int = @intCast(_grandparent_index);
+                            for (records.slice()) |record| {
+                                if (Index.isValid(record.source_index) and
+                                    record.source_index.get() == parent_to_check and
+                                    (record.kind == .stmt or record.kind == .dynamic))
+                                {
+                                    if (!meta_flags[grandparent_index].is_async_or_has_async_dependency) {
+                                        meta_flags[grandparent_index].is_async_or_has_async_dependency = true;
+                                        try parents_to_revisit_buf.append(c.allocator, grandparent_index);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

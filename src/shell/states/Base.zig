@@ -20,7 +20,6 @@ pub fn rootIO(this: *const Base) *const IO {
     return this.interpreter.rootIO();
 }
 
-const std = @import("std");
 const bun = @import("bun");
 
 const Interpreter = bun.shell.Interpreter;

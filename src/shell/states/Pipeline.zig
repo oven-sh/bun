@@ -306,47 +306,31 @@ const std = @import("std");
 const bun = @import("bun");
 const shell = bun.shell;
 
-const Allocator = std.mem.Allocator;
-
 const Interpreter = bun.shell.Interpreter;
-const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const GlobWalker = bun.shell.interpret.GlobWalker;
 const ShellState = Interpreter.ShellState;
-const StateKind = bun.shell.interpret.StateKind;
 const State = bun.shell.Interpreter.State;
-const throwShellErr = bun.shell.interpret.throwShellErr;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;
-const EnvStr = bun.shell.interpret.EnvStr;
 const Pipe = bun.shell.interpret.Pipe;
 const closefd = bun.shell.interpret.closefd;
 const IOReader = bun.shell.Interpreter.IOReader;
 const IOWriter = bun.shell.Interpreter.IOWriter;
 
 const Assigns = bun.shell.Interpreter.Assigns;
-const Script = bun.shell.Interpreter.Script;
 const Async = bun.shell.Interpreter.Async;
 const Cmd = bun.shell.Interpreter.Cmd;
 const If = bun.shell.Interpreter.If;
 const CondExpr = bun.shell.Interpreter.CondExpr;
 const Binary = bun.shell.Interpreter.Binary;
 const Subshell = bun.shell.Interpreter.Subshell;
-const Expansion = bun.shell.Interpreter.Expansion;
 const Stmt = bun.shell.Interpreter.Stmt;
 
 const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
 const Maybe = JSC.Maybe;
 const assert = bun.assert;
-const Arena = bun.shell.interpret.Arena;
-const Braces = bun.shell.interpret.Braces;
-const OOM = bun.shell.interpret.OOM;
-const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
-const WorkPool = bun.shell.interpret.WorkPool;
 const Syscall = bun.shell.interpret.Syscall;
 
 const windows = bun.windows;

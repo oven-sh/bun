@@ -173,38 +173,17 @@ pub const AssignCtx = enum {
 const std = @import("std");
 const bun = @import("bun");
 
-const Allocator = std.mem.Allocator;
-
 const Interpreter = bun.shell.Interpreter;
-const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const GlobWalker = bun.shell.interpret.GlobWalker;
 const ShellState = Interpreter.ShellState;
-const StateKind = bun.shell.interpret.StateKind;
 const State = bun.shell.Interpreter.State;
-const throwShellErr = bun.shell.interpret.throwShellErr;
 const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
 const EnvStr = bun.shell.interpret.EnvStr;
 
 const Cmd = bun.shell.Interpreter.Cmd;
-const CondExpr = bun.shell.Interpreter.CondExpr;
-const Subshell = bun.shell.Interpreter.Subshell;
 const Expansion = bun.shell.Interpreter.Expansion;
 const Stmt = bun.shell.Interpreter.Stmt;
 const Binary = bun.shell.Interpreter.Binary;
 const Pipeline = bun.shell.Interpreter.Pipeline;
-
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const Maybe = JSC.Maybe;
-const assert = bun.assert;
-const Arena = bun.shell.interpret.Arena;
-const Braces = bun.shell.interpret.Braces;
-const OOM = bun.shell.interpret.OOM;
-const WorkPoolTask = bun.shell.interpret.WorkPoolTask;
-const WorkPool = bun.shell.interpret.WorkPool;
-const Syscall = bun.shell.interpret.Syscall;

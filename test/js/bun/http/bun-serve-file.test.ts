@@ -373,8 +373,8 @@ describe("Bun.file in serve routes", () => {
     test.each(["hello.txt", "large.txt"])(
       "concurrent requests for %s",
       async filename => {
-        const batchSize = isWindows ? 8 : 32;
-        const iterations = isWindows ? 2 : 5;
+        const batchSize = 16;
+        const iterations = 10;
 
         async function iterate() {
           const promises = Array.from({ length: batchSize }, () =>
@@ -397,6 +397,7 @@ describe("Bun.file in serve routes", () => {
         for (let i = 0; i < iterations; i++) {
           await iterate();
           Bun.gc();
+          console.log("Completed iteration", i + 1);
         }
       },
       60000,

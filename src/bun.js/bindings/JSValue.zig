@@ -92,10 +92,10 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), true);
+        scope.init(globalThis.vm(), @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachPropertyNonIndexed(this, globalThis, ctx, callback);
-        try scope.returnIfException({});
+        try scope.returnIfException();
     }
 
     pub fn forEachProperty(
@@ -105,10 +105,10 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), true);
+        scope.init(globalThis.vm(), @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
-        try scope.returnIfException({});
+        try scope.returnIfException();
     }
 
     pub fn forEachPropertyOrdered(
@@ -118,10 +118,10 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), true);
+        scope.init(globalThis.vm(), @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
-        try scope.returnIfException({});
+        try scope.returnIfException();
     }
 
     extern fn JSC__JSValue__coerceToDouble(this: JSValue, globalObject: *JSC.JSGlobalObject) f64;
@@ -1548,7 +1548,7 @@ pub const JSValue = enum(i64) {
     pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         var property_name_str = bun.String.init(property_name);
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), true);
+        scope.init(global.vm(), @src(), .enabled);
         defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
         return if (scope.hasException())

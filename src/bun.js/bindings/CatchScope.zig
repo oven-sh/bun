@@ -4,7 +4,7 @@
 //! ```zig
 //! // Declare a CatchScope surrounding the call that may throw an exception
 //! var scope: CatchScope = undefined;
-//! scope.init(vm, @src());
+//! scope.init(vm, @src(), .assertions_only);
 //! defer scope.deinit();
 //!
 //! const value = external_call(vm, foo, bar, baz);
@@ -28,6 +28,17 @@ vm: *jsc.VM,
 location: if (Environment.allow_assert) *u8 else void,
 enabled: bool,
 
+pub const Enable = enum {
+    /// You are using the CatchScope to check for exceptions.
+    enabled,
+    /// You have another way to detect exceptions and are only using the CatchScope to prove that
+    /// exceptions are checked.
+    ///
+    /// This CatchScope will only do anything when assertions are enabled. Otherwise, init and
+    /// deinit do nothing and it always reports there is no exception.
+    assertions_only,
+};
+
 pub fn init(
     self: *CatchScope,
     vm: *jsc.VM,
@@ -36,8 +47,12 @@ pub fn init(
     /// If you need to do something different when there is an exception, leave enabled.
     /// If you are only using the scope to prove you handle exceptions correctly, you can pass
     /// `Environment.allow_assert` as `enabled`.
-    enabled: bool,
+    enable_condition: Enable,
 ) void {
+    const enabled = switch (enable_condition) {
+        .enabled => true,
+        .assertions_only => Environment.allow_assert,
+    };
     if (enabled) {
         CatchScope__construct(
             &self.bytes,
@@ -76,8 +91,8 @@ pub fn exception(self: *CatchScope) ?*jsc.Exception {
     return CatchScope__exception(&self.bytes);
 }
 
-pub fn returnIfException(self: *CatchScope, value: anytype) bun.JSError!@TypeOf(value) {
-    return if (self.hasException()) error.JSError else value;
+pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+    if (self.hasException()) return error.JSError;
 }
 
 /// If no exception, returns.

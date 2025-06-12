@@ -77,7 +77,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
     const arguments = callframe.arguments_old(1);
     const this_value = arguments.ptr[0];
     if (this_value.isEmptyOrUndefinedOrNull()) {
-        return .undefined;
+        return .jsUndefined();
     }
 
     const body: *Body.Value = brk: {
@@ -87,15 +87,15 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             break :brk &request.body.value;
         }
 
-        return .undefined;
+        return .jsUndefined();
     };
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .undefined,
+        .Used, .Empty, .Null => return .jsUndefined(),
         .Blob => |*blob| {
             if (blob.isBunFile()) {
-                return .undefined;
+                return .jsUndefined();
             }
             defer body.* = .{ .Used = {} };
             return blob.toArrayBuffer(globalObject, .transfer) catch return .zero;
@@ -104,7 +104,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked => return .undefined,
+        .Error, .Locked => return .jsUndefined(),
     }
 }
 

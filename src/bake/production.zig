@@ -141,7 +141,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |resolved| config: {
-            bun.assert(resolved == .undefined);
+            bun.assert(resolved.isUndefined());
             const default = BakeGetDefaultExportFromModule(vm.global, config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
@@ -572,7 +572,7 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !J
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |val| {
-            bun.assert(val == .undefined);
+            bun.assert(val.isUndefined());
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {

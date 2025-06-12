@@ -286,7 +286,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
             defer ctx.deref();
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .jsUndefined());
             return JSValue.jsUndefined();
         }
 
@@ -499,6 +499,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.detachResponse();
                 this.endRequestStreamingAndDrain();
                 resp.endWithoutBody(closeConnection);
+            }
+        }
+
+        pub fn forceClose(this: *RequestContext) void {
+            if (this.resp) |resp| {
+                defer this.deref();
+                this.detachResponse();
+                this.endRequestStreamingAndDrain();
+                resp.forceClose();
             }
         }
 
@@ -2070,7 +2079,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get() orelse .undefined,
+                        server.js_value.get() orelse .jsUndefined(),
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();

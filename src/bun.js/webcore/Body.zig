@@ -175,7 +175,7 @@ pub const PendingValue = struct {
 
                             break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
                                 .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
-                                .URLEncoded => .undefined,
+                                .URLEncoded => .jsUndefined(),
                             });
                         },
                         else => unreachable,

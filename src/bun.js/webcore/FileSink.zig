@@ -434,7 +434,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
 
     if (this.done) {
-        return .{ .result = .undefined };
+        return .initResult(.jsUndefined());
     }
 
     const rc = this.writer.flush();
@@ -454,7 +454,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
     return switch (this.toResult(rc)) {
         .err => unreachable,
-        else => |result| .{ .result = result.toJS(globalThis) },
+        else => |result| .initResult(result.toJS(globalThis)),
     };
 }
 

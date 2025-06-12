@@ -15,7 +15,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const data: JSC.JSValue = arguments[0];
 
         if (data == .zero) {
-            return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .undefined);
+            return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .jsUndefined());
         }
         if (data.isString()) {
             break :blk data.asString().toSlice(globalThis, bun.default_allocator);
@@ -114,7 +114,7 @@ pub fn CompressionStream(comptime T: type) type {
             this.poll_ref.ref(vm);
             JSC.WorkPool.schedule(&this.task);
 
-            return .undefined;
+            return .jsUndefined();
         }
 
         const AsyncJob = struct {
@@ -217,7 +217,7 @@ pub fn CompressionStream(comptime T: type) type {
             }
             this.deref();
 
-            return .undefined;
+            return .jsUndefined();
         }
 
         pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -225,14 +225,14 @@ pub fn CompressionStream(comptime T: type) type {
             if (err.isError()) {
                 try emitError(this, globalThis, callframe.this(), err);
             }
-            return .undefined;
+            return .jsUndefined();
         }
 
         pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = globalThis;
             _ = callframe;
             closeInternal(this);
-            return .undefined;
+            return .jsUndefined();
         }
 
         fn closeInternal(this: *T) void {
@@ -253,7 +253,7 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
-            return T.js.errorCallbackGetCached(this_value) orelse .undefined;
+            return T.js.errorCallbackGetCached(this_value) orelse .jsUndefined();
         }
 
         /// returns true if no error was detected/emitted
@@ -400,7 +400,7 @@ pub const SNativeZlib = struct {
 
         this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn params(this: *SNativeZlib, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -417,7 +417,7 @@ pub const SNativeZlib = struct {
         if (err.isError()) {
             try impl.emitError(this, globalThis, callframe.this(), err);
         }
-        return .undefined;
+        return .jsUndefined();
     }
 
     fn deinit(this: *@This()) void {
@@ -804,7 +804,7 @@ pub const SNativeBrotli = struct {
         _ = globalThis;
         _ = callframe;
         // intentionally left empty
-        return .undefined;
+        return .jsUndefined();
     }
 
     fn deinit(this: *@This()) void {

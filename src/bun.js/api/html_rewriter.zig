@@ -1093,7 +1093,7 @@ pub const TextChunk = struct {
 
     fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.text_chunk == null)
-            return .undefined;
+            return .jsUndefined();
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
 

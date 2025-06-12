@@ -19,6 +19,14 @@ pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Ver
         null;
 }
 
+pub fn getDependency(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency {
+    debug("looking up override dependency for {x}", .{name_hash});
+    if (this.map.count() == 0) {
+        return null;
+    }
+    return this.map.get(name_hash);
+}
+
 pub fn sort(this: *OverrideMap, lockfile: *const Lockfile) void {
     const Ctx = struct {
         buf: string,
@@ -306,7 +314,13 @@ pub fn parseOverrideValue(
         const pkg_deps: []const Dependency = root_package.dependencies.get(lockfile.buffers.dependencies.items);
         for (pkg_deps) |dep| {
             if (dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.items, ref_name)) {
-                return dep;
+                const name_hash = String.Builder.stringHash(key);
+                const name = builder.appendWithHash(String, key, name_hash);
+                return Dependency{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .version = dep.version,
+                };
             }
         }
         try log.addWarningFmt(source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });

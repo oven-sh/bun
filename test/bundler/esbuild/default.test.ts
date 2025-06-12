@@ -1581,6 +1581,29 @@ describe("bundler", () => {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
   });
+  itBundled.only("default/CircularTLADependency", {
+    files: {
+      "/entry.js": /* js */ `
+        const { A } = await import('./a.js');
+        console.log(A);
+      `,
+      "/a.js": /* js */ `
+        import { B } from './b.js';
+        export const A = 'hi';
+      `,
+      "/b.js": /* js */ `
+        import { A } from './a.js';
+
+        // TLA that should mark the wrapper closure for a.js as async
+        await 1;
+
+        export const B = 'hello';
+      `,
+    },
+    run: {
+      stdout: "hi\n",
+    },
+  });
   itBundled("default/ThisOutsideFunctionRenamedToExports", {
     files: {
       "/entry.js": /* js */ `

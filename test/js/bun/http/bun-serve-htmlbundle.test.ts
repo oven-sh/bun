@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// returning HTMLBundle directly works
 test("fetch routes HTMLBundle", async () => {
   const dir = tempDirWithFiles("htmlbundle", {
     "index.html": "<!DOCTYPE html><html><body>Hello HTML</body></html>",
@@ -24,8 +23,7 @@ test("fetch routes HTMLBundle", async () => {
   expect(missing.status).toBe(404);
 });
 
-// returning HTMLBundle from a function should work
-test("routes () => HTMLBundle", async () => {
+test("fetch Response(HTMLBundle)", async () => {
   const dir = tempDirWithFiles("htmlbundle", {
     "index.html": "<!DOCTYPE html><html><body>Hello HTML</body></html>",
   });
@@ -35,7 +33,7 @@ test("routes () => HTMLBundle", async () => {
   using server = Bun.serve({
     port: 0,
     routes: {
-      "/": (req) => html,
+      "/": new Response(html),
     },
   });
 
@@ -45,7 +43,7 @@ test("routes () => HTMLBundle", async () => {
   expect(missing.status).toBe(404);
 });
 
-test("fetch () => HTMLBundle", async () => {
+test("fetch Sleep 1s Response(HTMLBundle)", async () => {
   const dir = tempDirWithFiles("htmlbundle", {
     "index.html": "<!DOCTYPE html><html><body>Hello HTML</body></html>",
   });
@@ -54,13 +52,12 @@ test("fetch () => HTMLBundle", async () => {
 
   using server = Bun.serve({
     port: 0,
-    fetch: async (req) => {
-      const url = new URL(req.url);
-      if (url.pathname == "/")
-        return html;
-
-      return new Response("404", { status: 404 });
-    }
+    routes: {
+      "/": async () => {
+        Bun.sleep(1000);
+        return new Response(html);
+      },
+    },
   });
 
   const res = await fetch(server.url);

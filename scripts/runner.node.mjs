@@ -132,7 +132,8 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      // do not merge this
+      default: isCI ? (basename(execPath).includes("asan") ? "0" : "3") : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",

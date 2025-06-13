@@ -21,20 +21,7 @@ test("fetch routes HTMLBundle", async () => {
   expect(await res.text()).toContain("Hello HTML");
   const missing = await fetch(`${server.url}/index.html`);
   expect(missing.status).toBe(404);
-});
-
-test("fetch Response(HTMLBundle)", async () => {
-  using server = Bun.serve({
-    port: 0,
-    routes: {
-      "/": new Response(html),
-    },
-  });
-
-  const res = await fetch(server.url);
-  expect(await res.text()).toContain("Hello HTML");
-  const missing = await fetch(`${server.url}/index.html`);
-  expect(missing.status).toBe(404);
+  await server.stop();
 });
 
 test("fetch Sleep 1s Response(HTMLBundle)", async () => {
@@ -54,6 +41,21 @@ test("fetch Sleep 1s Response(HTMLBundle)", async () => {
   expect(missing.status).toBe(404);
 });
 
+test("fetch Response(HTMLBundle)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/": new Response(html),
+    },
+  });
+
+  const res = await fetch(server.url);
+  await server.stop();
+  expect(await res.text()).toContain("Hello HTML");
+  const missing = await fetch(`${server.url}/index.html`);
+  expect(missing.status).toBe(404);
+});
+
 test("fetch Response(HTMLBundle) headers", async () => {
   using server = Bun.serve({
     port: 0,
@@ -65,6 +67,7 @@ test("fetch Response(HTMLBundle) headers", async () => {
   });
 
   const res = await fetch(server.url);
+  await server.stop();
   expect(res.status).toBe(401);
   expect(res.headers.get("x-test")).toBe("true");
 });

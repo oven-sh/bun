@@ -2025,7 +2025,7 @@ describe("bundler", () => {
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {
       "/entry.ts": `
-        import index from './index.html'
+        import index from './index.html' with { type: 'file' }
         console.log(index);
       `,
       "/index.html": `
@@ -2051,7 +2051,7 @@ describe("bundler", () => {
   itBundled("edgecase/OutWithTwoFiles", {
     files: {
       "/entry.ts": `
-        import index from './index.html'
+        import index from './index.html' with { type: 'file' }
         console.log(index);
       `,
       "/index.html": `

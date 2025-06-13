@@ -1143,20 +1143,20 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     }
 }
 
-fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+fn onNotFound(_: *DevServer, _: *Request, resp: AnyResponse) void {
     notFound(resp);
 }
 
-fn notFound(resp: anytype) void {
+fn notFound(resp: AnyResponse) void {
     resp.corked(onNotFoundCorked, .{resp});
 }
 
-fn onNotFoundCorked(resp: anytype) void {
+fn onNotFoundCorked(resp: AnyResponse) void {
     resp.writeStatus("404 Not Found");
     resp.end("Not Found", false);
 }
 
-fn onOutdatedJSCorked(resp: anytype) void {
+fn onOutdatedJSCorked(resp: AnyResponse) void {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
@@ -1276,11 +1276,11 @@ inline fn redirectHandler(comptime path: []const u8, comptime is_ssl: bool) fn (
     }.handle;
 }
 
-fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
 
-fn onIncrementalVisualizerCorked(resp: anytype) void {
+fn onIncrementalVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
@@ -1288,11 +1288,11 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
     resp.end(code, false);
 }
 
-fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: AnyResponse) void {
     resp.corked(onMemoryVisualizerCorked, .{resp});
 }
 
-fn onMemoryVisualizerCorked(resp: anytype) void {
+fn onMemoryVisualizerCorked(resp: AnyResponse) void {
     const code = if (Environment.codegen_embed)
         @embedFile("memory_visualizer.html")
     else
@@ -4858,11 +4858,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
-                &bv2.graph.path_to_source_index_map,
-                &bv2.graph.client_path_to_source_index_map,
-                &bv2.graph.ssr_path_to_source_index_map,
-            }) |map| {
+            for (&bv2.graph.build_graphs.values) |*map| {
                 _ = map.remove(hash);
             }
         }

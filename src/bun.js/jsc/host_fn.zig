@@ -145,14 +145,7 @@ pub fn wrap1(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?) callconv(.c) JSValue {
-            const value = func(arg0) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(arg0, value, func);
-            }
-            return value;
+            return toJSHostCall(arg0, @src(), func, .{arg0});
         }
     }.wrapped;
 }
@@ -164,14 +157,7 @@ pub fn wrap2(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?) callconv(.c) JSValue {
-            const value = func(arg0, arg1) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(arg0, value, func);
-            }
-            return value;
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1 });
         }
     }.wrapped;
 }
@@ -183,14 +169,7 @@ pub fn wrap3(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?) callconv(.c) JSValue {
-            const value = func(arg0, arg1, arg2) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(arg0, value, func);
-            }
-            return value;
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2 });
         }
     }.wrapped;
 }
@@ -202,14 +181,7 @@ pub fn wrap4(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(.c) JSValue {
-            const value = func(arg0, arg1, arg2, arg3) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(arg0, value, func);
-            }
-            return value;
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
         }
     }.wrapped;
 }
@@ -221,14 +193,7 @@ pub fn wrap5(comptime func: anytype) @"return": {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
         pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?, arg4: p[4].type.?) callconv(.c) JSValue {
-            const value = func(arg0, arg1, arg2, arg3, arg4) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => arg0.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(arg0, value, func);
-            }
-            return value;
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3, arg4 });
         }
     }.wrapped;
 }

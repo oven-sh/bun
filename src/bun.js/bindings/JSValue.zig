@@ -288,7 +288,7 @@ pub const JSValue = enum(i64) {
             // this can be an async context so it's fine if it's not callable.
         }
 
-        return JSC.fromJSHostCall(global, @src(), Bun__JSValue__call, .{
+        return fromJSHostCall(global, @src(), Bun__JSValue__call, .{
             global,
             function,
             thisValue,
@@ -348,7 +348,7 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__createEmptyArray(global: *JSGlobalObject, len: usize) JSValue;
     pub fn createEmptyArray(global: *JSGlobalObject, len: usize) bun.JSError!JSValue {
-        return bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__createEmptyArray, .{ global, len });
+        return fromJSHostCall(global, @src(), JSC__JSValue__createEmptyArray, .{ global, len });
     }
 
     extern fn JSC__JSValue__putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void;
@@ -1391,7 +1391,7 @@ pub const JSValue = enum(i64) {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
 
-        const value = try JSC.host_fn.fromJSHostCall(
+        const value = try fromJSHostCall(
             global,
             @src(),
             JSC__JSValue__fastGet,
@@ -1502,7 +1502,7 @@ pub const JSValue = enum(i64) {
     /// Cannot handle property names that are numeric indexes. (For this use `getPropertyValue` instead.)
     ///
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
-        if (bun.Environment.isDebug) bun.assert(target.isObject());
+        bun.debugAssert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
 
         // This call requires `get` to be `inline`
@@ -1512,8 +1512,13 @@ pub const JSValue = enum(i64) {
             }
         }
 
-        return switch (JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
-            .zero => error.JSError,
+        return switch (try fromJSHostCall(global, @src(), JSC__JSValue__getIfPropertyExistsImpl, .{
+            target,
+            global,
+            property_slice.ptr,
+            @intCast(property_slice.len),
+        })) {
+            .zero => unreachable, // handled by fromJSHostCall
             .property_does_not_exist_on_object => null,
 
             // TODO: see bug described in ObjectBindings.cpp
@@ -2493,6 +2498,7 @@ const JSString = JSC.JSString;
 const JSObject = JSC.JSObject;
 const JSArrayIterator = JSC.JSArrayIterator;
 const JSCell = JSC.JSCell;
+const fromJSHostCall = JSC.fromJSHostCall;
 
 const AnyPromise = JSC.AnyPromise;
 const DOMURL = JSC.DOMURL;

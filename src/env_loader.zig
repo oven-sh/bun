@@ -518,8 +518,8 @@ pub const Loader = struct {
 
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
-        var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite, false, expand);
+        const source = &logger.Source.initPathString("test", str);
+        Parser.parse(source, this.allocator, this.map, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -774,10 +774,10 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(base, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
@@ -785,7 +785,7 @@ pub const Loader = struct {
             true,
         );
 
-        @field(this, base) = source;
+        @field(this, base) = source.*;
     }
 
     pub fn loadEnvFileDynamic(
@@ -845,10 +845,10 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(file_path, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
@@ -856,7 +856,7 @@ pub const Loader = struct {
             true,
         );
 
-        try this.custom_files_loaded.put(file_path, source);
+        try this.custom_files_loaded.put(file_path, source.*);
     }
 };
 

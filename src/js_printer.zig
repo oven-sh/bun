@@ -406,14 +406,14 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
-    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void;
+    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
 
-    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
+    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void)) type {
         return struct {
-            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
                 try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
             }
 
@@ -5853,7 +5853,7 @@ pub fn printAst(
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
 
-            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+            try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), "");
@@ -5861,7 +5861,7 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 
@@ -6102,7 +6102,7 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 

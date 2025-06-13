@@ -10,10 +10,8 @@
 /// - Offers safe casting between Zig and C representations
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
-    // making this opaque crashes Zig 0.14.0 when built in Debug or ReleaseSafe
-    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
-    return struct {
-        const Response = @This();
+    return opaque {
+        const Response = NewResponse(ssl_flag);
         const ssl = ssl_flag == 1;
 
         pub inline fn castRes(res: *c.uws_res) *Response {
@@ -22,6 +20,10 @@ pub fn NewResponse(ssl_flag: i32) type {
 
         pub inline fn downcast(res: *Response) *c.uws_res {
             return @as(*c.uws_res, @ptrCast(@alignCast(res)));
+        }
+
+        pub inline fn downcastSocket(res: *Response) *bun.uws.us_socket_t {
+            return @as(*bun.uws.us_socket_t, @ptrCast(@alignCast(res)));
         }
 
         pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
@@ -102,6 +104,14 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn hasResponded(res: *Response) bool {
             return c.uws_res_has_responded(ssl_flag, res.downcast());
+        }
+
+        pub fn markWroteContentLengthHeader(res: *Response) void {
+            c.uws_res_mark_wrote_content_length_header(ssl_flag, res.downcast());
+        }
+
+        pub fn writeMark(res: *Response) void {
+            c.uws_res_write_mark(ssl_flag, res.downcast());
         }
 
         pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
@@ -237,7 +247,7 @@ pub fn NewResponse(ssl_flag: i32) type {
         pub fn corked(
             res: *Response,
             comptime handler: anytype,
-            args_tuple: anytype,
+            args_tuple: std.meta.ArgsTuple(@TypeOf(handler)),
         ) void {
             const Wrapper = struct {
                 const handler_fn = handler;
@@ -305,6 +315,30 @@ pub const TLSResponse = NewResponse(1);
 pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
+
+    pub fn markNeedsMore(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markNeedsMore(),
+        };
+    }
+
+    pub fn markWroteContentLengthHeader(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markWroteContentLengthHeader(),
+        };
+    }
+
+    pub fn writeMark(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.writeMark(),
+        };
+    }
+
+    pub fn endSendFile(this: AnyResponse, write_offset: u64, close_connection: bool) void {
+        return switch (this) {
+            inline else => |resp| resp.endSendFile(write_offset, close_connection),
+        };
+    }
 
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
@@ -429,6 +463,13 @@ pub const AnyResponse = union(enum) {
         }
     }
 
+    pub fn forceClose(this: AnyResponse) void {
+        switch (this) {
+            .SSL => |resp| resp.downcastSocket().close(true, .failure),
+            .TCP => |resp| resp.downcastSocket().close(false, .failure),
+        }
+    }
+
     pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *uws.NewApp(true).Response) bool {
@@ -505,7 +546,7 @@ pub const AnyResponse = union(enum) {
         }
     }
 
-    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
+    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: std.meta.ArgsTuple(@TypeOf(handler))) void {
         switch (this) {
             inline else => |resp| resp.corked(handler, args_tuple),
         }
@@ -576,6 +617,8 @@ pub const uws_res = c.uws_res;
 
 const c = struct {
     pub const uws_res = opaque {};
+    pub extern fn uws_res_mark_wrote_content_length_header(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
@@ -635,6 +678,7 @@ const c = struct {
     pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
 };
 
+const std = @import("std");
 const bun = @import("bun");
 const uws = bun.uws;
 const Socket = uws.Socket;

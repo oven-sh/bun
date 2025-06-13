@@ -357,7 +357,7 @@ pub const Arguments = struct {
             ctx.log.level = original_level;
         }
         ctx.log.level = logger.Log.Level.warn;
-        try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+        try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
     fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -1815,29 +1815,31 @@ pub const Command = struct {
         }
 
         // bun build --compile entry point
-        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            context_data = .{
-                .args = std.mem.zeroes(Api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = bun.default_allocator,
-            };
-            global_cli_ctx = &context_data;
-            var ctx = global_cli_ctx;
+        if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
+            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+                context_data = .{
+                    .args = std.mem.zeroes(Api.TransformOptions),
+                    .log = log,
+                    .start_time = start_time,
+                    .allocator = bun.default_allocator,
+                };
+                global_cli_ctx = &context_data;
+                var ctx = global_cli_ctx;
 
-            ctx.args.target = Api.Target.bun;
-            if (bun.argv.len > 1) {
-                ctx.passthrough = bun.argv[1..];
-            } else {
-                ctx.passthrough = &[_]string{};
+                ctx.args.target = Api.Target.bun;
+                if (bun.argv.len > 1) {
+                    ctx.passthrough = bun.argv[1..];
+                } else {
+                    ctx.passthrough = &[_]string{};
+                }
+
+                try @import("./bun_js.zig").Run.bootStandalone(
+                    ctx,
+                    graph.entryPoint().name,
+                    graph,
+                );
+                return;
             }
-
-            try @import("./bun_js.zig").Run.bootStandalone(
-                ctx,
-                graph.entryPoint().name,
-                graph,
-            );
-            return;
         }
 
         debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});

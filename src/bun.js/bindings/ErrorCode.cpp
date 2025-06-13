@@ -2263,6 +2263,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(error);
     }
 
+    case Bun::ErrorCode::ERR_ZSTD_INVALID_PARAM: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid zstd parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:

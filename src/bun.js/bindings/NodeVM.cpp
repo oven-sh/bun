@@ -258,6 +258,7 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
         if (JSValue with = asObject(parameters)->getIfPropertyExists(globalObject, vm.propertyNames->with)) {
             parameters = with;
         }
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     MarkedArgumentBuffer args;

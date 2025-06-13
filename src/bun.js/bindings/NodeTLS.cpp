@@ -63,6 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
 
         auto str = WTF::String::fromUTF8(std::span { bioData, bioLength });
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        BIO_free(bio);
     }
 
     return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));

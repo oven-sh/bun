@@ -80,9 +80,8 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
     const cwd = FD.cwd();
 
-    const node_modules_path = bun.OSPathLiteral("node_modules");
-
     const root_node_modules_dir, const is_new_root_node_modules, const bun_modules_dir, const is_new_bun_modules = root_dirs: {
+        const node_modules_path = bun.OSPathLiteral("node_modules");
         const bun_modules_path = bun.OSPathLiteral("node_modules/.bun");
         const existing_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
             sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
@@ -158,12 +157,14 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
     };
     defer ctx.deinit();
 
-    {
+    const store = store: {
         var timer = std.time.Timer.start() catch unreachable;
         const pkgs = lockfile.packages.slice();
         const pkg_dependency_slices = pkgs.items(.dependencies);
         const pkg_resolutions = pkgs.items(.resolution);
         const pkg_names = pkgs.items(.name);
+        const pkg_metas = pkgs.items(.meta);
+        _ = pkg_metas;
 
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -186,6 +187,17 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             .pkg_id = 0,
         });
 
+        var dep_ids_sort_buf: std.ArrayListUnmanaged(DependencyID) = .empty;
+        defer dep_ids_sort_buf.deinit(lockfile.allocator);
+
+        // Used by leaves and workspace dependencies. They can be deduplicated early
+        // because peers won't change them.
+        //
+        // In the pnpm repo without this map: 772,471 nodes
+        //                 and with this map: 314,022 nodes
+        var dedupe: std.AutoHashMapUnmanaged(PackageID, Store.Node.Id) = .empty;
+        defer dedupe.deinit(lockfile.allocator);
+
         var peer_dep_ids: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer peer_dep_ids.deinit(lockfile.allocator);
 
@@ -204,9 +216,9 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 var curr_id = entry.parent_id;
                 while (curr_id != .invalid) {
                     if (node_pkg_ids[curr_id.get()] == entry.pkg_id) {
-                        // skip the node, but add the dependency so it appears in
-                        // `node_modules/.bun/name@version/node_modules`
-                        try node_nodes[entry.parent_id.get()].append(lockfile.allocator, curr_id);
+                        // skip the new node, and add the previously added node to parent so it appears in
+                        // 'node_modules/.bun/parent@version/node_modules'
+                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
                         continue :node_queue;
                     }
                     curr_id = node_parent_ids[curr_id.get()];
@@ -214,11 +226,29 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             }
 
             const node_id: Store.Node.Id = .from(@intCast(nodes.len));
+
+            const pkg_deps = pkg_dependency_slices[entry.pkg_id];
+
+            if (entry.dep_id != invalid_dependency_id) {
+                const entry_dep = dependencies[entry.dep_id];
+                if (pkg_deps.len == 0 or (entry_dep.behavior.isWorkspace() and !entry_dep.behavior.isWorkspaceOnly())) {
+                    const dedupe_entry = try dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
+                    const dedupe_node_id = dedupe_entry.value_ptr;
+                    if (dedupe_entry.found_existing) {
+                        nodes.items(.nodes)[entry.parent_id.get()].appendAssumeCapacity(dedupe_node_id.*);
+                        continue;
+                    }
+
+                    dedupe_node_id.* = node_id;
+                }
+            }
+
             try nodes.append(lockfile.allocator, .{
                 .pkg_id = entry.pkg_id,
                 .dep_id = entry.dep_id,
                 .parent_id = entry.parent_id,
-                .nodes = .empty,
+                .nodes = try .initCapacity(lockfile.allocator, pkg_deps.len),
+                .dependencies = try .initCapacity(lockfile.allocator, pkg_deps.len),
             });
 
             const nodes_slice = nodes.slice();
@@ -227,17 +257,37 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             const node_peers = nodes_slice.items(.peers);
             const node_nodes = nodes_slice.items(.nodes);
 
-            if (entry.parent_id != .invalid) {
-                try node_nodes[entry.parent_id.get()].append(lockfile.allocator, node_id);
+            if (entry.parent_id.tryGet()) |parent_id| {
+                node_nodes[parent_id].appendAssumeCapacity(node_id);
             }
 
-            const pkg_deps = pkg_dependency_slices[entry.pkg_id];
+            if (entry.dep_id != invalid_dependency_id) {
+                const entry_dep = dependencies[entry.dep_id];
+                if (entry_dep.behavior.isWorkspace() and !entry_dep.behavior.isWorkspaceOnly()) {
+                    continue;
+                }
+            }
 
-            peer_dep_ids.clearRetainingCapacity();
-
+            dep_ids_sort_buf.clearRetainingCapacity();
+            try dep_ids_sort_buf.ensureUnusedCapacity(lockfile.allocator, pkg_deps.len);
             for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
+                dep_ids_sort_buf.appendAssumeCapacity(dep_id);
+            }
 
+            // TODO: make this sort in an order that allows peers to be resolved last
+            // and devDependency handling to match `hoistDependency`
+            std.sort.pdq(
+                DependencyID,
+                dep_ids_sort_buf.items,
+                Lockfile.DepSorter{
+                    .lockfile = lockfile,
+                },
+                Lockfile.DepSorter.isLessThan,
+            );
+
+            peer_dep_ids.clearRetainingCapacity();
+            for (dep_ids_sort_buf.items) |dep_id| {
                 const pkg_id = resolutions[dep_id];
 
                 if (pkg_id >= pkgs.len) {
@@ -246,6 +296,22 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
                 const dep = dependencies[dep_id];
 
+                // TODO: filtering and removing duplicates
+                // {
+                //     // filtering
+                //     if (pkg_metas[pkg_id].isDisabled()) {
+                //         continue;
+                //     }
+
+                //     if (dep.behavior.isBundled() or !dep.behavior.isEnabled(manager.options.remote_package_features)) {
+                //         continue;
+                //     }
+
+                //     // if (manager.subcommand == .install) {
+
+                //     // }
+                // }
+
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`
 
@@ -253,7 +319,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     // simple case:
                     // - add it as a dependency
                     // - queue it
-                    try node_dependencies[node_id.get()].append(lockfile.allocator, .{ .dep_id = dep_id, .pkg_id = pkg_id });
+                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
                     try node_queue.writeItem(.{
                         .parent_id = node_id,
                         .dep_id = dep_id,
@@ -387,7 +453,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 if (visited_node_ids.items.len != 1) {
                     // visited parents length == 1 means the node satisfied it's own
                     // peer. don't queue.
-                    try node_dependencies[node_id.get()].append(lockfile.allocator, .{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
+                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
                     try node_queue.writeItem(.{
                         .parent_id = node_id,
                         .dep_id = peer_dep_id,
@@ -408,8 +474,8 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             peers: Store.Node.TransitivePeer.OrderedList,
         };
 
-        var placed: std.AutoHashMap(PackageID, std.ArrayListUnmanaged(PlacedInfo)) = .init(lockfile.allocator);
-        defer placed.deinit();
+        var placed: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(PlacedInfo)) = .empty;
+        defer placed.deinit(lockfile.allocator);
 
         const nodes_slice = nodes.slice();
         const node_pkg_ids = nodes_slice.items(.pkg_id);
@@ -431,14 +497,14 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         next_store: while (store_queue.readItem()) |entry| {
             const pkg_id = node_pkg_ids[entry.node_id.get()];
 
-            const placed_entry = try placed.getOrPut(pkg_id);
+            const placed_entry = try placed.getOrPut(lockfile.allocator, pkg_id);
             if (!placed_entry.found_existing) {
                 placed_entry.value_ptr.* = .{};
             } else {
                 const curr_peers = node_peers[entry.node_id.get()];
                 for (placed_entry.value_ptr.items) |info| {
                     if (info.peers.eql(&curr_peers)) {
-                        // dedupe!
+                        // dedupe! depend on the already created entry
                         store.items(.dependencies)[entry.store_parent_id.get()].appendAssumeCapacity(info.store_id);
                         continue :next_store;
                     }
@@ -448,15 +514,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             }
 
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
-            const new_entry_dep_name: String = if (new_entry_dep_id == invalid_dependency_id)
-                .{}
-            else
-                dependencies[new_entry_dep_id].name;
+
+            const is_root = new_entry_dep_id == invalid_dependency_id;
+            const new_entry_dep_name: String = if (is_root) .{} else dependencies[new_entry_dep_id].name;
 
             const new_entry: Store.Entry = .{
                 .pkg_id = pkg_id,
                 .dep_name = new_entry_dep_name,
                 .parent_id = entry.store_parent_id,
+                .is_workspace_only = if (is_root) false else dependencies[new_entry_dep_id].behavior.isWorkspaceOnly(),
                 // starts empty, filled when visiting the dependencies
                 .dependencies = try .initCapacity(lockfile.allocator, node_nodes[entry.node_id.get()].items.len),
             };
@@ -486,18 +552,84 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         // Store.Entry.debugPrintList(&store, lockfile);
 
         std.debug.print(
-            \\Build tree: [{}]
-            \\Deduplicate tree: [{}]
+            \\Build tree ({d}): [{}]
+            \\Deduplicate tree ({d}): [{}]
             \\Total: [{}]
             \\
+            \\
         , .{
+            nodes.len,
             bun.fmt.fmtDurationOneDecimal(full_tree_end),
+            store.len,
             bun.fmt.fmtDurationOneDecimal(dedupe_end),
             bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
         });
-    }
 
-    // TODO: install with `store`
+        Store.Node.deinitList(&nodes, lockfile.allocator);
+
+        break :store store;
+    };
+
+    {
+        const entries = store.slice();
+        const entry_dep_names = entries.items(.dep_name);
+        const entry_pkg_ids = entries.items(.pkg_id);
+        const entry_parent_ids = entries.items(.parent_id);
+        const entry_dependencies = entries.items(.dependencies);
+        const entry_is_workspace_only = entries.items(.is_workspace_only);
+
+        const string_buf = lockfile.buffers.string_bytes.items;
+
+        const pkgs = lockfile.packages.slice();
+        const pkg_names = pkgs.items(.name);
+        const pkg_resolutions = pkgs.items(.resolution);
+
+        var store_path = ctx.cwd_path.move();
+        defer ctx.cwd_path = store_path.move();
+
+        var dep_path = store_path.clone();
+        defer dep_path.deinit();
+
+        var rel_target_path: bun.RelPath(.{}) = .init();
+        defer rel_target_path.deinit();
+
+        for (
+            entry_dep_names,
+            entry_pkg_ids,
+            entry_parent_ids,
+            entry_dependencies,
+            entry_is_workspace_only,
+            0..,
+        ) |dep_name, pkg_id, parent_id, dependencies, is_workspace_only, _store_id| {
+            const store_path_reset_offset = store_path.len;
+            defer store_path.len = store_path_reset_offset;
+
+            const store_id: Store.Entry.Id = .from(@intCast(_store_id));
+            _ = dep_name;
+            _ = parent_id;
+            _ = is_workspace_only;
+            _ = store_id;
+
+            Store.Entry.appendPath(&store_path, pkg_id, string_buf, pkg_names, pkg_resolutions);
+
+            // ensureCached(manager, pkg_res);
+
+            std.debug.print("entry: '{s}'\n", .{store_path.slice()});
+            for (dependencies.items) |store_dep_id| {
+                const dep_path_reset_offset = dep_path.len;
+                defer dep_path.len = dep_path_reset_offset;
+
+                const dep_pkg_id = entry_pkg_ids[store_dep_id.get()];
+                const dep_dep_name = entry_dep_names[store_dep_id.get()];
+
+                Store.Entry.appendPath(&dep_path, entry_pkg_ids[dep_pkg_id], string_buf, pkg_names, pkg_resolutions);
+
+                store_path.relative(&dep_path, &rel_target_path);
+
+                std.debug.print(" - '{s}' -> '{s}'\n", .{ dep_dep_name.slice(string_buf), rel_target_path.slice() });
+            }
+        }
+    }
 
     return .{};
 }
@@ -528,6 +660,9 @@ const Store = struct {
         parent_id: Id,
         dependencies: std.ArrayListUnmanaged(Id) = .empty,
 
+        /// Does this entry originate from a isWorkspaceOnly node?
+        is_workspace_only: bool,
+
         pub const List = bun.MultiArrayList(Entry);
 
         pub const Id = enum(u32) {
@@ -550,6 +685,32 @@ const Store = struct {
                 return if (id == .invalid) null else @intFromEnum(id);
             }
         };
+
+        pub fn appendPath(
+            prefix: *bun.AbsPath(.{}),
+            entry_pkg_id: PackageID,
+            string_buf: string,
+            names: []const String,
+            resolutions: []const Resolution,
+        ) void {
+            const res = resolutions[entry_pkg_id];
+            switch (res.tag) {
+                .root => {
+                    prefix.append("node_modules");
+                },
+                .workspace => {
+                    prefix.appendFmt("{}", .{res.value.workspace.fmtPath(string_buf, .{ .replace_slashes = false })});
+                },
+                else => {
+                    const name = names[entry_pkg_id];
+                    prefix.appendFmt("node_modules/.bun/{s}@{}/node_modules/{s}", .{
+                        name.fmtPath(string_buf, .{ .replace_slashes = true }),
+                        res.fmt(string_buf, .posix),
+                        name.fmtPath(string_buf, .{ .replace_slashes = false }),
+                    });
+                },
+            }
+        }
 
         pub fn debugPrintList(list: *const List, lockfile: *Lockfile) void {
             const string_buf = lockfile.buffers.string_bytes.items;
@@ -608,7 +769,7 @@ const Store = struct {
             pub const OrderedList = struct {
                 list: std.ArrayListUnmanaged(TransitivePeer) = .empty,
 
-                pub fn deinit(this: *const OrderedList, allocator: std.mem.Allocator) void {
+                pub fn deinit(this: *OrderedList, allocator: std.mem.Allocator) void {
                     this.list.deinit(allocator);
                 }
 
@@ -669,6 +830,26 @@ const Store = struct {
         };
 
         pub const List = bun.MultiArrayList(Node);
+
+        pub fn deinitList(list: *const List, allocator: std.mem.Allocator) void {
+            const slice = list.slice();
+            const list_dependencies = slice.items(.dependencies);
+            const list_peers = slice.items(.peers);
+            const list_nodes = slice.items(.nodes);
+
+            var total: usize = list.capacity;
+
+            for (list_dependencies, list_peers, list_nodes) |*dependencies, *peers, *nodes| {
+                total += dependencies.capacity + peers.list.capacity + nodes.capacity;
+                dependencies.deinit(allocator);
+                peers.deinit(allocator);
+                nodes.deinit(allocator);
+            }
+
+            std.debug.print("nodes size: {}\n", .{bun.fmt.size(total, .{})});
+
+            list.deinit(allocator);
+        }
 
         pub const Id = enum(u32) {
             invalid = max,

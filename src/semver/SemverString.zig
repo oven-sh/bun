@@ -159,8 +159,41 @@ pub const String = extern struct {
             quote: bool = true,
         };
 
-        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: JsonFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             try writer.print("{}", .{bun.fmt.formatJSONStringUTF8(formatter.str.slice(formatter.buf), .{ .quote = formatter.opts.quote })});
+        }
+    };
+
+    pub inline fn fmtPath(self: *const String, buf: []const u8, opts: PathFormatter.Options) PathFormatter {
+        return .{
+            .buf = buf,
+            .str = self,
+            .opts = opts,
+        };
+    }
+
+    const PathFormatter = struct {
+        str: *const String,
+        buf: string,
+        opts: Options,
+
+        pub const Options = struct {
+            replace_slashes: bool,
+        };
+
+        pub fn format(formatter: PathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            if (formatter.opts.replace_slashes) {
+                for (formatter.str.slice(formatter.buf)) |c| {
+                    switch (c) {
+                        '/' => try writer.writeByte('+'),
+                        '\\' => try writer.writeByte('+'),
+                        else => try writer.writeByte(c),
+                    }
+                }
+                return;
+            }
+
+            try writer.writeAll(formatter.str.slice(formatter.buf));
         }
     };
 

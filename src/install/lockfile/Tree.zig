@@ -360,31 +360,13 @@ pub fn processSubtree(
         builder.sort_buf.appendAssumeCapacity(@intCast(dep_id));
     }
 
-    const DepSorter = struct {
-        lockfile: *const Lockfile,
-
-        pub fn isLessThan(sorter: @This(), l: DependencyID, r: DependencyID) bool {
-            const deps_buf = sorter.lockfile.buffers.dependencies.items;
-            const string_buf = sorter.lockfile.buffers.string_bytes.items;
-
-            const l_dep = deps_buf[l];
-            const r_dep = deps_buf[r];
-
-            return switch (l_dep.behavior.cmp(r_dep.behavior)) {
-                .lt => true,
-                .gt => false,
-                .eq => strings.order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf)) == .lt,
-            };
-        }
-    };
-
     std.sort.pdq(
         DependencyID,
         builder.sort_buf.items,
-        DepSorter{
+        Lockfile.DepSorter{
             .lockfile = builder.lockfile,
         },
-        DepSorter.isLessThan,
+        Lockfile.DepSorter.isLessThan,
     );
 
     for (builder.sort_buf.items) |dep_id| {

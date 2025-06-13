@@ -63,7 +63,7 @@ pub fn RelPath(comptime opts: Options) type {
         len: u16,
 
         pub fn slice(this: *@This()) callconv(bun.callconv_inline) stringZ {
-            bun.debugAssert(this.buf[this.len - 1] != std.fs.path.sep);
+            bun.debugAssert(this.len == 0 or this.buf[this.len - 1] != std.fs.path.sep);
             this.buf[this.len] = 0;
             return this.buf[0..this.len :0];
         }
@@ -227,6 +227,35 @@ pub fn AbsPath(comptime opts: Options) type {
             this.buf[this.len] = std.fs.path.sep;
             @memcpy(this.buf[this.len + 1 ..][0..trimmed.len], trimmed);
             this.len += @intCast(trimmed.len + 1);
+        }
+
+        /// Append a component
+        pub fn appendFmt(this: *@This(), comptime component_fmt: string, component_args: anytype) Result(void) {
+            bun.debugAssert(this.len != 0);
+
+            if (comptime opts.check_length == .check_for_greater_than_max_path) {
+                if (this.len + 1 > MAX_PATH_BYTES) {
+                    return error.MaxPathExceeded;
+                }
+            }
+
+            this.buf[this.len] = std.fs.path.sep;
+            this.len += 1;
+
+            const printed = std.fmt.bufPrint(
+                this.buf[this.len..],
+                component_fmt,
+                component_args,
+            ) catch {
+                if (comptime opts.check_length == .check_for_greater_than_max_path) {
+                    return error.MaxPathExceeded;
+                }
+                unreachable;
+            };
+
+            const trimmed = trimTrailingSlashes(printed);
+
+            this.len += @intCast(trimmed.len);
         }
 
         /// Pop a component. Trims leading and trailing slashes from input.

@@ -14180,7 +14180,6 @@ fn NewParser_(
                             return error.SyntaxError;
                         }
 
-                        // Non-null assertions should be transparent - no precedence check
                         try p.lexer.next();
                         optional_chain = old_optional_chain;
                     },

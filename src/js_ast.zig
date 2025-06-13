@@ -6342,7 +6342,7 @@ pub const Expr = struct {
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
                 .e_null => JSC.JSValue.null,
-                .e_undefined => .jsUndefined(),
+                .e_undefined => .js_undefined,
                 .e_boolean => |boolean| if (boolean.value)
                     JSC.JSValue.true
                 else

@@ -477,7 +477,7 @@ pub const Encoding = enum(u8) {
 pub fn jsAssertEncodingValid(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const value = call_frame.argument(0);
     _ = try Encoding.assert(value, global, .utf8);
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 const PathOrBuffer = union(Tag) {
@@ -1174,7 +1174,7 @@ pub const PathOrBlob = union(enum) {
         }
 
         const arg = args.nextEat() orelse {
-            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .jsUndefined());
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .js_undefined);
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{

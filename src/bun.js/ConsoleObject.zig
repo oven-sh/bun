@@ -184,7 +184,7 @@ fn messageWithTypeAndLevel_(
         // if value is not an object/array/iterable, don't print a table and just print it
         var tabular_data = vals[0];
         if (tabular_data.isObject()) {
-            const properties: JSValue = if (len >= 2 and vals[1].jsType().isArray()) vals[1] else .jsUndefined();
+            const properties: JSValue = if (len >= 2 and vals[1].jsType().isArray()) vals[1] else .js_undefined;
             var table_printer = TablePrinter.init(
                 global,
                 level,
@@ -1193,7 +1193,7 @@ pub const Formatter = struct {
 
         pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) bun.JSError!Result {
             switch (value) {
-                .zero, JSValue.jsUndefined() => return Result{
+                .zero, .js_undefined => return Result{
                     .tag = .{ .Undefined = {} },
                 },
                 .null => return Result{
@@ -2603,7 +2603,7 @@ pub const Formatter = struct {
                     }
 
                     // this case should never happen
-                    return try this.printAs(.Undefined, Writer, writer_, .jsUndefined(), .Cell, enable_ansi_colors);
+                    return try this.printAs(.Undefined, Writer, writer_, .js_undefined, .Cell, enable_ansi_colors);
                 } else if (value.as(bun.api.Timer.TimeoutObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                     if (timer.internals.flags.kind == .setInterval) {
@@ -2893,12 +2893,12 @@ pub const Formatter = struct {
             },
             .Event => {
                 const event_type_value: JSValue = brk: {
-                    const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk .jsUndefined();
+                    const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk .js_undefined;
                     if (value_.isString()) {
                         break :brk value_;
                     }
 
-                    break :brk .jsUndefined();
+                    break :brk .js_undefined;
                 };
 
                 const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
@@ -2969,7 +2969,7 @@ pub const Formatter = struct {
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data: JSValue = (try value.fastGet(this.globalThis, .data)) orelse .jsUndefined();
+                            const data: JSValue = (try value.fastGet(this.globalThis, .data)) orelse .js_undefined;
                             const tag = try Tag.getAdvanced(data, this.globalThis, .{
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,

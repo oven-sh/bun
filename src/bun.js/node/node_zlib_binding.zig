@@ -14,7 +14,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         const data: JSC.JSValue = arguments[0];
 
         if (data == .zero) {
-            return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .jsUndefined());
+            return globalThis.throwInvalidArgumentTypeValue("data", "string or an instance of Buffer, TypedArray, or DataView", .js_undefined);
         }
         if (data.isString()) {
             break :blk data.asString().toSlice(globalThis, bun.default_allocator);
@@ -113,7 +113,7 @@ pub fn CompressionStream(comptime T: type) type {
             this.poll_ref.ref(vm);
             JSC.WorkPool.schedule(&this.task);
 
-            return .jsUndefined();
+            return .js_undefined;
         }
 
         const AsyncJob = struct {
@@ -216,7 +216,7 @@ pub fn CompressionStream(comptime T: type) type {
             }
             this.deref();
 
-            return .jsUndefined();
+            return .js_undefined;
         }
 
         pub fn reset(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -224,14 +224,14 @@ pub fn CompressionStream(comptime T: type) type {
             if (err.isError()) {
                 try emitError(this, globalThis, callframe.this(), err);
             }
-            return .jsUndefined();
+            return .js_undefined;
         }
 
         pub fn close(this: *T, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             _ = globalThis;
             _ = callframe;
             closeInternal(this);
-            return .jsUndefined();
+            return .js_undefined;
         }
 
         fn closeInternal(this: *T) void {
@@ -252,7 +252,7 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn getOnError(_: *T, this_value: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
-            return T.js.errorCallbackGetCached(this_value) orelse .jsUndefined();
+            return T.js.errorCallbackGetCached(this_value) orelse .js_undefined;
         }
 
         /// returns true if no error was detected/emitted

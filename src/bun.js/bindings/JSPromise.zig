@@ -199,7 +199,7 @@ pub const JSPromise = opaque {
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
         if (value == .zero) {
-            return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
+            return resolvedPromiseValue(globalObject, .js_undefined);
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }

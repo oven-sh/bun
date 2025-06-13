@@ -542,7 +542,7 @@ pub fn getBucket(this: *Blob, globalThis: *JSC.JSGlobalObject) callconv(JSC.conv
     if (getBucketName(this)) |name| {
         return bun.String.createUTF8ForJS(globalThis, name);
     }
-    return .jsUndefined();
+    return .js_undefined;
 }
 pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1);

@@ -92,7 +92,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     if (!value.isTerminationException(vm.jsc)) {
         _ = vm.uncaughtException(globalObject, value, false);
     }
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 /// This function is called on another thread

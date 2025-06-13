@@ -245,7 +245,7 @@ pub const PostgresSQLContext = struct {
         ctx.onQueryResolveFn.set(globalObject, callframe.argument(0));
         ctx.onQueryRejectFn.set(globalObject, callframe.argument(1));
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     comptime {
@@ -541,10 +541,10 @@ pub const PostgresSQLQuery = struct {
 
         event_loop.runCallback(function, globalObject, thisValue, &.{
             targetValue,
-            consumePendingValue(thisValue, globalObject) orelse .jsUndefined(),
+            consumePendingValue(thisValue, globalObject) orelse .js_undefined,
             tag.toJSTag(globalObject),
             tag.toJSNumber(),
-            if (connection == .zero) .jsUndefined() else PostgresSQLConnection.js.queriesGetCached(connection) orelse .jsUndefined(),
+            if (connection == .zero) .js_undefined else PostgresSQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
             JSValue.jsBoolean(is_last),
         });
     }
@@ -578,8 +578,8 @@ pub const PostgresSQLQuery = struct {
             return globalThis.throw("values must be an array", .{});
         }
 
-        const pending_value: JSValue = args.nextEat() orelse .jsUndefined();
-        const columns: JSValue = args.nextEat() orelse .jsUndefined();
+        const pending_value: JSValue = args.nextEat() orelse .js_undefined;
+        const columns: JSValue = args.nextEat() orelse .js_undefined;
         const js_bigint: JSValue = args.nextEat() orelse .false;
         const js_simple: JSValue = args.nextEat() orelse .false;
 
@@ -628,12 +628,12 @@ pub const PostgresSQLQuery = struct {
     pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
         this.flags.is_done = true;
-        return .jsUndefined();
+        return .js_undefined;
     }
     pub fn setPendingValue(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const result = callframe.argument(0);
         js.pendingValueSetCached(this.thisValue.get(), globalObject, result);
-        return .jsUndefined();
+        return .js_undefined;
     }
     pub fn setMode(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const js_mode = callframe.argument(0);
@@ -645,7 +645,7 @@ pub const PostgresSQLQuery = struct {
         this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
             return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
         };
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -704,10 +704,10 @@ pub const PostgresSQLQuery = struct {
             } else {
                 connection.resetConnectionTimeout();
             }
-            return .jsUndefined();
+            return .js_undefined;
         }
 
-        const columns_value: JSValue = js.columnsGetCached(this_value) orelse .jsUndefined();
+        const columns_value: JSValue = js.columnsGetCached(this_value) orelse .js_undefined;
 
         var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value, connection.prepared_statement_id, connection.flags.use_unnamed_prepared_statements) catch |err| {
             if (!globalObject.hasException())
@@ -821,7 +821,7 @@ pub const PostgresSQLQuery = struct {
         } else {
             connection.resetConnectionTimeout();
         }
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -829,7 +829,7 @@ pub const PostgresSQLQuery = struct {
         _ = globalObject;
         _ = this;
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     comptime {
@@ -1182,7 +1182,7 @@ pub const PostgresSQLConnection = struct {
     statements: PreparedStatementsMap,
     prepared_statement_id: u64 = 0,
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    js_value: JSValue = .jsUndefined(),
+    js_value: JSValue = .js_undefined,
 
     backend_parameters: bun.StringMap = bun.StringMap.init(bun.default_allocator, true),
     backend_key_data: protocol.BackendKeyData = .{},
@@ -1410,7 +1410,7 @@ pub const PostgresSQLConnection = struct {
             return value;
         }
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -1422,7 +1422,7 @@ pub const PostgresSQLConnection = struct {
             return value;
         }
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -2046,17 +2046,17 @@ pub const PostgresSQLConnection = struct {
     pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
-        return .jsUndefined();
+        return .js_undefined;
     }
     pub fn doFlush(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.flushData();
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn deref(this: *@This()) void {
@@ -2074,7 +2074,7 @@ pub const PostgresSQLConnection = struct {
         this.disconnect();
         this.write_buffer.deinit(bun.default_allocator);
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn stopTimers(this: *PostgresSQLConnection) void {
@@ -2378,13 +2378,13 @@ pub const PostgresSQLConnection = struct {
             .DataRow => {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
-                var structure: JSValue = .jsUndefined();
+                var structure: JSValue = .js_undefined;
                 var cached_structure: ?PostgresCachedStructure = null;
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 switch (request.flags.result_mode) {
                     .objects => {
                         cached_structure = statement.structure(this.js_value, this.globalObject);
-                        structure = cached_structure.?.jsValue() orelse .jsUndefined();
+                        structure = cached_structure.?.jsValue() orelse .js_undefined;
                     },
                     .raw, .values => {
                         // no need to check for duplicate fields or structure

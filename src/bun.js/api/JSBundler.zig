@@ -88,7 +88,7 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "plugins")) |array| {
                 const length = try array.getLength(globalThis);
                 var iter = try array.arrayIterator(globalThis);
-                var onstart_promise_array: JSValue = .jsUndefined();
+                var onstart_promise_array: JSValue = .js_undefined;
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {

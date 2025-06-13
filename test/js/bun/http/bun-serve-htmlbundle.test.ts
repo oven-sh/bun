@@ -1,4 +1,4 @@
-import { serve, type HTMLBundle } from "bun";
+import { type HTMLBundle } from "bun";
 import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";

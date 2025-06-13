@@ -127,6 +127,12 @@ pub const AnyRoute = union(enum) {
             } else {
                 return .{ .html = entry.value_ptr.dupeRef() };
             }
+        } 
+        
+        if (argument.as(Response)) |resp| {
+            if(resp.body.value == .HTMLRoute){
+                return .{ .html = resp.body.value.HTMLRoute.dupeRef() };
+            }
         }
 
         return null;

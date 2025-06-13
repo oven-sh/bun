@@ -163,8 +163,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             ctx.flags.response_protected = true;
             value.protect();
 
-            // "/" => async () => { await sleep(1); return new Response(HTMLBundle); }
-            if (response.html_bundle_route) |route_ref| {
+            if (response.body.value == .HTMLRoute) {
+                const route_ref = response.body.value.HTMLRoute;
+
                 if(ctx.resp) |resp| {
                     var route = route_ref.data;
                     if(route.server == null){
@@ -175,6 +176,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     ctx.detachResponse();
                     ctx.endRequestStreamingAndDrain();
+                    
+                    if(ctx.signal) |signal| {
+                        ctx.signal = null;
+                        signal.pendingActivityUnref();
+                        signal.unref();
+                    }
 
                     const any_resp = uws.AnyResponse.init(resp);
                     if(ctx.req)|req_ptr|{
@@ -1521,8 +1528,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
 
-                // () => new Response(HTMLBundle)
-                if(response.html_bundle_route) |route_ref| {
+                if(response.body.value == .HTMLRoute) {
+                    const route_ref = response.body.value.HTMLRoute;
                     if(ctx.resp) |resp| {
                         var route = route_ref.data;
                         if(route.server == null){
@@ -1533,6 +1540,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                         ctx.detachResponse();
                         ctx.endRequestStreamingAndDrain();
+                        
+                        if (ctx.signal) |signal| {
+                            ctx.signal = null;
+                            signal.pendingActivityUnref();
+                            signal.unref();
+                        }
 
                         const any_resp = uws.AnyResponse.init(resp);
                         if(ctx.req) |req_ptr| {
@@ -1614,8 +1627,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
 
-                        // async () => new Response(HTMLBundle)
-                        if(response.html_bundle_route) |route_ref| {
+                        if(response.body.value == .HTMLRoute) {
+                            const route_ref = response.body.value.HTMLRoute;
+
                             if(ctx.resp) |resp| {
                                 var route = route_ref.data;
                                 if (route.server == null) {
@@ -1625,6 +1639,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 }
                                 ctx.detachResponse();
                                 ctx.endRequestStreamingAndDrain();
+
+                                if (ctx.signal) |signal| {
+                                    ctx.signal = null;
+                                    signal.pendingActivityUnref();
+                                    signal.unref();
+                                }
+
                                 const any_resp = uws.AnyResponse.init(resp);
                                 if (ctx.req) |req_ptr| {
                                     if (ctx.method == .HEAD) {

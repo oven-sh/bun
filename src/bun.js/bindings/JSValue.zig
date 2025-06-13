@@ -1920,29 +1920,41 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), .enabled);
+        defer scope.deinit();
         const result = JSC__JSValue__deepEquals(this, other, global);
-        if (global.hasException()) return error.JSError;
+        try scope.returnIfException();
         return result;
     }
     extern fn JSC__JSValue__jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
     pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), .enabled);
+        defer scope.deinit();
         const result = JSC__JSValue__jestDeepEquals(this, other, global);
-        if (global.hasException()) return error.JSError;
+        try scope.returnIfException();
         return result;
     }
 
     extern fn JSC__JSValue__strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), .enabled);
+        defer scope.deinit();
         const result = JSC__JSValue__strictDeepEquals(this, other, global);
-        if (global.hasException()) return error.JSError;
+        try scope.returnIfException();
         return result;
     }
     extern fn JSC__JSValue__jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), .enabled);
+        defer scope.deinit();
         const result = JSC__JSValue__jestStrictDeepEquals(this, other, global);
-        if (global.hasException()) return error.JSError;
+        try scope.returnIfException();
         return result;
     }
     extern fn JSC__JSValue__deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool;

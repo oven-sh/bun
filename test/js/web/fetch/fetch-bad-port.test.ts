@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("fetch should block bad ports", async () => {
   // Test a few known bad ports

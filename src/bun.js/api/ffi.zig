@@ -538,7 +538,7 @@ pub const FFI = struct {
         }
 
         pub fn fromJSArray(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
-            var iter = value.arrayIterator(globalThis);
+            var iter = try value.arrayIterator(globalThis);
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
 
             while (iter.next()) |val| {
@@ -625,7 +625,7 @@ pub const FFI = struct {
 
         if (try object.getTruthy(globalThis, "flags")) |flags_value| {
             if (flags_value.isArray()) {
-                var iter = flags_value.arrayIterator(globalThis);
+                var iter = try flags_value.arrayIterator(globalThis);
 
                 var flags = std.ArrayList(u8).init(allocator);
                 defer flags.deinit();
@@ -701,7 +701,7 @@ pub const FFI = struct {
         if (try object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
-                var iter = source_value.arrayIterator(globalThis);
+                var iter = try source_value.arrayIterator(globalThis);
                 while (iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
@@ -1254,7 +1254,7 @@ pub const FFI = struct {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
 
-            var array = args.arrayIterator(global);
+            var array = try args.arrayIterator(global);
 
             try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
             while (array.next()) |val| {

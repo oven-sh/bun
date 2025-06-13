@@ -252,7 +252,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
     if (try obj.getTruthy(global, "key")) |js_obj| {
         if (js_obj.jsType().isArray()) {
-            const count = js_obj.getLength(global);
+            const count = try js_obj.getLength(global);
             if (count > 0) {
                 const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
@@ -360,7 +360,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
     if (try obj.getTruthy(global, "cert")) |js_obj| {
         if (js_obj.jsType().isArray()) {
-            const count = js_obj.getLength(global);
+            const count = try js_obj.getLength(global);
             if (count > 0) {
                 const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
@@ -469,7 +469,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
     if (try obj.getTruthy(global, "ca")) |js_obj| {
         if (js_obj.jsType().isArray()) {
-            const count = js_obj.getLength(global);
+            const count = try js_obj.getLength(global);
             if (count > 0) {
                 const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 

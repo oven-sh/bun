@@ -353,7 +353,7 @@ pub const Tag = enum(short) {
                 return .int8;
             }
 
-            if (tag.isArrayLike() and value.getLength(globalObject) > 0) {
+            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
                 return Tag.fromJS(globalObject, value.getIndex(globalObject, 0));
             }
             if (globalObject.hasException()) return error.JSError;

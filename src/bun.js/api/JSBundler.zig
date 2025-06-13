@@ -86,8 +86,8 @@ pub const JSBundler = struct {
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
-                const length = array.getLength(globalThis);
-                var iter = array.arrayIterator(globalThis);
+                const length = try array.getLength(globalThis);
+                var iter = try array.arrayIterator(globalThis);
                 var onstart_promise_array: JSValue = JSValue.undefined;
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
@@ -267,7 +267,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
-                var iter = entry_points.arrayIterator(globalThis);
+                var iter = try entry_points.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
@@ -291,7 +291,7 @@ pub const JSBundler = struct {
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
                 } else if (conditions_value.jsType().isArray()) {
-                    var iter = conditions_value.arrayIterator(globalThis);
+                    var iter = try conditions_value.arrayIterator(globalThis);
                     while (iter.next()) |entry_point| {
                         var slice = try entry_point.toSliceOrNull(globalThis);
                         defer slice.deinit();
@@ -332,7 +332,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnArray(globalThis, "external")) |externals| {
-                var iter = externals.arrayIterator(globalThis);
+                var iter = try externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
@@ -341,7 +341,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
-                var iter = drops.arrayIterator(globalThis);
+                var iter = try drops.arrayIterator(globalThis);
                 while (iter.next()) |entry| {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();

@@ -151,7 +151,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         }
     } else |_| {
         // Initialize model name to "unknown"
-        var it = values.arrayIterator(globalThis);
+        var it = try values.arrayIterator(globalThis);
         while (it.next()) |cpu| {
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
@@ -634,7 +634,7 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
         // Does this entry already exist?
         if (ret.get_unsafe(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
@@ -748,7 +748,7 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
         const interface_name = bun.span(iface.name);
         if (ret.get_unsafe(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element

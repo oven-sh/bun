@@ -356,7 +356,7 @@ pub const CallbackList = union(enum) {
             },
         }
     }
-    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) void {
+    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) bun.JSError!void {
         switch (self.*) {
             .ack_nack => {},
             .none => {},
@@ -366,7 +366,7 @@ pub const CallbackList = union(enum) {
                 self.* = .none;
             },
             .callback_array => {
-                var iter = self.callback_array.arrayIterator(global);
+                var iter = try self.callback_array.arrayIterator(global);
                 while (iter.next()) |item| {
                     item.callNextTick(global, .{.null});
                 }
@@ -399,8 +399,8 @@ pub const SendHandle = struct {
 
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
-        self.callbacks.callNextTick(global);
-        self.deinit();
+        defer self.deinit();
+        self.callbacks.callNextTick(global) catch @panic("TODO do not merge this");
     }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();

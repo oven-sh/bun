@@ -18,7 +18,7 @@ pub const JSArray = opaque {
         return bun.jsc.fromJSHostCall(global, @src(), JSArray__constructEmptyArray, .{ global, len });
     }
 
-    pub fn iterator(array: *JSArray, global: *JSGlobalObject) JSArrayIterator {
+    pub fn iterator(array: *JSArray, global: *JSGlobalObject) bun.JSError!JSArrayIterator {
         return JSValue.fromCell(array).arrayIterator(global);
     }
 };

@@ -911,7 +911,7 @@ pub fn fromJS(
             if (tls.isFalsey()) {
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
-                var value_iter = tls.arrayIterator(global);
+                var value_iter = try tls.arrayIterator(global);
                 if (value_iter.len == 1) {
                     return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
                 }

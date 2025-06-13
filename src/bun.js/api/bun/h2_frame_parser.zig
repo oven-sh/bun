@@ -2878,7 +2878,7 @@ pub const H2FrameParser = struct {
             var stream = std.io.fixedBufferStream(&buffer);
             const writer = stream.writer();
             stream.seekTo(FrameHeader.byteSize) catch {};
-            var value_iter = origin_arg.arrayIterator(globalObject);
+            var value_iter = try origin_arg.arrayIterator(globalObject);
 
             while (value_iter.next()) |item| {
                 if (!item.isString()) {
@@ -3446,7 +3446,7 @@ pub const H2FrameParser = struct {
 
             if (js_value.jsType().isArray()) {
                 // https://github.com/oven-sh/bun/issues/8940
-                var value_iter = js_value.arrayIterator(globalObject);
+                var value_iter = try js_value.arrayIterator(globalObject);
 
                 if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                     if (value_iter.len > 1 or single_value_headers[idx]) {
@@ -3889,7 +3889,7 @@ pub const H2FrameParser = struct {
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
                     // https://github.com/oven-sh/bun/issues/8940
-                    var value_iter = js_value.arrayIterator(globalObject);
+                    var value_iter = try js_value.arrayIterator(globalObject);
 
                     if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                         if (value_iter.len > 1 or single_value_headers[idx]) {

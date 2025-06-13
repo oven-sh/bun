@@ -1137,7 +1137,7 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Array => {
-                    const len = @as(u32, @truncate(value.getLength(this.globalThis)));
+                    const len: u32 = @truncate(try value.getLength(this.globalThis));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -1681,7 +1681,7 @@ pub const JestPrettyFormat = struct {
                                                 this.writeIndent(Writer, writer_) catch unreachable;
                                             },
                                             .Array => {
-                                                const length = children.getLength(this.globalThis);
+                                                const length = try children.getLength(this.globalThis);
                                                 if (length == 0) break :print_children;
                                                 writer.writeAll(">\n");
 

@@ -279,7 +279,7 @@ pub const Jest = struct {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
-                if (function.getLength(globalThis) > 0) {
+                if (try function.getLength(globalThis) > 0) {
                     return globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                 }
 
@@ -933,7 +933,7 @@ pub const DescribeScope = struct {
             }
 
             const vm = VirtualMachine.get();
-            var result: JSValue = switch (cb.getLength(globalObject)) {
+            var result: JSValue = switch (cb.getLength(globalObject) catch |e| return globalObject.takeException(e)) { // TODO is this right?
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
                     this.done = false;
@@ -1834,7 +1834,7 @@ inline fn createScope(
             function.protect();
         }
 
-        const func_params_length = function.getLength(globalThis);
+        const func_params_length = try function.getLength(globalThis);
         var arg_size: usize = 0;
         var has_callback = false;
         if (func_params_length > 0) {
@@ -2062,16 +2062,16 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             return .undefined;
         }
 
-        var iter = array.arrayIterator(globalThis);
+        var iter = try array.arrayIterator(globalThis);
 
         var test_idx: usize = 0;
         while (iter.next()) |item| {
-            const func_params_length = function.getLength(globalThis);
+            const func_params_length = try function.getLength(globalThis);
             const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
 
             if (item_is_array) {
-                arg_size = item.getLength(globalThis);
+                arg_size = try item.getLength(globalThis);
             }
 
             // add room for callback function
@@ -2085,7 +2085,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
             if (item_is_array) {
                 // Spread array as args
-                var item_iter = item.arrayIterator(globalThis);
+                var item_iter = try item.arrayIterator(globalThis);
                 while (item_iter.next()) |array_item| {
                     if (array_item == .zero) {
                         allocator.free(function_args);
@@ -2206,7 +2206,7 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     vm.eventLoop().enter();
     defer vm.eventLoop().exit();
 
-    globalObject.clearTerminationException();
+    globalObject.clearTerminationException(); // TODO this is sus
     return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
 }
 

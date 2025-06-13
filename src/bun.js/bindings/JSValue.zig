@@ -802,7 +802,7 @@ pub const JSValue = enum(i64) {
     /// If the object is not an object, it will crash. **You must check if the object is an object before calling this function.**
     pub const hasOwnPropertyValue = JSC__JSValue__hasOwnPropertyValue;
 
-    pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSArrayIterator {
+    pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSError!JSArrayIterator {
         return JSArrayIterator.init(this, global);
     }
 
@@ -1061,7 +1061,7 @@ pub const JSValue = enum(i64) {
     pub inline fn isFunction(this: JSValue) bool {
         return this.isCell() and this.jsType().isFunction();
     }
-    pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
+    pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) JSError!bool {
         const type_of_value = this.jsType();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
         // Map and Set are not considered as object in jest-extended
@@ -1069,7 +1069,7 @@ pub const JSValue = enum(i64) {
             return false;
         }
 
-        return this.jsType().isObject() and keys(this, globalObject).getLength(globalObject) == 0;
+        return this.jsType().isObject() and try keys(this, globalObject).getLength(globalObject) == 0;
     }
 
     extern fn JSC__JSValue__isClass(this: JSValue, global: *JSGlobalObject) bool;
@@ -1756,7 +1756,7 @@ pub const JSValue = enum(i64) {
             return globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
         }
 
-        if (prop.getLength(globalThis) == 0) {
+        if (try prop.getLength(globalThis) == 0) {
             return null;
         }
 
@@ -2175,42 +2175,27 @@ pub const JSValue = enum(i64) {
     /// - anything with a .length property returning a number
     ///
     /// If the "length" property does not exist, this function will return 0.
-    pub fn getLength(this: JSValue, globalThis: *JSGlobalObject) u64 {
-        const len = this.getLengthIfPropertyExistsInternal(globalThis);
+    pub fn getLength(this: JSValue, globalThis: *JSGlobalObject) JSError!u64 {
+        const len = try this.getLengthIfPropertyExistsInternal(globalThis);
         if (len == std.math.floatMax(f64)) {
             return 0;
         }
 
-        return @as(u64, @intFromFloat(@max(@min(len, std.math.maxInt(i52)), 0)));
-    }
-
-    /// This function supports:
-    /// - Array, DerivedArray & friends
-    /// - String, DerivedString & friends
-    /// - TypedArray
-    /// - Map (size)
-    /// - WeakMap (size)
-    /// - Set (size)
-    /// - WeakSet (size)
-    /// - ArrayBuffer (byteLength)
-    /// - anything with a .length property returning a number
-    ///
-    /// If the "length" property does not exist, this function will return null.
-    pub fn tryGetLength(this: JSValue, globalThis: *JSGlobalObject) ?f64 {
-        const len = this.getLengthIfPropertyExistsInternal(globalThis);
-        if (len == std.math.floatMax(f64)) {
-            return null;
-        }
-
-        return @as(u64, @intFromFloat(@max(@min(len, std.math.maxInt(i52)), 0)));
+        return @intFromFloat(std.math.clamp(len, 0, std.math.maxInt(i52)));
     }
 
     extern fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) f64;
     /// Do not use this directly!
     ///
     /// If the property does not exist, this function will return max(f64) instead of 0.
-    pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) f64 {
-        return JSC__JSValue__getLengthIfPropertyExistsInternal(this, globalThis);
+    /// TODO this should probably just return an optional
+    pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) JSError!f64 {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis.vm(), @src(), .enabled);
+        defer scope.deinit();
+        const length = JSC__JSValue__getLengthIfPropertyExistsInternal(this, globalThis);
+        try scope.returnIfException();
+        return length;
     }
 
     extern fn JSC__JSValue__isAggregateError(this: JSValue, globalObject: *JSGlobalObject) bool;

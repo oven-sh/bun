@@ -157,7 +157,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
     const exec_argv = bun.api.node.process.getExecArgv(globalThis);
     const argv = bun.api.node.process.getArgv(globalThis);
     if (argv.isArray() and exec_argv.isArray()) {
-        var iter = exec_argv.arrayIterator(globalThis);
+        var iter = try exec_argv.arrayIterator(globalThis);
         while (iter.next()) |item| {
             if (item.isString()) {
                 const str = try item.toBunString(globalThis);
@@ -166,12 +166,12 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
                     return .{
                         .array = argv,
                         .start = 1,
-                        .end = @intCast(argv.getLength(globalThis)),
+                        .end = @intCast(try argv.getLength(globalThis)),
                     };
                 }
             }
         }
-        return .{ .array = argv, .start = 2, .end = @intCast(argv.getLength(globalThis)) };
+        return .{ .array = argv, .start = 2, .end = @intCast(try argv.getLength(globalThis)) };
     }
 
     return .{
@@ -671,7 +671,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         break :args .{
             .array = config_args,
             .start = 0,
-            .end = @intCast(config_args.getLength(globalThis)),
+            .end = @intCast(try config_args.getLength(globalThis)),
         };
     } else try getDefaultArgs(globalThis);
 

@@ -532,7 +532,7 @@ pub const TablePrinter = struct {
 
         // if the "properties" arg was provided, pre-populate the columns
         if (!this.properties.isUndefined()) {
-            var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
+            var properties_iter = try JSC.JSArrayIterator.init(this.properties, globalObject);
             while (properties_iter.next()) |value| {
                 try columns.append(.{
                     .name = try value.toBunString(globalObject),
@@ -2369,7 +2369,7 @@ pub const Formatter = struct {
                 }
             },
             .Array => {
-                const len = value.getLength(this.globalThis);
+                const len = try value.getLength(this.globalThis);
 
                 // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
                 // if (jsType == .DerivedArray) {
@@ -3195,7 +3195,7 @@ pub const Formatter = struct {
                                             this.writeIndent(Writer, writer_) catch unreachable;
                                         },
                                         .Array => {
-                                            const length = children.getLength(this.globalThis);
+                                            const length = try children.getLength(this.globalThis);
                                             if (length == 0) break :print_children;
                                             writer.writeAll(">\n");
 

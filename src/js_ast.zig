@@ -8409,7 +8409,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var iter = JSC.JSArrayIterator.init(value, this.global);
+                        var iter = try JSC.JSArrayIterator.init(value, this.global);
                         if (iter.len == 0) {
                             const result = Expr.init(
                                 E.Array,

@@ -586,10 +586,10 @@ pub const PostgresSQLQuery = struct {
         const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
         const simple = js_simple.isBoolean() and js_simple.asBoolean();
         if (simple) {
-            if (values.getLength(globalThis) > 0) {
+            if (try values.getLength(globalThis) > 0) {
                 return globalThis.throwInvalidArguments("simple query cannot have parameters", .{});
             }
-            if (query.getLength(globalThis) >= std.math.maxInt(i32)) {
+            if (try query.getLength(globalThis) >= std.math.maxInt(i32)) {
                 return globalThis.throwInvalidArguments("query is too long", .{});
             }
         }
@@ -866,7 +866,7 @@ pub const PostgresRequest = struct {
         // of parameters.
         try writer.short(len);
 
-        var iter = QueryBindingIterator.init(values_array, columns_value, globalObject);
+        var iter = try QueryBindingIterator.init(values_array, columns_value, globalObject);
         for (0..len) |i| {
             const parameter_field = parameter_fields[i];
             const is_custom_type = std.math.maxInt(short) < parameter_field;
@@ -3050,9 +3050,9 @@ const QueryBindingIterator = union(enum) {
     array: JSC.JSArrayIterator,
     objects: ObjectIterator,
 
-    pub fn init(array: JSValue, columns: JSValue, globalObject: *JSC.JSGlobalObject) QueryBindingIterator {
+    pub fn init(array: JSValue, columns: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!QueryBindingIterator {
         if (columns.isEmptyOrUndefinedOrNull()) {
-            return .{ .array = JSC.JSArrayIterator.init(array, globalObject) };
+            return .{ .array = try JSC.JSArrayIterator.init(array, globalObject) };
         }
 
         return .{
@@ -3060,8 +3060,8 @@ const QueryBindingIterator = union(enum) {
                 .array = array,
                 .columns = columns,
                 .globalObject = globalObject,
-                .columns_count = columns.getLength(globalObject),
-                .array_length = array.getLength(globalObject),
+                .columns_count = try columns.getLength(globalObject),
+                .array_length = try array.getLength(globalObject),
             },
         };
     }
@@ -3213,7 +3213,7 @@ const Signature = struct {
             name.deinit();
         }
 
-        var iter = QueryBindingIterator.init(array_value, columns, globalObject);
+        var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
 
         while (iter.next()) |value| {
             if (value.isEmptyOrUndefinedOrNull()) {

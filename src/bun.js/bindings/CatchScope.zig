@@ -85,14 +85,43 @@ pub fn hasException(self: *CatchScope) bool {
     return self.exception() != null;
 }
 
+/// Get the thrown exception if it exists
 pub fn exception(self: *CatchScope) ?*jsc.Exception {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return null;
-    return CatchScope__exception(&self.bytes);
+    return CatchScope__pureException(&self.bytes);
 }
 
+/// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
+pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
+    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (!self.enabled) return null;
+    return CatchScope__exceptionIncludingTraps(&self.bytes);
+}
+
+/// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
+/// an exception to be thrown.
 pub fn returnIfException(self: *CatchScope) bun.JSError!void {
-    if (self.hasException()) return error.JSError;
+    if (self.exceptionIncludingTraps() != null) return error.JSError;
+}
+
+/// Asserts there has not been any exception thrown.
+pub fn assertNoException(self: *CatchScope) void {
+    if (self.exception()) |e| self.assertionFailure(e);
+}
+
+/// Asserts that there is or is not an exception according to the value of `should_have_exception`.
+/// Prefer over `assert(scope.hasException() == ...)` because if there is an unexpected exception,
+/// this function prints a trace of where it was thrown.
+pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
+    if (Environment.allow_assert) {
+        bun.assert(self.enabled);
+        if (should_have_exception) {
+            bun.assertf(self.hasException(), "Expected an exception to be thrown", .{});
+        } else {
+            self.assertNoException();
+        }
+    }
 }
 
 /// If no exception, returns.
@@ -123,7 +152,8 @@ extern fn CatchScope__construct(
     size: usize,
     alignment: usize,
 ) void;
-extern fn CatchScope__exception(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+extern fn CatchScope__pureException(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+extern fn CatchScope__exceptionIncludingTraps(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
 extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 

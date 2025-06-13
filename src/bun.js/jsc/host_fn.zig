@@ -97,17 +97,15 @@ pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions
     src: std.builtin.SourceLocation,
-    comptime func: anytype,
-    args: std.meta.ArgsTuple(@TypeOf(func)),
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!JSValue {
     var scope: jsc.CatchScope = undefined;
     scope.init(globalThis.vm(), src, .assertions_only);
     defer scope.deinit();
 
-    const value = @call(.auto, func, args);
-    if (Environment.allow_assert) {
-        bun.assert((value == .zero) == scope.hasException());
-    }
+    const value = @call(.auto, function, args);
+    scope.assertExceptionPresenceMatches(value == .zero);
     return if (value == .zero) error.JSError else value;
 }
 

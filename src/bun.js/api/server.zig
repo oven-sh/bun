@@ -127,10 +127,10 @@ pub const AnyRoute = union(enum) {
             } else {
                 return .{ .html = entry.value_ptr.dupeRef() };
             }
-        } 
-        
+        }
+
         if (argument.as(Response)) |resp| {
-            if(resp.body.value == .HTMLRoute){
+            if (resp.body.value == .HTMLRoute) {
                 return .{ .html = resp.body.value.HTMLRoute.dupeRef() };
             }
         }
@@ -497,7 +497,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         // cache HTMLBundle routes returned by handlers at runtime.
         html_bundle_route_cache: bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)) = undefined,
-        
+
         on_clienterror: JSC.Strong.Optional = .empty,
 
         inspector_server_id: JSC.Debugger.DebuggerId = .init(0),
@@ -533,7 +533,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
             }
-            
+
             if (server.plugins) |p| {
                 return p.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
             }
@@ -1554,7 +1554,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             //HTMLBundle
             var iter_html = this.html_bundle_route_cache.valueIterator();
-            while (iter_html.next()) | route_ptr | {
+            while (iter_html.next()) |route_ptr| {
                 route_ptr.deref();
             }
             this.html_bundle_route_cache.deinit();
@@ -1603,7 +1603,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .allocator = Arena.getThreadlocalDefault(),
                 .dev_server = dev_server,
             });
-            
+
             server.html_bundle_route_cache = bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)).init(bun.default_allocator);
 
             if (RequestContext.pool == null) {

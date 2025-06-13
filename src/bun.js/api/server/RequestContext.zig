@@ -166,33 +166,31 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (response.body.value == .HTMLRoute) {
                 const route_ref = response.body.value.HTMLRoute;
 
-                if(ctx.resp) |resp| {
+                if (ctx.resp) |resp| {
                     var route = route_ref.data;
-                    if(route.server == null){
-                        if(ctx.server) |server| {
+                    if (route.server == null) {
+                        if (ctx.server) |server| {
                             route.server = JSC.API.AnyServer.from(server);
                         }
                     }
 
                     ctx.detachResponse();
                     ctx.endRequestStreamingAndDrain();
-                    
-                    if(ctx.signal) |signal| {
+
+                    if (ctx.signal) |signal| {
                         ctx.signal = null;
                         signal.pendingActivityUnref();
                         signal.unref();
                     }
 
                     const any_resp = uws.AnyResponse.init(resp);
-                    if(ctx.req)|req_ptr|{
-                        if(ctx.method == .HEAD){
+                    if (ctx.req) |req_ptr| {
+                        if (ctx.method == .HEAD) {
                             route.onHEADRequest(req_ptr, any_resp);
-                        }
-                        else {
+                        } else {
                             route.onRequest(req_ptr, any_resp);
                         }
-                    }
-                    else {
+                    } else {
                         route.respond(any_resp, ctx.method);
                     }
                     ctx.finalizeWithoutDeinit();
@@ -1522,25 +1520,24 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
 
-                if(response.body.value == .HTMLRoute) {
+                if (response.body.value == .HTMLRoute) {
                     const route_ref = response.body.value.HTMLRoute;
-                    if(ctx.resp) |resp| {
+                    if (ctx.resp) |resp| {
                         var route = route_ref.data;
-                        if(route.server == null){
-                            if(ctx.server) |server| {
+                        if (route.server == null) {
+                            if (ctx.server) |server| {
                                 route.server = JSC.API.AnyServer.from(server);
                             }
                         }
 
                         ctx.detachResponse();
                         ctx.endRequestStreamingAndDrain();
-                        
+
                         if (ctx.signal) |signal| {
                             ctx.signal = null;
                             signal.pendingActivityUnref();
@@ -1548,11 +1545,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         }
 
                         const any_resp = uws.AnyResponse.init(resp);
-                        if(ctx.req) |req_ptr| {
-                            if(ctx.method == .HEAD){
+                        if (ctx.req) |req_ptr| {
+                            if (ctx.method == .HEAD) {
                                 route.onHEADRequest(req_ptr, any_resp);
-                            }
-                            else {
+                            } else {
                                 route.onRequest(req_ptr, any_resp);
                             }
                         } else {
@@ -1561,8 +1557,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.finalizeWithoutDeinit();
                         ctx.deref();
                         return;
-                    }
-                    else {
+                    } else {
                         ctx.renderMissingInvalidResponse(response_value);
                         return;
                     }
@@ -1627,13 +1622,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
 
-                        if(response.body.value == .HTMLRoute) {
+                        if (response.body.value == .HTMLRoute) {
                             const route_ref = response.body.value.HTMLRoute;
 
-                            if(ctx.resp) |resp| {
+                            if (ctx.resp) |resp| {
                                 var route = route_ref.data;
                                 if (route.server == null) {
-                                    if(ctx.server) |server| {
+                                    if (ctx.server) |server| {
                                         route.server = JSC.API.AnyServer.from(server);
                                     }
                                 }
@@ -1660,8 +1655,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 ctx.finalizeWithoutDeinit();
                                 ctx.deref();
                                 return;
-                            }
-                            else {
+                            } else {
                                 ctx.renderMissingInvalidResponse(fulfilled_value);
                                 return;
                             }

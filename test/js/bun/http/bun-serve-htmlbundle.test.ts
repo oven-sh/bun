@@ -67,7 +67,7 @@ test("fetch Response(HTMLBundle) headers", async () => {
   });
 
   const res = await fetch(server.url);
-  await server.stop();
   expect(res.status).toBe(401);
   expect(res.headers.get("x-test")).toBe("true");
+  await server.stop();
 });

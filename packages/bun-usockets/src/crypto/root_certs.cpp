@@ -14,7 +14,7 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 // for the OpenSSL CLI, but works poorly for this case because it involves
 // synchronous interaction with the controlling terminal, something we never
 // want, and use this function to avoid it.
-int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
+static int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
   return 0;
 }
 
@@ -138,7 +138,7 @@ struct us_default_ca_certificates {
   STACK_OF(X509) *root_extra_cert_instances;
 };
 
-us_default_ca_certificates* us_get_default_ca_certificates() {
+static us_default_ca_certificates* us_get_default_ca_certificates() {
   static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
 
   us_internal_init_root_certs(default_ca_certificates.root_cert_instances, default_ca_certificates.root_extra_cert_instances);

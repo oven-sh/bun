@@ -2011,24 +2011,14 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    extern fn JSC__JSValue__asNumber(this: JSValue) f64;
     pub fn asNumber(this: JSValue) f64 {
+        bun.assert(this.isNumber());
         if (this.isInt32()) {
-            return @as(f64, @floatFromInt(this.asInt32()));
-        }
-
-        if (isNumber(this)) {
+            return @floatFromInt(this.asInt32());
+        } else {
             // Don't need to check for !isInt32() because above
-            return asDouble(this);
+            return this.asDouble();
         }
-
-        if (this.isUndefinedOrNull()) {
-            return 0.0;
-        } else if (this.isBoolean()) {
-            return if (asBoolean(this)) 1.0 else 0.0;
-        }
-
-        return JSC__JSValue__asNumber(this);
     }
 
     pub fn asDouble(this: JSValue) f64 {

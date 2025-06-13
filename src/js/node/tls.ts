@@ -501,7 +501,7 @@ function Server(options, secureConnectionListener): void {
     return new Server(options, secureConnectionListener);
   }
 
-  NetServer.$apply(this, [options, secureConnectionListener]);
+  NetServer.$apply(this, [options, tlsConnectionListener]);
 
   this.key = undefined;
   this.cert = undefined;
@@ -629,12 +629,22 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext(options);
+
+  if (secureConnectionListener) {
+    this.on("secureConnection", secureConnectionListener);
+  }
 }
 $toClass(Server, "Server", NetServer);
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
+
+function tlsConnectionListener(rawSocket) {
+  $debug("net.Server.on(connection): new TLSSocket");
+  //TODO
+}
+
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_MIN_VERSION = "TLSv1.2",

@@ -298,11 +298,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 const Static = struct {
                     pub const message = std.fmt.comptimePrint("{s} is not constructable", .{SinkType.name});
                 };
-                const err = JSC.SystemError{
+                return JSC.SystemError.throw(globalThis, .{
                     .message = bun.String.static(Static.message),
                     .code = bun.String.static(@tagName(.ERR_ILLEGAL_CONSTRUCTOR)),
-                };
-                return globalThis.throwValue(err.toErrorInstance(globalThis));
+                });
             }
 
             var this = bun.new(SinkType, undefined);

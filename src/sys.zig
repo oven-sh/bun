@@ -9,9 +9,9 @@
 // like `Error`, `Maybe`, `Tag`, and so on.
 const sys = @This(); // to avoid ambiguous references.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("errno/windows_errno.zig"),
-    .linux => @import("errno/linux_errno.zig"),
     .mac => @import("errno/darwin_errno.zig"),
+    .linux => @import("errno/linux_errno.zig"),
+    .windows => @import("errno/windows_errno.zig"),
     .wasm => {},
 };
 pub const workaround_symbols = @import("workaround_missing_symbols.zig").current;
@@ -523,7 +523,7 @@ pub const Error = struct {
     pub fn toShellSystemError(this: Error) SystemError {
         @setEvalBranchQuota(1_000_000);
         var err = SystemError{
-            .errno = @as(c_int, this.errno) * -1,
+            .errno = this.errno,
             .syscall = bun.String.static(@tagName(this.syscall)),
         };
 
@@ -558,7 +558,7 @@ pub const Error = struct {
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
-            .errno = -%@as(c_int, this.errno),
+            .errno = this.errno,
             .syscall = bun.String.static(@tagName(this.syscall)),
         };
 

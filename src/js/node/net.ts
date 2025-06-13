@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -360,7 +360,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const { pauseOnConnect, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
     const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket._requestCert = requestCert;
@@ -409,12 +409,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       _socket.pause();
     }
 
-    if (typeof connectionListener === "function") {
-      this.pauseOnConnect = pauseOnConnect;
-      if (!isTLS) {
-        connectionListener.$call(self, _socket);
-      }
-    }
     self.emit("connection", _socket);
     // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
     if (!pauseOnConnect && !isTLS) {
@@ -454,10 +448,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     } else {
       self.authorized = true;
-    }
-    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-    if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -625,8 +615,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
-
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   timeout(socket) {
@@ -1509,6 +1497,8 @@ function lookupAndConnect(self, options) {
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
 
+  validateString(host, "options.host");
+
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);
   }
@@ -2059,10 +2049,10 @@ function createConnectionError(req, status) {
 
 type MaybeListener = SocketListener<unknown> | null;
 
-function Server();
-function Server(options?: null | undefined);
-function Server(connectionListener: () => {});
-function Server(options: ServerOpts, connectionListener?: () => {});
+function Server(): void;
+function Server(options?: null | undefined): void;
+function Server(connectionListener: () => {}): void;
+function Server(options: ServerOpts, connectionListener?: () => {}): void;
 function Server(options?, connectionListener?) {
   if (!(this instanceof Server)) {
     return new Server(options, connectionListener);
@@ -2073,10 +2063,12 @@ function Server(options?, connectionListener?) {
   if (typeof options === "function") {
     connectionListener = options;
     options = {};
+    this.on("connection", connectionListener);
   } else if (options == null || typeof options === "object") {
     options = { ...options };
+    if (typeof connectionListener === "function") this.on("connection", connectionListener);
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
@@ -2105,7 +2097,6 @@ function Server(options?, connectionListener?) {
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
 
-  options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
 
   if (options.blockList) {

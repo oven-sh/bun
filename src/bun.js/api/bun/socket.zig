@@ -141,8 +141,7 @@ pub const Handlers = struct {
         handlers: *Handlers,
 
         pub fn exit(this: *Scope) void {
-            var vm = this.handlers.vm;
-            defer vm.eventLoop().exit();
+            this.handlers.vm.eventLoop().exit();
             this.handlers.markInactive();
         }
     };
@@ -150,9 +149,7 @@ pub const Handlers = struct {
     pub fn enter(this: *Handlers) Scope {
         this.markActive();
         this.vm.eventLoop().enter();
-        return .{
-            .handlers = this,
-        };
+        return .{ .handlers = this };
     }
 
     // corker: Corker = .{},
@@ -1215,14 +1212,13 @@ pub const Listener = struct {
             true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
             false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
         } orelse {
-            const err = JSC.SystemError{
+            handlers.unprotect();
+            connection.deinit();
+            return JSC.SystemError.throw(globalObject, .{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
                 .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-            };
-            handlers.unprotect();
-            connection.deinit();
-            return globalObject.throwValue(err.toErrorInstance(globalObject));
+            });
         };
 
         if (ssl_enabled) {
@@ -1594,8 +1590,10 @@ fn NewSocket(comptime ssl: bool) type {
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
 
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1647,23 +1645,24 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+            var errno_: c_uint = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
             const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
-            const err = JSC.SystemError{
-                .errno = -errno_,
+            const err_value = JSC.SystemError.createJS(globalObject, .{
+                .errno = errno_,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
                 .code = code_,
-            };
-            vm.eventLoop().enter();
-            defer {
-                vm.eventLoop().exit();
-            }
+            });
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
@@ -1674,7 +1673,6 @@ fn NewSocket(comptime ssl: bool) type {
                     this.has_pending_activity.store(false, .release);
 
                     // reject the promise on connect() error
-                    const err_value = err.toErrorInstance(globalObject);
                     promise.asPromise().?.reject(globalObject, err_value);
                 }
 
@@ -1685,11 +1683,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.this_value = .zero;
             this.has_pending_activity.store(false, .release);
 
-            const err_value = err.toErrorInstance(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-                err_value,
-            }) catch |e| globalObject.takeException(e);
+            const result = callback.call(globalObject, this_value, &.{ this_value, err_value }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
                 if (handlers.rejectPromise(err_val)) return;
@@ -1698,8 +1692,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
-                const err_ = err.toErrorInstance(globalObject);
-                promise.rejectAsHandled(globalObject, err_);
+                promise.rejectAsHandled(globalObject, err_value);
             }
         }
 
@@ -1812,10 +1805,11 @@ fn NewSocket(comptime ssl: bool) type {
             } else {
                 if (callback == .zero) return;
             }
-            const vm = handlers.vm;
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
-            const result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
+            const result = callback.call(globalObject, this_value, &.{this_value}) catch |err| globalObject.takeException(err);
 
             if (result.toError()) |err| {
                 defer this.markInactive();
@@ -1911,7 +1905,7 @@ fn NewSocket(comptime ssl: bool) type {
             // open callback only have 1 parameters and its the socket
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
-                result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
+                result = callback.call(globalObject, this_value, &.{this_value}) catch |err| globalObject.takeException(err);
 
                 // only call onOpen once for clients
                 if (!handlers.is_server) {
@@ -1928,7 +1922,7 @@ fn NewSocket(comptime ssl: bool) type {
                 else
                     ssl_error.toJS(globalObject);
 
-                result = callback.call(globalObject, this_value, &[_]JSValue{
+                result = callback.call(globalObject, this_value, &.{
                     this_value,
                     JSValue.jsBoolean(authorized),
                     authorization_error,
@@ -1978,7 +1972,7 @@ fn NewSocket(comptime ssl: bool) type {
                 js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
             }
 
-            _ = callback.call(globalObject, this_value, &[_]JSValue{
+            _ = callback.call(globalObject, this_value, &.{
                 this_value,
                 js_error,
             }) catch |e| {
@@ -2009,7 +2003,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer scope.exit();
 
             // const encoding = handlers.encoding;
-            _ = callback.call(globalObject, this_value, &[_]JSValue{
+            _ = callback.call(globalObject, this_value, &.{
                 this_value,
                 output_value,
             }) catch |err| {
@@ -2223,12 +2217,18 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn writeBuffered(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                // should we separate unattached and detached?
+                return JSC.SystemError.throw(globalObject, .{
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
+                    .code = .static("EBADF"),
+                    .message = .static("write EBADF"),
+                    .syscall = .static("write"),
+                });
             }
 
-            const args = callframe.argumentsUndef(2);
+            const args = callframe.argumentsAsArray(2);
 
-            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
+            return switch (this.writeOrEndBuffered(globalObject, args[0], args[1], false)) {
                 .fail => .zero,
                 .success => |result| if (@max(result.wrote, 0) == result.total) .true else .false,
             };

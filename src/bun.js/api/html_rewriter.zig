@@ -493,18 +493,16 @@ pub const HTMLRewriter = struct {
                 defer sink.deref();
                 return switch (buffering_error) {
                     error.StreamAlreadyUsed => {
-                        var err = JSC.SystemError{
+                        return JSC.SystemError.createJS(sink.global, .{
                             .code = bun.String.static("ERR_STREAM_ALREADY_FINISHED"),
                             .message = bun.String.static("Stream already used, please create a new one"),
-                        };
-                        return err.toErrorInstance(sink.global);
+                        });
                     },
                     else => {
-                        var err = JSC.SystemError{
+                        return JSC.SystemError.createJS(sink.global, .{
                             .code = bun.String.static("ERR_STREAM_CANNOT_PIPE"),
                             .message = bun.String.static("Failed to pipe stream"),
-                        };
-                        return err.toErrorInstance(sink.global);
+                        });
                     },
                 };
             };

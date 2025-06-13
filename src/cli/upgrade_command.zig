@@ -348,16 +348,31 @@ pub const UpgradeCommand = struct {
 
         const args = bun.argv;
         if (args.len > 2) {
-            for (args, 0..) |arg, i| {
-                if (i == 0) continue;
-                if (strings.eqlComptime(arg, "upgrade")) continue;
-                if (strings.startsWith(arg, "--")) continue;
+            var upgrade_index: ?usize = null;
+            for (args[1..], 1..) |arg, i| {
+                if (upgrade_index == null and strings.eqlComptime(arg, "upgrade")) {
+                    upgrade_index = i + 1;
+                    continue;
+                }
+
+                // if this is before the "upgrade", just judge that it's a flag (because BUN_OPTIONS are passed here)
+                // otherwise, needs to be one of the specific flags
+                if (upgrade_index == null) {
+                    if (strings.startsWith(arg, "--")) continue;
+                } else {
+                    if (strings.eqlComptime(arg, "--canary") or
+                        strings.eqlComptime(arg, "--profile") or
+                        strings.eqlComptime(arg, "--stable"))
+                    {
+                        continue;
+                    }
+                }
 
                 Output.prettyError(
                     \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
                     \\<blue>note<r><d>:<r> Use `bun update
                 , .{});
-                for (args[i..]) |arg_err| {
+                for (args[upgrade_index.?..]) |arg_err| {
                     Output.prettyError(" {s}", .{arg_err});
                 }
                 Output.prettyErrorln("` instead.", .{});

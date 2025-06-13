@@ -1765,7 +1765,7 @@ pub const main_file_name: string = "bun:main";
 pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     _ = callframe; // autofix
     globalObject.bunVM().drainMicrotasks();
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
@@ -2424,7 +2424,7 @@ fn printErrorFromMaybePrivateData(
 pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
     var jsc_vm = globalObject.bunVM();
     _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {

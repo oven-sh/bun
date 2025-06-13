@@ -255,6 +255,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_CREDENTIAL", Error],
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
+  ["ERR_ZSTD_INVALID_PARAM", RangeError],
   ["ERR_USE_AFTER_CLOSE", Error],
   ["ERR_WASI_NOT_STARTED", Error],
   ["ERR_WORKER_INIT_FAILED", Error],

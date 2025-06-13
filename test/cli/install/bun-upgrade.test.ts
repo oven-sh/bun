@@ -43,7 +43,7 @@ const invalid_tests = [
   [["upgrade", "--latest"], "bun update --latest"],
 ];
 for (const [args, expected] of invalid_tests) {
-  it("two invalid arguments, should display error message and suggest command", async () => {
+  it(`"${args.join(" ")}": should display error message and suggest command`, async () => {
     const { stderr } = spawn({
       cmd: [execPath, ...args],
       cwd,

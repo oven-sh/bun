@@ -1528,11 +1528,23 @@ pub const HTTPThread = struct {
             return;
 
         {
-            var batch_ = batch;
-            while (batch_.pop()) |task| {
+
+            // Move the linked list from Batch into AsyncHTTP.next.
+            // This is kind of unnecessary work.
+            var next = batch.head;
+            const head: *AsyncHTTP = @fieldParentPtr("task", next.?);
+            var tail: *AsyncHTTP = head;
+            next = if (next.?.node.next) |node| @fieldParentPtr("node", node) else null;
+            while (next) |task| {
                 const http: *AsyncHTTP = @fieldParentPtr("task", task);
-                this.queued_tasks.push(http);
+                tail.next = http;
+                tail = http;
+                const node = task.node.next orelse break;
+                next = @fieldParentPtr("node", node);
             }
+
+            // Use pushBatch so we do fewer atomic operations.
+            this.queued_tasks.pushBatch(head, tail, batch.len);
         }
 
         if (this.has_awoken.load(.monotonic))

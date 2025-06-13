@@ -59,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
 
         char* bioData = nullptr;
         long bioLen = BIO_get_mem_data(bio, &bioData);
-        if (bioLen <= 0) {
+        if (bioLen <= 0 || !bioData) {
             BIO_free(bio);
             return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
         }

@@ -570,7 +570,7 @@ pub fn NewSource(
                     bun.assert(flag.isBoolean());
                 }
                 return switch (this.context.setRawMode(flag == .true)) {
-                    .result => .undefined,
+                    .result => .jsUndefined(),
                     .err => |e| e.toJSC(global),
                 };
             }
@@ -618,7 +618,7 @@ pub fn NewSource(
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;
-                var buffer = view.asArrayBuffer(globalThis) orelse return .undefined;
+                var buffer = view.asArrayBuffer(globalThis) orelse return .jsUndefined();
                 return processResult(
                     this_jsvalue,
                     globalThis,
@@ -679,7 +679,7 @@ pub fn NewSource(
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 this.cancel();
-                return .undefined;
+                return .jsUndefined();
             }
 
             pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
@@ -704,7 +704,7 @@ pub fn NewSource(
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
-                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
+                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .jsUndefined());
                     return;
                 }
 
@@ -720,7 +720,7 @@ pub fn NewSource(
 
                 JSC.markBinding(@src());
 
-                return this.close_jsvalue.get() orelse .undefined;
+                return this.close_jsvalue.get() orelse .jsUndefined();
             }
 
             pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -732,7 +732,7 @@ pub fn NewSource(
                     return val;
                 }
 
-                return .undefined;
+                return .jsUndefined();
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -742,7 +742,7 @@ pub fn NewSource(
                 const ref_or_unref = callFrame.argument(0).toBoolean();
                 this.setRef(ref_or_unref);
 
-                return .undefined;
+                return .jsUndefined();
             }
 
             fn onClose(ptr: ?*anyopaque) void {

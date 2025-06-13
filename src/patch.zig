@@ -1168,11 +1168,11 @@ pub const TestingAPIs = struct {
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
-            return .{ .err = .undefined };
+            return .initErr(.jsUndefined());
         };
 
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.undefined);
+            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.jsUndefined());
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
@@ -1180,13 +1180,13 @@ pub const TestingAPIs = struct {
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
-                    return .{ .err = .undefined };
+                    return .initErr(.jsUndefined());
                 },
                 .result => |fd| fd,
             };
         } else bun.FileDescriptor.cwd();
 
-        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.undefined);
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.jsUndefined());
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
@@ -1198,7 +1198,7 @@ pub const TestingAPIs = struct {
 
             patchfile_src.deinit();
             globalThis.throwError(e, "failed to parse patchfile") catch {};
-            return .{ .err = .undefined };
+            return .initErr(.jsUndefined());
         };
 
         return .{

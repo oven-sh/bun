@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isWindows, rmScope, tempDirWithFiles } from "harness";
+import { rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -373,8 +373,8 @@ describe("Bun.file in serve routes", () => {
     test.each(["hello.txt", "large.txt"])(
       "concurrent requests for %s",
       async filename => {
-        const batchSize = isWindows ? 8 : 32;
-        const iterations = isWindows ? 2 : 5;
+        const batchSize = 16;
+        const iterations = 10;
 
         async function iterate() {
           const promises = Array.from({ length: batchSize }, () =>
@@ -388,9 +388,10 @@ describe("Bun.file in serve routes", () => {
 
           // Verify all responses are identical
           const expected = results[0];
-          results.forEach(result => {
+          for (const result of results) {
+            expect(result?.length).toBe(expected.length);
             expect(result).toBe(expected);
-          });
+          }
         }
 
         for (let i = 0; i < iterations; i++) {
@@ -398,7 +399,7 @@ describe("Bun.file in serve routes", () => {
           Bun.gc();
         }
       },
-      30000,
+      60000,
     );
 
     it("memory usage stays reasonable", async () => {

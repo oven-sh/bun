@@ -539,7 +539,7 @@ pub const IniTestingAPIs = struct {
             while (try object_iter.next()) |key| {
                 const keyslice = try key.toOwnedSlice(allocator);
                 var value = object_iter.value;
-                if (value == .undefined) continue;
+                if (value.isUndefined()) continue;
 
                 const value_str = try value.getZigString(globalThis);
                 const slice = try value_str.toOwnedSlice(allocator);

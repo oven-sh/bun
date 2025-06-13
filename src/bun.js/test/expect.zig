@@ -513,7 +513,7 @@ pub const Expect = struct {
         const left = try this.getValue(globalThis, thisValue, "toBe", "<green>expected<r>");
 
         const not = this.flags.not;
-        var pass = right.isSameValue(left, globalThis);
+        var pass = try right.isSameValue(left, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -738,7 +738,7 @@ pub const Expect = struct {
         if (value.jsTypeLoose().isArrayLike()) {
             var itr = value.arrayIterator(globalThis);
             while (itr.next()) |item| {
-                if (item.isSameValue(expected, globalThis)) {
+                if (try item.isSameValue(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -770,7 +770,7 @@ pub const Expect = struct {
                     item: JSValue,
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.isSameValue(entry.expected, entry.globalThis)) {
+                    if (item.isSameValue(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -2290,7 +2290,7 @@ pub const Expect = struct {
                 if (globalThis.hasException()) return .zero;
 
                 // no partial match for this case
-                if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
+                if (!try expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
                 return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
             }
@@ -2397,7 +2397,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
-                    if (received_message.isSameValue(expected_message, globalThis)) return .undefined;
+                    if (try received_message.isSameValue(expected_message, globalThis)) return .undefined;
                 }
 
                 // error: message from received error does not match expected error message.

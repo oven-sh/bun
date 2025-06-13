@@ -1908,8 +1908,14 @@ pub const JSValue = enum(i64) {
     ///
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
-    pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return @intFromEnum(this) == @intFromEnum(other) or JSC__JSValue__isSameValue(this, other, global);
+    pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        if (@intFromEnum(this) == @intFromEnum(other)) return true;
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global.vm(), @src(), .enabled);
+        defer scope.deinit();
+        const same = JSC__JSValue__isSameValue(this, other, global);
+        try scope.returnIfException();
+        return same;
     }
 
     extern fn JSC__JSValue__deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;

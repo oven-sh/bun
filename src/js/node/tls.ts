@@ -730,10 +730,6 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
-function getOptionValue(option: string): boolean {
-  return false;
-}
-
 let bundledRootCertificates: string[] | undefined;
 function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
@@ -744,17 +740,9 @@ function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  if (!getOptionValue("--use-openssl-ca")) {
-    const bundled = cacheBundledRootCertificates();
-    for (let i = 0; i < bundled.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-    }
-    if (getOptionValue("--use-system-ca")) {
-      const system = cacheSystemCACertificates();
-      for (let i = 0; i < system.length; ++i) {
-        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
-      }
-    }
+  const bundled = cacheBundledRootCertificates();
+  for (let i = 0; i < bundled.length; ++i) {
+    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
   }
 
   if (process.env.NODE_EXTRA_CA_CERTS) {
@@ -769,7 +757,7 @@ function cacheDefaultCACertificates() {
 }
 
 function cacheSystemCACertificates(): string[] {
-  throw new Error("getCACertificates 'system' is not yet implemented in Bun");
+  throw new Error("getCACertificates('system') is not yet implemented in Bun");
 }
 
 let extraCACertificates: string[] | undefined;

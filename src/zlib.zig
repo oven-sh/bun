@@ -737,6 +737,8 @@ pub const NodeMode = enum(u8) {
     UNZIP = 7,
     BROTLI_DECODE = 8,
     BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
 };
 
 /// Not for streaming!

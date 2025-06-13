@@ -1787,7 +1787,7 @@ pub const InternalDNS = struct {
         };
 
         prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z, port);
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8, port: u16) void {
@@ -2762,7 +2762,7 @@ pub const DNSResolver = struct {
 
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
-                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
+                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .jsUndefined()),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
 
@@ -3245,13 +3245,13 @@ pub const DNSResolver = struct {
         const first_af = try setChannelLocalAddress(channel, globalThis, arguments[0]);
 
         if (arguments.len < 2 or arguments[1].isUndefined()) {
-            return .undefined;
+            return .jsUndefined();
         }
 
         const second_af = try setChannelLocalAddress(channel, globalThis, arguments[1]);
 
         if (first_af != second_af) {
-            return .undefined;
+            return .jsUndefined();
         }
 
         switch (first_af) {
@@ -3311,7 +3311,7 @@ pub const DNSResolver = struct {
                 const err = c_ares.Error.get(r).?;
                 return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
             }
-            return .undefined;
+            return .jsUndefined();
         }
 
         const allocator = bun.default_allocator;
@@ -3370,7 +3370,7 @@ pub const DNSResolver = struct {
             return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
         }
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn setGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3402,7 +3402,7 @@ pub const DNSResolver = struct {
         _ = callframe;
         const channel = try this.getChannelOrError(globalThis);
         c_ares.ares_cancel(channel);
-        return .undefined;
+        return .jsUndefined();
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.

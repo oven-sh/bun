@@ -8,7 +8,7 @@ const JSValue = jsc.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 const WebWorker = @This();
-const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -85,7 +85,7 @@ export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaqu
         startWithErrorHandling,
         .{handle.worker.?},
     ) catch {
-        handle.worker.?.deinit();
+        handle.worker.?.destroy();
         return false;
     };
     thread.detach();
@@ -366,7 +366,7 @@ pub fn start(
 
 /// Deinit will clean up vm and everything.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
-fn freeWithoutDeinit(this: *WebWorker) void {
+fn deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
@@ -376,7 +376,7 @@ fn freeWithoutDeinit(this: *WebWorker) void {
     bun.default_allocator.free(this.preloads);
 }
 
-fn deinit(this: *WebWorker) void {
+fn destroy(this: *WebWorker) void {
     bun.destroy(this);
 }
 
@@ -625,7 +625,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     bun.uws.onThreadExit();
-    this.freeWithoutDeinit();
+    this.deinit();
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.

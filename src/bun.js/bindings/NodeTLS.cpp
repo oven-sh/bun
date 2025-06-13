@@ -6,6 +6,7 @@
 #include "libusockets.h"
 
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 #include "openssl/base.h"
 #include "openssl/bio.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
@@ -41,9 +42,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
     STACK_OF(X509)* root_extra_cert_instances = us_get_root_extra_cert_instances();
 
     auto size = sk_X509_num(root_extra_cert_instances);
-    if (size < 0) {
-        return JSValue::encode(jsUndefined());
-    }
+    if (size < 0) size = 0; // root_extra_cert_instances is nullptr
 
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
     for (auto i = 0; i < size; i++) {
@@ -55,13 +54,17 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
 
         if (PEM_write_bio_X509(bio, sk_X509_value(root_extra_cert_instances, i)) != 1) {
             BIO_free(bio);
-            continue;
+            return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "X509 to PEM conversion"_str);
         }
 
         char* bioData = nullptr;
-        size_t bioLength = BIO_get_mem_data(bio, &bioData);
+        long bioLen = BIO_get_mem_data(bio, &bioData);
+        if (bioLen <= 0) {
+            BIO_free(bio);
+            return throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Reading PEM data"_str);
+        }
 
-        auto str = WTF::String::fromUTF8(std::span { bioData, bioLength });
+        auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
         BIO_free(bio);
     }

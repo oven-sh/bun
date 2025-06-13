@@ -26,7 +26,6 @@ pub const getOnError = impl.getOnError;
 pub const finalize = impl.finalize;
 
 ref_count: RefCount,
-mode: bun.zlib.NodeMode,
 globalThis: *JSC.JSGlobalObject,
 stream: Context = .{},
 write_result: ?[*]u32 = null,
@@ -55,10 +54,9 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     const ptr = bun.new(@This(), .{
         .ref_count = .init(),
-        .mode = @enumFromInt(mode_int),
         .globalThis = globalThis,
     });
-    ptr.stream.mode = ptr.mode;
+    ptr.stream.mode = @enumFromInt(mode_int);
     return ptr;
 }
 

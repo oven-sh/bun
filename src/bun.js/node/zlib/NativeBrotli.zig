@@ -26,7 +26,6 @@ pub const getOnError = impl.getOnError;
 pub const finalize = impl.finalize;
 
 ref_count: RefCount,
-mode: bun.zlib.NodeMode,
 globalThis: *JSC.JSGlobalObject,
 stream: Context = .{},
 write_result: ?[*]u32 = null,
@@ -55,18 +54,16 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     const ptr = bun.new(@This(), .{
         .ref_count = .init(),
-        .mode = @enumFromInt(mode_int),
         .globalThis = globalThis,
     });
-    ptr.stream.mode = ptr.mode;
-    ptr.stream.mode_ = ptr.mode;
+    ptr.stream.mode = @enumFromInt(mode_int);
     return ptr;
 }
 
 pub fn estimatedSize(this: *const @This()) usize {
     const encoder_state_size: usize = 5143; // @sizeOf(@cImport(@cInclude("brotli/encode.h")).BrotliEncoderStateStruct)
     const decoder_state_size: usize = 855; // @sizeOf(@cImport(@cInclude("brotli/decode.h")).BrotliDecoderStateStruct)
-    return @sizeOf(@This()) + switch (this.mode) {
+    return @sizeOf(@This()) + switch (this.stream.mode) {
         .BROTLI_ENCODE => encoder_state_size,
         .BROTLI_DECODE => decoder_state_size,
         else => 0,
@@ -133,8 +130,7 @@ const Context = struct {
     const Op = bun.brotli.c.BrotliEncoder.Operation;
 
     mode: bun.zlib.NodeMode = .NONE,
-    mode_: bun.zlib.NodeMode = .NONE,
-    state: *anyopaque = undefined,
+    state: ?*anyopaque = null,
 
     next_in: ?[*]const u8 = null,
     next_out: ?[*]u8 = null,
@@ -147,7 +143,7 @@ const Context = struct {
     error_: c.BrotliDecoderErrorCode2 = .NO_ERROR,
 
     pub fn init(this: *Context) Error {
-        switch (this.mode_) {
+        switch (this.mode) {
             .BROTLI_ENCODE => {
                 const alloc = &bun.brotli.BrotliAllocator.alloc;
                 const free = &bun.brotli.BrotliAllocator.free;
@@ -173,7 +169,7 @@ const Context = struct {
     }
 
     pub fn setParams(this: *Context, key: c_uint, value: u32) Error {
-        switch (this.mode_) {
+        switch (this.mode) {
             .BROTLI_ENCODE => {
                 if (c.BrotliEncoderSetParameter(@ptrCast(this.state), key, value) == 0) {
                     return Error.init("Setting parameter failed", -1, "ERR_BROTLI_PARAM_SET_FAILED");
@@ -206,7 +202,7 @@ const Context = struct {
     }
 
     pub fn doWork(this: *Context) void {
-        switch (this.mode_) {
+        switch (this.mode) {
             .BROTLI_ENCODE => {
                 var next_in = this.next_in;
                 this.last_result.e = c.BrotliEncoderCompressStream(@ptrCast(this.state), this.flush, &this.avail_in, &next_in, &this.avail_out, &this.next_out, null);
@@ -230,7 +226,7 @@ const Context = struct {
     }
 
     pub fn getErrorInfo(this: *Context) Error {
-        switch (this.mode_) {
+        switch (this.mode) {
             .BROTLI_ENCODE => {
                 if (this.last_result.e == 0) {
                     return Error.init("Compression failed", -1, "ERR_BROTLI_COMPRESSION_FAILED");
@@ -250,7 +246,7 @@ const Context = struct {
     }
 
     pub fn close(this: *Context) void {
-        switch (this.mode_) {
+        switch (this.mode) {
             .BROTLI_ENCODE => c.BrotliEncoderDestroyInstance(@ptrCast(@alignCast(this.state))),
             .BROTLI_DECODE => c.BrotliDecoderDestroyInstance(@ptrCast(@alignCast(this.state))),
             else => unreachable,

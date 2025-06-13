@@ -17,8 +17,6 @@ ref_count: u32 = 1,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 
-html_bundle_route: ?bun.ptr.RefPtr(HTMLBundle.Route) = null,
-
 pub const getText = ResponseMixin.getText;
 pub const getBody = ResponseMixin.getBody;
 pub const getBytes = ResponseMixin.getBytes;
@@ -41,15 +39,9 @@ pub fn estimatedSize(this: *Response) callconv(.C) usize {
 }
 
 pub fn calculateEstimatedByteSize(this: *Response) void {
-    var html_bundle_size: usize = 0;
-    if(this.html_bundle_route != null){
-        html_bundle_size = @sizeOf(?*HTMLBundle.Route);
-    }
-
     this.reported_estimated_size = this.body.value.estimatedSize() +
         this.url.byteSlice().len +
         this.init.status_text.byteSlice().len +
-        html_bundle_size +
         @sizeOf(Response);
 }
 
@@ -100,7 +92,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .js_undefined,
+        .Used, .Empty, .Null, .HTMLRoute => return .jsUndefined(),
         .Blob => |*blob| {
             if (blob.isBunFile()) {
                 return .js_undefined;
@@ -307,7 +299,6 @@ pub fn cloneValue(
         .init = this.init.clone(globalThis),
         .url = this.url.clone(),
         .redirected = this.redirected,
-        .html_bundle_route = if(this.html_bundle_route) |route| route.dupeRef() else null,
     };
 }
 
@@ -327,10 +318,6 @@ fn destroy(this: *Response) void {
     this.init.deinit(bun.default_allocator);
     this.body.deinit(bun.default_allocator);
     this.url.deref();
-
-    if(this.html_bundle_route) |route| {
-        route.deref();
-    }
 
     bun.destroy(this);
 }
@@ -524,12 +511,11 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
-        if(arguments[0].as(HTMLBundle)) |html_bundle| {
+        if (arguments[0].as(HTMLBundle)) |html_bundle| {
             var response: Response = .{
-                .init = Response.Init{.status_code = 200},
-                .body = Body{ .value = .{ .Empty = {} } },
+                .init = Response.Init{ .status_code = 200 },
+                .body = Body{ .value = .{ .HTMLRoute = HTMLBundle.Route.init(html_bundle) } },
                 .url = bun.String.empty,
-                .html_bundle_route = HTMLBundle.Route.init(html_bundle),
             };
 
             response.init.headers = response.getOrCreateHeaders(globalThis);

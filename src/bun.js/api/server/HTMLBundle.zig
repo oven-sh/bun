@@ -134,8 +134,8 @@ pub const Route = struct {
     pub fn onHEADRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, true);
     }
-    
-    pub fn respond(this: *Route, resp: HTTPResponse, method: HTTP.Method) void{
+
+    pub fn respond(this: *Route, resp: HTTPResponse, method: HTTP.Method) void {
         this.ref();
         defer this.deref();
 
@@ -147,19 +147,14 @@ pub const Route = struct {
 
         const is_head = method == .HEAD;
 
-        state: while(true) 
+        state: while (true)
             switch (this.state) {
                 .pending => {
                     this.scheduleBundle(server) catch bun.outOfMemory();
                     continue :state;
                 },
                 .building => {
-                    const pending = bun.new(PendingResponse, .{
-                        .method = method,
-                        .resp = resp,
-                        .server = this.server,
-                        .route = this
-                    });
+                    const pending = bun.new(PendingResponse, .{ .method = method, .resp = resp, .server = this.server, .route = this });
 
                     this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
 
@@ -174,14 +169,13 @@ pub const Route = struct {
                     return;
                 },
                 .html => |html| {
-                    if(is_head) {
+                    if (is_head) {
                         html.onHEAD(resp);
-                    }
-                    else {
+                    } else {
                         html.on(resp);
                     }
                     return;
-                }
+                },
             };
     }
 

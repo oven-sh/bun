@@ -2428,6 +2428,16 @@ Server.prototype[kRealListen] = function (
   setTimeout(emitListeningNextTick, 1, this);
 };
 
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
+};
+
 Server.prototype.getsockname = function getsockname(out) {
   out.port = this.address().port;
   return out;

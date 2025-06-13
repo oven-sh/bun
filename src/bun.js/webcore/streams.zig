@@ -32,7 +32,7 @@ pub const Start = union(Tag) {
     pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
         switch (this) {
             .empty, .ready => {
-                return .undefined;
+                return .jsUndefined();
             },
             .chunk_size => |chunk| {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
@@ -47,7 +47,7 @@ pub const Start = union(Tag) {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
-                return .undefined;
+                return .jsUndefined();
             },
         }
     }

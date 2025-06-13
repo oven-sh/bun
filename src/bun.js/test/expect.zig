@@ -438,7 +438,7 @@ pub const Expect = struct {
         var pass = true;
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var msg = _msg.toSlice(default_allocator);
         defer msg.deinit();
@@ -483,7 +483,7 @@ pub const Expect = struct {
         var pass = false;
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var msg = _msg.toSlice(default_allocator);
         defer msg.deinit();
@@ -516,7 +516,7 @@ pub const Expect = struct {
         var pass = try right.isSameValue(left, globalThis);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -608,7 +608,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         if (not) {
@@ -686,7 +686,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -781,7 +781,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1424,7 +1424,7 @@ pub const Expect = struct {
         if (truthy) pass = true;
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1453,7 +1453,7 @@ pub const Expect = struct {
         if (value.isUndefined()) pass = true;
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1486,7 +1486,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1514,7 +1514,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = value.isNull();
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1542,7 +1542,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = !value.isUndefined();
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1575,7 +1575,7 @@ pub const Expect = struct {
         if (!truthy) pass = true;
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1612,7 +1612,7 @@ pub const Expect = struct {
         var pass = try value.jestDeepEquals(expected, globalThis);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         const diff_formatter = DiffFormatter{
@@ -1651,7 +1651,7 @@ pub const Expect = struct {
         var pass = try value.jestStrictDeepEquals(expected, globalThis);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         const diff_formatter = DiffFormatter{ .received = value, .expected = expected, .globalThis = globalThis, .not = not };
@@ -1706,7 +1706,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1790,7 +1790,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1847,7 +1847,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1907,7 +1907,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -1967,7 +1967,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2027,7 +2027,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2090,7 +2090,7 @@ pub const Expect = struct {
         }
 
         if (std.math.isPositiveInf(expected) and std.math.isPositiveInf(received)) {
-            return .undefined;
+            return .jsUndefined();
         }
 
         const expected_diff = bun.pow(10, -precision) / 2;
@@ -2100,7 +2100,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -2159,7 +2159,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2217,7 +2217,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toThrow", "<green>expected<r>", true);
 
-            if (!did_throw) return .undefined;
+            if (!did_throw) return .jsUndefined();
 
             const result: JSValue = result_.?;
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2226,8 +2226,8 @@ pub const Expect = struct {
             if (expected_value == .zero or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
-                    const name = try err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
-                    const message = try err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
+                    const name: JSValue = try err.getTruthyComptime(globalThis, "name") orelse .jsUndefined();
+                    const message: JSValue = try err.getTruthyComptime(globalThis, "message") orelse .jsUndefined();
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
                     return globalThis.throwPretty(fmt, .{
                         name.toFmt(&formatter),
@@ -2254,7 +2254,7 @@ pub const Expect = struct {
                     defer expected_slice.deinit();
                     const received_slice = try received_message.toSliceOrNull(globalThis);
                     defer received_slice.deinit();
-                    if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
+                    if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .jsUndefined();
                 }
 
                 return this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2273,7 +2273,7 @@ pub const Expect = struct {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (try expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                    if (!matches.toBoolean()) return .undefined;
+                    if (!matches.toBoolean()) return .jsUndefined();
                 }
 
                 return this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2290,21 +2290,21 @@ pub const Expect = struct {
                 if (globalThis.hasException()) return .zero;
 
                 // no partial match for this case
-                if (!try expected_message.isSameValue(received_message, globalThis)) return .undefined;
+                if (!try expected_message.isSameValue(received_message, globalThis)) return .jsUndefined();
 
                 return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
             }
 
-            if (!result.isInstanceOf(globalThis, expected_value)) return .undefined;
+            if (!result.isInstanceOf(globalThis, expected_value)) return .jsUndefined();
 
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
-            const received_message = (try result.fastGet(globalThis, .message)) orelse .undefined;
+            const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .jsUndefined();
             return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
 
         if (did_throw) {
-            if (expected_value == .zero or expected_value.isUndefined()) return .undefined;
+            if (expected_value == .zero or expected_value.isUndefined()) return .jsUndefined();
 
             const result: JSValue = if (result_.?.toError()) |r|
                 r
@@ -2324,7 +2324,7 @@ pub const Expect = struct {
                     defer expected_slice.deinit();
                     const received_slice = try received_message.toSlice(globalThis, globalThis.allocator());
                     defer received_slice.deinit();
-                    if (strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
+                    if (strings.contains(received_slice.slice(), expected_slice.slice())) return .jsUndefined();
                 }
 
                 // error: message from received error does not match expected string
@@ -2349,7 +2349,7 @@ pub const Expect = struct {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (try expected_value.get(globalThis, "test")) |test_fn| {
                         const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                        if (matches.toBoolean()) return .undefined;
+                        if (matches.toBoolean()) return .jsUndefined();
                     }
                 }
 
@@ -2380,7 +2380,7 @@ pub const Expect = struct {
                 }
 
                 if (is_equal) {
-                    return .undefined;
+                    return .jsUndefined();
                 }
 
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2397,7 +2397,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
-                    if (try received_message.isSameValue(expected_message, globalThis)) return .undefined;
+                    if (try received_message.isSameValue(expected_message, globalThis)) return .jsUndefined();
                 }
 
                 // error: message from received error does not match expected error message.
@@ -2415,7 +2415,7 @@ pub const Expect = struct {
                 return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
             }
 
-            if (result.isInstanceOf(globalThis, expected_value)) return .undefined;
+            if (result.isInstanceOf(globalThis, expected_value)) return .jsUndefined();
 
             // error: received error not instance of received error constructor
             var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -2503,7 +2503,7 @@ pub const Expect = struct {
         const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = &return_value;
         vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-        return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
+        return_value_from_function = value.call(globalThis, .jsUndefined(), &.{}) catch |err| globalThis.takeException(err);
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
         vm.global.handleRejectedPromises();
@@ -2584,10 +2584,10 @@ pub const Expect = struct {
 
         var err_value_res = err_value orelse return null;
         if (err_value_res.isAnyError()) {
-            const message = try err_value_res.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
+            const message: JSValue = try err_value_res.getTruthyComptime(globalThis, "message") orelse .jsUndefined();
             err_value_res = message;
         } else {
-            err_value_res = JSValue.undefined;
+            err_value_res = .jsUndefined();
         }
         return err_value_res;
     }
@@ -2787,7 +2787,7 @@ pub const Expect = struct {
 
             if (strings.eqlLong(pretty_value.slice(), trim_res.trimmed, true)) {
                 Jest.runner.?.snapshots.passed += 1;
-                return .undefined;
+                return .jsUndefined();
             } else if (update) {
                 Jest.runner.?.snapshots.passed += 1;
                 needs_write = true;
@@ -2850,7 +2850,7 @@ pub const Expect = struct {
             });
         }
 
-        return .undefined;
+        return .jsUndefined();
     }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         defer this.postMatch(globalThis);
@@ -2955,7 +2955,7 @@ pub const Expect = struct {
         if (existing_value) |saved_value| {
             if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
-                return .undefined;
+                return .jsUndefined();
             }
 
             Jest.runner.?.snapshots.failed += 1;
@@ -2970,7 +2970,7 @@ pub const Expect = struct {
             return globalThis.throwPretty(fmt, .{diff_format});
         }
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -3036,7 +3036,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         if (not) {
             const signature = comptime getSignature("toBeEmpty", "", true);
@@ -3089,7 +3089,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isUndefinedOrNull() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3115,7 +3115,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.jsType().isArray() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3156,7 +3156,7 @@ pub const Expect = struct {
         var pass = value.jsType().isArray() and @as(i32, @intCast(try value.getLength(globalThis))) == size.toInt32();
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3182,7 +3182,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isBoolean() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3253,7 +3253,7 @@ pub const Expect = struct {
         pass = strings.eql(typeof, whatIsTheType);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3280,7 +3280,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = (value.isBoolean() and value.toBoolean()) != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3306,7 +3306,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = (value.isBoolean() and !value.toBoolean()) != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3332,7 +3332,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isNumber() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3358,7 +3358,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isAnyInt() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3416,7 +3416,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3448,7 +3448,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3480,7 +3480,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3533,7 +3533,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3616,7 +3616,7 @@ pub const Expect = struct {
         }
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -3644,7 +3644,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isSymbol() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3670,7 +3670,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isCallable() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3696,7 +3696,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isDate() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3749,7 +3749,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = value.isString() != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3798,7 +3798,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3879,7 +3879,7 @@ pub const Expect = struct {
             pass = std.mem.containsAtLeast(u8, expectStringAsStr, countAsNum, subStringAsStr);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -3945,7 +3945,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const result = predicate.call(globalThis, .undefined, &.{value}) catch |e| {
+        const result = predicate.call(globalThis, .jsUndefined(), &.{value}) catch |e| {
             const err = globalThis.takeException(e);
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
             return globalThis.throwValue(globalThis.createAggregateError(&.{err}, &fmt));
@@ -3954,7 +3954,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         const pass = (result.isBoolean() and result.toBoolean()) != not;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -4006,7 +4006,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -4060,7 +4060,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         if (not) pass = !pass;
 
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -4106,7 +4106,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = value.isInstanceOf(globalThis, expected_value);
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         const expected_fmt = expected_value.toFmt(&formatter);
@@ -4165,7 +4165,7 @@ pub const Expect = struct {
         };
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         const expected_fmt = expected_value.toFmt(&formatter);
@@ -4203,7 +4203,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         if (not) {
@@ -4235,7 +4235,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         if (not) {
@@ -4274,7 +4274,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         if (not) {
@@ -4325,7 +4325,7 @@ pub const Expect = struct {
         var pass = received_object.jestDeepMatch(property_matchers, globalThis, true);
 
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         const diff_formatter = DiffFormatter{
@@ -4391,7 +4391,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         if (not) {
@@ -4446,7 +4446,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -4510,7 +4510,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -4595,7 +4595,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (not) pass = !pass;
-        if (pass) return .undefined;
+        if (pass) return .jsUndefined();
 
         if (!pass and return_status == ReturnStatus.throw) {
             const signature = comptime getSignature(name, "<green>expected<r>", false);
@@ -4709,7 +4709,7 @@ pub const Expect = struct {
 
         globalThis.bunVM().autoGarbageCollect();
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     const CustomMatcherParamsFormatter = struct {
@@ -4825,7 +4825,7 @@ pub const Expect = struct {
                         }
                         message = message_value;
                     } else {
-                        message = JSValue.undefined;
+                        message = .jsUndefined();
                     }
 
                     break :valid true;
@@ -4870,7 +4870,7 @@ pub const Expect = struct {
 
         // retrieve the user-provided matcher function (matcher_fn)
         const func: JSValue = callFrame.callee();
-        var matcher_fn = getCustomMatcherFn(func, globalThis) orelse JSValue.undefined;
+        var matcher_fn: JSValue = getCustomMatcherFn(func, globalThis) orelse .jsUndefined();
         if (!matcher_fn.jsType().isFunction()) {
             return globalThis.throw("Internal consistency error: failed to retrieve the matcher function for a custom matcher!", .{});
         }
@@ -4924,7 +4924,7 @@ pub const Expect = struct {
 
         is_expecting_assertions = true;
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -4955,7 +4955,7 @@ pub const Expect = struct {
         is_expecting_assertions_count = true;
         active_test_expectation_counter.expected = unsigned_expected_assertions;
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn notImplementedJSCFn(_: *Expect, globalThis: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
@@ -5180,7 +5180,7 @@ pub const ExpectCloseTo = struct {
         }
         const number_value = args[0];
 
-        var precision_value = if (args.len > 1) args[1] else JSValue.undefined;
+        var precision_value: JSValue = if (args.len > 1) args[1] else .jsUndefined();
         if (precision_value.isUndefined()) {
             precision_value = JSValue.jsNumberFromInt32(2); // default value from jest
         }

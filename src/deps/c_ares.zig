@@ -332,7 +332,7 @@ pub const hostent_with_ttls = struct {
                     bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
 
                 const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
-                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .undefined);
+                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .jsUndefined());
                 array.putIndex(globalThis, count, resultObject);
             }
 
@@ -439,7 +439,7 @@ pub const struct_nameinfo = extern struct {
             const node_slice = this.node[0..node_len];
             array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 0, .undefined);
+            array.putIndex(globalThis, 0, .jsUndefined());
         }
 
         if (this.service != null) {
@@ -447,7 +447,7 @@ pub const struct_nameinfo = extern struct {
             const service_slice = this.service[0..service_len];
             array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 1, .undefined);
+            array.putIndex(globalThis, 1, .jsUndefined());
         }
 
         return array;
@@ -2021,9 +2021,9 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
-            return .undefined;
+            return .jsUndefined();
         }
-        for (addr_str) |char| if (char == '/') return .undefined; // CIDR not allowed
+        for (addr_str) |char| if (char == '/') return .jsUndefined(); // CIDR not allowed
 
         var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
         // we need a null terminated string as input
@@ -2036,12 +2036,12 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
             af = AF.INET6;
             if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return .undefined;
+                return .jsUndefined();
             }
         }
         // ip_addr will contain the null-terminated string of the cannonicalized IP
         if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return .undefined;
+            return .jsUndefined();
         }
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));

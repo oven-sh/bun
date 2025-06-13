@@ -3555,11 +3555,6 @@ JSC::JSCell* JSC__JSValue__asCell(JSC::EncodedJSValue JSValue0)
     auto value = JSC::JSValue::decode(JSValue0);
     return value.asCell();
 }
-double JSC__JSValue__asNumber(JSC::EncodedJSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    return value.asNumber();
-};
 
 JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)
 {
@@ -3726,10 +3721,6 @@ bool JSC__JSValue__isUndefinedOrNull(JSC::EncodedJSValue JSValue0)
 JSC::EncodedJSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
-}
-JSC::EncodedJSValue JSC__JSValue__jsDoubleNumber(double arg0)
-{
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
 
 JSC::EncodedJSValue JSC__JSValue__jsEmptyString(JSC::JSGlobalObject* arg0)

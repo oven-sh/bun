@@ -674,7 +674,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         if (recv != .zero)
             recv
         else
-            .undefined,
+            .jsUndefined(),
         if (arg_count > 0 and args != null)
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
@@ -1616,16 +1616,16 @@ pub const ThreadSafeFunction = struct {
 
         switch (this.callback) {
             .js => |strong| {
-                const js = strong.get() orelse .undefined;
+                const js: JSValue = strong.get() orelse .jsUndefined();
                 if (js.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
 
-                _ = js.call(globalObject, .undefined, &.{}) catch |err|
+                _ = js.call(globalObject, .jsUndefined(), &.{}) catch |err|
                     globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
-                const js = cb.js.get() orelse .undefined;
+                const js: JSValue = cb.js.get() orelse .jsUndefined();
 
                 const handle_scope = NapiHandleScope.open(env, false);
                 defer if (handle_scope) |scope| scope.close(env);

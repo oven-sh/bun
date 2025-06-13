@@ -2329,7 +2329,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callfra
         stream.done(globalThis);
     }
     this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -2347,7 +2347,7 @@ pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfram
     if (strong.get(globalThis)) |stream| {
         stream.cancel(globalThis);
     }
-    return .undefined;
+    return .jsUndefined();
 }
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFn(onFileStreamResolveRequestStream);
@@ -2911,7 +2911,7 @@ pub fn getName(
     _: JSC.JSValue,
     globalThis: *JSC.JSGlobalObject,
 ) JSValue {
-    return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
+    return if (this.getNameString()) |name| name.toJS(globalThis) else .jsUndefined();
 }
 
 pub fn setName(

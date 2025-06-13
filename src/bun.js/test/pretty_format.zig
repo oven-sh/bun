@@ -360,7 +360,7 @@ pub const JestPrettyFormat = struct {
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!Result {
                 switch (value) {
-                    .zero, .undefined => return Result{
+                    .zero, JSValue.jsUndefined() => return Result{
                         .tag = .Undefined,
                     },
                     .null => return Result{
@@ -1420,13 +1420,13 @@ pub const JestPrettyFormat = struct {
                     writer.print("{}", .{str});
                 },
                 .Event => {
-                    const event_type_value = brk: {
-                        const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                    const event_type_value: JSValue = brk: {
+                        const value_: JSValue = value.get_unsafe(this.globalThis, "type") orelse break :brk .jsUndefined();
                         if (value_.isString()) {
                             break :brk value_;
                         }
 
-                        break :brk JSValue.undefined;
+                        break :brk .jsUndefined();
                     };
 
                     const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
@@ -1478,7 +1478,7 @@ pub const JestPrettyFormat = struct {
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = (try value.fastGet(this.globalThis, .data)) orelse JSValue.undefined;
+                                const data: JSValue = (try value.fastGet(this.globalThis, .data)) orelse .jsUndefined();
                                 const tag = try Tag.get(data, this.globalThis);
 
                                 if (tag.cell.isStringLike()) {

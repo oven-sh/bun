@@ -200,6 +200,9 @@ src/bun.js/node/util/parse_args_utils.zig
 src/bun.js/node/util/parse_args.zig
 src/bun.js/node/util/validators.zig
 src/bun.js/node/win_watcher.zig
+src/bun.js/node/zlib/NativeBrotli.zig
+src/bun.js/node/zlib/NativeZlib.zig
+src/bun.js/node/zlib/NativeZstd.zig
 src/bun.js/ProcessAutoKiller.zig
 src/bun.js/rare_data.zig
 src/bun.js/ResolveMessage.zig

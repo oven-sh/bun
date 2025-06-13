@@ -794,7 +794,7 @@ pub const FetchTasklet = struct {
                     const js_hostname = hostname.toJS(globalObject);
                     js_hostname.ensureStillAlive();
                     js_cert.ensureStillAlive();
-                    const check_result = check_server_identity.call(globalObject, .undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
+                    const check_result = check_server_identity.call(globalObject, .jsUndefined(), &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
@@ -1499,7 +1499,7 @@ pub fn Bun__fetchPreconnect_(
     }
 
     bun.http.AsyncHTTP.preconnect(url, true);
-    return .undefined;
+    return .jsUndefined();
 }
 
 const StringOrURL = struct {

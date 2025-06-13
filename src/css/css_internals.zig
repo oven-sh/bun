@@ -320,7 +320,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
                 .initOutsideOfBundler(&import_records),
             ) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                return .undefined;
+                return .jsUndefined();
             };
 
             return bun.String.fromBytes(result.code).toJS(globalThis);

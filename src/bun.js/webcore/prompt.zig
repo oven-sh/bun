@@ -31,14 +31,14 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
             // 5. Show message to the user, treating U+000A LF as a line break.
             output.writeAll(message.slice()) catch {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return .undefined;
+                return .jsUndefined();
             };
         }
     }
 
     output.writeAll(if (has_message) " [Enter] " else "Alert [Enter] ") catch {
         // 1. If we cannot show simple dialogs for this, then return.
-        return .undefined;
+        return .jsUndefined();
     };
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -56,7 +56,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
 
-    return .undefined;
+    return .jsUndefined();
 }
 
 fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

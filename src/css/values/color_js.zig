@@ -55,7 +55,7 @@ const OutputColorFormat = enum {
 };
 
 fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) bun.JSError!i32 {
-    if (input == .zero or input == .undefined or !input.isNumber()) {
+    if (input == .zero or input.isUndefined() or !input.isNumber()) {
         return globalThis.throwInvalidArgumentType("color", property, "integer");
     }
 

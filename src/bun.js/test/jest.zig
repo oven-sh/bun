@@ -285,7 +285,7 @@ pub const Jest = struct {
 
                 function.protect();
                 @field(the_runner.global_callbacks, name).append(bun.default_allocator, function) catch unreachable;
-                return .undefined;
+                return .jsUndefined();
             }
         }.appendGlobalFunctionCallback;
     }
@@ -505,7 +505,7 @@ pub const Jest = struct {
             test_runner.default_timeout_override = timeout_ms;
         }
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     comptime {
@@ -1083,7 +1083,7 @@ pub const DescribeScope = struct {
 
         if (callback == .zero) {
             this.runTests(globalObject);
-            return .undefined;
+            return .jsUndefined();
         }
 
         {
@@ -1096,17 +1096,17 @@ pub const DescribeScope = struct {
                     .fulfilled => {},
                     else => {
                         _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue());
-                        return .undefined;
+                        return .jsUndefined();
                     },
                 }
             } else if (result.toError()) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                return .undefined;
+                return .jsUndefined();
             }
         }
 
         this.runTests(globalObject);
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
@@ -1805,7 +1805,7 @@ inline fn createScope(
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
-        return .undefined;
+        return .jsUndefined();
     }
 
     var is_skip = tag == .skip or
@@ -2052,14 +2052,14 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
         const allocator = bun.default_allocator;
         const each_data = bun.cast(*EachData, data);
         JSC.host_fn.setFunctionData(callee, null);
-        const array = each_data.*.strong.get() orelse return .undefined;
+        const array = each_data.*.strong.get() orelse return .jsUndefined();
         defer {
             each_data.*.strong.deinit();
             allocator.destroy(each_data);
         }
 
         if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
-            return .undefined;
+            return .jsUndefined();
         }
 
         var iter = try array.arrayIterator(globalThis);
@@ -2138,7 +2138,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 allocator.free(formattedLabel);
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
-                    return .undefined;
+                    return .jsUndefined();
                 } else {
                     function.protect();
                     parent.tests.append(allocator, TestScope{
@@ -2168,7 +2168,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
         }
     }
 
-    return .undefined;
+    return .jsUndefined();
 }
 
 inline fn createEach(
@@ -2207,7 +2207,7 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     defer vm.eventLoop().exit();
 
     globalObject.clearTerminationException(); // TODO this is sus
-    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
+    return function.call(globalObject, .jsUndefined(), args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

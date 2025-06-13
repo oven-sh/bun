@@ -1,7 +1,6 @@
 /// ABI-compatible with EncodedJSValue
 /// In the future, this type will exclude `zero`, encoding it as `error.JSError` instead.
 pub const JSValue = enum(i64) {
-    undefined = 0xa,
     null = 0x2,
     true = FFI.TrueI64,
     false = 0x6,
@@ -20,6 +19,10 @@ pub const JSValue = enum(i64) {
     /// in `JSC__JSValue__getIfPropertyExistsImpl`
     property_does_not_exist_on_object = 0x4,
     _,
+
+    /// not `pub` on purpose.
+    /// use .jsUndefined() so as to not be accidentally confused/typo'd with Zig undefined.
+    const @"undefined": JSValue = @enumFromInt(0xa);
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
@@ -554,8 +557,9 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
     }
 
+    /// this must have been created by fromPtrAddress()
     pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
-        return asPtr(this, T);
+        return @ptrFromInt(this.asPtrAddress());
     }
 
     extern fn JSC__JSValue__createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue;
@@ -633,7 +637,7 @@ pub const JSValue = enum(i64) {
         return switch (comptime Number) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
-            f32, f64 => jsNumberFromDouble(@as(f64, number)),
+            f32, f64 => jsDoubleNumber(@as(f64, number)),
             u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
@@ -689,9 +693,6 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__jsDoubleNumber(i: f64) JSValue;
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return JSC__JSValue__jsDoubleNumber(i);
-    }
 
     extern fn JSC__JSValue__jsEmptyString(globalThis: *JSGlobalObject) JSValue;
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
@@ -712,7 +713,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn jsUndefined() JSValue {
-        return JSValue.undefined;
+        return @enumFromInt(0xa);
     }
 
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
@@ -806,7 +807,7 @@ pub const JSValue = enum(i64) {
         return JSArrayIterator.init(this, global);
     }
 
-    pub fn jsNumberFromDouble(i: f64) JSValue {
+    pub fn jsDoubleNumber(i: f64) JSValue {
         return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
     }
     extern fn JSC__JSValue__jsNumberFromChar(i: u8) JSValue;
@@ -826,7 +827,7 @@ pub const JSValue = enum(i64) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -842,7 +843,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
@@ -903,7 +904,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
-        return this == .undefined;
+        return @intFromEnum(this) == 0xa;
     }
     pub inline fn isNull(this: JSValue) bool {
         return this == .null;
@@ -1106,7 +1107,7 @@ pub const JSValue = enum(i64) {
 
     pub inline fn isCell(this: JSValue) bool {
         return switch (this) {
-            .zero, .undefined, .null, .true, .false => false,
+            .zero, JSValue.undefined, .null, .true, .false => false,
             else => (@as(u64, @bitCast(@intFromEnum(this))) & FFI.NotCellMask) == 0,
         };
     }
@@ -1391,15 +1392,14 @@ pub const JSValue = enum(i64) {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
 
-        const value = try fromJSHostCall(
+        return switch (try fromJSHostCall(
             global,
             @src(),
             JSC__JSValue__fastGet,
             .{ this, global, @intFromEnum(builtin_name) },
-        );
-        return switch (value) {
+        )) {
             .zero => unreachable, // handled by fromJSHostCall
-            .undefined, .property_does_not_exist_on_object => null,
+            JSValue.undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1461,9 +1461,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
-        if (comptime bun.Environment.allow_assert)
-            bun.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
-        return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
+        return this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
@@ -1484,7 +1482,7 @@ pub const JSValue = enum(i64) {
         }
 
         return switch (JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len))) {
-            .undefined, .zero, .property_does_not_exist_on_object => null,
+            JSValue.undefined, .zero, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1525,7 +1523,7 @@ pub const JSValue = enum(i64) {
             // since there are false positives, the better path is to make them
             // negatives, as the number of places that desire throwing on
             // existing undefined is extremely small, but non-zero.
-            .undefined => null,
+            JSValue.undefined => null,
             else => |val| val,
         };
     }
@@ -1545,7 +1543,7 @@ pub const JSValue = enum(i64) {
         return switch (JSC__JSValue__getPropertyValue(target, global, property_name.ptr, @intCast(property_name.len))) {
             .zero => error.JSError,
             .property_does_not_exist_on_object => null,
-            .undefined => null,
+            JSValue.undefined => null,
             else => |val| val,
         };
     }
@@ -1575,7 +1573,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         if (try getOwn(this, global, property_name)) |prop| {
-            if (prop == .undefined) return null;
+            if (prop.isUndefined()) return null;
             return prop;
         }
 
@@ -1605,7 +1603,7 @@ pub const JSValue = enum(i64) {
             .zero => unreachable,
 
             // Treat undefined and null as unspecified
-            .null, .undefined => null,
+            .null, JSValue.undefined => null,
 
             // false, 0, are deliberately not included in this list.
             // That would prevent you from passing `0` or `false` to various Bun APIs.
@@ -1852,7 +1850,7 @@ pub const JSValue = enum(i64) {
         const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
-            .undefined => null,
+            JSValue.undefined => null,
             .false, .true => prop == .true,
             else => {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);
@@ -2068,24 +2066,20 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    extern fn JSC__JSValue__asNumber(this: JSValue) f64;
+    /// Asserts this is a number, undefined, null, or a boolean
     pub fn asNumber(this: JSValue) f64 {
+        bun.assert(this.isNumber() or this.isUndefinedOrNull() or this.isBoolean());
         if (this.isInt32()) {
-            return @as(f64, @floatFromInt(this.asInt32()));
-        }
-
-        if (isNumber(this)) {
+            return @floatFromInt(this.asInt32());
+        } else if (isNumber(this)) {
             // Don't need to check for !isInt32() because above
-            return asDouble(this);
-        }
-
-        if (this.isUndefinedOrNull()) {
+            return this.asDouble();
+        } else if (this.isUndefinedOrNull()) {
             return 0.0;
         } else if (this.isBoolean()) {
-            return if (asBoolean(this)) 1.0 else 0.0;
+            return @floatFromInt(@intFromBool(this.asBoolean()));
         }
-
-        return JSC__JSValue__asNumber(this);
+        return std.math.nan(f64); // unreachable in assertion builds
     }
 
     pub fn asDouble(this: JSValue) f64 {
@@ -2093,21 +2087,16 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_DOUBLE(.{ .asJSValue = this });
     }
 
-    pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @as(*Pointer, @ptrFromInt(this.asPtrAddress()));
+    /// Encodes addr as a double. Resulting value can be passed to asPtrAddress.
+    pub fn fromPtrAddress(addr: usize) JSValue {
+        return jsDoubleNumber(@floatFromInt(addr));
     }
 
-    pub fn fromPtrAddress(addr: anytype) JSValue {
-        return jsNumber(@as(f64, @floatFromInt(@as(usize, @bitCast(@as(usize, addr))))));
-    }
-
+    /// Interprets a numeric JSValue as a pointer address. Use on values returned by fromPtrAddress.
     pub fn asPtrAddress(this: JSValue) usize {
-        return @as(usize, @bitCast(@as(usize, @intFromFloat(this.asDouble()))));
+        return @intFromFloat(this.asNumber());
     }
 
-    pub fn fromPtr(addr: anytype) JSValue {
-        return fromPtrAddress(@intFromPtr(addr));
-    }
     extern fn JSC__JSValue__toBoolean(this: JSValue) bool;
     /// Equivalent to the `!!` operator
     pub fn toBoolean(this: JSValue) bool {
@@ -2378,7 +2367,7 @@ pub const JSValue = enum(i64) {
         }
 
         switch (comptime Type) {
-            void => return .undefined,
+            void => return .jsUndefined(),
             bool => return JSC.JSValue.jsBoolean(if (comptime Type != T) value.* else value),
             *JSC.JSGlobalObject => return value.toJSValue(),
             []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {

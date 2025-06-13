@@ -682,7 +682,7 @@ pub fn wrapStaticMethod(
                     ?jsc.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = try jsc.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
-                                if (arg == .undefined) {
+                                if (arg.isUndefined()) {
                                     break :brk null;
                                 }
 

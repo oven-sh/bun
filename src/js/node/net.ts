@@ -172,7 +172,7 @@ function onConnectEnd() {
     error.host = options.host;
     error.port = options.port;
     error.localAddress = options.localAddress;
-    this.destroy(error);
+    this.destroySoon(error);
   }
 }
 

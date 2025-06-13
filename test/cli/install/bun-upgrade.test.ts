@@ -55,7 +55,7 @@ for (const [args, expected] of invalid_tests) {
 
     const err = await new Response(stderr).text();
     expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-    expect(err.split(/\r?\n/)).toContain(`note: Use ${expected} instead.`);
+    expect(err.split(/\r?\n/)).toContain(`note: Use \`${expected}\` instead.`);
   });
 }
 

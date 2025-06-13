@@ -162,19 +162,21 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
+  X509** root_cert_instances = default_ca_certificates->root_cert_instances;
+  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {
-    X509 *cert = default_ca_certificates->root_cert_instances[i];
+    X509 *cert = root_cert_instances[i];
     if (cert == NULL)
       continue;
     X509_up_ref(cert);
     X509_STORE_add_cert(store, cert);
   }
 
-  if (default_ca_certificates->root_extra_cert_instances) {
-    for (int i = 0; i < sk_X509_num(default_ca_certificates->root_extra_cert_instances); i++) {
-      X509 *cert = sk_X509_value(default_ca_certificates->root_extra_cert_instances, i);
+  if (root_extra_cert_instances) {
+    for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
+      X509 *cert = sk_X509_value(root_extra_cert_instances, i);
       X509_up_ref(cert);
       X509_STORE_add_cert(store, cert);
     }

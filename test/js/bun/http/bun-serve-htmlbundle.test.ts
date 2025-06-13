@@ -1,4 +1,4 @@
-import { type HTMLBundle } from "bun";
+import { serve, type HTMLBundle } from "bun";
 import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -39,6 +39,7 @@ test("fetch Sleep 1s Response(HTMLBundle)", async () => {
   expect(await res.text()).toContain("Hello HTML");
   const missing = await fetch(`${server.url}/index.html`);
   expect(missing.status).toBe(404);
+  server.stop();
 });
 
 test("fetch Response(HTMLBundle)", async () => {
@@ -50,10 +51,10 @@ test("fetch Response(HTMLBundle)", async () => {
   });
 
   const res = await fetch(server.url);
-  await server.stop();
   expect(await res.text()).toContain("Hello HTML");
   const missing = await fetch(`${server.url}/index.html`);
   expect(missing.status).toBe(404);
+  await server.stop();
 });
 
 test("fetch Response(HTMLBundle) headers", async () => {
@@ -67,6 +68,7 @@ test("fetch Response(HTMLBundle) headers", async () => {
   });
 
   const res = await fetch(server.url);
+  console.log(res.headers);
   expect(res.status).toBe(401);
   expect(res.headers.get("x-test")).toBe("true");
   await server.stop();

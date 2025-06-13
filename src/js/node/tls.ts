@@ -33,6 +33,9 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
+
+const ObjectFreeze = Object.freeze;
+
 function parseCertString() {
   // Removed since JAN 2022 Node v18.0.0+ https://github.com/nodejs/node/pull/41479
   throwNotImplemented("Not implemented");
@@ -726,21 +729,49 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
-let bundledRootCertificates: string[] | undefined;
-function cacheBundledRootCertificates() {
-  bundledRootCertificates ||= getBundledRootCertificates();
+function getOptionValue(option: string): boolean {
+  return false;
+}
 
+let bundledRootCertificates: string[] | undefined;
+function cacheBundledRootCertificates(): string[] {
+  bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
+let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
-  throw new Error("getCACertificates 'default' is not yet implemented in Bun");
+  if (defaultCACertificates) return defaultCACertificates;
+  defaultCACertificates = [];
+
+  if (!getOptionValue("--use-openssl-ca")) {
+    const bundled = cacheBundledRootCertificates();
+    for (let i = 0; i < bundled.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+    }
+    if (getOptionValue("--use-system-ca")) {
+      const system = cacheSystemCACertificates();
+      for (let i = 0; i < system.length; ++i) {
+        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+      }
+    }
+  }
+
+  if (process.env.NODE_EXTRA_CA_CERTS) {
+    const extra = cacheExtraCACertificates();
+    for (let i = 0; i < extra.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
+    }
+  }
+
+  ObjectFreeze(defaultCACertificates);
+  return defaultCACertificates;
 }
 
-function cacheSystemCACertificates() {
+function cacheSystemCACertificates(): string[] {
   throw new Error("getCACertificates 'system' is not yet implemented in Bun");
 }
 
-function cacheExtraCACertificates() {
+function cacheExtraCACertificates(): string[] {
   throw new Error("getCACertificates 'extra' is not yet implemented in Bun");
 }
 

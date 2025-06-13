@@ -614,7 +614,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (length == 0) {
-        return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
     }
     // fill argument
     if (callFrame->argumentCount() > 1) [[unlikely]] {

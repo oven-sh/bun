@@ -220,12 +220,11 @@ declare module "bun" {
     set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...options: string[]): Promise<"OK" | string | null>;
 
     /**
-     * Delete a key
-     * @param key The key to delete
-     * @param keys Additional keys to delete
+     * Delete a key(s)
+     * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys removed
      */
-    del(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+    del(...keys: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Increment the integer value of a key by one

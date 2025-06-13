@@ -204,9 +204,9 @@ pub const Run = struct {
         var vm = run.vm;
         var b = &vm.transpiler;
         vm.preload = ctx.preloads;
-        vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
+        vm.argv = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

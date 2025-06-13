@@ -885,7 +885,7 @@ _bun_link_param_package_completion() {
     global_node_modules=$install_dir/install/global/node_modules
 
     local -a packages_full_path=(${global_node_modules}/*(N))
-    packages=$(echo $packages_full_path | tr ' ' '\n' | xargs  basename)
+    packages=$(echo $packages_full_path | tr ' ' '\n' | xargs -l basename)
     _alternative "dirs:directory:(($packages))"
 }
 

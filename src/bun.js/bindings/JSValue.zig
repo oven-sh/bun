@@ -1154,9 +1154,12 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void;
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) error{JSError}!void {
+    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) JSError!void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
         JSC__JSValue__toZigString(this, out, global);
-        if (global.hasException()) return error.JSError;
+        try scope.returnIfException();
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
@@ -1551,9 +1554,8 @@ pub const JSValue = enum(i64) {
         scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
-        return if (scope.hasException())
-            error.JSError
-        else if (value == .zero)
+        try scope.returnIfException();
+        return if (value == .zero)
             null
         else
             value;
@@ -1651,6 +1653,9 @@ pub const JSValue = enum(i64) {
     /// - JSValue.undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
         const prop = try get(this, global, property) orelse return null;
         if (prop.isNull() or prop == .false) {
             return null;
@@ -1660,14 +1665,12 @@ pub const JSValue = enum(i64) {
         }
 
         const str = try prop.toBunString(global);
-        if (global.hasException()) {
-            str.deref();
-            return error.JSError;
-        }
-        if (str.isEmpty()) {
-            return null;
-        }
-        return str;
+        errdefer str.deref();
+        try scope.returnIfException();
+        return if (str.isEmpty())
+            null
+        else
+            str;
     }
 
     pub fn toEnumFromMap(

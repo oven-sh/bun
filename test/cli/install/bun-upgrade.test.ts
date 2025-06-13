@@ -38,7 +38,7 @@ const invalid_tests = [
   [["upgrade", "bun-types", "--dev"], "bun update bun-types --dev"],
   [["upgrade", "bun-types"], "bun update bun-types"],
   [["upgrade", "--dev", "bun-types"], "bun update --dev bun-types"],
-  [["upgrade", "--dev", "upgrade", "bun-types", "--stable"], "bun update bun-types --stable"],
+  [["--dev", "upgrade", "bun-types", "--stable"], "bun update --dev bun-types --stable"],
   [["upgrade", "upgrade"], "bun update upgrade"],
   [["upgrade", "--latest"], "bun update --latest"],
 ];

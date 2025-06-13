@@ -50,6 +50,10 @@ To install, paste this into a terminal:
 > scoop install bun
 ```
 
+```powershell#Chocolatey
+> choco install bun
+```
+
 {% /codetabs %}
 
 {% callout %}
@@ -314,6 +318,10 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 
 ```powershell#Scoop
 > scoop uninstall bun
+```
+
+```powershell#Chocolatey
+> choco uninstall bun
 ```
 
 ```bash#npm

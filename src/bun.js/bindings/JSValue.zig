@@ -2012,7 +2012,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asNumber(this: JSValue) f64 {
-        bun.assert(this.isNumber());
+        bun.debugAssert(this.isNumber());
         if (this.isInt32()) {
             return @floatFromInt(this.asInt32());
         } else {

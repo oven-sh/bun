@@ -2998,7 +2998,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
 /// }
 /// ```
 pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
-    if (comptime !Environment.isDebug) {
+    if (comptime !(Environment.isDebug or Environment.enable_asan)) {
         return;
     }
 

@@ -110,7 +110,7 @@ extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) bun.JSExecutionTerminated!void {
     JSC.markBinding(@src());
     var scope: JSC.CatchScope = undefined;
-    scope.init(jsc_vm, @src(), .enabled);
+    scope.init(globalObject, @src(), .enabled);
     defer scope.deinit();
 
     jsc_vm.releaseWeakRefs();
@@ -449,7 +449,7 @@ pub fn processGCTimer(this: *EventLoop) void {
 pub fn tick(this: *EventLoop) void {
     JSC.markBinding(@src());
     var scope: JSC.CatchScope = undefined;
-    scope.init(this.virtual_machine.jsc, @src(), .enabled);
+    scope.init(this.global, @src(), .enabled);
     defer scope.deinit();
     this.entered_event_loop_count += 1;
     this.debug.enter();

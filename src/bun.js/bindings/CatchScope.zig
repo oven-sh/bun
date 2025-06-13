@@ -4,7 +4,7 @@
 //! ```zig
 //! // Declare a CatchScope surrounding the call that may throw an exception
 //! var scope: CatchScope = undefined;
-//! scope.init(vm, @src(), .assertions_only);
+//! scope.init(global, @src(), .assertions_only);
 //! defer scope.deinit();
 //!
 //! const value = external_call(vm, foo, bar, baz);
@@ -23,7 +23,7 @@ const size = 56;
 const alignment = 8;
 
 bytes: [size]u8 align(alignment),
-vm: *jsc.VM,
+global: *jsc.JSGlobalObject,
 /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
 location: if (Environment.allow_assert) *u8 else void,
 enabled: bool,
@@ -41,7 +41,7 @@ pub const Enable = enum {
 
 pub fn init(
     self: *CatchScope,
-    vm: *jsc.VM,
+    global: *jsc.JSGlobalObject,
     src: std.builtin.SourceLocation,
     /// If not enabled, the scope does nothing (it never has an exception).
     /// If you need to do something different when there is an exception, leave enabled.
@@ -56,7 +56,7 @@ pub fn init(
     if (enabled) {
         CatchScope__construct(
             &self.bytes,
-            vm,
+            global,
             src.fn_name,
             src.file,
             src.line,
@@ -66,7 +66,7 @@ pub fn init(
     }
     self.* = .{
         .bytes = self.bytes,
-        .vm = vm,
+        .global = global,
         .location = if (Environment.allow_assert) &self.bytes[0],
         .enabled = enabled,
     };
@@ -129,7 +129,7 @@ pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: 
 /// If non-termination exception, assertion failure.
 pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
     return if (self.exception()) |e|
-        if (jsc.JSValue.fromCell(e).isTerminationException(self.vm))
+        if (jsc.JSValue.fromCell(e).isTerminationException(self.global.vm()))
             error.JSExecutionTerminated
         else
             self.assertionFailure(e)
@@ -145,7 +145,7 @@ pub fn deinit(self: *CatchScope) void {
 
 extern fn CatchScope__construct(
     ptr: *align(alignment) [size]u8,
-    vm: *jsc.VM,
+    global: *jsc.JSGlobalObject,
     function: [*:0]const u8,
     file: [*:0]const u8,
     line: c_uint,

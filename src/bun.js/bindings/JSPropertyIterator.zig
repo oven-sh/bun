@@ -122,7 +122,7 @@ const JSPropertyIteratorImpl = opaque {
         only_non_index_properties: bool,
     ) bun.JSError!?*JSPropertyIteratorImpl {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject.vm(), @src(), .enabled);
+        scope.init(globalObject, @src(), .enabled);
         defer scope.deinit();
         const iter = Bun__JSPropertyIterator__create(globalObject, object.toJS(), count, own_properties_only, only_non_index_properties);
         if (scope.hasException()) {

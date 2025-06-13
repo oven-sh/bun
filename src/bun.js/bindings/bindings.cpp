@@ -6502,7 +6502,7 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
 
 extern "C" void CatchScope__construct(
     void* ptr,
-    JSC::VM* vm,
+    JSC::JSGlobalObject* globalObject,
     const char* function,
     const char* file,
     unsigned line,
@@ -6519,13 +6519,13 @@ extern "C" void CatchScope__construct(
 
 // TODO how important is the stack pointer passed here?
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-    new (ptr) JSC::CatchScope(*vm,
+    new (ptr) JSC::CatchScope(JSC::getVM(globalObject),
         ExceptionEventLocation { currentStackPointer(), function, file, line });
 #else
     (void)function;
     (void)file;
     (void)line;
-    new (ptr) JSC::CatchScope(*vm);
+    new (ptr) JSC::CatchScope(JSC::getVM(globalObject));
 #endif
 }
 

@@ -91,7 +91,7 @@ pub fn toJSHostCall(
     args: anytype,
 ) JSValue {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis.vm(), src, .assertions_only);
+    scope.init(globalThis, src, .assertions_only);
     defer scope.deinit();
 
     const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
@@ -112,7 +112,7 @@ pub fn fromJSHostCall(
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!JSValue {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis.vm(), src, .assertions_only);
+    scope.init(globalThis, src, .assertions_only);
     defer scope.deinit();
 
     const value = @call(.auto, function, args);

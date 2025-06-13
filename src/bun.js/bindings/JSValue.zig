@@ -92,7 +92,7 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), .enabled);
+        scope.init(globalThis, @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachPropertyNonIndexed(this, globalThis, ctx, callback);
         try scope.returnIfException();
@@ -105,7 +105,7 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), .enabled);
+        scope.init(globalThis, @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
         try scope.returnIfException();
@@ -118,7 +118,7 @@ pub const JSValue = enum(i64) {
         callback: PropertyIteratorFn,
     ) JSError!void {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), .enabled);
+        scope.init(globalThis, @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
         try scope.returnIfException();
@@ -1548,7 +1548,7 @@ pub const JSValue = enum(i64) {
     pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         var property_name_str = bun.String.init(property_name);
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
         return if (scope.hasException())
@@ -1911,7 +1911,7 @@ pub const JSValue = enum(i64) {
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         if (@intFromEnum(this) == @intFromEnum(other)) return true;
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const same = JSC__JSValue__isSameValue(this, other, global);
         try scope.returnIfException();
@@ -1921,7 +1921,7 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const result = JSC__JSValue__deepEquals(this, other, global);
         try scope.returnIfException();
@@ -1931,7 +1931,7 @@ pub const JSValue = enum(i64) {
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
     pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const result = JSC__JSValue__jestDeepEquals(this, other, global);
         try scope.returnIfException();
@@ -1941,7 +1941,7 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const result = JSC__JSValue__strictDeepEquals(this, other, global);
         try scope.returnIfException();
@@ -1951,7 +1951,7 @@ pub const JSValue = enum(i64) {
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         var scope: JSC.CatchScope = undefined;
-        scope.init(global.vm(), @src(), .enabled);
+        scope.init(global, @src(), .enabled);
         defer scope.deinit();
         const result = JSC__JSValue__jestStrictDeepEquals(this, other, global);
         try scope.returnIfException();
@@ -2191,7 +2191,7 @@ pub const JSValue = enum(i64) {
     /// TODO this should probably just return an optional
     pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) JSError!f64 {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis.vm(), @src(), .enabled);
+        scope.init(globalThis, @src(), .enabled);
         defer scope.deinit();
         const length = JSC__JSValue__getLengthIfPropertyExistsInternal(this, globalThis);
         try scope.returnIfException();

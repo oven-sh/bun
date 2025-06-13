@@ -257,6 +257,9 @@ pub const JSPromise = opaque {
     /// The value can be another Promise
     /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src(), .enabled);
+        defer scope.deinit();
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -266,6 +269,7 @@ pub const JSPromise = opaque {
         }
 
         JSC__JSPromise__resolve(this, globalThis, value);
+        scope.returnIfException() catch @panic("TODO: JSPromise.resolve() threw");
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {

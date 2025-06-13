@@ -10,6 +10,7 @@ const { validateString } = require("internal/validators");
 const { Server: NetServer, Socket: NetSocket } = net;
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
+const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const SymbolReplace = Symbol.replace;
@@ -771,8 +772,10 @@ function cacheSystemCACertificates(): string[] {
   throw new Error("getCACertificates 'system' is not yet implemented in Bun");
 }
 
+let extraCACertificates: string[] | undefined;
 function cacheExtraCACertificates(): string[] {
-  throw new Error("getCACertificates 'extra' is not yet implemented in Bun");
+  extraCACertificates ||= getExtraCACertificates() as string[];
+  return extraCACertificates;
 }
 
 function getCACertificates(type = "default") {

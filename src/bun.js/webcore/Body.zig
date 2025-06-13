@@ -1453,7 +1453,10 @@ pub const ValueBufferer = struct {
                 log("Empty", .{});
                 return sink.onFinishedBuffering(sink.ctx, "", null, false);
             },
-
+            .HTMLRoute => {
+                log("HTMLRoute", .{});
+                return sink.onFinishedBuffering(sink.ctx, "", null, false);
+            },
             .Error => |err| {
                 log("Error", .{});
                 sink.onFinishedBuffering(sink.ctx, "", err, false);

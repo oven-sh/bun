@@ -1473,7 +1473,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
-                .Used, .Null, .Empty, .Error => {
+                .Used, .Null, .Empty, .Error, .HTMLRoute => {
                     this.renderMetadata();
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());

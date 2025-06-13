@@ -1329,6 +1329,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                 .Empty,
                 .Blob,
                 .Null,
+                .HTMLRoute,
                 => {
                     break :brk response.body.use();
                 },
@@ -1390,6 +1391,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                 .Empty,
                 .Blob,
                 .Null,
+                .HTMLRoute
                 => {
                     break :brk request.body.value.use();
                 },
@@ -2148,7 +2150,7 @@ fn getExistsSync(this: *Blob) JSC.JSValue {
     // We say regular files and pipes exist.
     // This is mostly meant for "Can we use this in new Response(file)?"
     return JSValue.jsBoolean(
-        bun.isRegularFile(store.data.file.mode) or bun.sys.S.ISFIFO(store.data.file.mode),
+        bun.isRegularFile(store.data.file.mode) or bun.sys.S.ISFIFO(@as(i32, @intCast(store.data.file.mode))),
     );
 }
 

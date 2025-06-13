@@ -92,7 +92,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .jsUndefined(),
+        .Used, .Empty, .Null, .HTMLBundle => return .jsUndefined(),
         .Blob => |*blob| {
             if (blob.isBunFile()) {
                 return .jsUndefined();

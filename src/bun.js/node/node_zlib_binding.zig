@@ -4,7 +4,6 @@ const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
-const validators = @import("./util/validators.zig");
 const debug = bun.Output.scoped(.zlib, true);
 const Buffer = bun.api.node.Buffer;
 

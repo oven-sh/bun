@@ -349,7 +349,7 @@ const SourceMapHandlerGetter = struct {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in source_mappings like normal
     /// This is hideously expensive memory-wise...
-    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
         temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
@@ -1686,7 +1686,7 @@ pub const main_file_name: string = "bun:main";
 pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     _ = callframe; // autofix
     globalObject.bunVM().drainMicrotasks();
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
@@ -2345,7 +2345,7 @@ fn printErrorFromMaybePrivateData(
 pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
     var jsc_vm = globalObject.bunVM();
     _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {

@@ -244,9 +244,9 @@ pub fn loadFromDir(
     };
 
     if (lockfile_format == .text) {
-        const source = logger.Source.initPathString("bun.lock", buf);
+        const source = &logger.Source.initPathString("bun.lock", buf);
         initializeStore();
-        const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
             return .{
                 .err = .{
                     .step = .parse_file,
@@ -257,7 +257,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -306,13 +306,13 @@ pub fn loadFromDir(
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
-                const source = logger.Source.initPathString("bun.lock", text_lockfile_bytes);
+                const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
-                const json = JSON.parsePackageJSONUTF8(&source, log, allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, &source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 

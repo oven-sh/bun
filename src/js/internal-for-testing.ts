@@ -186,3 +186,10 @@ export const decodeURIComponentSIMD = $newCppFunction(
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+
+interface setSocketOptionsFn {
+  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
+  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
+}
+
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);

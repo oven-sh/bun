@@ -926,7 +926,7 @@ pub const Listener = struct {
 
     pub fn dispose(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.doStop(true);
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -935,7 +935,7 @@ pub const Listener = struct {
 
         this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     fn doStop(this: *Listener, force_close: bool) void {
@@ -1501,19 +1501,19 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            if (this.socket.isDetached()) return .undefined;
+            if (this.socket.isDetached()) return .jsUndefined();
 
             log("resume", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
             if (this.wrapped == .none and this.flags.is_paused) {
                 this.flags.is_paused = !this.socket.resumeStream();
             }
-            return .undefined;
+            return .jsUndefined();
         }
 
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            if (this.socket.isDetached()) return .undefined;
+            if (this.socket.isDetached()) return .jsUndefined();
 
             log("pause", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
@@ -1521,7 +1521,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.flags.is_paused = this.socket.pauseStream();
             }
 
-            return .undefined;
+            return .jsUndefined();
         }
 
         pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -1972,7 +1972,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            var js_error: JSValue = .undefined;
+            var js_error: JSValue = .jsUndefined();
             if (err != 0) {
                 // errors here are always a read error
                 js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
@@ -2257,7 +2257,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn writeOrEndBuffered(this: *This, globalObject: *JSC.JSGlobalObject, data_value: JSC.JSValue, encoding_value: JSC.JSValue, comptime is_end: bool) WriteResult {
             if (this.buffered_data_for_node_net.len == 0) {
-                var values = [4]JSC.JSValue{ data_value, .undefined, .undefined, encoding_value };
+                var values = [4]JSC.JSValue{ data_value, .jsUndefined(), .jsUndefined(), encoding_value };
                 return this.writeOrEnd(globalObject, &values, true, is_end);
             }
 
@@ -2387,16 +2387,16 @@ fn NewSocket(comptime ssl: bool) type {
             var encoding_value: JSC.JSValue = args[3];
             if (args[2].isString()) {
                 encoding_value = args[2];
-                args[2] = .undefined;
+                args[2] = .jsUndefined();
             } else if (args[1].isString()) {
                 encoding_value = args[1];
-                args[1] = .undefined;
+                args[1] = .jsUndefined();
             }
 
             const offset_value = args[1];
             const length_value = args[2];
 
-            if (encoding_value != .undefined and (offset_value != .undefined or length_value != .undefined)) {
+            if (!encoding_value.isUndefined() and (!offset_value.isUndefined() or !length_value.isUndefined())) {
                 return globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch .fail;
             }
 
@@ -4372,4 +4372,37 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
     array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;
+}
+
+pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.arguments();
+
+    if (arguments.len < 3) {
+        return global.throwNotEnoughArguments("setSocketOptions", 3, arguments.len);
+    }
+
+    const socket = arguments.ptr[0].as(TCPSocket) orelse {
+        return global.throw("Expected a SocketTCP instance", .{});
+    };
+
+    const is_for_send_buffer = arguments.ptr[1].toInt32() == 1;
+    const is_for_recv_buffer = arguments.ptr[1].toInt32() == 2;
+    const buffer_size = arguments.ptr[2].toInt32();
+    const file_descriptor = socket.socket.fd();
+
+    if (bun.Environment.isPosix) {
+        if (is_for_send_buffer) {
+            const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, buffer_size);
+            if (result.asErr()) |err| {
+                return global.throwValue(err.toJSC(global));
+            }
+        } else if (is_for_recv_buffer) {
+            const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, buffer_size);
+            if (result.asErr()) |err| {
+                return global.throwValue(err.toJSC(global));
+            }
+        }
+    }
+
+    return JSC.JSValue.jsUndefined();
 }

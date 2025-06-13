@@ -8200,8 +8200,7 @@ pub const PackageManager = struct {
             Output.prettyln("<r><green>success:<r> unlinked package \"{s}\"", .{name});
             Global.exit(0);
         } else {
-            Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
-            Global.crash();
+            try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
         }
     }
 
@@ -8782,11 +8781,10 @@ pub const PackageManager = struct {
             "peerDependencies"
         else
             "dependencies";
-        var any_changes = false;
 
         var not_in_workspace_root: ?PatchCommitResult = null;
         switch (subcommand) {
-            .remove => {
+            .remove, .unlink => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
                 // they can even put it multiple times and we will just remove all of them
                 for (updates.*) |request| {
@@ -8797,16 +8795,17 @@ pub const PackageManager = struct {
                                 var i: usize = 0;
                                 var new_len = dependencies.len;
                                 while (i < dependencies.len) : (i += 1) {
-                                    if (dependencies[i].key.?.data == .e_string) {
-                                        if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
-                                            if (new_len > 1) {
-                                                dependencies[i] = dependencies[new_len - 1];
-                                                new_len -= 1;
-                                            } else {
-                                                new_len = 0;
-                                            }
-
-                                            any_changes = true;
+                                    if (dependencies[i].key.?.data == .e_string and
+                                        dependencies[i].key.?.data.e_string.eql(string, request.name) and
+                                        (subcommand != .unlink or
+                                            (dependencies[i].value.?.data == .e_string and
+                                                dependencies[i].value.?.data.e_string.hasPrefixComptime("link:"))))
+                                    {
+                                        if (new_len > 1) {
+                                            dependencies[i] = dependencies[new_len - 1];
+                                            new_len -= 1;
+                                        } else {
+                                            new_len = 0;
                                         }
                                     }
                                 }
@@ -8893,7 +8892,7 @@ pub const PackageManager = struct {
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var written = JSPrinter.printJSON(
+        _ = JSPrinter.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
             current_package_json.root,
@@ -9034,7 +9033,7 @@ pub const PackageManager = struct {
                 preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
 
-            written = JSPrinter.printJSON(
+            _ = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer_two),
                 &package_json_writer_two,
                 new_package_json,
@@ -9069,13 +9068,10 @@ pub const PackageManager = struct {
             try workspace_package_json_file.pwriteAll(source, 0);
             std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
             workspace_package_json_file.close();
+        }
 
-            if (subcommand == .remove) {
-                if (!any_changes) {
-                    Global.exit(0);
-                    return;
-                }
-
+        if (manager.options.do.install_packages) {
+            if (subcommand == .remove or subcommand == .unlink) {
                 var cwd = std.fs.cwd();
                 // This is not exactly correct
                 var node_modules_buf: bun.PathBuffer = undefined;

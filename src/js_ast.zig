@@ -3352,8 +3352,8 @@ pub const Expr = struct {
         const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
-            var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
+            const source = &logger.Source.initPathString("fetch.json", bytes);
+            var out_expr = JSONParser.parseForMacro(source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;
@@ -6342,7 +6342,7 @@ pub const Expr = struct {
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
                 .e_null => JSC.JSValue.null,
-                .e_undefined => JSC.JSValue.undefined,
+                .e_undefined => .jsUndefined(),
                 .e_boolean => |boolean| if (boolean.value)
                     JSC.JSValue.true
                 else

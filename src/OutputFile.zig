@@ -21,6 +21,7 @@ side: ?bun.bake.Side,
 /// entrypoint like sourcemaps and bytecode
 entry_point_index: ?u32,
 referenced_css_files: []const Index = &.{},
+source_index: Index.Optional = .none,
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
 
@@ -62,11 +63,19 @@ pub const FileOperation = struct {
     }
 };
 
-pub const Kind = @typeInfo(Value).Union.tag_type.?;
+pub const Kind = enum {
+    move,
+    copy,
+    noop,
+    buffer,
+    pending,
+    saved,
+};
+
 // TODO: document how and why all variants of this union(enum) are used,
 // specifically .move and .copy; the new bundler has to load files in memory
 // in order to hash them, so i think it uses .buffer for those
-pub const Value = union(enum) {
+pub const Value = union(Kind) {
     move: FileOperation,
     copy: FileOperation,
     noop: u0,
@@ -177,6 +186,7 @@ pub const Options = struct {
     source_map_index: ?u32 = null,
     bytecode_index: ?u32 = null,
     output_path: string,
+    source_index: Index.Optional = .none,
     size: ?usize = null,
     input_path: []const u8 = "",
     display_size: u32 = 0,
@@ -205,6 +215,7 @@ pub fn init(options: Options) OutputFile {
         .input_loader = options.input_loader,
         .src_path = Fs.Path.init(options.input_path),
         .dest_path = options.output_path,
+        .source_index = options.source_index,
         .size = options.size orelse switch (options.data) {
             .buffer => |buf| buf.data.len,
             .file => |file| file.size,
@@ -310,7 +321,7 @@ pub fn toJS(
 ) bun.JSC.JSValue {
     return switch (this.value) {
         .move, .pending => @panic("Unexpected pending output file"),
-        .noop => JSC.JSValue.undefined,
+        .noop => .jsUndefined(),
         .copy => |copy| brk: {
             const file_blob = JSC.WebCore.Blob.Store.initFile(
                 if (copy.fd.isValid())

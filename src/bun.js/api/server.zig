@@ -61,6 +61,7 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
+pub const FileRoute = @import("./server/FileRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
 
@@ -68,6 +69,8 @@ pub const AnyRoute = union(enum) {
     /// Serve a static file
     /// "/robots.txt": new Response(...),
     static: *StaticRoute,
+    /// Serve a file from disk
+    file: *FileRoute,
     /// Bundle an HTML import
     /// import html from "./index.html";
     /// "/": html,
@@ -82,6 +85,7 @@ pub const AnyRoute = union(enum) {
     pub fn memoryCost(this: AnyRoute) usize {
         return switch (this) {
             .static => |static_route| static_route.memoryCost(),
+            .file => |file_route| file_route.memoryCost(),
             .html => |html_bundle_route| html_bundle_route.data.memoryCost(),
             .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
@@ -90,6 +94,7 @@ pub const AnyRoute = union(enum) {
     pub fn setServer(this: AnyRoute, server: ?AnyServer) void {
         switch (this) {
             .static => |static_route| static_route.server = server,
+            .file => |file_route| file_route.server = server,
             .html => |html_bundle_route| html_bundle_route.server = server,
             .framework_router => {}, // DevServer contains .server field
         }
@@ -98,6 +103,7 @@ pub const AnyRoute = union(enum) {
     pub fn deref(this: AnyRoute) void {
         switch (this) {
             .static => |static_route| static_route.deref(),
+            .file => |file_route| file_route.deref(),
             .html => |html_bundle_route| html_bundle_route.deref(),
             .framework_router => {}, // not reference counted
         }
@@ -106,6 +112,7 @@ pub const AnyRoute = union(enum) {
     pub fn ref(this: AnyRoute) void {
         switch (this) {
             .static => |static_route| static_route.ref(),
+            .file => |file_route| file_route.ref(),
             .html => |html_bundle_route| html_bundle_route.ref(),
             .framework_router => {}, // not reference counted
         }
@@ -182,6 +189,9 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (try FileRoute.fromJS(global, argument)) |file_route| {
+            return .{ .file = file_route };
+        }
         return .{ .static = try StaticRoute.fromJS(global, argument) orelse return null };
     }
 };
@@ -542,7 +552,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             bun.debugAssert(server.listener != null); // this assertion is only valid while listening
             return server.js_value.get() orelse brk: {
                 bun.debugAssert(false);
-                break :brk .undefined; // safe-ish
+                break :brk .jsUndefined(); // safe-ish
             };
         }
 
@@ -926,7 +936,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.app.?.clearRoutes();
 
             // only reload those two, but ignore if they're not specified.
-            if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and new_config.onRequest != .undefined)) {
+            if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and !new_config.onRequest.isUndefined())) {
                 this.config.onRequest.unprotect();
                 this.config.onRequest = new_config.onRequest;
             }
@@ -934,7 +944,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.config.onNodeHTTPRequest.unprotect();
                 this.config.onNodeHTTPRequest = new_config.onNodeHTTPRequest;
             }
-            if (this.config.onError != new_config.onError and (new_config.onError != .zero and new_config.onError != .undefined)) {
+            if (this.config.onError != new_config.onError and (new_config.onError != .zero and !new_config.onError.isUndefined())) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
             }
@@ -1038,7 +1048,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.onReloadFromZig(&new_config, globalThis);
 
-            return this.js_value.get() orelse .undefined;
+            return this.js_value.get() orelse .jsUndefined();
         }
 
         pub fn onFetch(
@@ -1186,7 +1196,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.stop(true);
             }
 
-            return .undefined;
+            return .jsUndefined();
         }
 
         pub fn getPort(
@@ -1194,7 +1204,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             _: *JSC.JSGlobalObject,
         ) JSC.JSValue {
             switch (this.config.address) {
-                .unix => return .undefined,
+                .unix => return .jsUndefined(),
                 else => {},
             }
 
@@ -1293,7 +1303,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             switch (this.config.address) {
-                .unix => return .undefined,
+                .unix => return .jsUndefined(),
                 else => {},
             }
 
@@ -1366,7 +1376,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn getAllClosedPromise(this: *ThisServer, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             if (this.listener == null and this.pending_requests == 0) {
-                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).toJS();
+                return JSC.JSPromise.resolvedPromise(globalThis, .jsUndefined()).toJS();
             }
             const prom = &this.all_closed_promise;
             if (prom.strong.has()) {
@@ -1744,12 +1754,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const buffer_writer = js_printer.BufferWriter.init(allocator);
             var writer = js_printer.BufferPrinter.init(buffer_writer);
             defer writer.ctx.buffer.deinit();
-            var source = logger.Source.initEmptyFile("info.json");
+            const source = &logger.Source.initEmptyFile("info.json");
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
                 bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
-                &source,
+                source,
                 .{ .mangled_props = null },
             ) catch unreachable;
 
@@ -1779,7 +1789,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp.timeout(this.config.idleTimeout);
 
             const globalThis = this.globalThis;
-            const thisObject = this.js_value.get() orelse .undefined;
+            const thisObject: JSValue = this.js_value.get() orelse .jsUndefined();
             const vm = this.vm;
 
             var node_http_response: ?*NodeHTTPResponse = null;
@@ -1800,7 +1810,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (bun.http.Method.find(req.method())) |method|
                     method.toJS(globalThis)
                 else
-                    .undefined,
+                    .jsUndefined(),
                 req,
                 resp,
                 upgrade_ctx,
@@ -2511,6 +2521,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         .static => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path, entry.method);
                         },
+                        .file => |file_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
+                        },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
@@ -2782,7 +2795,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 const loop = this.globalThis.bunVM().eventLoop();
                 loop.enter();
                 defer loop.exit();
-                _ = callback.call(this.globalThis, .undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
+                _ = callback.call(this.globalThis, .jsUndefined(), &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
                     this.globalThis.reportActiveExceptionAsUnhandled(err);
                 };
             }
@@ -2830,7 +2843,7 @@ pub const ServerAllConnectionsClosedTask = struct {
         bun.destroy(this);
 
         if (!vm.isShuttingDown()) {
-            promise.resolve(globalObject, .undefined);
+            promise.resolve(globalObject, .jsUndefined());
         }
     }
 };
@@ -3202,7 +3215,7 @@ pub fn Server__setOnClientError_(globalThis: *JSC.JSGlobalObject, server: JSC.JS
     } else {
         bun.debugAssert(false);
     }
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn Server__setAppFlags_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, require_host_header: bool, use_strict_method_validation: bool) bun.JSError!JSC.JSValue {
@@ -3221,7 +3234,7 @@ pub fn Server__setAppFlags_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue
     } else {
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
-    return .undefined;
+    return .jsUndefined();
 }
 
 pub fn Server__setMaxHTTPHeaderSize_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, max_header_size: u64) bun.JSError!JSC.JSValue {
@@ -3240,7 +3253,7 @@ pub fn Server__setMaxHTTPHeaderSize_(globalThis: *JSC.JSGlobalObject, server: JS
     } else {
         return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
     }
-    return .undefined;
+    return .jsUndefined();
 }
 comptime {
     _ = Server__setIdleTimeout;

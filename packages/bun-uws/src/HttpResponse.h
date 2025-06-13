@@ -112,7 +112,7 @@ public:
                 * one party must tell the other one so.
                 *
                 * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     writeHeader("Connection", "close");
                 }
 
@@ -132,7 +132,6 @@ public:
 
             /* Terminating 0 chunk */
             Super::write("0\r\n\r\n", 5);
-
             httpResponseData->markDone();
 
             /* We need to check if we should close this socket here now */
@@ -586,7 +585,6 @@ public:
         if (writtenPtr) {
             *writtenPtr = total_written;
         }
-
         /* If we did not fail the write, accept more */
         return !has_failed;
     }

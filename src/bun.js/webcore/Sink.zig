@@ -463,7 +463,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .undefined));
+            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .jsUndefined()));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {

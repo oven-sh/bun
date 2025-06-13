@@ -5,6 +5,7 @@ const bun = @import("bun");
 /// The field names correspond exactly to the expected environment variable names.
 pub const RuntimeFeatureFlag = enum {
     BUN_ASSUME_PERFECT_INCREMENTAL,
+    BUN_BE_BUN,
     BUN_DEBUG_NO_DUMP,
     BUN_DESTRUCT_VM_ON_EXIT,
     BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING,

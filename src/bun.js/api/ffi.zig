@@ -558,7 +558,7 @@ pub const FFI = struct {
         }
 
         pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
-            if (value == .undefined) return .{};
+            if (value.isUndefined()) return .{};
             if (!value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
@@ -595,7 +595,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
+        const symbols_object: JSValue = object.getOwn(globalThis, "symbols") orelse .jsUndefined();
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -668,7 +668,7 @@ pub const FFI = struct {
                 while (try iter.next()) |entry| {
                     const key = entry.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                     var owned_value: [:0]const u8 = "";
-                    if (iter.value != .zero and iter.value != .undefined) {
+                    if (!iter.value.isUndefinedOrNull()) {
                         if (iter.value.isString()) {
                             const value = try iter.value.getZigString(globalThis);
                             if (value.len > 0) {
@@ -805,7 +805,7 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function = ctx.asPtr(Function);
+        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
         return JSValue.jsUndefined();
     }
@@ -866,7 +866,7 @@ pub const FFI = struct {
     ) bun.JSError!JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return .undefined;
+            return .jsUndefined();
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -894,7 +894,7 @@ pub const FFI = struct {
         //     bun.default_allocator.free(relocated_bytes_to_free);
         // }
 
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
@@ -1143,7 +1143,7 @@ pub const FFI = struct {
 
     pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
-        return .undefined;
+        return .jsUndefined();
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object_value: JSC.JSValue) JSC.JSValue {

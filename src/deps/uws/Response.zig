@@ -10,10 +10,8 @@
 /// - Offers safe casting between Zig and C representations
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
-    // making this opaque crashes Zig 0.14.0 when built in Debug or ReleaseSafe
-    // TODO: change to opaque when we have https://github.com/ziglang/zig/pull/23197
-    return struct {
-        const Response = @This();
+    return opaque {
+        const Response = NewResponse(ssl_flag);
         const ssl = ssl_flag == 1;
 
         pub inline fn castRes(res: *c.uws_res) *Response {

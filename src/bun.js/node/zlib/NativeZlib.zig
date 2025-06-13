@@ -93,7 +93,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
 
     this.stream.init(level, windowBits, memLevel, strategy, dictionary);
 
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -110,7 +110,7 @@ pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     if (err.isError()) {
         try impl.emitError(this, globalThis, callframe.this(), err);
     }
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 fn deinit(this: *@This()) void {

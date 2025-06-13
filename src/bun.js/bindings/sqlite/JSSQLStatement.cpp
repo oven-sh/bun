@@ -2375,22 +2375,22 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_PREPARED
 
     int count = sqlite3_column_count(castedThis->stmt);
-    
+
     // We need to reset and step the statement to get fresh types,
     // but only do this for read-only statements to avoid side effects
     bool isReadOnly = sqlite3_stmt_readonly(castedThis->stmt) != 0;
 
-    if (! isReadOnly) {
-      // For non-read-only statements, throw an error since column types don't make sense
-      throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "columnTypes is not available for non-read-only statements (INSERT, UPDATE, DELETE, etc.)"_s));
-      return { };
+    if (!isReadOnly) {
+        // For non-read-only statements, throw an error since column types don't make sense
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "columnTypes is not available for non-read-only statements (INSERT, UPDATE, DELETE, etc.)"_s));
+        return {};
     }
 
     // Reset the statement (safe for read-only statements)
     int resetStatus = sqlite3_reset(castedThis->stmt);
     if (resetStatus != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
-        return { };
+        return {};
     }
 
     MarkedArgumentBuffer args;
@@ -2439,7 +2439,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
         // If there was an error stepping, throw it
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
         sqlite3_reset(castedThis->stmt);
-        return { };
+        return {};
     }
 
     // Reset the statement back to its original state
@@ -2462,7 +2462,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
     // Ensure the statement has been executed at least once
     if (!castedThis->hasExecuted) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing declaredTypes"_s));
-        return { };
+        return {};
     }
 
     int count = sqlite3_column_count(castedThis->stmt);
@@ -2472,7 +2472,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
     for (int i = 0; i < count; i++) {
         const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
         JSC::JSValue typeValue;
-        
+
         if (declType != nullptr) {
             String typeStr = String::fromUTF8(declType);
             typeValue = JSC::jsNontrivialString(vm, typeStr);
@@ -2480,10 +2480,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
             // If no declared type (e.g., for expressions or results of functions)
             typeValue = JSC::jsNull();
         }
-        
+
         array->putDirectIndex(lexicalGlobalObject, i, typeValue);
     }
-    
+
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(array));
 }
 

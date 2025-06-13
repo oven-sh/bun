@@ -1110,7 +1110,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("Missing options.root", .{});
         defer root.deinit();
 
-        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .jsUndefined(), global);
+        var style = try Style.fromJS(try opts.getOptional(global, "style", JSValue) orelse .js_undefined, global);
         errdefer style.deinit();
 
         const abs_root = try bun.default_allocator.dupe(u8, bun.strings.withoutTrailingSlash(

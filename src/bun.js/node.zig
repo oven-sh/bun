@@ -198,7 +198,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
 
-                    void => .jsUndefined(),
+                    void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
                     JSC.ArrayBuffer => r.toJS(globalObject, null),

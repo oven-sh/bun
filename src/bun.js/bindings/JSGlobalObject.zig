@@ -482,7 +482,7 @@ pub const JSGlobalObject = opaque {
         error_array: JSValue,
     ) JSValue {
         if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .jsUndefined());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;

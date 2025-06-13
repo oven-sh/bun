@@ -478,6 +478,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
 
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
+    var content_length: ?u64 = null;
 
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
         .credentials = this.store.?.data.s3.getCredentials().*,
@@ -498,6 +499,11 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
                 if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
                 expires = @intCast(expires_);
             }
+            if (method == .PUT or method == .POST) {
+                if (try options.getOptional(globalThis, "contentLength", u64)) |cl| {
+                    content_length = cl;
+                }
+            }
         }
         credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
     }
@@ -508,12 +514,14 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
+        .content_length = content_length,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
     return bun.String.createUTF8ForJS(this.globalThis, result.url);
 }
+
 pub fn getBucketName(
     this: *const Blob,
 ) ?[]const u8 {

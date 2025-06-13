@@ -5,6 +5,7 @@ const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const EventEmitter = require("node:events");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -501,7 +502,11 @@ function Server(options, secureConnectionListener): void {
     return new Server(options, secureConnectionListener);
   }
 
-  NetServer.$apply(this, [options, secureConnectionListener]);
+  NetServer.$apply(this, [options, () => {}]);
+
+  if (secureConnectionListener) {
+    this.on("secureConnection", secureConnectionListener);
+  }
 
   this.key = undefined;
   this.cert = undefined;
@@ -631,6 +636,15 @@ function Server(options, secureConnectionListener): void {
   this.setSecureContext(options);
 }
 $toClass(Server, "Server", NetServer);
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "secureConnection":
+      sock.destroy(err);
+      break;
+    default:
+      ReflectApply(net.Server.prototype[SymbolFor("nodejs.rejection")], this, [err, event, sock]);
+  }
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

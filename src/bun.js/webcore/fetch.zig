@@ -1712,6 +1712,19 @@ pub fn Bun__fetch_(
             err,
         );
     };
+
+    if (url.isBadPort()) {
+        const err = globalThis.createTypeErrorInstance("fetch failed", .{});
+        // const cause = bun.String.createUTF8ForJS(globalThis, "bad port");
+        const cause = globalThis.createError("bad port", .{});
+        _ = err.put(globalThis, "cause", cause);
+        is_error = true;
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
+            globalThis,
+            err,
+        );
+    }
+
     if (url.isFile()) {
         url_type = URLType.file;
     } else if (url.isBlob()) {

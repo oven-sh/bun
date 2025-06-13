@@ -81,14 +81,25 @@ pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemor
     return true;
 }
 
-pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    const normal = value catch |err| switch (err) {
+/// Convert the return value of a function returning an error union into a maybe-empty JSValue
+pub fn toJSHostCall(
+    globalThis: *JSGlobalObject,
+    src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    // This can't use std.meta.ArgsTuple because that will turn comptime function parameters into
+    // runtime tuple values
+    args: anytype,
+) JSValue {
+    var scope: jsc.CatchScope = undefined;
+    scope.init(globalThis.vm(), src, .assertions_only);
+    defer scope.deinit();
+
+    const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
+    const normal = returned catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
     };
-    if (Environment.allow_assert and Environment.is_canary) {
-        debugExceptionAssertion(globalThis, normal, toJSHostValue);
-    }
+    scope.assertExceptionPresenceMatches(normal == .zero);
     return normal;
 }
 
@@ -481,7 +492,7 @@ pub fn DOMCall(
             arguments_ptr: [*]const jsc.JSValue,
             arguments_len: usize,
         ) callconv(jsc.conv) jsc.JSValue {
-            return jsc.toJSHostValue(globalObject, @field(Container, functionName)(globalObject, thisValue, arguments_ptr[0..arguments_len]));
+            return jsc.toJSHostCall(globalObject, @src(), @field(Container, functionName), .{ globalObject, thisValue, arguments_ptr[0..arguments_len] });
         }
 
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");

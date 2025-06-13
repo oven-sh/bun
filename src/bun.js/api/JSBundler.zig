@@ -782,7 +782,7 @@ pub const JSBundler = struct {
         }
 
         export fn JSBundlerPlugin__onDefer(load: *Load, global: *JSC.JSGlobalObject) JSValue {
-            return JSC.toJSHostValue(global, load.onDefer(global));
+            return JSC.toJSHostCall(global, @src(), Load.onDefer, .{ load, global });
         }
         fn onDefer(this: *Load, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
             if (this.called_defer) {

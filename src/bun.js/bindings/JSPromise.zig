@@ -189,7 +189,7 @@ pub const JSPromise = opaque {
             args: Args,
 
             pub fn call(this: *@This(), g: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(g, @call(.auto, Fn, this.args));
+                return JSC.toJSHostCall(g, @src(), Fn, this.args);
             }
         };
 

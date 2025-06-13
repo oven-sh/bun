@@ -193,9 +193,7 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
-pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
-}
+pub const getCwd = JSC.host_fn.wrap1(getCwd_);
 fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     var buf: bun.PathBuffer = undefined;
     switch (bun.api.node.path.getCwd(&buf)) {
@@ -206,9 +204,7 @@ fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     }
 }
 
-pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
-    return JSC.toJSHostValue(globalObject, setCwd_(globalObject, to));
-}
+pub const setCwd = JSC.host_fn.wrap2(setCwd_);
 fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JSC.JSValue {
     if (to.len == 0) {
         return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});

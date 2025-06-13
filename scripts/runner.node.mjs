@@ -132,6 +132,8 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
+      // do not merge this!
+      // I just added this so that the ASan tests actually finish, instead of timing out because they all run 4 times in a row
       default: isCI ? (getEnv("BUILDKITE_STEP_KEY")?.includes("asan") ? "0" : "3") : "0", // N retries = N+1 attempts
     },
     ["junit"]: {

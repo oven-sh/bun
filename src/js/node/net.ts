@@ -1089,6 +1089,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;

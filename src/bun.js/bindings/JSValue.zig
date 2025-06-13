@@ -545,8 +545,9 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
     }
 
+    /// this must have been created by fromPtrAddress()
     pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
-        return asPtr(this, T);
+        return @ptrFromInt(this.asPtrAddress());
     }
 
     extern fn JSC__JSValue__createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue;
@@ -624,7 +625,7 @@ pub const JSValue = enum(i64) {
         return switch (comptime Number) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
-            f32, f64 => jsNumberFromDouble(@as(f64, number)),
+            f32, f64 => jsDoubleNumber(@as(f64, number)),
             u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
@@ -680,9 +681,6 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__jsDoubleNumber(i: f64) JSValue;
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return JSC__JSValue__jsDoubleNumber(i);
-    }
 
     extern fn JSC__JSValue__jsEmptyString(globalThis: *JSGlobalObject) JSValue;
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
@@ -797,7 +795,7 @@ pub const JSValue = enum(i64) {
         return JSArrayIterator.init(this, global);
     }
 
-    pub fn jsNumberFromDouble(i: f64) JSValue {
+    pub fn jsDoubleNumber(i: f64) JSValue {
         return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
     }
     extern fn JSC__JSValue__jsNumberFromChar(i: u8) JSValue;
@@ -817,7 +815,7 @@ pub const JSValue = enum(i64) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -833,7 +831,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
@@ -1435,9 +1433,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
-        if (comptime bun.Environment.allow_assert)
-            bun.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
-        return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
+        return this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
@@ -2011,24 +2007,20 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    extern fn JSC__JSValue__asNumber(this: JSValue) f64;
+    /// Asserts this is a number, undefined, null, or a boolean
     pub fn asNumber(this: JSValue) f64 {
+        bun.assert(this.isNumber() or this.isUndefinedOrNull() or this.isBoolean());
         if (this.isInt32()) {
-            return @as(f64, @floatFromInt(this.asInt32()));
-        }
-
-        if (isNumber(this)) {
+            return @floatFromInt(this.asInt32());
+        } else if (isNumber(this)) {
             // Don't need to check for !isInt32() because above
-            return asDouble(this);
-        }
-
-        if (this.isUndefinedOrNull()) {
+            return this.asDouble();
+        } else if (this.isUndefinedOrNull()) {
             return 0.0;
         } else if (this.isBoolean()) {
-            return if (asBoolean(this)) 1.0 else 0.0;
+            return @floatFromInt(@intFromBool(this.asBoolean()));
         }
-
-        return JSC__JSValue__asNumber(this);
+        return std.math.nan(f64); // unreachable in assertion builds
     }
 
     pub fn asDouble(this: JSValue) f64 {
@@ -2036,21 +2028,16 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_DOUBLE(.{ .asJSValue = this });
     }
 
-    pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @as(*Pointer, @ptrFromInt(this.asPtrAddress()));
+    /// Encodes addr as a double. Resulting value can be passed to asPtrAddress.
+    pub fn fromPtrAddress(addr: usize) JSValue {
+        return jsDoubleNumber(@floatFromInt(addr));
     }
 
-    pub fn fromPtrAddress(addr: anytype) JSValue {
-        return jsNumber(@as(f64, @floatFromInt(@as(usize, @bitCast(@as(usize, addr))))));
-    }
-
+    /// Interprets a numeric JSValue as a pointer address. Use on values returned by fromPtrAddress.
     pub fn asPtrAddress(this: JSValue) usize {
-        return @as(usize, @bitCast(@as(usize, @intFromFloat(this.asDouble()))));
+        return @intFromFloat(this.asNumber());
     }
 
-    pub fn fromPtr(addr: anytype) JSValue {
-        return fromPtrAddress(@intFromPtr(addr));
-    }
     extern fn JSC__JSValue__toBoolean(this: JSValue) bool;
     /// Equivalent to the `!!` operator
     pub fn toBoolean(this: JSValue) bool {

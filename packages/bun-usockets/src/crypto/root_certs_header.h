@@ -1,6 +1,5 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
-#include "./root_certs.h"
 
 #ifdef __cplusplus
 #define CPPDECL extern "C"

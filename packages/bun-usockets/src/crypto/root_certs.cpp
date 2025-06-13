@@ -1,5 +1,6 @@
 // MSVC doesn't support C11 stdatomic.h propertly yet.
 // so we use C++ std::atomic instead.
+#include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
 #include <atomic>

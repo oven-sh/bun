@@ -506,8 +506,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             ctx: *Context,
             comptime socket_field_name: []const u8,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen, error_);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -574,6 +575,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -581,7 +583,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
+            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8, error_) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .connected = socket } };
@@ -597,6 +599,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -619,6 +622,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
+                error_,
             ) orelse return error.FailedToOpenSocket;
             const socket = if (did_dns_resolve == 1)
                 ThisSocket{

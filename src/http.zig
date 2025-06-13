@@ -1017,6 +1017,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false, // dont allow half-open sockets
+                null,
             );
             client.allow_retry = false;
             return socket;
@@ -1051,6 +1052,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 this.us_socket_context,
                 ActiveSocket.init(client).ptr(),
                 false,
+                null,
             );
             client.allow_retry = false;
             return socket;

@@ -1959,7 +1959,7 @@ pub const PostgresSQLConnection = struct {
 
             if (path.len > 0) {
                 ptr.socket = .{
-                    .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                    .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false, null) catch |err| {
                         tls_config.deinit();
                         if (tls_ctx) |tls| {
                             tls.deinit(true);
@@ -1970,7 +1970,7 @@ pub const PostgresSQLConnection = struct {
                 };
             } else {
                 ptr.socket = .{
-                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false, null) catch |err| {
                         tls_config.deinit();
                         if (tls_ctx) |tls| {
                             tls.deinit(true);

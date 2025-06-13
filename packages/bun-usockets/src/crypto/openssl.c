@@ -1615,7 +1615,7 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
   struct us_internal_ssl_socket_t *s = (struct us_internal_ssl_socket_t *)us_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size, is_connecting);
+          socket_ext_size, is_connecting, NULL);
   if (*is_connecting && s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
   }
@@ -1628,7 +1628,7 @@ struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
   struct us_socket_t *s = (struct us_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
+          socket_ext_size, NULL);
   if (s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen((struct us_internal_ssl_socket_t*) s);
   }

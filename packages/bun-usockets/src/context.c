@@ -416,8 +416,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options, error);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
@@ -487,7 +487,7 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
     return 0;
 }
 
-void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* has_dns_resolved) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* has_dns_resolved, int *error) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
         return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, has_dns_resolved);
@@ -500,7 +500,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     struct sockaddr_storage addr;
     if (try_parse_ip(host, port, &addr)) {
         *has_dns_resolved = 1;
-        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size, error);
     }
 
     struct addrinfo_request* ai_req;
@@ -519,7 +519,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
             struct sockaddr_storage addr;
             init_addr_with_port(&result->entries->info, port, &addr);
             *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size, error);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;
         }
@@ -551,7 +551,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options, NULL);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }
@@ -716,14 +716,14 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     }
 }
 
-struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
+struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size, int *error) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         return (struct us_socket_t *) us_internal_ssl_socket_context_connect_unix((struct us_internal_ssl_socket_context_t *) context, server_path, pathlen, options, socket_ext_size);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options, error);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }

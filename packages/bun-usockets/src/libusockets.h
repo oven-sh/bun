@@ -327,10 +327,10 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_d
       per the happy eyeballs algorithm
 */
 void *us_socket_context_connect(int ssl, struct us_socket_context_t * nonnull_arg context,
-    const char *host, int port, int options, int socket_ext_size, int *is_connecting) __attribute__((nonnull(2)));
+    const char *host, int port, int options, int socket_ext_size, int *is_connecting, int *error) __attribute__((nonnull(2)));
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, us_socket_context_r context,
-    const char *server_path, size_t pathlen, int options, int socket_ext_size) __attribute__((nonnull(2)));
+    const char *server_path, size_t pathlen, int options, int socket_ext_size, int *error) __attribute__((nonnull(2)));
 
 /* Is this socket established? Can be used to check if a connecting socket has fired the on_open event yet.
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */

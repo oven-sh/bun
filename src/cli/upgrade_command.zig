@@ -348,18 +348,20 @@ pub const UpgradeCommand = struct {
 
         const args = bun.argv;
         if (args.len > 2) {
-            for (args[2..]) |arg| {
-                if (!strings.contains(arg, "--")) {
-                    Output.prettyError(
-                        \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
-                        \\<blue>note<r><d>:<r> Use `bun update
-                    , .{});
-                    for (args[2..]) |arg_err| {
-                        Output.prettyError(" {s}", .{arg_err});
-                    }
-                    Output.prettyErrorln("` instead.", .{});
-                    Global.exit(1);
+            for (args, 0..) |arg, i| {
+                if (i == 0) continue;
+                if (strings.eqlComptime(arg, "upgrade")) continue;
+                if (strings.startsWith(arg, "--")) continue;
+
+                Output.prettyError(
+                    \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
+                    \\<blue>note<r><d>:<r> Use `bun update
+                , .{});
+                for (args[i..]) |arg_err| {
+                    Output.prettyError(" {s}", .{arg_err});
                 }
+                Output.prettyErrorln("` instead.", .{});
+                Global.exit(1);
             }
         }
 

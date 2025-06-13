@@ -168,6 +168,4 @@
     "WebKit/WebInspectorUI": true,
   },
   "git.detectSubmodules": false,
-  "zig.zls.enableBuildOnSave": true,
-  "zig.zls.buildOnSaveArgs": ["check", "--watch", "-fincremental", "--prominent-compile-errors"],
 }

@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, it } from "bun:test";
 
 describe("SQLite Statement column types", () => {
   it("reports correct column types for a variety of data types", () => {
@@ -25,25 +25,25 @@ describe("SQLite Statement column types", () => {
 
     // Prepare a statement that selects all columns
     const stmt = db.prepare("SELECT * FROM test_types");
-    
+
     // Execute the statement to get column types
     const row = stmt.get();
 
     // Verify column metadata
     expect(stmt.native.columns).toEqual(["id", "name", "weight", "image", "is_active"]);
     expect(stmt.native.columnsCount).toBe(5);
-    
+
     // Test the columnTypes property (uses actual data types from sqlite3_column_type)
     expect(stmt.columnTypes).toBeDefined();
     expect(Array.isArray(stmt.columnTypes)).toBe(true);
     expect(stmt.columnTypes.length).toBe(5);
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT', 'FLOAT', 'BLOB', 'INTEGER']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "TEXT", "FLOAT", "BLOB", "INTEGER"]);
+
     // Test the declaredTypes property (uses declared types from sqlite3_column_decltype)
     expect(stmt.declaredTypes).toBeDefined();
     expect(Array.isArray(stmt.declaredTypes)).toBe(true);
     expect(stmt.declaredTypes.length).toBe(5);
-    expect(stmt.declaredTypes).toEqual(['INTEGER', 'TEXT', 'REAL', 'BLOB', 'INTEGER']);
+    expect(stmt.declaredTypes).toEqual(["INTEGER", "TEXT", "REAL", "BLOB", "INTEGER"]);
   });
 
   it("handles NULL values correctly", () => {
@@ -59,15 +59,15 @@ describe("SQLite Statement column types", () => {
     db.run(`INSERT INTO nulls_test (id, nullable) VALUES (1, NULL)`);
 
     const stmt = db.prepare("SELECT * FROM nulls_test");
-    
+
     // Execute the statement to get column types
     const row = stmt.get();
 
     // columnTypes now returns actual data types - NULL values are reported as 'NULL'
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'NULL']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "NULL"]);
+
     // declaredTypes still shows the declared table schema
-    expect(stmt.declaredTypes).toEqual(['INTEGER', 'TEXT']);
+    expect(stmt.declaredTypes).toEqual(["INTEGER", "TEXT"]);
   });
 
   it("reports actual column types based on data values", () => {
@@ -82,24 +82,24 @@ describe("SQLite Statement column types", () => {
 
     // SQLite can store various types in the same column
     db.run(`INSERT INTO dynamic_types VALUES (1, 42)`);
-    
+
     let stmt = db.prepare("SELECT * FROM dynamic_types");
-    
+
     // Execute the statement to get column types
     let row = stmt.get();
-    
+
     // We should get the actual type of the value (integer)
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "INTEGER"]);
+
     // Update to a text value
     db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
-    
+
     // Re-prepare to get fresh column type information
     stmt = db.prepare("SELECT * FROM dynamic_types");
     row = stmt.get();
-    
+
     // We should get the actual type of the value (text)
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT']);
+    expect(stmt.columnTypes).toEqual(["INTEGER", "TEXT"]);
 
     // Update to a float value
     db.run(`UPDATE dynamic_types SET value = 3.14 WHERE id = 1`);
@@ -109,7 +109,7 @@ describe("SQLite Statement column types", () => {
     row = stmt.get();
 
     // We should get the actual type of the value (float)
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'FLOAT']);
+    expect(stmt.columnTypes).toEqual(["INTEGER", "FLOAT"]);
   });
 
   it("reports actual types for columns from expressions", () => {
@@ -124,14 +124,14 @@ describe("SQLite Statement column types", () => {
     expect(row).toEqual({
       str_length: 3,
       magic_number: 42,
-      greeting: "hello"
+      greeting: "hello",
     });
 
     // Check columns are correctly identified
-    expect(stmt.native.columns).toEqual(['str_length', 'magic_number', 'greeting']);
-    
+    expect(stmt.native.columns).toEqual(["str_length", "magic_number", "greeting"]);
+
     // For expressions, expect the actual data types
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER', 'TEXT']);
+    expect(stmt.columnTypes).toEqual(["INTEGER", "INTEGER", "TEXT"]);
   });
 
   it("handles multiple different expressions and functions", () => {
@@ -148,33 +148,31 @@ describe("SQLite Statement column types", () => {
         length('bun') AS func_result,
         CURRENT_TIMESTAMP AS timestamp
     `);
-    
+
     const row = stmt.get();
 
     // Verify we have the expected columns
     expect(stmt.native.columns).toEqual([
-      'int_val', 
-      'float_val', 
-      'text_val', 
-      'blob_val', 
-      'null_val', 
-      'func_result', 
-      'timestamp'
+      "int_val",
+      "float_val",
+      "text_val",
+      "blob_val",
+      "null_val",
+      "func_result",
+      "timestamp",
     ]);
 
     // Expression columns should be reported with their actual types
-    expect(stmt.columnTypes).toEqual([
-      'INTEGER', 'FLOAT', 'TEXT', 'BLOB', 'NULL', 'INTEGER', 'TEXT'
-    ]);
+    expect(stmt.columnTypes).toEqual(["INTEGER", "FLOAT", "TEXT", "BLOB", "NULL", "INTEGER", "TEXT"]);
 
     // Verify data types were correctly identified at runtime
-    expect(typeof row.int_val).toBe('number');
-    expect(typeof row.float_val).toBe('number');
-    expect(typeof row.text_val).toBe('string');
+    expect(typeof row.int_val).toBe("number");
+    expect(typeof row.float_val).toBe("number");
+    expect(typeof row.text_val).toBe("string");
     expect(row.blob_val instanceof Uint8Array).toBe(true);
     expect(row.null_val).toBe(null);
-    expect(typeof row.func_result).toBe('number');
-    expect(typeof row.timestamp).toBe('string');
+    expect(typeof row.func_result).toBe("number");
+    expect(typeof row.timestamp).toBe("string");
   });
 
   it("shows difference between columnTypes and declaredTypes for expressions", () => {
@@ -185,8 +183,8 @@ describe("SQLite Statement column types", () => {
     const row = stmt.get();
 
     // columnTypes shows actual data types based on the values
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER', 'TEXT']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "INTEGER", "TEXT"]);
+
     // declaredTypes shows declared types (which are null for expressions without explicit declarations)
     expect(stmt.declaredTypes).toEqual([null, null, null]);
   });
@@ -203,27 +201,27 @@ describe("SQLite Statement column types", () => {
 
     // Insert an integer value
     db.run(`INSERT INTO dynamic_types VALUES (1, 42)`);
-    
+
     let stmt = db.prepare("SELECT * FROM dynamic_types");
     let row = stmt.get();
-    
+
     // columnTypes shows actual type (integer) for the current value
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'INTEGER']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "INTEGER"]);
+
     // declaredTypes shows the declared table schema
-    expect(stmt.declaredTypes).toEqual(['INTEGER', 'ANY']);
-    
+    expect(stmt.declaredTypes).toEqual(["INTEGER", "ANY"]);
+
     // Update to a text value
     db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
-    
+
     stmt = db.prepare("SELECT * FROM dynamic_types");
     row = stmt.get();
-    
+
     // columnTypes now shows text for the current value
-    expect(stmt.columnTypes).toEqual(['INTEGER', 'TEXT']);
-    
+    expect(stmt.columnTypes).toEqual(["INTEGER", "TEXT"]);
+
     // declaredTypes still shows the declared table schema
-    expect(stmt.declaredTypes).toEqual(['INTEGER', 'ANY']);
+    expect(stmt.declaredTypes).toEqual(["INTEGER", "ANY"]);
   });
 
   it("throws an error when accessing columnTypes before statement execution", () => {
@@ -235,7 +233,7 @@ describe("SQLite Statement column types", () => {
 
     // Accessing columnTypes before executing is fine (implicitly executes the statement)
     expect(stmt.columnTypes).toBeArray();
-    
+
     // Accessing declaredTypes before executing should throw
     expect(() => {
       stmt.declaredTypes;

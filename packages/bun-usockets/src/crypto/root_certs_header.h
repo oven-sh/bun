@@ -3,7 +3,10 @@
 
 #ifdef __cplusplus
 #define CPPDECL extern "C"
+#include <mutex>
 
+extern std::mutex us_get_root_extra_cert_instances_mutex;
+void us_load_extra_ca_certs(const char *extra_certs);
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 STACK_OF(X509) *us_get_root_system_cert_instances();
 

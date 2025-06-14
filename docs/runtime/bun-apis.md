@@ -79,6 +79,11 @@ Click the link in the right column to jump to the associated documentation.
 
 ---
 
+- Cryptography
+- `Bun.loadExtraCACerts`
+
+---
+
 - SQLite
 - [`bun:sqlite`](https://bun.com/docs/api/sqlite)
 

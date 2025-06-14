@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    1beadf9651a7bfdec6b5367c380ecc3fe1c40d1a
+    6cfc8ad9d054b0541a24a73e2fa885ca166f6be6
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -32,7 +32,9 @@ if(ENABLE_VALGRIND)
 endif()
 
 if(WIN32)
-  if(DEBUG)
+  if(DEBUG AND ENABLE_ASAN)
+    set(MIMALLOC_LIBRARY mimalloc-asan-static-debug)
+  elseif(DEBUG)
     set(MIMALLOC_LIBRARY mimalloc-static-debug)
   else()
     set(MIMALLOC_LIBRARY mimalloc-static)
@@ -52,6 +54,7 @@ endif()
 if(APPLE OR (LINUX AND NOT DEBUG))
   set(MIMALLOC_LIBRARY CMakeFiles/mimalloc-obj.dir/src/static.c.o)
 endif()
+
 
 register_cmake_command(
   TARGET

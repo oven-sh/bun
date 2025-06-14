@@ -3625,8 +3625,13 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
     const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
-        .err => |err| return .{ .err = err },
+        .err => |err| {
+            log("dup({}) = {}", .{ fd, err });
+            return .{ .err = err };
+        },
     };
+
+    log("dup({}) = {}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
 
     return .initResult(.fromNative(@intCast(out)));
 }

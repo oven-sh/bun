@@ -27,6 +27,10 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         var symbols = &this.graph.symbols;
         defer this.graph.symbols = symbols.*;
 
+        // For propagating cyclic TLA correctly. Parents need to be revisited
+        var parents_to_revisit_buf: std.ArrayListUnmanaged(Index.Int) = .empty;
+        defer parents_to_revisit_buf.deinit(this.allocator);
+
         // Step 1: Figure out what modules must be CommonJS
         for (reachable) |source_index_| {
             const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
@@ -80,7 +84,16 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 continue;
             }
 
-            _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
+            _ = try this.validateTLA(
+                id,
+                tla_keywords,
+                tla_checks,
+                input_files,
+                import_records,
+                flags,
+                import_records_list,
+                &parents_to_revisit_buf,
+            );
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {

@@ -6267,3 +6267,5 @@ pub fn percentEncodeWrite(
     // Write the rest of the string
     try writer.appendSlice(remaining);
 }
+
+pub const didYouMean = @import("./string/did_you_mean.zig").didYouMean;

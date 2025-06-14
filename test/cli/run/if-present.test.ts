@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { basename, extname } from "node:path";
 
 let cwd: string;
 
@@ -20,13 +21,41 @@ describe("bun", () => {
   test("should error with missing script", () => {
     const { exitCode, stdout, stderr } = spawnSync({
       cwd,
+      cmd: [bunExe(), "definitelynotpresent"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    expect(stderr.toString().replaceAll("\r\n", "\n")).toMatchInlineSnapshot(`
+      "error: Script not found "definitelynotpresent"
+      "
+    `);
+    expect(exitCode).toBe(1);
+  });
+  test("should error with missing script and include did you mean", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd,
       cmd: [bunExe(), "notpresent"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    expect(stderr.toString()).toMatch(/Script not found/);
+    expect(
+      stderr
+        .toString()
+        .replaceAll(basename(bunExe(), extname(bunExe())), "bun")
+        .replaceAll("\r\n", "\n"),
+    ).toMatchInlineSnapshot(`
+      "error: Script not found "notpresent"
+
+      Did you mean "present"?
+
+        bun present
+      "
+    `);
+    expect(stdout.toString()).toBeEmpty();
     expect(exitCode).toBe(1);
   });
   test("should error with missing module", () => {

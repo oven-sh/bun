@@ -49,14 +49,14 @@ MessagePortChannelRegistry::~MessagePortChannelRegistry()
 void MessagePortChannelRegistry::didCreateMessagePortChannel(const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
 {
     // LOG(MessagePorts, "Registry: Creating MessagePortChannel %p linking %s and %s", this, port1.logString().utf8().data(), port2.logString().utf8().data());
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     MessagePortChannel::create(*this, port1, port2);
 }
 
 void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& channel)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
@@ -67,20 +67,27 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
 
 void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel& channel)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     ASSERT(m_openChannels.get(channel.port1()) == &channel);
     ASSERT(m_openChannels.get(channel.port2()) == &channel);
 
     m_openChannels.remove(channel.port1());
     m_openChannels.remove(channel.port2());
+    // auto* port1Channel = m_openChannels.get(channel.port1());
+    // if (port1Channel == &channel)
+    //     m_openChannels.remove(channel.port1());
+
+    // auto* port2Channel = m_openChannels.get(channel.port2());
+    // if (port2Channel == &channel)
+    //     m_openChannels.remove(channel.port2());
 
     // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }
 
 void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, ProcessIdentifier process)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
     RefPtr channel = m_openChannels.get(local);
@@ -94,7 +101,7 @@ void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdent
 
 void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
     if (RefPtr channel = m_openChannels.get(port))
@@ -103,7 +110,7 @@ void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIden
 
 void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
 
@@ -124,7 +131,7 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 
 bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
 
@@ -140,7 +147,7 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
     RefPtr channel = m_openChannels.get(port);
@@ -154,7 +161,7 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
 
 std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessageForPort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
@@ -168,7 +175,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
 
 MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
+    ASSERT(isMainThread());
 
     return m_openChannels.get(port);
 }

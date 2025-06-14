@@ -194,13 +194,13 @@ pub const Route = struct {
             }
 
             // Simpler development workflow which rebundles on every request.
-            if (this.state == .html) {
-                this.state.html.deref();
-                this.state = .pending;
-            } else if (this.state == .err) {
-                this.state.err.deinit();
-                this.state = .pending;
-            }
+            // if (this.state == .html) {
+            //     this.state.html.deref();
+            //     this.state = .pending;
+            // } else if (this.state == .err) {
+            //     this.state.err.deinit();
+            //     this.state = .pending;
+            // }
         }
 
         state: switch (this.state) {
@@ -252,7 +252,7 @@ pub const Route = struct {
 
     /// Schedule a bundle to be built.
     /// If success, bumps the ref count and returns true;
-    fn scheduleBundle(this: *Route, server: AnyServer) !void {
+    pub fn scheduleBundle(this: *Route, server: AnyServer) !void {
         switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),

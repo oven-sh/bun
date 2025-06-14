@@ -546,7 +546,8 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             response.init.headers = response.getOrCreateHeaders(globalThis);
             response.calculateEstimatedByteSize();
 
-            return bun.new(Response, response);
+            //return bun.new(Response, response);
+            return response;
         }
 
         if (arguments[0].as(Blob)) |blob| {

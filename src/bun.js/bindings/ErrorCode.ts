@@ -204,6 +204,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT", TypeError, "PostgresError"],
+  ["ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"],
   ["ERR_REQUIRE_ASYNC_MODULE", Error],
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],

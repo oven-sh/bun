@@ -3,6 +3,7 @@
 
 import { expect, test as it } from "bun:test";
 import { expectType } from "./utilities";
+import { tmpdirSync } from "harness";
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);
@@ -39,7 +40,6 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
   it(`Bun.serve() types test ${++id}`, async () => {
     try {
       using server = Bun.serve(serveConfig);
-
       try {
         await testServer(server);
       } finally {
@@ -182,7 +182,7 @@ test(
 );
 
 test({
-  port: 1234,
+  port: 0,
   fetch(req, server) {
     server.upgrade(req);
     if (Math.random() > 0.5) return undefined;
@@ -197,7 +197,7 @@ test({
 
 test(
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     fetch() {
       return new Response();
     },
@@ -214,7 +214,7 @@ test(
 test(
   // @ts-expect-error - TODO Fix this
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
       server.upgrade(req);
       if (Math.random() > 0.5) return undefined;
@@ -234,7 +234,7 @@ test(
 test(
   // @ts-expect-error - TODO Fix this
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
       server.upgrade(req);
       if (Math.random() > 0.5) return undefined;
@@ -254,7 +254,7 @@ test(
 
 test(
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
       server.upgrade(req);
       return new Response();
@@ -272,7 +272,7 @@ test(
 test(
   // @ts-expect-error - TODO Fix this
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
       if (server.upgrade(req)) {
         return;
@@ -334,7 +334,7 @@ test(
 
 test(
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     routes: {
       "/": new Response("Hello World"),
     },
@@ -351,7 +351,7 @@ test(
 test(
   // @ts-expect-error - Missing fetch or routes
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
   },
   {
     onConstructorFailure: error => {
@@ -469,9 +469,9 @@ test({
 
 test(
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     // @ts-expect-error
-    port: 1234,
+    port: 0,
     fetch() {
       return new Response();
     },
@@ -487,9 +487,9 @@ test(
 
 test(
   {
-    unix: "/tmp/bun.sock",
+    unix: `${tmpdirSync()}/bun.sock`,
     // @ts-expect-error
-    port: 1234,
+    port: 0,
     fetch(req, server) {
       server.upgrade(req);
       if (Math.random() > 0.5) return undefined;

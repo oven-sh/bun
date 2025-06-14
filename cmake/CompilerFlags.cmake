@@ -88,7 +88,7 @@ endif()
 if(UNIX)
   register_compiler_flags(
     DESCRIPTION "Enable debug symbols"
-    -g3 -gz=zstd ${DEBUG}
+    -g3 -gz=zlib ${DEBUG}
     -g1 ${RELEASE}
   )
 

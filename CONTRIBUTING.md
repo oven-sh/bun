@@ -2,6 +2,8 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, please refer to [this guide](https://bun.sh/docs/project/building-windows)
 
+By using [Dev Containers](https://containers.dev/) you can skip the next two sections, and instead just open the project folder in a supported IDE *or* run `devpod up .`. This is especially convenient as manually getting the dependencies right can be finicky.
+
 ## Install Dependencies
 
 Using your system's package manager, install Bun's dependencies:
@@ -110,6 +112,8 @@ $ export PATH="$PATH:/usr/lib/llvm19/bin"
 ## Building Bun
 
 After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
+
+Note that this will require about 8 GB of RAM, so you may want to close a few apps first if your system is tight on memory.
 
 ```bash
 $ bun run build

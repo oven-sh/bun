@@ -408,10 +408,10 @@ pub const Archive = opaque {
     pub fn writeAddFilterB64encode(archive: *Archive) Result {
         return archive_write_add_filter_b64encode(archive);
     }
-    // extern fn archive_write_add_filter_bzip2(*Archive) Result;
-    // pub fn writeAddFilterBzip2(archive: *Archive) Result {
-    //     return archive_write_add_filter_bzip2(archive);
-    // }
+    extern fn archive_write_add_filter_bzip2(*Archive) Result;
+    pub fn writeAddFilterBzip2(archive: *Archive) Result {
+        return archive_write_add_filter_bzip2(archive);
+    }
     extern fn archive_write_add_filter_compress(*Archive) Result;
     pub fn writeAddFilterCompress(archive: *Archive) Result {
         return archive_write_add_filter_compress(archive);
@@ -677,10 +677,10 @@ pub const Archive = opaque {
     pub fn readSupportFilterByCode(archive: *Archive, code: i32) Result {
         return archive_read_support_filter_by_code(archive, code);
     }
-    // extern fn archive_read_support_filter_bzip2(*Archive) Result;
-    // pub fn readSupportFilterbZip2(archive: *Archive) Result {
-    //     return archive_read_support_filter_bzip2(archive);
-    // }
+    extern fn archive_read_support_filter_bzip2(*Archive) Result;
+    pub fn readSupportFilterbZip2(archive: *Archive) Result {
+        return archive_read_support_filter_bzip2(archive);
+    }
     extern fn archive_read_support_filter_compress(*Archive) Result;
     pub fn readSupportFilterCompress(archive: *Archive) Result {
         return archive_read_support_filter_compress(archive);

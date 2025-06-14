@@ -484,7 +484,7 @@ function ClientRequest(input, options, cb) {
     }
 
     try {
-      options.lookup(host, { all: true }, (err, results) => {
+      options.lookup(host, { all: true, family: options.family }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
           process.nextTick((self, err) => self.emit("error", err), this, err);

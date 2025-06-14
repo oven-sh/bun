@@ -2,8 +2,15 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, test as it } from "bun:test";
-import { tmpdirSync } from "harness";
 import { expectType } from "./utilities";
+import fs from "node:fs";
+import { join } from "node:path";
+import os from "node:os";
+
+// XXX: importing this from "harness" caused a failure in bun-types.test.ts
+function tmpdirSync(pattern: string = "bun.test."): string {
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+}
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);

@@ -139,56 +139,8 @@ pub const Route = struct {
         this.onAnyRequest(req, resp, true);
     }
 
-    pub fn respond(this: *Route, resp: HTTPResponse, method: HTTP.Method) void {
-        this.ref();
-        defer this.deref();
-
-        const server: AnyServer = this.server orelse {
-            resp.writeStatus("500 Internal Server Error");
-            resp.endWithoutBody(true);
-            return;
-        };
-
-        const is_head = method == .HEAD;
-
-        state: while (true)
-            switch (this.state) {
-                .pending => {
-                    this.scheduleBundle(server) catch bun.outOfMemory();
-                    continue :state;
-                },
-                .building => {
-                    const pending = bun.new(PendingResponse, .{
-                        .method = method,
-                        .resp = resp,
-                        .server = this.server,
-                        .route = this,
-                    });
-
-                    this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
-
-                    this.ref();
-                    resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
-                    return;
-                },
-                .err => |log| {
-                    _ = log; // TODO: Surface build errors
-                    resp.writeStatus("500 Build Failed");
-                    resp.endWithoutBody(false);
-                    return;
-                },
-                .html => |html| {
-                    if (is_head) {
-                        html.onHEAD(resp);
-                    } else {
-                        html.on(resp);
-                    }
-                    return;
-                },
-            };
-    }
-
     pub fn respondWithInit(this: *Route, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
+        debug("respondWithInit", .{});
         this.ref();
         defer this.deref();
 
@@ -200,22 +152,24 @@ pub const Route = struct {
 
         const is_head = method == .HEAD;
 
-        var cloned_init = resinit.clone(server.globalThis);
+        var cloned_init = resinit.clone(server.globalThis());
         defer cloned_init.deinit(bun.default_allocator);
 
         state: while (true)
             switch (this.state) {
                 .pending => {
+                    debug("pending...", .{});
                     this.scheduleBundle(server) catch bun.outOfMemory();
                     continue :state;
                 },
                 .building => {
+                    debug("building...", .{});
                     const pending = bun.new(PendingResponse, .{
                         .method = method,
                         .resp = resp,
                         .server = this.server,
                         .route = this,
-                        .init = cloned_init.clone(server.globalThis),
+                        .init = cloned_init.clone(server.globalThis()),
                     });
                     this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
                     this.ref();
@@ -223,21 +177,27 @@ pub const Route = struct {
                     return;
                 },
                 .err => |log| {
+                    debug("err...", .{});
                     _ = log; // TODO: Surface build errors
                     resp.writeStatus("500 Build Failed");
                     resp.endWithoutBody(false);
                     return;
                 },
                 .html => |html| {
-                    var route_clone = html.clone(server.globalThis) catch bun.outOfMemory();
+                    debug("serving...", .{});
+                    var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
                     route_clone.status_code = cloned_init.status_code;
                     if (cloned_init.headers) |headers| {
-                        const entries = headers.entries.slice();
+                        debug("getting headers", .{});
+                        var extra = Headers.from(headers, bun.default_allocator, .{ .body = &route_clone.blob }) catch bun.outOfMemory();
+                        defer extra.deinit();
+                        const entries = extra.entries.slice();
                         const names = entries.items(.name);
                         const values = entries.items(.value);
-                        const buf = headers.buf.items;
-                        for (names, values) |name, value| {
-                            route_clone.headers.append(name.slice(buf), value.slice(buf)) catch bun.outOfMemory();
+                        const buf = extra.buf.items;
+                        for (names, values) |name, val| {
+                            debug("\nname:  {any}\n", .{name});
+                            route_clone.headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
                         }
                     }
                     if (is_head) {
@@ -266,13 +226,13 @@ pub const Route = struct {
             }
 
             // Simpler development workflow which rebundles on every request.
-            // if (this.state == .html) {
-            //     this.state.html.deref();
-            //     this.state = .pending;
-            // } else if (this.state == .err) {
-            //     this.state.err.deinit();
-            //     this.state = .pending;
-            // }
+            if (this.state == .html) {
+                this.state.html.deref();
+                this.state = .pending;
+            } else if (this.state == .err) {
+                this.state.err.deinit();
+                this.state = .pending;
+            }
         }
 
         state: switch (this.state) {

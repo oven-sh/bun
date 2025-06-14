@@ -1779,9 +1779,9 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
-        if (!bun.Environment.isMac) return .jsUndefined();
+        if (!bun.Environment.isMac) return .js_undefined;
 
-        const header = std.c._dyld_get_image_header(0) orelse return .jsUndefined();
+        const header = std.c._dyld_get_image_header(0) orelse return .js_undefined;
         const base_address = @intFromPtr(header);
         const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
 
@@ -1793,7 +1793,7 @@ pub const js_bindings = struct {
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {

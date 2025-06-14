@@ -200,7 +200,7 @@ pub export fn TextEncoder__encodeRopeString(
     array.ensureStillAlive();
 
     if (encoder.any_non_ascii) {
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     if (array == .zero) {

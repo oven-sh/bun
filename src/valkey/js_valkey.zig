@@ -165,7 +165,7 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .jsUndefined());
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
         }
 
         if (js.connectionPromiseGetCached(this_value)) |promise| {
@@ -219,17 +219,17 @@ pub const JSValkeyClient = struct {
 
     pub fn jsDisconnect(this: *JSValkeyClient, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         if (this.client.status == .disconnected) {
-            return .jsUndefined();
+            return .js_undefined;
         }
         this.client.disconnect();
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
         if (js.onconnectGetCached(thisValue)) |value| {
             return value;
         }
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
@@ -240,7 +240,7 @@ pub const JSValkeyClient = struct {
         if (js.oncloseGetCached(thisValue)) |value| {
             return value;
         }
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
@@ -406,7 +406,7 @@ pub const JSValkeyClient = struct {
         defer event_loop.exit();
 
         if (this.this_value.tryGet()) |this_value| {
-            const hello_value: JSValue = value.toJS(globalObject) catch .jsUndefined();
+            const hello_value: JSValue = value.toJS(globalObject) catch .js_undefined;
             js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (js.onconnectGetCached(this_value)) |on_connect| {

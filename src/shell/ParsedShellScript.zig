@@ -54,12 +54,12 @@ pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     };
     const str = try bun.String.fromJS(str_js, globalThis);
     this.cwd = str;
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     this.quiet = true;
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -97,7 +97,7 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
         previous.deinit();
     }
     this.export_env = env;
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

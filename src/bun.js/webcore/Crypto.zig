@@ -114,7 +114,7 @@ comptime {
 pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.argumentsUndef(2).slice();
 
-    var encoding_value: JSC.JSValue = .jsUndefined();
+    var encoding_value: JSC.JSValue = .js_undefined;
 
     const encoding: JSC.Node.Encoding = brk: {
         if (arguments.len > 0) {
@@ -137,7 +137,7 @@ pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
         else if (arguments.len == 1 and encoding_value.isUndefined())
             arguments[0]
         else
-            .jsUndefined();
+            .js_undefined;
 
         if (!timestamp_value.isUndefined()) {
             if (timestamp_value.isDate()) {

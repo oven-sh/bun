@@ -3232,11 +3232,13 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
         if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
             promise->reject(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
         if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
             promise->reject(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
@@ -3246,11 +3248,13 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
         if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
             promise->reject(globalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
         if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
             promise->reject(globalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
@@ -3259,10 +3263,12 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
         promise->resolve(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
         promise->resolve(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
 

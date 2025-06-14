@@ -1904,7 +1904,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
 
                 const any_resp = uws.AnyResponse.init(resp_ptr);
-                route.respondWithInit(any_resp, ctx.method, &response.init);
+                route.respondWithInit(ctx.req.?,any_resp, ctx.method, &response.init);
 
                 ctx.finalizeWithoutDeinit();
                 ctx.deref();

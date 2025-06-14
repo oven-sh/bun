@@ -27,7 +27,10 @@
 #include "MessagePortChannelProvider.h"
 
 // #include "Document.h"
+#include "BunWorkerGlobalScope.h"
 #include "MessagePortChannelProviderImpl.h"
+#include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
 // #include "WorkerGlobalScope.h"
 // #include "WorkletGlobalScope.h"
 #include <wtf/MainThread.h>

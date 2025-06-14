@@ -176,7 +176,6 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
         UNUSED_PARAM(size);
         --(protectedThis->m_messageBatchesInFlight);
         // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, protectedThis->logString().utf8().data(), size, port.logString().utf8().data(), protectedThis->m_messageBatchesInFlight);
-
     });
 }
 

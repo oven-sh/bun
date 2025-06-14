@@ -222,6 +222,8 @@ const SocketHandlers: SocketHandler = {
   error(socket, error) {
     const self = socket.data;
     if (!self) return;
+    if (self._hadError) return;
+    self._hadError = true;
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -462,7 +464,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (!data) return;
 
     if (data._hadError) return;
-    data._hadError = true;
     const bunTLS = this[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
@@ -2066,12 +2067,17 @@ function Server(options?, connectionListener?) {
   if (typeof options === "function") {
     connectionListener = options;
     options = {};
-    this.on("connection", connectionListener);
   } else if (options == null || typeof options === "object") {
     options = { ...options };
-    if (typeof connectionListener === "function") this.on("connection", connectionListener);
   } else {
     throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+  if (typeof connectionListener === "function") {
+    if (typeof this[bunTlsSymbol] === "function") {
+      this.on("secureConnection", connectionListener);
+    } else {
+      this.on("connection", connectionListener);
+    }
   }
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener

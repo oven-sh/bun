@@ -507,7 +507,8 @@ function Server(options, secureConnectionListener): void {
     return new Server(options, secureConnectionListener);
   }
 
-  NetServer.$apply(this, [options, tlsConnectionListener]);
+  this[buntls] = () => {}; // for detection, overwrote below
+  NetServer.$apply(this, [options, secureConnectionListener]);
 
   this.key = undefined;
   this.cert = undefined;
@@ -635,20 +636,11 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext(options);
-
-  if (secureConnectionListener) {
-    this.on("secureConnection", secureConnectionListener);
-  }
 }
 $toClass(Server, "Server", NetServer);
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
-}
-
-function tlsConnectionListener(rawSocket) {
-  $debug("net.Server.on(connection): new TLSSocket");
-  //TODO
 }
 
 const DEFAULT_ECDH_CURVE = "auto",

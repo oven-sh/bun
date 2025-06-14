@@ -773,8 +773,13 @@ pub const Listener = struct {
                     break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
                 },
                 .fd => |fd| {
-                    _ = fd;
-                    return globalObject.ERR(.INVALID_ARG_VALUE, "Bun does not support listening on a file descriptor.", .{}).throw();
+                    return JSC.SystemError.throw(globalObject, .{
+                        .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL),
+                        .code = .static("EINVAL"),
+                        .message = .static("Bun does not support listening on a file descriptor."),
+                        .syscall = .static("listen"),
+                        .fd = fd.uv(),
+                    });
                 },
             }
         } orelse {

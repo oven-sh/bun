@@ -164,7 +164,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             value.protect();
 
             if (response.body.value == .HTMLRoute) {
-                RenderHTMLBundle(ctx, response);
+                RenderHTMLBundle(ctx, value, response);
                 return;
             }
 
@@ -1495,9 +1495,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.flags.response_protected = false;
 
                 if (response.body.value == .HTMLRoute) {
-                    RenderHTMLBundle(ctx, response);
+                    RenderHTMLBundle(ctx, response_value,response);
                     return;
                 }
+
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
                         var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1559,7 +1560,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.flags.response_protected = false;
 
                         if (response.body.value == .HTMLRoute) {
-                            RenderHTMLBundle(ctx, response);
+                            RenderHTMLBundle(ctx, fulfilled_value, response);
                         }
 
                         ctx.response_ptr = response;
@@ -1882,7 +1883,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.renderBytes();
         }
 
-        pub fn RenderHTMLBundle(ctx: *RequestContext, response: *Response) void {
+        pub fn RenderHTMLBundle(ctx: *RequestContext, value: JSValue,response: *Response) void {
             const route_ref = response.body.value.HTMLRoute;
             if (ctx.resp) |resp_ptr| {
                 var route = route_ref.data;
@@ -1908,7 +1909,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.finalizeWithoutDeinit();
                 ctx.deref();
             } else {
-                ctx.renderMissingInvalidResponse(response.body.value);
+                ctx.renderMissingInvalidResponse(value);
             }
         }
 

@@ -164,33 +164,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             value.protect();
 
             if (response.body.value == .HTMLRoute) {
-                const route_ref = response.body.value.HTMLRoute;
-
-                if (ctx.resp) |resp| {
-                    var route = route_ref.data;
-                    if (route.server == null) {
-                        if (ctx.server) |server| {
-                            route.server = JSC.API.AnyServer.from(server);
-                        }
-                    }
-
-                    ctx.detachResponse();
-                    ctx.endRequestStreamingAndDrain();
-
-                    if (ctx.signal) |signal| {
-                        ctx.signal = null;
-                        signal.pendingActivityUnref();
-                        signal.unref();
-                    }
-
-                    const any_resp = uws.AnyResponse.init(resp);
-
-                    route.respondWithInit(any_resp, ctx.method, &response.init);
-
-                    ctx.finalizeWithoutDeinit();
-                    ctx.deref();
-                    return;
-                }
+                RenderHTMLBundle(ctx, response);
+                return;
             }
 
             if (ctx.method == .HEAD) {
@@ -1520,34 +1495,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.flags.response_protected = false;
 
                 if (response.body.value == .HTMLRoute) {
-                    const route_ref = response.body.value.HTMLRoute;
-                    if (ctx.resp) |resp| {
-                        var route = route_ref.data;
-                        if (route.server == null) {
-                            if (ctx.server) |server| {
-                                route.server = JSC.API.AnyServer.from(server);
-                            }
-                        }
-
-                        ctx.detachResponse();
-                        ctx.endRequestStreamingAndDrain();
-
-                        if (ctx.signal) |signal| {
-                            ctx.signal = null;
-                            signal.pendingActivityUnref();
-                            signal.unref();
-                        }
-
-                        const any_resp = uws.AnyResponse.init(resp);
-                        route.respondWithInit(any_resp, ctx.method, &response.init);
-
-                        ctx.finalizeWithoutDeinit();
-                        ctx.deref();
-                        return;
-                    } else {
-                        ctx.renderMissingInvalidResponse(response_value);
-                        return;
-                    }
+                    RenderHTMLBundle(ctx, response);
+                    return;
                 }
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
@@ -1610,34 +1559,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.flags.response_protected = false;
 
                         if (response.body.value == .HTMLRoute) {
-                            const route_ref = response.body.value.HTMLRoute;
-
-                            if (ctx.resp) |resp| {
-                                var route = route_ref.data;
-                                if (route.server == null) {
-                                    if (ctx.server) |server| {
-                                        route.server = JSC.API.AnyServer.from(server);
-                                    }
-                                }
-                                ctx.detachResponse();
-                                ctx.endRequestStreamingAndDrain();
-
-                                if (ctx.signal) |signal| {
-                                    ctx.signal = null;
-                                    signal.pendingActivityUnref();
-                                    signal.unref();
-                                }
-
-                                const any_resp = uws.AnyResponse.init(resp);
-                                route.respondWithInit(any_resp, ctx.method, &response.init);
-
-                                ctx.finalizeWithoutDeinit();
-                                ctx.deref();
-                                return;
-                            } else {
-                                ctx.renderMissingInvalidResponse(fulfilled_value);
-                                return;
-                            }
+                            RenderHTMLBundle(ctx, response);
                         }
 
                         ctx.response_ptr = response;
@@ -1958,6 +1880,36 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn doRenderBlobCorked(this: *RequestContext) void {
             this.renderMetadata();
             this.renderBytes();
+        }
+
+        pub fn RenderHTMLBundle(ctx: *RequestContext, response: *Response) void {
+            const route_ref = response.body.value.HTMLRoute;
+            if (ctx.resp) |resp_ptr| {
+                var route = route_ref.data;
+
+                if (route.server == null) {
+                    if (ctx.server) |server_ptr| {
+                        route.server = JSC.API.AnyServer.from(server_ptr);
+                    }
+                }
+
+                ctx.detachResponse();
+                ctx.endRequestStreamingAndDrain();
+
+                if (ctx.signal) |signal_ptr| {
+                    ctx.signal = null;
+                    signal_ptr.pendingActivityUnref();
+                    signal_ptr.unref();
+                }
+
+                const any_resp = uws.AnyResponse.init(resp_ptr);
+                route.respondWithInit(any_resp, ctx.method, &response.init);
+
+                ctx.finalizeWithoutDeinit();
+                ctx.deref();
+            } else {
+                ctx.renderMissingInvalidResponse(response.body.value);
+            }
         }
 
         pub fn doRender(this: *RequestContext) void {

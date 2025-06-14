@@ -19,7 +19,7 @@ BEGIN
             VALUE "OriginalFilename", "bun.exe\0"
             VALUE "ProductName", "Bun\0"
             VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0"
-            VALUE "Copyright", "See https://bun.sh/docs/project/licensing"
+            VALUE "LegalCopyright", "https://bun.sh/docs/project/licensing\0"
         END
     END
     BLOCK "VarFileInfo"

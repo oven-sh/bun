@@ -55,10 +55,18 @@ pub const KeepAlive = struct {
             return;
         this.status = .inactive;
         if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            if (comptime bun.Environment.debug_checks) {
+                event_loop_ctx_.assertEventLoopThread();
+            }
+
             event_loop_ctx_.loop().subActive(1);
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        if (comptime bun.Environment.debug_checks) {
+            event_loop_ctx.assertEventLoopThread();
+        }
+
         event_loop_ctx.platformEventLoop().subActive(1);
     }
 
@@ -76,6 +84,10 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
+        if (comptime bun.Environment.debug_checks) {
+            JSC.AbstractVM(vm).assertEventLoopThread();
+        }
+
         vm.event_loop_handle.?.dec();
     }
 
@@ -95,10 +107,18 @@ pub const KeepAlive = struct {
         this.status = .active;
         const EventLoopContext = @TypeOf(event_loop_ctx_);
         if (comptime EventLoopContext == JSC.EventLoopHandle) {
+            if (comptime bun.Environment.debug_checks) {
+                event_loop_ctx_.assertEventLoopThread();
+            }
+
             event_loop_ctx_.ref();
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        if (comptime bun.Environment.debug_checks) {
+            event_loop_ctx.assertEventLoopThread();
+        }
+
         event_loop_ctx.platformEventLoop().ref();
     }
 

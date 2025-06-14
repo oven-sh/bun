@@ -90,6 +90,13 @@ pub const EventLoopHandle = union(EventLoopKind) {
         }
     }
 
+    pub fn assertEventLoopThread(this: EventLoopHandle) void {
+        switch (this) {
+            .js => JSC.AbstractVM(this.js.virtual_machine).assertEventLoopThread(),
+            .mini => JSC.AbstractVM(this.mini).assertEventLoopThread(),
+        }
+    }
+
     pub fn loop(this: EventLoopHandle) *bun.uws.Loop {
         return switch (this) {
             .js => this.js.usocketsLoop(),
@@ -107,10 +114,18 @@ pub const EventLoopHandle = union(EventLoopKind) {
     pub const platformEventLoop = loop;
 
     pub fn ref(this: EventLoopHandle) void {
+        if (comptime bun.Environment.debug_checks) {
+            this.assertEventLoopThread();
+        }
+
         this.loop().ref();
     }
 
     pub fn unref(this: EventLoopHandle) void {
+        if (comptime bun.Environment.debug_checks) {
+            this.assertEventLoopThread();
+        }
+
         this.loop().unref();
     }
 

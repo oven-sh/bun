@@ -218,7 +218,7 @@ pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(
 
     // test.
     if (comptime T == *HTMLBundle.Route){
-        if (server.config().isDevelopment()) {
+        if (server.config().isDevelopment() and entry.state == .pending) {
             entry.scheduleBundle(server) catch bun.outOfMemory();
         }
     }

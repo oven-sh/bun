@@ -2,8 +2,8 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, test as it } from "bun:test";
-import { expectType } from "./utilities";
 import { tmpdirSync } from "harness";
+import { expectType } from "./utilities";
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);

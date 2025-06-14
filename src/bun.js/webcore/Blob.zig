@@ -1328,8 +1328,8 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                 .Used,
                 .Empty,
                 .Blob,
-                .Null,
                 .HTMLRoute,
+                .Null,
                 => {
                     break :brk response.body.use();
                 },
@@ -1385,7 +1385,14 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
 
         if (data.as(Request)) |request| {
             switch (request.body.value) {
-                .WTFStringImpl, .InternalBlob, .Used, .Empty, .Blob, .Null, .HTMLRoute => {
+                .WTFStringImpl,
+                .InternalBlob,
+                .Used,
+                .Empty,
+                .Blob,
+                .HTMLRoute,
+                .Null,
+                => {
                     break :brk request.body.value.use();
                 },
                 .Error => |*err_ref| {

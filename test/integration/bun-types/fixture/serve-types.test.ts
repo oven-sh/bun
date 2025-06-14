@@ -2,10 +2,10 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, test as it } from "bun:test";
-import { expectType } from "./utilities";
 import fs from "node:fs";
-import { join } from "node:path";
 import os from "node:os";
+import { join } from "node:path";
+import { expectType } from "./utilities";
 
 // XXX: importing this from "harness" caused a failure in bun-types.test.ts
 function tmpdirSync(pattern: string = "bun.test."): string {

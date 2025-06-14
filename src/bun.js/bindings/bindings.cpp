@@ -3278,24 +3278,24 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) {
         auto* exception = scope.exception();
         scope.clearException();
-        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
-        return JSValue::encode(promise);
+        RELEASE_AND_RETURN(scope, JSValue::encode(promise));
     }
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
-        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
     }
 
-    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
 }
 
 void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,

@@ -2186,7 +2186,9 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
     arguments.append(JSValue::decode(nativePtr));
 
     auto callData = JSC::getCallData(function);
-    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+    auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
+    return JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);

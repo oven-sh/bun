@@ -193,8 +193,13 @@ pub const JSPromise = opaque {
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src(), .enabled);
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
-        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        scope.returnIfException() catch @panic("TODO: JSPromise wrap threw");
+        return promise;
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {

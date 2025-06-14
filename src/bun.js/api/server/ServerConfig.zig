@@ -215,7 +215,6 @@ pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyRoute,
 
 pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(ssl), comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
     entry.server = server;
-
     const handler_wrap = struct {
         pub fn handler(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
             route.onRequest(req, switch (comptime ssl) {

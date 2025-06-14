@@ -17,4 +17,6 @@ test("piscina atomics", async () => {
   }
 
   await Promise.all(tasks);
+
+  await pool.destroy();
 });

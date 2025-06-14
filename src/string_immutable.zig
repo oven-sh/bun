@@ -495,12 +495,10 @@ pub fn indexOf(self: string, str: string) ?usize {
     bun.unsafeAssert(i < self_len);
     return @as(usize, @intCast(i));
 }
-
 pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
     if (T == u8) return indexOf(haystack, needle);
     return std.mem.indexOf(T, haystack, needle);
 }
-
 pub fn split(self: string, delimiter: string) SplitIterator {
     return SplitIterator{
         .buffer = self,
@@ -994,11 +992,9 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
 pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
 }
-
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
-
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
     const rhs = comptime switch (T) {
         u8 => alt,
@@ -1397,7 +1393,6 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
         remain = remain[1..];
     }
 }
-
 /// It is common on Windows to find files that are not encoded in UTF8. Most of these include
 /// a 'byte-order mark' codepoint at the start of the file. The layout of this codepoint can
 /// determine the encoding.
@@ -1874,7 +1869,6 @@ pub fn withoutNTPrefix(comptime T: type, path: []const T) []const T {
     }
     return path;
 }
-
 pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindows(utf8)) {
         return toWPathNormalized(wbuf, utf8);
@@ -1902,7 +1896,6 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     wbuf[0..prefix.len].* = prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
-
 pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     if (!std.fs.path.isAbsoluteWindowsWTF16(path)) {
         return toWPathNormalized16(wbuf, path);
@@ -2122,9 +2115,25 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
     bun.unsafeAssert(wbuf.len > 0);
 
+    // Ensure we always have space for the null terminator
+    if (wbuf.len == 0) {
+        return wbuf[0..0 :0];
+    }
+
+    // Reserve space for null terminator and optional trailing slash
+    const reserved_space = 1 + @as(usize, @intFromBool(add_trailing_lash));
+
+    // If the buffer is too small to hold even a null terminator, return empty
+    if (wbuf.len < reserved_space) {
+        wbuf[0] = 0;
+        return wbuf[0..0 :0];
+    }
+
+    const max_result_len = wbuf.len -| reserved_space;
+
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
-        wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
+        wbuf[0..max_result_len],
     );
 
     // Many Windows APIs expect normalized path slashes, particularly when the
@@ -2342,7 +2351,6 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     var foo = try allocateLatin1IntoUTF8WithList(list, 0, Type, latin1_);
     return try foo.toOwnedSlice();
 }
-
 pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) OOM!std.ArrayList(u8) {
     var latin1 = latin1_;
     var i: usize = offset_into_list;
@@ -2771,7 +2779,6 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
 
     return bun.simdutf.length.utf16.from.latin1(latin1_);
 }
-
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
     const Scalar = struct {
         pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
@@ -3111,7 +3118,6 @@ fn Escaped(comptime T: type) type {
         allocated: []T,
     };
 }
-
 pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) !Escaped(u16) {
     const Scalar = struct {
         pub const lengths: [std.math.maxInt(u8) + 1]u4 = brk: {
@@ -3597,7 +3603,6 @@ pub fn elementLengthUTF16IntoUTF8(comptime Type: type, utf16: Type) usize {
 
     return count + utf16_remaining.len;
 }
-
 pub fn elementLengthUTF8IntoUTF16(comptime Type: type, utf8: Type) usize {
     var utf8_remaining = utf8;
     var count: usize = 0;
@@ -4088,7 +4093,6 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
 
     return bun.highway.indexOfChar(slice, char);
 }
-
 pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
     if (!Environment.isNative) {
         return std.mem.indexOfScalarPos(u8, slice, char);
@@ -4100,7 +4104,6 @@ pub fn indexOfCharPos(slice: []const u8, char: u8, start_index: usize) ?usize {
     bun.debugAssert(slice.len > result + start_index);
     return result + start_index;
 }
-
 pub fn indexOfAnyPosComptime(slice: []const u8, comptime chars: []const u8, start_index: usize) ?usize {
     if (chars.len == 1) return indexOfCharPos(slice, chars[0], start_index);
     return std.mem.indexOfAnyPos(u8, slice, start_index, chars);
@@ -4583,7 +4586,6 @@ pub fn codepointSize(comptime R: type, r: R) u3_fast {
 
 //                 return 3;
 //             }
-
 //             out[0] = @truncate(u8, 0b11100000 | (c >> 12));
 //             out[1] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
 //             out[2] = @truncate(u8, 0b10000000 | c & 0b111111);
@@ -4599,7 +4601,6 @@ pub fn codepointSize(comptime R: type, r: R) u3_fast {
 //         else => {
 //             // Replacement character
 //             out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
 //             return 3;
 //         },
 //     }
@@ -5082,7 +5083,6 @@ pub fn isIPAddress(input: []const u8) bool {
 
     return bun.c_ares.ares_inet_pton(std.posix.AF.INET, ip_addr_str.ptr, &sockaddr) > 0 or bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
-
 pub fn isIPV6Address(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
     if (input.len >= max_ip_address_buffer.len) return false;
@@ -5095,7 +5095,6 @@ pub fn isIPV6Address(input: []const u8) bool {
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
     return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
-
 pub fn cloneNormalizingSeparators(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -5935,7 +5934,6 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool)
 
     return 1;
 }
-
 pub const visible = struct {
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
     fn visibleLatin1Width(input_: []const u8) usize {

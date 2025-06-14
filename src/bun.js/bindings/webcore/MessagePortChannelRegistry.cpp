@@ -161,7 +161,8 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
 
 std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessageForPort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
+    // Bun calls this from worker threads
+    // ASSERT(isMainThread());
 
     // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
@@ -175,7 +176,8 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
 
 MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
+    // Bun calls this from worker threads
+    // ASSERT(isMainThread());
 
     return m_openChannels.get(port);
 }

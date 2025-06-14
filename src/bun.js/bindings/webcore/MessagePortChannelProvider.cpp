@@ -25,24 +25,13 @@
 
 #include "config.h"
 #include "MessagePortChannelProvider.h"
-
-// #include "Document.h"
 #include "MessagePortChannelProviderImpl.h"
 #include "ScriptExecutionContext.h"
-#include "ZigGlobalObject.h"
 #include "BunWorkerGlobalScope.h"
-// #include "WorkerGlobalScope.h"
-// #include "WorkletGlobalScope.h"
-#include <wtf/MainThread.h>
-#include <mutex>
 
 namespace WebCore {
 
-static WeakPtr<MessagePortChannelProvider>& globalProvider()
-{
-    static MainThreadNeverDestroyed<WeakPtr<MessagePortChannelProvider>> globalProvider;
-    return globalProvider;
-}
+static MessagePortChannelProviderImpl* globalProvider;
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
@@ -50,18 +39,16 @@ MessagePortChannelProvider& MessagePortChannelProvider::singleton()
     // ASSERT(isMainThread());
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        auto& globalProvider = WebCore::globalProvider();
         if (!globalProvider)
             globalProvider = new MessagePortChannelProviderImpl;
     });
 
-    return *globalProvider().get();
+    return *globalProvider;
 }
 
 // void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
 // {
 //     RELEASE_ASSERT(isMainThread());
-//     auto& globalProvider = WebCore::globalProvider();
 //     RELEASE_ASSERT(!globalProvider);
 //     globalProvider = &provider;
 // }

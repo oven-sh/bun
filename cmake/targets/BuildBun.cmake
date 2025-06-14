@@ -673,20 +673,14 @@ if(WIN32)
   else()
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
-  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
   configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
+  set(BUN_ICO_PATH ${CODEGEN_PATH}/bun.ico)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  add_custom_command(
-    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
-    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
-    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
-    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
-  )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
 # --- Executable ---
@@ -694,7 +688,7 @@ endif()
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)
@@ -712,7 +706,7 @@ elseif(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 else()
-  add_executable(${bun} ${BUN_CPP_SOURCES} ${WINDOWS_RESOURCES})
+  add_executable(${bun} ${BUN_CPP_SOURCES})
   target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
 endif()
 

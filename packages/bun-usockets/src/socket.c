@@ -357,7 +357,7 @@ void *us_connecting_socket_get_native_handle(int ssl, struct us_connecting_socke
     return (void *) (uintptr_t) -1;
 }
 
-int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
+int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more, int *error) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length, msg_more);
@@ -367,7 +367,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length, msg_more);
+    int written = bsd_send(us_poll_fd(&s->p), data, length, msg_more, error);
     if (written != length) {
         s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -502,7 +502,7 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
     }
 #endif
  // non-TLS is always raw
- return us_socket_write(ssl, s, data, length, msg_more);
+ return us_socket_write(ssl, s, data, length, msg_more, NULL);
 }
 
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)

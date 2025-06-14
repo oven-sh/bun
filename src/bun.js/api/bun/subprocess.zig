@@ -2277,7 +2277,7 @@ pub fn spawnMaybeSync(
             else
                 "";
             var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
-            systemerror.errno = if (err == error.EMFILE) -bun.sys.UV_E.MFILE else -bun.sys.UV_E.NFILE;
+            systemerror.errno = if (err == error.EMFILE) bun.sys.UV_E.MFILE else bun.sys.UV_E.NFILE;
             return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
         },
         else => {
@@ -2295,7 +2295,7 @@ pub fn spawnMaybeSync(
                         "";
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
-                        if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
+                        if (errno == .NOENT) systemerror.errno = bun.sys.UV_E.NOENT;
                         return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
                     }
                 },
@@ -2600,13 +2600,12 @@ pub fn spawnMaybeSync(
 }
 
 fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bun.JSError {
-    const err = JSC.SystemError{
+    return JSC.SystemError.throw(globalThis, .{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
-        .errno = -bun.sys.UV_E.NOENT,
+        .errno = bun.sys.UV_E.NOENT,
         .path = bun.String.createUTF8(command),
-    };
-    return globalThis.throwValue(err.toErrorInstance(globalThis));
+    });
 }
 
 const node_cluster_binding = @import("./../../node/node_cluster_binding.zig");

@@ -6,7 +6,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 pub const SystemError = extern struct {
-    errno: c_int = 0,
+    errno: c_uint = 0,
     /// label for errno
     code: String = .empty,
     message: String = .empty,
@@ -29,7 +29,7 @@ pub const SystemError = extern struct {
 
     pub fn getErrno(this: *const SystemError) bun.sys.E {
         // The inverse in bun.sys.Error.toSystemError()
-        return @enumFromInt(this.errno * -1);
+        return @enumFromInt(this.errno);
     }
 
     pub fn deref(this: *const SystemError) void {
@@ -79,6 +79,14 @@ pub const SystemError = extern struct {
         defer this.deref();
 
         return SystemError__toErrorInstanceWithInfoObject(this, global);
+    }
+
+    pub fn createJS(globalThis: *JSGlobalObject, literal_init: SystemError) JSValue {
+        return literal_init.toErrorInstance(globalThis);
+    }
+
+    pub fn throw(globalThis: *JSGlobalObject, literal_init: SystemError) bun.JSError {
+        return globalThis.throwValue(literal_init.toErrorInstance(globalThis));
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

@@ -2414,7 +2414,7 @@ pub const DNSResolver = struct {
             .result => |result| return result,
             .err => |err| {
                 const system_error = JSC.SystemError{
-                    .errno = -1,
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EPERM),
                     .code = bun.String.static(err.code()),
                     .message = bun.String.static(err.label()),
                 };
@@ -3120,7 +3120,7 @@ pub const DNSResolver = struct {
                 defer syscall.deref();
 
                 const system_error = JSC.SystemError{
-                    .errno = -1,
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EPERM),
                     .code = bun.String.static(err.code()),
                     .message = bun.String.static(err.label()),
                     .syscall = syscall,

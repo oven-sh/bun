@@ -327,10 +327,10 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_d
       per the happy eyeballs algorithm
 */
 void *us_socket_context_connect(int ssl, struct us_socket_context_t * nonnull_arg context,
-    const char *host, int port, int options, int socket_ext_size, int *is_connecting) __attribute__((nonnull(2)));
+    const char *host, int port, int options, int socket_ext_size, int *is_connecting, int *error) __attribute__((nonnull(2)));
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, us_socket_context_r context,
-    const char *server_path, size_t pathlen, int options, int socket_ext_size) __attribute__((nonnull(2)));
+    const char *server_path, size_t pathlen, int options, int socket_ext_size, int *error) __attribute__((nonnull(2)));
 
 /* Is this socket established? Can be used to check if a connecting socket has fired the on_open event yet.
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */
@@ -421,7 +421,7 @@ void *us_socket_get_native_handle(int ssl, us_socket_r s) nonnull_fn_decl;
 /* Write up to length bytes of data. Returns actual bytes written.
  * Will call the on_writable callback of active socket context on failure to write everything off in one go.
  * Set hint msg_more if you have more immediate data to write. */
-int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int msg_more) nonnull_fn_decl;
+int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int msg_more, int *error);
 
 /* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
 int us_socket_write2(int ssl, us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;

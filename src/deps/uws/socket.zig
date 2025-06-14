@@ -317,18 +317,18 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             }
         }
 
-        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool, error_: ?*i32) i32 {
             return switch (this.socket) {
                 .upgradedDuplex => |socket| socket.encodeAndWrite(data, msg_more),
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.encodeAndWrite(data, msg_more) else 0,
-                .connected => |socket| socket.write(is_ssl, data, msg_more),
+                .connected => |socket| socket.write(is_ssl, data, msg_more, error_),
                 .connecting, .detached => 0,
             };
         }
 
         pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
             return switch (this.socket) {
-                .upgradedDuplex, .pipe => this.write(data, false),
+                .upgradedDuplex, .pipe => this.write(data, false, null),
                 .connected => |socket| socket.writeFd(data, file_descriptor),
                 .connecting, .detached => 0,
             };
@@ -506,8 +506,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             ctx: *Context,
             comptime socket_field_name: []const u8,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen, error_);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -574,6 +575,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -581,7 +583,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
+            const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8, error_) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .connected = socket } };
@@ -597,6 +599,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
             allowHalfOpen: bool,
+            error_: ?*i32,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -619,6 +622,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
+                error_,
             ) orelse return error.FailedToOpenSocket;
             const socket = if (did_dns_resolve == 1)
                 ThisSocket{
@@ -1138,8 +1142,8 @@ pub const AnySocket = union(enum) {
 
     pub fn write(this: AnySocket, data: []const u8, msg_more: bool) i32 {
         return switch (this) {
-            .SocketTCP => |sock| sock.write(data, msg_more),
-            .SocketTLS => |sock| sock.write(data, msg_more),
+            .SocketTCP => |sock| sock.write(data, msg_more, null),
+            .SocketTLS => |sock| sock.write(data, msg_more, null),
         };
     }
 

@@ -39,7 +39,7 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
     ASSERT_NOT_REACHED();
 }
 
-void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, bool)
+void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
     ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
         if (CheckedPtr registry = weakRegistry.get())
@@ -98,11 +98,7 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
 
 std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port] {
-        if (CheckedPtr registry = weakRegistry.get())
-            return registry->tryTakeMessageForPort(port);
-    });
-    return std::nullopt;
+    return m_registry.tryTakeMessageForPort(port);
 }
 
 } // namespace WebCore

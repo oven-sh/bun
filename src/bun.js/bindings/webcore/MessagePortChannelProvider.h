@@ -53,7 +53,7 @@ public:
     virtual ~MessagePortChannelProvider() { }
 
     // Operations that WebProcesses perform
-    virtual void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, bool siteIsolationEnabled) = 0;
+    virtual void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void messagePortDisentangled(const MessagePortIdentifier& local) = 0;
     virtual void messagePortClosed(const MessagePortIdentifier& local) = 0;

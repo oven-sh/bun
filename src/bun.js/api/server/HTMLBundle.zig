@@ -64,6 +64,10 @@ pub const Route = struct {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
 
+    /// Optional status code and headers to apply to the generated static route
+    status_code: u16 = 200,
+    headers: Headers = .{ .allocator = bun.default_allocator },
+
     method: union(enum) {
         any: void,
         method: bun.http.Method.Set,
@@ -154,7 +158,12 @@ pub const Route = struct {
                     continue :state;
                 },
                 .building => {
-                    const pending = bun.new(PendingResponse, .{ .method = method, .resp = resp, .server = this.server, .route = this });
+                    const pending = bun.new(PendingResponse, .{
+                        .method = method,
+                        .resp = resp,
+                        .server = this.server,
+                        .route = this,
+                    });
 
                     this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
 
@@ -174,6 +183,69 @@ pub const Route = struct {
                     } else {
                         html.on(resp);
                     }
+                    return;
+                },
+            };
+    }
+
+    pub fn respondWithInit(this: *Route, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
+        this.ref();
+        defer this.deref();
+
+        const server: AnyServer = this.server orelse {
+            resp.writeStatus("500 Internal Server Error");
+            resp.endWithoutBody(true);
+            return;
+        };
+
+        const is_head = method == .HEAD;
+
+        var cloned_init = resinit.clone(server.globalThis);
+        defer cloned_init.deinit(bun.default_allocator);
+
+        state: while (true)
+            switch (this.state) {
+                .pending => {
+                    this.scheduleBundle(server) catch bun.outOfMemory();
+                    continue :state;
+                },
+                .building => {
+                    const pending = bun.new(PendingResponse, .{
+                        .method = method,
+                        .resp = resp,
+                        .server = this.server,
+                        .route = this,
+                        .init = cloned_init.clone(server.globalThis),
+                    });
+                    this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                    this.ref();
+                    resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
+                    return;
+                },
+                .err => |log| {
+                    _ = log; // TODO: Surface build errors
+                    resp.writeStatus("500 Build Failed");
+                    resp.endWithoutBody(false);
+                    return;
+                },
+                .html => |html| {
+                    var route_clone = html.clone(server.globalThis) catch bun.outOfMemory();
+                    route_clone.status_code = cloned_init.status_code;
+                    if (cloned_init.headers) |headers| {
+                        const entries = headers.entries.slice();
+                        const names = entries.items(.name);
+                        const values = entries.items(.value);
+                        const buf = headers.buf.items;
+                        for (names, values) |name, value| {
+                            route_clone.headers.append(name.slice(buf), value.slice(buf)) catch bun.outOfMemory();
+                        }
+                    }
+                    if (is_head) {
+                        route_clone.onHEAD(resp);
+                    } else {
+                        route_clone.on(resp);
+                    }
+                    route_clone.deref();
                     return;
                 },
             };
@@ -518,6 +590,7 @@ pub const Route = struct {
     pub const PendingResponse = struct {
         method: bun.http.Method,
         resp: HTTPResponse,
+        init: ?Response.Init = null,
         is_response_pending: bool = true,
         server: ?AnyServer = null,
         route: *Route,
@@ -527,6 +600,9 @@ pub const Route = struct {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
+            }
+            if (this.init) |*i| {
+                i.deinit(bun.default_allocator);
             }
             this.route.deref();
             bun.destroy(this);
@@ -558,8 +634,11 @@ const HTTPResponse = bun.uws.AnyResponse;
 const HTTP = bun.http;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
+const Response = JSC.WebCore.Response;
 const StaticRoute = @import("./StaticRoute.zig");
 const RefPtr = bun.ptr.RefPtr;
+const ResponseInit = JSC.WebCore.Response.Init;
+const Headers = bun.http.Headers;
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

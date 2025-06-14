@@ -184,15 +184,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
 
                     const any_resp = uws.AnyResponse.init(resp);
-                    if (ctx.req) |req_ptr| {
-                        if (ctx.method == .HEAD) {
-                            route.onHEADRequest(req_ptr, any_resp);
-                        } else {
-                            route.onRequest(req_ptr, any_resp);
-                        }
-                    } else {
-                        route.respond(any_resp, ctx.method);
-                    }
+
+                    route.respondWithInit(any_resp, ctx.method, &response.init);
+
                     ctx.finalizeWithoutDeinit();
                     ctx.deref();
                     return;
@@ -1520,7 +1514,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (response_value.as(JSC.WebCore.Response)) |response| {
+            if (response_value.as(Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
@@ -1545,15 +1539,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         }
 
                         const any_resp = uws.AnyResponse.init(resp);
-                        if (ctx.req) |req_ptr| {
-                            if (ctx.method == .HEAD) {
-                                route.onHEADRequest(req_ptr, any_resp);
-                            } else {
-                                route.onRequest(req_ptr, any_resp);
-                            }
-                        } else {
-                            route.respond(any_resp, ctx.method);
-                        }
+                        route.respondWithInit(any_resp, ctx.method, &response.init);
+
                         ctx.finalizeWithoutDeinit();
                         ctx.deref();
                         return;
@@ -1642,15 +1629,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 }
 
                                 const any_resp = uws.AnyResponse.init(resp);
-                                if (ctx.req) |req_ptr| {
-                                    if (ctx.method == .HEAD) {
-                                        route.onHEADRequest(req_ptr, any_resp);
-                                    } else {
-                                        route.onRequest(req_ptr, any_resp);
-                                    }
-                                } else {
-                                    route.respond(any_resp, ctx.method);
-                                }
+                                route.respondWithInit(any_resp, ctx.method, &response.init);
 
                                 ctx.finalizeWithoutDeinit();
                                 ctx.deref();
@@ -2644,6 +2623,7 @@ const Response = JSC.WebCore.Response;
 const FetchHeaders = JSC.WebCore.FetchHeaders;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
+const HTMLBundle = JSC.WebCore.Blob;
 const MimeType = bun.http.MimeType;
 const HTTP = bun.http;
 const Output = bun.Output;

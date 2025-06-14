@@ -278,8 +278,9 @@ pub const Value = union(Tag) {
             .Used, .Empty => true,
             .InternalBlob => this.InternalBlob.slice().len == 0,
             .Blob => this.Blob.size == 0,
+            .HTMLRoute => false, //this.HTMLRoute.data.ref_count.active_counts == 0,
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
-            .Error, .Locked, .HTMLRoute => false,
+            .Error, .Locked => false,
         };
     }
 
@@ -395,7 +396,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
             .Locked => this.Locked.sizeHint(),
-            .HTMLRoute => @sizeOf(bun.ptr.RefPtr(HTMLBundle.Route)),
+            .HTMLRoute => this.HTMLRoute.data.memoryCost(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };
@@ -877,7 +878,7 @@ pub const Value = union(Tag) {
             },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
-            .HTMLRoute => .{ .Blob = Blob.initEmpty(undefined) },
+            .HTMLRoute => .{ .Blob = Blob.initEmpty(undefined) }, //temp
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -893,9 +894,9 @@ pub const Value = union(Tag) {
             .Blob => .{ .Blob = this.Blob },
             .InternalBlob => .{ .InternalBlob = this.InternalBlob },
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
+            .HTMLRoute => .{ .Blob = Blob.initEmpty(undefined)  }, //todo
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
-            .HTMLRoute => .{ .Blob = Blob.initEmpty(undefined) },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 

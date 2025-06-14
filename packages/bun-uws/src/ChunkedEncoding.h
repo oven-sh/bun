@@ -76,7 +76,7 @@ namespace uWS {
                 data.remove_prefix(1);
             }
         }
-        
+
         auto len = data.length();
         if(len) {
             // consume extension
@@ -93,20 +93,20 @@ namespace uWS {
                     /* RFC 9110: Token format (TLDR; anything bellow 32 is not allowed)
                     * TODO: add support for quoted-strings values (RFC 9110: 3.2.6. Quoted-String)
                     * Example of chunked encoding with extensions:
-                    * 
+                    *
                     * 4;key=value\r\n
                     * Wiki\r\n
                     * 5;foo=bar;baz=quux\r\n
                     * pedia\r\n
                     * 0\r\n
                     * \r\n
-                    * 
+                    *
                     * The chunk size is in hex (4, 5, 0), followed by optional
                     * semicolon-separated extensions. Extensions consist of a key
                     * (token) and optional value. The value may be a token or a
                     * quoted string. The chunk data follows the CRLF after the
                     * extensions and must be exactly the size specified.
-                    * 
+                    *
                     * RFC 7230 Section 4.1.1 defines chunk extensions as:
                     * chunk-ext = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
                     * chunk-ext-name = token
@@ -116,7 +116,7 @@ namespace uWS {
                         state = STATE_IS_ERROR;
                         return;
                     }
-                    
+
                     data.remove_prefix(1);
                 }
             }

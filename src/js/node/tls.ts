@@ -5,10 +5,13 @@ const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
-const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
+const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
+const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -31,6 +34,9 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
+
+const ObjectFreeze = Object.freeze;
+
 function parseCertString() {
   // Removed since JAN 2022 Node v18.0.0+ https://github.com/nodejs/node/pull/41479
   throwNotImplemented("Not implemented");
@@ -734,6 +740,59 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
+let bundledRootCertificates: string[] | undefined;
+function cacheBundledRootCertificates(): string[] {
+  bundledRootCertificates ||= getBundledRootCertificates() as string[];
+  return bundledRootCertificates;
+}
+let defaultCACertificates: string[] | undefined;
+function cacheDefaultCACertificates() {
+  if (defaultCACertificates) return defaultCACertificates;
+  defaultCACertificates = [];
+
+  const bundled = cacheBundledRootCertificates();
+  for (let i = 0; i < bundled.length; ++i) {
+    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+  }
+
+  if (process.env.NODE_EXTRA_CA_CERTS) {
+    const extra = cacheExtraCACertificates();
+    for (let i = 0; i < extra.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
+    }
+  }
+
+  ObjectFreeze(defaultCACertificates);
+  return defaultCACertificates;
+}
+
+function cacheSystemCACertificates(): string[] {
+  throw new Error("getCACertificates('system') is not yet implemented in Bun");
+}
+
+let extraCACertificates: string[] | undefined;
+function cacheExtraCACertificates(): string[] {
+  extraCACertificates ||= getExtraCACertificates() as string[];
+  return extraCACertificates;
+}
+
+function getCACertificates(type = "default") {
+  validateString(type, "type");
+
+  switch (type) {
+    case "default":
+      return cacheDefaultCACertificates();
+    case "bundled":
+      return cacheBundledRootCertificates();
+    case "system":
+      return cacheSystemCACertificates();
+    case "extra":
+      return cacheExtraCACertificates();
+    default:
+      throw $ERR_INVALID_ARG_VALUE("type", type);
+  }
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -752,6 +811,7 @@ export default {
   TLSSocket,
   checkServerIdentity,
   get rootCertificates() {
-    return rootCertificates;
+    return cacheBundledRootCertificates();
   },
+  getCACertificates,
 } as any as typeof import("node:tls");

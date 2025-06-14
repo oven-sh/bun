@@ -12,7 +12,7 @@ const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 

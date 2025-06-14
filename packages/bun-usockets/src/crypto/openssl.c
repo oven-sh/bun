@@ -44,10 +44,7 @@ void *sni_find(void *sni, const char *hostname);
 #include <wolfssl/options.h>
 #endif
 
-#include "./root_certs.h"
-
-/* These are in root_certs.cpp */
-extern X509_STORE *us_get_default_ca_store();
+#include "./root_certs_header.h"
 
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;

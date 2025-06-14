@@ -228,11 +228,11 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             pub fn close(this: *@This(), _: ?Syscall.Error) void {
-                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, JSValue.jsUndefined());
+                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, .js_undefined);
             }
 
             pub fn ready(this: *@This(), _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                onReady(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
+                onReady(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, .js_undefined, .js_undefined);
             }
 
             pub fn start(_: *@This()) void {}
@@ -462,7 +462,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .jsUndefined()));
+            const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .js_undefined));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {

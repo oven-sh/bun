@@ -644,8 +644,8 @@ pub const SendQueue = struct {
             global.emitWarning(
                 warning.transferToJS(global),
                 warning_name.transferToJS(global),
-                .jsUndefined(),
-                .jsUndefined(),
+                .js_undefined,
+                .js_undefined,
             ) catch |e| {
                 _ = global.takeException(e);
             };
@@ -927,7 +927,7 @@ const MAX_HANDLE_RETRANSMISSIONS = 3;
 fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const ex = callframe.argumentsAsArray(1)[0];
     JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-    return .jsUndefined();
+    return .js_undefined;
 }
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
@@ -948,11 +948,11 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
 
     if (handle.isCallable()) {
         callback = handle;
-        handle = .jsUndefined();
-        options_ = .jsUndefined();
+        handle = .js_undefined;
+        options_ = .js_undefined;
     } else if (options_.isCallable()) {
         callback = options_;
-        options_ = .jsUndefined();
+        options_ = .js_undefined;
     } else if (!options_.isUndefined()) {
         try globalObject.validateObject("options", options_, .{});
     }
@@ -979,7 +979,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
         if (serialized_array.isUndefinedOrNull()) {
-            handle = .jsUndefined();
+            handle = .js_undefined;
         } else {
             const serialized_handle = serialized_array.getIndex(globalObject, 0);
             const serialized_message = serialized_array.getIndex(globalObject, 1);
@@ -1023,14 +1023,14 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
 pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const target, const message, const handle = callframe.argumentsAsArray(3);
     if (target.isNull()) {
-        const ipc = globalThis.bunVM().getIPCInstance() orelse return .jsUndefined();
+        const ipc = globalThis.bunVM().getIPCInstance() orelse return .js_undefined;
         ipc.handleIPCMessage(.{ .data = message }, handle);
     } else {
-        if (!target.isCell()) return .jsUndefined();
-        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .jsUndefined();
+        if (!target.isCell()) return .js_undefined;
+        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .js_undefined;
         subprocess.handleIPCMessage(.{ .data = message }, handle);
     }
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 const IPCCommand = union(enum) {
@@ -1131,7 +1131,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     } else {
         switch (send_queue.owner) {
             inline else => |owner| {
-                owner.handleIPCMessage(message, .jsUndefined());
+                owner.handleIPCMessage(message, .js_undefined);
             },
         }
     }

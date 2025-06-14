@@ -22,7 +22,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include "root.h"
+
 #include "config.h"
 #include "MessagePortChannelProviderImpl.h"
 
@@ -39,46 +39,70 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
     ASSERT_NOT_REACHED();
 }
 
-void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
+void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, bool)
 {
-    m_registry.didCreateMessagePortChannel(local, remote);
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didCreateMessagePortChannel(local, remote);
+    });
 }
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didEntangleLocalToRemote(local, remote, Process::identifier());
+    });
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
 {
-    m_registry.didDisentangleMessagePort(local);
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didDisentangleMessagePort(local);
+    });
 }
 
 void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifier& local)
 {
-    m_registry.didCloseMessagePort(local);
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didCloseMessagePort(local);
+    });
 }
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    if (m_registry.didPostMessageToRemote(WTFMove(message), remoteTarget))
-        MessagePort::notifyMessageAvailable(remoteTarget);
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget]() mutable {
+        CheckedPtr registry = weakRegistry.get();
+        if (!registry)
+            return;
+        if (registry->didPostMessageToRemote(WTFMove(message), remoteTarget))
+            MessagePort::notifyMessageAvailable(remoteTarget);
+    });
 }
 
 void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
 {
     // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
     auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
-        // ASSERT(isMainThread());
+        ASSERT(isMainThread());
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 
-    m_registry.takeAllMessagesForPort(port, WTFMove(callback));
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)]() mutable {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->takeAllMessagesForPort(port, WTFMove(callback));
+    });
 }
 
 std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)
 {
-    return m_registry.tryTakeMessageForPort(port);
+    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port] {
+        if (CheckedPtr registry = weakRegistry.get())
+            return registry->tryTakeMessageForPort(port);
+    });
+    return std::nullopt;
 }
 
 } // namespace WebCore

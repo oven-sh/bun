@@ -24,37 +24,39 @@
  */
 
 #include "config.h"
-// #include "MessagePortChannelProvider.h"
+#include "MessagePortChannelProvider.h"
 
 // #include "Document.h"
 #include "MessagePortChannelProviderImpl.h"
 // #include "WorkerGlobalScope.h"
 // #include "WorkletGlobalScope.h"
 #include <wtf/MainThread.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-static MessagePortChannelProviderImpl* globalProvider;
+static WeakPtr<MessagePortChannelProvider>& globalProvider()
+{
+    static MainThreadNeverDestroyed<WeakPtr<MessagePortChannelProvider>> globalProvider;
+    return globalProvider;
+}
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
-    // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
-    // ASSERT(isMainThread());
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        if (!globalProvider)
-            globalProvider = new MessagePortChannelProviderImpl;
-    });
-
+    ASSERT(isMainThread());
+    auto& globalProvider = WebCore::globalProvider();
+    if (!globalProvider)
+        globalProvider = new MessagePortChannelProviderImpl;
     return *globalProvider;
 }
 
-// void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
-// {
-//     RELEASE_ASSERT(isMainThread());
-//     RELEASE_ASSERT(!globalProvider);
-//     globalProvider = &provider;
-// }
+void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
+{
+    RELEASE_ASSERT(isMainThread());
+    auto& globalProvider = WebCore::globalProvider();
+    RELEASE_ASSERT(!globalProvider);
+    globalProvider = provider;
+}
 
 MessagePortChannelProvider& MessagePortChannelProvider::fromContext(ScriptExecutionContext& context)
 {

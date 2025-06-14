@@ -30,7 +30,8 @@
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
 #include <wtf/HashSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
@@ -62,10 +63,7 @@ public:
     uint64_t beingTransferredCount();
 
 #if !LOG_DISABLED
-    String logString() const
-    {
-        return makeString(m_ports[0].logString(), ":"_s, m_ports[1].logString());
-    }
+    String logString() const { return makeString(m_ports[0].logString(), ':', m_ports[1].logString()); }
 #endif
 
 private:
@@ -80,7 +78,7 @@ private:
     RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
     uint64_t m_messageBatchesInFlight { 0 };
 
-    MessagePortChannelRegistry& m_registry;
+    CheckedRef<MessagePortChannelRegistry> m_registry;
 };
 
 } // namespace WebCore

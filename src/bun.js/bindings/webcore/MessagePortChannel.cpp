@@ -42,6 +42,8 @@ MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, con
     : m_ports { port1, port2 }
     , m_registry(registry)
 {
+    ASSERT(isMainThread());
+
     relaxAdoptionRequirement();
 
     m_processes[0] = port1.processIdentifier;
@@ -49,16 +51,22 @@ MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, con
     m_processes[1] = port2.processIdentifier;
     m_entangledToProcessProtectors[1] = this;
 
-    m_registry.messagePortChannelCreated(*this);
+    checkedRegistry()->messagePortChannelCreated(*this);
 }
 
 MessagePortChannel::~MessagePortChannel()
 {
-    m_registry.messagePortChannelDestroyed(*this);
+    checkedRegistry()->messagePortChannelDestroyed(*this);
+}
+
+CheckedRef<MessagePortChannelRegistry> MessagePortChannel::checkedRegistry() const
+{
+    return m_registry;
 }
 
 std::optional<ProcessIdentifier> MessagePortChannel::processForPort(const MessagePortIdentifier& port)
 {
+    ASSERT(isMainThread());
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
     return m_processes[i];
@@ -66,11 +74,15 @@ std::optional<ProcessIdentifier> MessagePortChannel::processForPort(const Messag
 
 bool MessagePortChannel::includesPort(const MessagePortIdentifier& port)
 {
+    ASSERT(isMainThread());
+
     return m_ports[0] == port || m_ports[1] == port;
 }
 
 void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& port, ProcessIdentifier process)
 {
+    ASSERT(isMainThread());
+
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
@@ -84,6 +96,8 @@ void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& po
 
 void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 {
+    ASSERT(isMainThread());
+
     // LOG(MessagePorts, "MessagePortChannel %s (%p) disentangling port %s", logString().utf8().data(), this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
@@ -100,15 +114,13 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 {
+    ASSERT(isMainThread());
+
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
     m_processes[i] = std::nullopt;
     m_isClosed[i] = true;
-
-    // This set of steps is to guarantee that the lock is unlocked before the
-    // last ref to this object is released.
-    Ref protectedThis { *this };
 
     m_pendingMessages[i].clear();
     m_pendingMessagePortTransfers[i].clear();
@@ -118,6 +130,8 @@ void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 
 bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
+    ASSERT(isMainThread());
+
     ASSERT(remoteTarget == m_ports[0] || remoteTarget == m_ports[1]);
     size_t i = remoteTarget == m_ports[0] ? 0 : 1;
 
@@ -135,22 +149,19 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
 
 void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
+    ASSERT(isMainThread());
+
     // LOG(MessagePorts, "MessagePortChannel %p taking all messages for port %s", this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
     if (m_pendingMessages[i].isEmpty()) {
-        callback({}, [] {});
+        callback({ }, [] { });
         return;
     }
 
-    ASSERT(m_pendingMessageProtectors[i]);
-    // if (!m_pendingMessageProtectors[i]) {
-    //     m_pendingMessages[i].clear();
-    //     callback({}, [] {});
-    //     return;
-    // }
+    ASSERT(m_pendingMessageProtectors[i] == this);
 
     Vector<MessageWithMessagePorts> result;
     result.swap(m_pendingMessages[i]);
@@ -159,11 +170,20 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
 
     // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
 
-    callback(WTFMove(result), [this, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
+    auto size = result.size();
+    callback(WTFMove(result), [size, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
         UNUSED_PARAM(port);
-        --m_messageBatchesInFlight;
-        // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
+        UNUSED_PARAM(size);
+        --(protectedThis->m_messageBatchesInFlight);
+        // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, protectedThis->logString().utf8().data(), size, port.logString().utf8().data(), protectedThis->m_messageBatchesInFlight);
+
     });
+}
+
+bool MessagePortChannel::hasAnyMessagesPendingOrInFlight() const
+{
+    ASSERT(isMainThread());
+    return m_messageBatchesInFlight || !m_pendingMessages[0].isEmpty() || !m_pendingMessages[1].isEmpty();
 }
 
 std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort(const MessagePortIdentifier port)

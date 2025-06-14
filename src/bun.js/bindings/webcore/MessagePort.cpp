@@ -332,6 +332,7 @@ void MessagePort::dispatchMessages()
     MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));
 }
 
+// synchronous for node:worker_threads.receiveMessageOnPort
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
 {
     auto* context = scriptExecutionContext();

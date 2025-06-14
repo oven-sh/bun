@@ -447,7 +447,7 @@ const NetworkTask = struct {
         this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.unsafe_http_client.client.verbose = .headers;
+            this.unsafe_http_client.verbose = .headers;
         }
 
         this.callback = .{
@@ -619,7 +619,6 @@ pub const PreinstallState = enum(u4) {
     apply_patch,
     applying_patch,
 };
-
 /// Schedule long-running callbacks for a task
 /// Slow stuff is broken into tasks, each can run independently without locks
 pub const Task = struct {
@@ -1731,7 +1730,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             };
         }
-
         const HardLinkWindowsInstallTask = struct {
             bytes: []u16,
             src: [:0]bun.OSPathChar,
@@ -2511,7 +2509,6 @@ const TaskCallbackContext = union(enum) {
     root_dependency: DependencyID,
     root_request_id: PackageID,
 };
-
 const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 
@@ -3249,7 +3246,6 @@ pub const PackageManager = struct {
         not_found: void,
         failure: anyerror,
     };
-
     pub fn enqueueDependencyToRoot(
         this: *PackageManager,
         name: []const u8,
@@ -4038,7 +4034,6 @@ pub const PackageManager = struct {
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
         return bun.sys.directoryExistsAt(.fromStdDir(this.getCacheDirectory()), folder_path).unwrap() catch false;
     }
-
     pub fn pathForCachedNPMPath(
         this: *PackageManager,
         buf: *bun.PathBuffer,
@@ -4588,7 +4583,6 @@ pub const PackageManager = struct {
 
         return false;
     }
-
     fn getOrPutResolvedPackage(
         this: *PackageManager,
         name_hash: PackageNameHash,
@@ -5181,7 +5175,6 @@ pub const PackageManager = struct {
             else => .{ original_name, original_name_hash },
         };
     }
-
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -5918,7 +5911,6 @@ pub const PackageManager = struct {
         manager.patch_calc_hash_batch = .{};
         return count;
     }
-
     pub fn enqueueDependencyList(
         this: *PackageManager,
         dependencies_list: Lockfile.DependencySlice,
@@ -6344,7 +6336,6 @@ pub const PackageManager = struct {
         var fallback_parts = [_]string{"node_modules/.bun-cache"};
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
-
     pub fn runTasks(
         manager: *PackageManager,
         comptime ExtractCompletionContext: type,
@@ -6790,7 +6781,6 @@ pub const PackageManager = struct {
                 else => unreachable,
             }
         }
-
         var resolve_tasks_batch = manager.resolve_tasks.popBatch();
         var resolve_tasks_iter = resolve_tasks_batch.iterator();
         while (resolve_tasks_iter.next()) |task| {
@@ -7295,7 +7285,6 @@ pub const PackageManager = struct {
         }
         Global.crash();
     }
-
     pub fn init(
         ctx: Command.Context,
         cli: CommandLineArguments,
@@ -8079,7 +8068,6 @@ pub const PackageManager = struct {
             try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
         }
     }
-
     pub fn unlink(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
         var manager, const original_cwd = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
@@ -8320,7 +8308,8 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
+                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t\\")) catch bun.outOfMemory();
+
                 {
                     var temp: [2048]u8 = undefined;
                     const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
@@ -9507,7 +9496,6 @@ pub const PackageManager = struct {
 
         return;
     }
-
     fn overwritePackageInNodeModulesFolder(
         manager: *PackageManager,
         cache_dir: std.fs.Dir,
@@ -10297,7 +10285,6 @@ pub const PackageManager = struct {
             Global.exit(1);
         }
     }
-
     pub const LazyPackageDestinationDir = union(enum) {
         dir: std.fs.Dir,
         node_modules_path: struct {
@@ -11018,7 +11005,6 @@ pub const PackageManager = struct {
         fn getPatchfileHash(patchfile_path: []const u8) ?u64 {
             _ = patchfile_path; // autofix
         }
-
         fn installPackageWithNameAndResolution(
             this: *PackageInstaller,
             dependency_id: DependencyID,
@@ -11791,7 +11777,6 @@ pub const PackageManager = struct {
     }
 
     const EnqueuePackageForDownloadError = NetworkTask.ForTarballError;
-
     pub fn enqueuePackageForDownload(
         this: *PackageManager,
         name: []const u8,
@@ -12394,7 +12379,6 @@ pub const PackageManager = struct {
             }
         }
     }
-
     fn installWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
@@ -13182,7 +13166,6 @@ pub const PackageManager = struct {
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));
         }
-
         if (manager.options.do.save_yarn_lock) {
             var node: *Progress.Node = undefined;
             if (log_level.showProgress()) {

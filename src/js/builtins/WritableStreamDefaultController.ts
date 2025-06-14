@@ -43,6 +43,6 @@ export function error(this, e) {
     throw $ERR_INVALID_THIS("WritableStreamDefaultController");
 
   const stream = $getByIdDirectPrivate(this, "stream");
-  if ($getByIdDirectPrivate(stream, "state") !== "writable") return;
+  if ($getByIdDirectPrivate(stream, "state") !== $streamWritable) return;
   $writableStreamDefaultControllerError(this, e);
 }

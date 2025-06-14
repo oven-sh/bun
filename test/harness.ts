@@ -5,7 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
+import { gc as bunGC, readableStreamToText, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ChildProcess, fork } from "child_process";
@@ -463,11 +463,43 @@ if (expect.extend)
         }
       }
     },
+    async toRunAsync(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
+      const result = Bun.spawn({
+        cmd: [bunExe(), ...cmds],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        readableStreamToText(result.stdout),
+        readableStreamToText(result.stderr),
+        result.exited,
+      ]);
+
+      if (exitCode !== expectedCode) {
+        return {
+          pass: false,
+          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + stdout + "\n" + stderr,
+        };
+      }
+
+      if (optionalStdout != null) {
+        return {
+          pass: stdout === optionalStdout,
+          message: () => `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${stdout}`,
+        };
+      }
+
+      return {
+        pass: true,
+        message: () => `Expected ${cmds.join(" ")} to run`,
+      };
+    },
     toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
       const result = Bun.spawnSync({
         cmd: [bunExe(), ...cmds],
         env: bunEnv,
-        stdio: ["inherit", "pipe", "inherit"],
+        stdio: ["ignore", "pipe", "inherit"],
       });
 
       if (result.exitCode !== expectedCode) {
@@ -1273,6 +1305,7 @@ interface BunHarnessTestMatchers {
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
+  toRunAsync(optionalStdout?: string, expectedCode?: number): Promise<void>;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }

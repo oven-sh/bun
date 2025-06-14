@@ -87,7 +87,7 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    testFile = Bun.jest(file);
+    testFile = (Bun as typeof Bun & { jest: (absoluteSourceFilePath: string) => BunTestExports }).jest(file);
     testFiles.set(file, testFile);
   }
   return testFile;

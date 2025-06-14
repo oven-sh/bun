@@ -284,7 +284,7 @@ pub const Route = struct {
 
     /// Schedule a bundle to be built.
     /// If success, bumps the ref count and returns true;
-    pub fn scheduleBundle(this: *Route, server: AnyServer) !void {
+    fn scheduleBundle(this: *Route, server: AnyServer) !void {
         switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),
@@ -561,9 +561,11 @@ pub const Route = struct {
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
             }
+
             if (this.init) |*i| {
                 i.deinit(bun.default_allocator);
             }
+            
             this.route.deref();
             bun.destroy(this);
         }

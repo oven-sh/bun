@@ -146,12 +146,39 @@ static us_default_ca_certificates* us_get_default_ca_certificates() {
   return &default_ca_certificates;
 }
 
+std::mutex us_get_root_extra_cert_instances_mutex;
 STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+static X509_STORE *store;
+
+void us_load_extra_ca_certs(const char *extra_certs) {
+  if (store == NULL || !extra_certs || !extra_certs[0])
+    return;
+
+  STACK_OF(X509)* loaded = us_ssl_ctx_load_all_certs_from_file(extra_certs);
+  if (loaded) {
+    for (int i = 0; i < sk_X509_num(loaded); i++) {
+      X509 *cert = sk_X509_value(loaded, i);
+      X509_up_ref(cert);
+      X509_STORE_add_cert(store, cert);
+    }
+
+    std::unique_lock current_lock{us_get_root_extra_cert_instances_mutex};
+    auto* current = us_get_default_ca_certificates();
+    if (current->root_extra_cert_instances == NULL)
+      current->root_extra_cert_instances = loaded;
+    else {
+      for (X509 *cert; (cert = sk_X509_pop(loaded)) != NULL;)
+        sk_X509_push(current->root_extra_cert_instances, cert);
+      sk_X509_free(loaded);
+    }
+  }
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
-  X509_STORE *store = X509_STORE_new();
+  store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }

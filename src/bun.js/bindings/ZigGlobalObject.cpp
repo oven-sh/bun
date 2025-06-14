@@ -4415,6 +4415,14 @@ bool GlobalObject::hasNapiFinalizers() const
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
+extern "C" WebCore::Worker* Bun__VirtualMachine__getWorker(VirtualMachine* bunVM);
+
+WebCore::Worker* GlobalObject::worker()
+{
+    // TODO make bunVM typed instead of void* everywhere
+    return Bun__VirtualMachine__getWorker(reinterpret_cast<VirtualMachine*>(bunVM()));
+}
+
 void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
 {
     this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });

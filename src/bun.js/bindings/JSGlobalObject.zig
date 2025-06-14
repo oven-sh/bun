@@ -881,6 +881,36 @@ pub const JSGlobalObject = opaque {
         return @enumFromInt(ScriptExecutionContextIdentifier__forGlobalObject(global));
     }
 
+    pub const StdioWriterFd = enum(c_int) {
+        stdout = 1,
+        stderr = 2,
+    };
+    extern fn Process__writeToStdio(global: *JSGlobalObject, fd: StdioWriterFd, bytes: [*]const u8, len: usize) void;
+
+    const ProcessStdioWriterContext = struct {
+        global: *JSGlobalObject,
+        fd: StdioWriterFd,
+
+        fn write(this: ProcessStdioWriterContext, bytes: []const u8) bun.JSError!usize {
+            Process__writeToStdio(this.global, this.fd, bytes.ptr, bytes.len);
+            if (this.global.hasException()) {
+                return error.JSError;
+            }
+            return bytes.len;
+        }
+    };
+
+    pub const ProcessStdioWriter = std.io.Writer(
+        ProcessStdioWriterContext,
+        bun.JSError,
+        ProcessStdioWriterContext.write,
+    );
+
+    /// Get a writer which calls process.stdout.write or process.stderr.write
+    pub fn processStdioWriter(global: *JSGlobalObject, fd: StdioWriterFd) ProcessStdioWriter {
+        return .{ .context = .{ .global = global, .fd = fd } };
+    }
+
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {

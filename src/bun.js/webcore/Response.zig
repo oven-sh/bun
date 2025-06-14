@@ -512,38 +512,22 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(HTMLBundle)) |html_bundle| {
-            var init: Init = (brk: {
-                if (arguments[1].isUndefinedOrNull()) {
-                    break :brk Init{
-                        .status_code = 200,
-                        .headers = null,
-                    };
-                }
-                if (arguments[1].isObject()) {
-                    break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
-                }
-                if (!globalThis.hasException()) {
-                    return globalThis.throwInvalidArguments("Failed to construct 'Response': The provided body value is not of type 'ResponseInit'", .{});
-                }
-                return error.JSError;
-            });
-            errdefer init.deinit(bun.default_allocator);
-
             if (globalThis.hasException()) {
                 return error.JSError;
             }
 
             var response: Response = .{
-                .init = init,
+                .init = Response.Init{ .status_code = 302 },
                 .body = Body{ .value = .{ .HTMLRoute = HTMLBundle.Route.init(html_bundle) } },
                 .url = bun.String.empty,
             };
             
-            _ = response.getOrCreateHeaders(globalThis);
+            response.init.headers = response.getOrCreateHeaders(globalThis);
             response.calculateEstimatedByteSize();
 
             return bun.new(Response, response);
         }
+        
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
                 if (!arguments[1].isEmptyOrUndefinedOrNull()) {

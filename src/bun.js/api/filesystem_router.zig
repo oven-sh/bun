@@ -99,7 +99,7 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
-            var iter = file_extensions.arrayIterator(globalThis);
+            var iter = try file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
             while (iter.next()) |val| {
                 if (!val.isString()) {
@@ -108,7 +108,7 @@ pub const FileSystemRouter = struct {
                     globalThis.allocator().destroy(arena);
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
-                if (val.getLength(globalThis) == 0) continue;
+                if (try val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }

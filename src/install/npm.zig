@@ -724,7 +724,7 @@ pub const OperatingSystem = enum(u16) {
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
+        var iter = try args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
@@ -841,7 +841,7 @@ pub const Architecture = enum(u16) {
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
+        var iter = try args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();

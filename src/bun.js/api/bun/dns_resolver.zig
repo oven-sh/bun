@@ -3303,7 +3303,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("setServers", "servers", "array");
         }
 
-        var triplesIterator = argument.arrayIterator(globalThis);
+        var triplesIterator = try argument.arrayIterator(globalThis);
 
         if (triplesIterator.len == 0) {
             const r = c_ares.ares_set_servers_ports(channel, null);

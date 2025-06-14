@@ -158,7 +158,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
     _ = allocator; // autofix
     if (try jsobj.getTruthy(globalThis, "flags")) |val| {
         if (val.isArray()) {
-            var iter = val.arrayIterator(globalThis);
+            var iter = try val.arrayIterator(globalThis);
             while (iter.next()) |item| {
                 const bunstr = try item.toBunString(globalThis);
                 defer bunstr.deref();

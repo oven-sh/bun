@@ -1853,7 +1853,7 @@ pub fn Bun__fetch_(
         inline for (0..2) |i| {
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "unix")) |socket_path| {
-                    if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
+                    if (socket_path.isString() and try socket_path.getLength(ctx) > 0) {
                         if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                             break :extract_unix_socket_path slice;
                         }
@@ -2001,7 +2001,7 @@ pub fn Bun__fetch_(
         inline for (0..2) |i| {
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
-                    if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
+                    if (proxy_arg.isString() and try proxy_arg.getLength(ctx) > 0) {
                         var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
                             const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});

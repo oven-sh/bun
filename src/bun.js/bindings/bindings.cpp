@@ -191,7 +191,7 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 };
 
 #if ASSERT_ENABLED
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_THROW_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
 #else
 #define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
 #endif
@@ -2285,7 +2285,6 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
-                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, lengthValue.toNumber(globalObject));
             }
         }
@@ -2756,10 +2755,10 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
-    RETURN_IF_EXCEPTION(scope, {});
+    EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
 }
 
@@ -3201,7 +3200,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     const BunString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
@@ -3212,7 +3211,9 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    return promise->then(globalObject, resolverFunction, nullptr);
+    auto* newPromise = promise->then(globalObject, resolverFunction, nullptr);
+    EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
+    return newPromise;
 }
 #pragma mark - JSC::JSPromise
 
@@ -3231,11 +3232,13 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
         if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
             promise->reject(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
         if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
             promise->reject(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
@@ -3245,11 +3248,13 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
         if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
             promise->reject(globalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
         if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
             promise->reject(globalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
 
@@ -3258,10 +3263,12 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
         promise->resolve(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
         promise->resolve(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
 
@@ -3271,24 +3278,24 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) {
         auto* exception = scope.exception();
         scope.clearException();
-        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
-        return JSValue::encode(promise);
+        RELEASE_AND_RETURN(scope, JSValue::encode(promise));
     }
 
     if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
-        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
     }
 
-    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
 }
 
 void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,
@@ -3974,15 +3981,16 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
 
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     if (value.getOwnPropertySlot(globalObject, property, slot)) {
-        return JSValue::encode(slot.getValue(globalObject, property));
+        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, property)));
     }
-    return JSValue::encode({});
+    RELEASE_AND_RETURN(scope, JSValue::encode({}));
 }
 
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
@@ -4648,13 +4656,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
         populateStackTrace(vm, *stackTrace, &except->stack, global, flags);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), &except->stack, global, flags);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     } else {
         getFromSourceURL = true;
@@ -4668,17 +4676,26 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
     if (except->type == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
+        }
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
         except->message = Bun::toStringRef(global, message);
     } else {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
+        }
     }
 
-    if (scope.exception()) [[unlikely]] {
-        scope.clearExceptionExceptTermination();
+    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        return;
     }
 
     except->name = Bun::toStringRef(err->sanitizedNameString(global));
+    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        return;
+    }
 
     except->runtime_type = err->runtimeTypeForCause();
 
@@ -4691,8 +4708,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName())) {
@@ -4701,8 +4718,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue path = getNonObservable(vm, global, obj, names.pathPublicName())) {
@@ -4711,8 +4728,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue fd = getNonObservable(vm, global, obj, names.fdPublicName())) {
@@ -4721,8 +4738,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
 
         if (JSC::JSValue errno_ = getNonObservable(vm, global, obj, names.errnoPublicName())) {
@@ -4731,8 +4748,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
 
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
         }
     }
 
@@ -4742,14 +4759,12 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             // we don't want to serialize JSC::StackFrame longer than we need to
             // so in this case, we parse the stack trace as a string
 
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
             // This one intentionally calls getters.
             if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
                 if (stackValue.isString()) {
                     WTF::String stack = stackValue.toWTFString(global);
-                    if (catchScope.exception()) [[unlikely]] {
-                        catchScope.clearExceptionExceptTermination();
+                    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+                        return;
                     }
                     if (!stack.isEmpty()) {
 
@@ -4793,8 +4808,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 }
             }
 
-            if (catchScope.exception()) [[unlikely]] {
-                catchScope.clearExceptionExceptTermination();
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+                return;
             }
         }
 
@@ -5519,10 +5534,10 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto throwScopeForStackOverflowException = DECLARE_THROW_SCOPE(vm);
 
     if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, throwScope);
+        throwStackOverflowError(globalObject, throwScopeForStackOverflowException);
         return;
     }
 
@@ -5843,6 +5858,7 @@ void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSG
         ZigString key = toZigString(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+        // TODO what if iter throws?
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
     }
     properties.releaseData();
@@ -6425,7 +6441,7 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     }
 
     auto& vm = global->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         return {};
     }
@@ -6433,9 +6449,9 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     auto& builtinNames = WebCore::builtinNames(vm);
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    ASSERT(!scope.exception());
+    scope.assertNoExceptionExceptTermination();
     if (!object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot)) {
-        ASSERT(!scope.exception());
+        scope.assertNoExceptionExceptTermination();
         return {};
     }
 
@@ -6477,4 +6493,63 @@ CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
+}
+
+#pragma mark - JSC::CatchScope
+
+extern "C" void CatchScope__construct(
+    void* ptr,
+    JSC::JSGlobalObject* globalObject,
+    const char* function,
+    const char* file,
+    unsigned line,
+    size_t size,
+    size_t alignment)
+{
+    // validate that Zig is correct about what the size and alignment should be
+    ASSERT(size >= sizeof(CatchScope));
+    ASSERT(alignment >= alignof(CatchScope));
+    ASSERT((uintptr_t)ptr % alignment == 0);
+    // wipe out the entire array in the hope of causing (and detecting)
+    // stack corruption if Zig's array is too small
+    memset(ptr, 0xaa, size);
+
+// TODO how important is the stack pointer passed here?
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    new (ptr) JSC::CatchScope(JSC::getVM(globalObject),
+        ExceptionEventLocation { currentStackPointer(), function, file, line });
+#else
+    (void)function;
+    (void)file;
+    (void)line;
+    new (ptr) JSC::CatchScope(JSC::getVM(globalObject));
+#endif
+}
+
+extern "C" JSC::Exception* CatchScope__pureException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    return static_cast<CatchScope*>(ptr)->exception();
+}
+
+extern "C" JSC::Exception* CatchScope__exceptionIncludingTraps(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    auto* scope = static_cast<CatchScope*>(ptr);
+    // this is different than `return scope->exception()` because
+    // RETURN_IF_EXCEPTION also handles traps
+    RETURN_IF_EXCEPTION(*scope, scope->exception());
+    return nullptr;
+}
+
+extern "C" void CatchScope__destruct(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    static_cast<CatchScope*>(ptr)->~CatchScope();
+}
+
+extern "C" void CatchScope__assertNoException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    static_cast<CatchScope*>(ptr)->assertNoException();
 }

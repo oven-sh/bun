@@ -110,7 +110,7 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
     }
     const string_args = arguments[0];
     const template_args_js = arguments[1];
-    var template_args = template_args_js.arrayIterator(globalThis);
+    var template_args = try template_args_js.arrayIterator(globalThis);
 
     var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
     var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);

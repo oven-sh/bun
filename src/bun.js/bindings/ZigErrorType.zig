@@ -1,6 +1,7 @@
 pub const ZigErrorType = extern struct {
     code: ErrorCode,
-    ptr: ?*anyopaque,
+    value: bun.jsc.JSValue,
 };
 
+const bun = @import("bun");
 const ErrorCode = @import("ErrorCode.zig").ErrorCode;

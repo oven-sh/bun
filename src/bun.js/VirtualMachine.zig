@@ -1657,7 +1657,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;
     }
 
@@ -1747,7 +1747,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -1769,7 +1769,8 @@ pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callfram
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    this.eventLoop().drainMicrotasks();
+    // TODO(@190n) will it be too big a refactor to forward errors from here?
+    this.eventLoop().drainMicrotasks() catch {};
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
@@ -1791,7 +1792,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
@@ -1799,13 +1800,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid(),
+                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
                     referrer.toUTF8(bun.default_allocator).slice(),
-                ) catch |e| globalThis.takeException(e)).asVoid(),
+                ) catch |e| globalThis.takeException(e)),
             });
             return;
         },
@@ -1838,7 +1839,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ).asVoid(),
+                ),
             );
         },
     }
@@ -1907,8 +1908,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.isException(this.global.vm())) {
-        const exception = @as(*Exception, @ptrCast(result.asVoid()));
+    if (result.asException(this.jsc)) |exception| {
         this.printException(
             exception,
             exception_list,
@@ -1984,7 +1984,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 return error.ModuleNotFound;
             },
         };
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).protect();
@@ -3088,7 +3088,7 @@ fn printErrorInstance(
                 }
 
                 formatter.format(
-                    JSC.Formatter.Tag.getAdvanced(
+                    try JSC.Formatter.Tag.getAdvanced(
                         value,
                         this.global,
                         .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3129,7 +3129,7 @@ fn printErrorInstance(
 
         // "cause" is not enumerable, so the above loop won't see it.
         if (!saw_cause) {
-            if (error_instance.getOwn(this.global, "cause")) |cause| {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
                     try errors_to_append.append(cause);
@@ -3138,7 +3138,7 @@ fn printErrorInstance(
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
-        const tag = JSC.Formatter.Tag.getAdvanced(
+        const tag = try JSC.Formatter.Tag.getAdvanced(
             error_instance,
             this.global,
             .{ .disable_inspect_custom = true, .hide_global = true },

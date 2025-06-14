@@ -1153,7 +1153,7 @@ pub fn Mixin(comptime Type: type) type {
         fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
             return struct {
                 fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                    return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
+                    return JSC.toJSHostCall(globalObject, @src(), Fn, .{ this, globalObject, lifetime });
                 }
             }.wrap;
         }

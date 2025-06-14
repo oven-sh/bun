@@ -8303,7 +8303,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch ((try JSC.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -8409,7 +8409,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var iter = JSC.JSArrayIterator.init(value, this.global);
+                        var iter = try JSC.JSArrayIterator.init(value, this.global);
                         if (iter.len == 0) {
                             const result = Expr.init(
                                 E.Array,

@@ -490,6 +490,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__generateHeapSnapshot(this);
     }
 
+    // DEPRECATED
     pub fn hasException(this: *JSGlobalObject) bool {
         return JSGlobalObject__hasException(this);
     }

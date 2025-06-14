@@ -10,11 +10,11 @@ pub const JSArrayIterator = struct {
     array: JSValue,
     global: *JSGlobalObject,
 
-    pub fn init(value: JSValue, global: *JSGlobalObject) JSArrayIterator {
+    pub fn init(value: JSValue, global: *JSGlobalObject) !JSArrayIterator {
         return .{
             .array = value,
             .global = global,
-            .len = @as(u32, @truncate(value.getLength(global))),
+            .len = @truncate(try value.getLength(global)),
         };
     }
 

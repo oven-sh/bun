@@ -1827,7 +1827,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 }
 
 fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = args.arrayIterator(globalThis);
+    var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
     argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
@@ -2031,7 +2031,7 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "stdio")) |stdio_val| {
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
+                        var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
                         while (stdio_iter.next()) |value| : (i += 1) {
                             try stdio[i].extract(globalThis, i, value);

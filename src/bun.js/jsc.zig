@@ -33,8 +33,8 @@ pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
 pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
 pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
-pub const toJSHostValue = host_fn.toJSHostValue;
-pub const fromJSHostValue = host_fn.fromJSHostValue;
+pub const toJSHostCall = host_fn.toJSHostCall;
+pub const fromJSHostCall = host_fn.fromJSHostCall;
 pub const createCallback = host_fn.createCallback;
 
 // JSC Classes Bindings
@@ -79,6 +79,7 @@ pub const Weak = @import("Weak.zig").Weak;
 pub const WeakRefType = @import("Weak.zig").WeakRefType;
 pub const Exception = @import("bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("bindings/SourceProvider.zig").SourceProvider;
+pub const CatchScope = @import("bindings/CatchScope.zig");
 
 // JavaScript-related
 pub const Errorable = @import("bindings/Errorable.zig").Errorable;

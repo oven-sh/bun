@@ -6,7 +6,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     if (!args_array.isObject() or !args_array.isArray()) {
         return globalObject.throw("Arguments must be an array", .{});
     }
-    var iter = args_array.arrayIterator(globalObject);
+    var iter = try args_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, iter.len);
     defer {
         for (args.items) |*item| {
@@ -390,7 +390,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Fields must be an array", .{});
     }
 
-    var iter = fields_array.arrayIterator(globalObject);
+    var iter = try fields_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSC.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
     defer {
         for (args.items) |item| {
@@ -495,7 +495,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }
 
-    var iter = array_arg.arrayIterator(globalObject);
+    var iter = try array_arg.arrayIterator(globalObject);
     if (iter.len % 2 != 0) {
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }

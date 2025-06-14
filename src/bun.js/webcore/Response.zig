@@ -92,7 +92,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .js_undefined,
+        .Used, .Empty, .Null, .HTMLRoute => return .js_undefined,
         .Blob => |*blob| {
             if (blob.isBunFile()) {
                 return .js_undefined;
@@ -511,6 +511,23 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
+        if (arguments[0].as(HTMLBundle)) |html_bundle| {
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            var response: Response = .{
+                .init = Response.Init{ .status_code = 302 },
+                .body = Body{ .value = .{ .HTMLRoute = HTMLBundle.Route.init(html_bundle) } },
+                .url = bun.String.empty,
+            };
+            
+            response.init.headers = response.getOrCreateHeaders(globalThis);
+            response.calculateEstimatedByteSize();
+
+            return bun.new(Response, response);
+        }
+        
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
                 if (!arguments[1].isEmptyOrUndefinedOrNull()) {
@@ -737,6 +754,7 @@ const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
+const HTMLBundle = JSC.API.HTMLBundle;
 const InternalBlob = JSC.WebCore.Blob.Internal;
 const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;

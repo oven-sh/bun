@@ -20,6 +20,6 @@ declare module "*/bun.lock" {
 
 declare module "*.html" {
   // In Bun v1.2, this might change to Bun.HTMLBundle
-  var contents: any;
+  var contents: Bun.HTMLBundle;
   export = contents;
 }

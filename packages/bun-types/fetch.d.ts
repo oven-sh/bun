@@ -13,6 +13,7 @@ declare module "bun" {
   type BodyInit =
     | ReadableStream
     | Bun.XMLHttpRequestBodyInit
+    | Bun.HTMLBundle
     | URLSearchParams
     | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
     | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>);

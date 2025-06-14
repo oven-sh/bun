@@ -82,6 +82,9 @@ ObjectDefineProperty(AgentClass, "globalAgent", {
   get: function () {
     return globalAgent;
   },
+  set: function (value) {
+    globalAgent = value;
+  },
 });
 
 ObjectDefineProperty(AgentClass, "defaultMaxSockets", {
@@ -144,10 +147,20 @@ Agent.prototype.destroy = function () {
 
 var globalAgent = new Agent();
 
-const http_agent_exports = {
+const http_agent_exports: any = {
   Agent: AgentClass,
-  globalAgent,
   NODE_HTTP_WARNING,
 };
+
+ObjectDefineProperty(http_agent_exports, "globalAgent", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    return globalAgent;
+  },
+  set(value) {
+    globalAgent = value;
+  },
+});
 
 export default http_agent_exports;

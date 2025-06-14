@@ -783,10 +783,10 @@ pub const Version = struct {
         pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
-                return .jsUndefined();
+                return .js_undefined;
             }
 
-            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .jsUndefined();
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .js_undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -1284,19 +1284,19 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .jsUndefined();
+    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
-        return .jsUndefined();
+        return .js_undefined;
     }
     const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
-        return .jsUndefined();
+        return .js_undefined;
     }
 
-    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .jsUndefined();
+    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1320,7 +1320,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
-        return .jsUndefined();
+        return .js_undefined;
     };
 
     if (log.msgs.items.len > 0) {

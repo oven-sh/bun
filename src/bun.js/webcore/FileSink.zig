@@ -434,7 +434,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
 
     if (this.done) {
-        return .initResult(.jsUndefined());
+        return .initResult(.js_undefined);
     }
 
     const rc = this.writer.flush();

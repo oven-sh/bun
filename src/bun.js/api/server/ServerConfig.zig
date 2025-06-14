@@ -215,6 +215,14 @@ pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyRoute,
 
 pub fn applyStaticRoute(server: AnyServer, comptime ssl: bool, app: *uws.NewApp(ssl), comptime T: type, entry: T, path: []const u8, method: HTTP.Method.Optional) void {
     entry.server = server;
+
+    // test.
+    if (comptime T == *HTMLBundle.Route){
+        if (server.config().isDevelopment()) {
+            entry.scheduleBundle(server) catch bun.outOfMemory();
+        }
+    }
+
     const handler_wrap = struct {
         pub fn handler(route: T, req: *uws.Request, resp: *uws.NewApp(ssl).Response) void {
             route.onRequest(req, switch (comptime ssl) {
@@ -1090,3 +1098,4 @@ const AnyRoute = @import("../server.zig").AnyRoute;
 const HTTP = bun.http;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
+const HTMLBundle = JSC.API.HTMLBundle;

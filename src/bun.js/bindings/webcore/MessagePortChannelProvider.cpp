@@ -27,14 +27,14 @@
 #include "MessagePortChannelProvider.h"
 
 // #include "Document.h"
-#include "BunWorkerGlobalScope.h"
 #include "MessagePortChannelProviderImpl.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
+#include "BunWorkerGlobalScope.h"
 // #include "WorkerGlobalScope.h"
 // #include "WorkletGlobalScope.h"
 #include <wtf/MainThread.h>
-#include <wtf/NeverDestroyed.h>
+#include <mutex>
 
 namespace WebCore {
 
@@ -46,20 +46,25 @@ static WeakPtr<MessagePortChannelProvider>& globalProvider()
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
-    ASSERT(isMainThread());
-    auto& globalProvider = WebCore::globalProvider();
-    if (!globalProvider)
-        globalProvider = new MessagePortChannelProviderImpl;
-    return *globalProvider;
+    // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
+    // ASSERT(isMainThread());
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        auto& globalProvider = WebCore::globalProvider();
+        if (!globalProvider)
+            globalProvider = new MessagePortChannelProviderImpl;
+    });
+
+    return *globalProvider().get();
 }
 
-void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
-{
-    RELEASE_ASSERT(isMainThread());
-    auto& globalProvider = WebCore::globalProvider();
-    RELEASE_ASSERT(!globalProvider);
-    globalProvider = provider;
-}
+// void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
+// {
+//     RELEASE_ASSERT(isMainThread());
+//     auto& globalProvider = WebCore::globalProvider();
+//     RELEASE_ASSERT(!globalProvider);
+//     globalProvider = &provider;
+// }
 
 MessagePortChannelProvider& MessagePortChannelProvider::fromContext(ScriptExecutionContext& context)
 {

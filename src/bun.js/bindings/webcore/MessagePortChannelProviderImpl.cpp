@@ -41,7 +41,7 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 
 void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didCreateMessagePortChannel(local, remote);
     });
@@ -49,7 +49,7 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote] {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didEntangleLocalToRemote(local, remote, Process::identifier());
     });
@@ -57,7 +57,7 @@ void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(cons
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didDisentangleMessagePort(local);
     });
@@ -65,7 +65,7 @@ void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortId
 
 void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifier& local)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local] {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didCloseMessagePort(local);
     });
@@ -73,7 +73,7 @@ void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifi
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget]() mutable {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget]() mutable {
         CheckedPtr registry = weakRegistry.get();
         if (!registry)
             return;
@@ -90,7 +90,7 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 
-    ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)]() mutable {
+    WTF::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)]() mutable {
         if (CheckedPtr registry = weakRegistry.get())
             registry->takeAllMessagesForPort(port, WTFMove(callback));
     });

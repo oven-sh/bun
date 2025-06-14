@@ -5230,20 +5230,36 @@ pub const PackageManager = struct {
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
             // if it's a workspaceOnly dependency
             if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
-                if (this.lockfile.overrides.get(name_hash)) |new| {
+                if (this.lockfile.overrides.getDependency(name_hash)) |override_dep| {
+                    const new = override_dep.version;
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
-                    name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
-
-                    if (new.tag == .catalog) {
-                        if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
-                            name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
-                            break :version catalog_dep.version;
+                    // Check if this override should preserve the original name ($ syntax)
+                    // If the override dependency has the same name_hash as requested, it means
+                    // it was created with preserved identity in parseOverrideValue
+                    if (override_dep.name_hash == name_hash) {
+                        // This is a $ override that preserves package identity
+                        // Only update the version, not the name
+                        if (new.tag == .catalog) {
+                            if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
+                                break :version catalog_dep.version;
+                            }
                         }
-                    }
+                        break :version new;
+                    } else {
+                        // Normal override - update name and name_hash
+                        name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
 
-                    // `name_hash` stays the same
-                    break :version new;
+                        if (new.tag == .catalog) {
+                            if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
+                                name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+                                break :version catalog_dep.version;
+                            }
+                        }
+
+                        // `name_hash` stays the same
+                        break :version new;
+                    }
                 }
 
                 if (dependency.version.tag == .catalog) {

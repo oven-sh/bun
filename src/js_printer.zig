@@ -2111,12 +2111,12 @@ fn NewPrinter(
 
                         if (p.options.target == .node) {
                             // "__require.module"
-                            if (p.options.require_ref) |require|
-                                p.printSymbol(require)
-                            else
-                                p.print("require");
-
-                            p.print(".module");
+                            if (p.options.require_ref) |require| {
+                                p.printSymbol(require);
+                                p.print(".module");
+                            } else {
+                                p.print("module");
+                            }
                         } else if (p.options.commonjs_module_ref.isValid()) {
                             p.printSymbol(p.options.commonjs_module_ref);
                         } else {

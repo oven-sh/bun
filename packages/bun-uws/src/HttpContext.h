@@ -383,7 +383,7 @@ private:
                     httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false);
+                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false, NULL);
                 us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
@@ -588,7 +588,7 @@ public:
             methods = getAllHttpMethods();
         } else {
             methods_buffer[0] = std::string(method);
-            methods = {methods_buffer.data(), 1};   
+            methods = {methods_buffer.data(), 1};
         }
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);

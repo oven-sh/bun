@@ -247,7 +247,7 @@ public:
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
             /* Attempt to write data to the socket */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, 0);
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, 0, NULL);
             total_written += written;
             
             /* Check if we couldn't write the entire buffer */
@@ -297,7 +297,7 @@ public:
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
             /* Write off as much as we can */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, /*nextLength != 0 | */length);
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, /*nextLength != 0 | */length, NULL);
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
@@ -342,7 +342,7 @@ public:
                 }
             } else {
                 /* We are not corked */
-                int written = us_socket_write(SSL, (us_socket_t *) this, src, length, nextLength != 0);
+                int written = us_socket_write(SSL, (us_socket_t *) this, src, length, nextLength != 0, NULL);
 
                 /* Did we fail? */
                 if (written < length) {

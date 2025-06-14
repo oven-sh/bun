@@ -1573,8 +1573,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (vm.isShuttingDown()) {
                 return;
             }
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = handlers.callErrorHandler(this_value, &.{ this_value, err_value });
@@ -1594,7 +1596,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             this.ref();
             defer this.deref();
-            this.internalFlush();
+            this.internalFlush() catch return;
             log("onWritable buffered_data_for_node_net {d}", .{this.buffered_data_for_node_net.len});
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
@@ -2216,7 +2218,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const res = this.socket.write(buffer, false);
+            const res = this.socket.write(buffer, false, null);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -2256,7 +2258,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush();
+                        this.internalFlush() catch return .jsBoolean(false);
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);
@@ -2534,9 +2536,10 @@ fn NewSocket(comptime ssl: bool) type {
             return this.flags.is_active and this.flags.end_after_flush and !this.flags.empty_packet_pending and this.buffered_data_for_node_net.len == 0;
         }
 
-        fn internalFlush(this: *This) void {
+        fn internalFlush(this: *This) error{CalledOnError}!void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
+                var errno: c_int = 0;
+                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false, &errno), 0));
                 this.bytes_written += written;
                 if (written > 0) {
                     if (this.buffered_data_for_node_net.len > written) {
@@ -2547,6 +2550,14 @@ fn NewSocket(comptime ssl: bool) type {
                         this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                         this.buffered_data_for_node_net = .{};
                     }
+                } else if (errno > 0) {
+                    this.handleError(JSC.SystemError.createJS(this.handlers.globalObject, .{
+                        .errno = @bitCast(errno),
+                        .code = .static(@tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno)))),
+                        .message = .static("idk what goes here"),
+                        .syscall = .static("send"),
+                    }));
+                    return error.CalledOnError;
                 }
             }
 
@@ -2560,7 +2571,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn flush(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            this.internalFlush();
+            this.internalFlush() catch return .js_undefined;
             return .js_undefined;
         }
 
@@ -2608,7 +2619,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush();
+                        this.internalFlush() catch return .jsNumber(0);
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },

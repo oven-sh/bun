@@ -773,7 +773,7 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #endif
 
-ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more, int *error) {
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -788,6 +788,10 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
             // use TCP_NOPUSH
             ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
         #endif
+        if (rc < 0) {
+            if (error != NULL) *error = LIBUS_ERR;
+            return -1;
+        }
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;

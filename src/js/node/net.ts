@@ -222,8 +222,6 @@ const SocketHandlers: SocketHandler = {
   error(socket, error) {
     const self = socket.data;
     if (!self) return;
-    if (self._hadError) return;
-    self._hadError = true;
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -231,7 +229,7 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
-    self.emit("error", error);
+    if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   open(socket) {
     const self = socket.data;
@@ -488,7 +486,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

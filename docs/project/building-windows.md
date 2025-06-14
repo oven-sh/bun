@@ -65,7 +65,6 @@ After Visual Studio, you need the following:
 - Rust
 - NASM
 - Perl
-- Ruby
 - Node.js
 - Ccache
 
@@ -79,7 +78,7 @@ After Visual Studio, you need the following:
 
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
-> scoop install nodejs-lts go rust nasm ruby perl ccache
+> scoop install nodejs-lts go rust nasm perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
 > scoop install llvm@19.1.7
 ```

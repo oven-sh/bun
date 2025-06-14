@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
-   libxml2-dev ruby ruby-dev bison gawk perl make golang \
+   libxml2-dev bison gawk perl make golang \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \

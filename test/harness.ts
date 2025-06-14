@@ -590,6 +590,20 @@ if (expect.extend)
         message: () => `Expected ${actual} to be a UTF16 string`,
       };
     },
+    // meant to be called like `expect(() => ....).not.toCrash()`
+    // when fuzzing exposed internals, the important piece is that it finishes without sefaulting, not whether it throws an error or not
+    toCrash(fn: unknown) {
+      if (typeof fn !== "function") throw new Error("toCrash expects a function");
+      try {
+        fn();
+      } catch (e) {
+        // ignore
+      }
+      return {
+        pass: false,
+        message: () => `Expected 'fn' to cause a crash`,
+      };
+    },
   });
 
 export function ospath(path: string) {

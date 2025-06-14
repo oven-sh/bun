@@ -91,6 +91,16 @@ pub const Route = struct {
         });
     }
 
+    pub fn initEmpty() RefPtr(Route) {
+        return .new(.{
+            .bundle = undefined,
+            .pending_response = .{},
+            .refcount = .init(),
+            .server = null,
+            .state = .pending,
+        });
+    }
+
     fn deinit(this: *Route) void {
         bun.assert(this.pending_responses.items.len == 0); // pending responses keep a ref to the route
         this.pending_responses.deinit(bun.default_allocator);
@@ -139,8 +149,7 @@ pub const Route = struct {
         this.onAnyRequest(req, resp, true);
     }
 
-    pub fn respondWithInit(this: *Route, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
-        debug("respondWithInit", .{});
+    pub fn respondWithInit(this: *Route, req: *uws.Request, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
         this.ref();
         defer this.deref();
 
@@ -151,6 +160,21 @@ pub const Route = struct {
         };
 
         const is_head = method == .HEAD;
+
+        if (server.config().isDevelopment()) {
+            if (server.devServer()) |dev| {
+                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
+                return;
+            }
+
+            if (this.state == .html) {
+                this.state.html.deref();
+                this.state = .pending;
+            } else if (this.state == .err) {
+                this.state.err.deinit();
+                this.state = .pending;
+            }
+        }
 
         var cloned_init = resinit.clone(server.globalThis());
         defer cloned_init.deinit(bun.default_allocator);
@@ -209,6 +233,8 @@ pub const Route = struct {
                     return;
                 },
             };
+        
+        bun.Output.print("\nhtmlbundle count: {any}\n", .{this.ref_count.active_counts});
     }
 
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
@@ -565,7 +591,7 @@ pub const Route = struct {
             if (this.init) |*i| {
                 i.deinit(bun.default_allocator);
             }
-            
+
             this.route.deref();
             bun.destroy(this);
         }

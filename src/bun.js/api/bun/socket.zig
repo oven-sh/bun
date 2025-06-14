@@ -783,7 +783,7 @@ pub const Listener = struct {
                 socket_context.free(ssl_enabled);
             }
 
-            const err = globalObject.createErrorInstance("Failed to listen at {s} ({d})", .{ bun.span(hostname_or_unix.slice()), errno });
+            const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
             log("Failed to listen {d}", .{errno});
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("syscall"), bun.String.createUTF8ForJS(globalObject, "listen"));

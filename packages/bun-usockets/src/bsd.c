@@ -1029,13 +1029,13 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 
             // if the path is just a single character, or the path is too long, we cannot use this method
             if (dirname_len < 2 || (path_len - dirname_len + 1) >= sizeof(server_address->sun_path)) {
-                *error = ENAMETOOLONG;
+                if (error != NULL) *error = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
             char dirname_buf[4096];
             if (dirname_len + 1 > sizeof(dirname_buf)) {
-                *error = ENAMETOOLONG;
+                if (error != NULL) *error = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
@@ -1050,7 +1050,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 
             int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
-                *error = ENAMETOOLONG;
+                if (error != NULL) *error = ENAMETOOLONG;
                 close(socket_dir_fd);
                 return LIBUS_SOCKET_ERROR;
             }

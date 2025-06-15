@@ -2,7 +2,6 @@ const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const std = @import("std");
@@ -12,11 +11,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL.c;
-const X509 = @import("./x509.zig");
 const Async = bun.Async;
-const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
-const NodePath = @import("../../node/path.zig");
 
 pub const SocketAddress = @import("./socket/SocketAddress.zig");
 

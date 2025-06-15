@@ -987,6 +987,5 @@ const TLSSocket = JSC.API.TLSSocket;
 const socket_ = @import("../socket.zig");
 const WindowsNamedPipeContext = socket_.WindowsNamedPipeContext;
 const SocketConfig = socket_.SocketConfig;
-const SocketConfigOptions = socket_.SocketConfigOptions;
 const NodePath = JSC.Node.path;
 const NewSocket = socket_.NewSocket;

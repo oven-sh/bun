@@ -368,7 +368,6 @@ pub const SocketConfig = struct {
 };
 
 const bun = @import("bun");
-const std = @import("std");
 const Listener = JSC.API.Listener;
 const uws = bun.uws;
 const Environment = bun.Environment;

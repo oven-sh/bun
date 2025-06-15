@@ -647,17 +647,12 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
 
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
-const Environment = bun.Environment;
 const strings = bun.strings;
 const string = bun.string;
-const Output = bun.Output;
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("../x509.zig");
-const Async = bun.Async;
-const uv = bun.windows.libuv;

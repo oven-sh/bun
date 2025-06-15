@@ -489,12 +489,22 @@ pub const Route = struct {
                             headers.append("SourceMap", route_path) catch bun.outOfMemory();
                         }
                     }
+                    
+                    if (this.headers.entries.len > 0) {
+                        const extra_entries = this.headers.entries.slice();
+                        const extra_names = extra_entries.items(.name);
+                        const extra_vals = extra_entries.items(.value);
+                        const buf = this.headers.buf.items;
+                        for (extra_names, extra_vals) |name, val| {
+                            headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
+                        }
+                    }
 
                     const static_route = bun.new(StaticRoute, .{
                         .ref_count = .init(),
                         .blob = blob,
                         .server = server,
-                        .status_code = 202,
+                        .status_code = this.status_code,
                         .headers = headers,
                         .cached_blob_size = blob.size(),
                     });

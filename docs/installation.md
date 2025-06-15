@@ -9,6 +9,10 @@ Bun ships as a single executable with no dependencies that can be installed a fe
 Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Use `uname -r` to check Kernel version.
 {% /callout %}
 
+{% callout %}
+**MacOS Silicon users** — Running amd64 Bun under Rosetta2 is not supported, please build/compile/install for your architecture.
+{% /callout %}
+
 {% codetabs %}
 
 ```bash#macOS/Linux_(curl)

@@ -234,7 +234,7 @@ pub const Route = struct {
                     return;
                 },
             };
-        
+
         bun.Output.print("\nhtmlbundle count: {any}\n", .{this.ref_count.active_counts});
     }
 
@@ -490,7 +490,7 @@ pub const Route = struct {
                             headers.append("SourceMap", route_path) catch bun.outOfMemory();
                         }
                     }
-                    
+
                     if (this.headers.entries.len > 0) {
                         const extra_entries = this.headers.entries.slice();
                         const extra_names = extra_entries.items(.name);
@@ -560,10 +560,34 @@ pub const Route = struct {
 
             switch (this.state) {
                 .html => |html| {
-                    if (method == .HEAD) {
-                        html.onHEAD(resp);
+                    const server = this.server.?; // server must exist here
+                    if (pending_response.init) |*_init| {
+                        var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
+                        this.status_code = _init.status_code;
+                        route_clone.status_code = _init.status_code;
+                        if (_init.headers) |headers| {
+                            var extra = Headers.from(headers, bun.default_allocator, .{ .body = &route_clone.blob }) catch bun.outOfMemory();
+                            defer extra.deinit();
+                            const entries = extra.entries.slice();
+                            const names = entries.items(.name);
+                            const values = entries.items(.value);
+                            const buf = extra.buf.items;
+                            for (names, values) |name, val| {
+                                route_clone.headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
+                            }
+                        }
+                        if (method == .HEAD) {
+                            route_clone.onHEAD(resp);
+                        } else {
+                            route_clone.on(resp);
+                        }
+                        route_clone.deref();
                     } else {
-                        html.on(resp);
+                        if (method == .HEAD) {
+                            html.onHEAD(resp);
+                        } else {
+                            html.on(resp);
+                        }
                     }
                 },
                 .err => |log| {

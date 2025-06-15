@@ -130,6 +130,9 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
+const PackageManager = Install.PackageManager;
+const PmViewCommand = @import("./cli/pm_view_command.zig");
+
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
         const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
@@ -1381,6 +1384,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>publish<r>                        Publish a package to the npm registry
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
+        \\  <b><blue>info<r>      <d>{s:<16}<r>     Display package metadata from the registry
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
@@ -1411,6 +1415,7 @@ pub const HelpCommand = struct {
             packages_to_add_filler[package_add_i],
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
+            packages_to_add_filler[(package_add_i + 2) % packages_to_add_filler.len],
             packages_to_create_filler[package_create_i],
         };
 
@@ -1774,7 +1779,7 @@ pub const Command = struct {
             // when we add our actual command
             RootCommandMatcher.case("deploy") => .ReservedCommand,
             RootCommandMatcher.case("cloud") => .ReservedCommand,
-            RootCommandMatcher.case("info") => .ReservedCommand,
+            RootCommandMatcher.case("info") => .InfoCommand,
             RootCommandMatcher.case("config") => .ReservedCommand,
             RootCommandMatcher.case("use") => .ReservedCommand,
             RootCommandMatcher.case("auth") => .ReservedCommand,
@@ -1808,6 +1813,7 @@ pub const Command = struct {
         "pm",
         "x",
         "repl",
+        "info",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -1860,6 +1866,21 @@ pub const Command = struct {
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
+            .InfoCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InfoCommand) unreachable;
+
+                // Parse arguments
+                const cli = try PackageManager.CommandLineArguments.parse(allocator, .pm);
+                const pm, const cwd = try PackageManager.init(Command.Context{ .allocator = allocator, .log = log, .args = std.mem.zeroes(Api.TransformOptions) }, cli, PackageManager.Subcommand.pm);
+                defer allocator.free(cwd);
+
+                const property_path = if (pm.options.positionals.len > 1) pm.options.positionals[1] else null;
+                const package_name = if (pm.options.positionals.len > 0) pm.options.positionals[0] else "";
+
+                // Call the same logic as "bun pm view"
+                try PmViewCommand.view(allocator, pm, package_name, property_path, pm.options.json_output);
+                Global.exit(0);
+            },
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
@@ -2335,6 +2356,7 @@ pub const Command = struct {
         GetCompletionsCommand,
         HelpCommand,
         InitCommand,
+        InfoCommand,
         InstallCommand,
         InstallCompletionsCommand,
         LinkCommand,
@@ -2369,6 +2391,7 @@ pub const Command = struct {
                 .GetCompletionsCommand => 'g',
                 .HelpCommand => 'h',
                 .InitCommand => 'j',
+                .InfoCommand => 'v',
                 .InstallCommand => 'i',
                 .InstallCompletionsCommand => 'C',
                 .LinkCommand => 'l',
@@ -2645,6 +2668,30 @@ pub const Command = struct {
                         .PublishCommand => .publish,
                         .AuditCommand => .audit,
                     });
+                },
+                .InfoCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r> <blue>[property path]<r>
+                        \\  Display package metadata from the registry.
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>View basic information about a package<r>
+                        \\  <b><green>bun info<r> <blue>react<r>
+                        \\
+                        \\  <d>View specific version<r>
+                        \\  <b><green>bun info<r> <blue>react@18.0.0<r>
+                        \\
+                        \\  <d>View specific property<r>
+                        \\  <b><green>bun info<r> <blue>react<r> version
+                        \\  <b><green>bun info<r> <blue>react<r> dependencies
+                        \\  <b><green>bun info<r> <blue>react<r> versions
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit);

@@ -32,7 +32,11 @@ src/bun.js/api/bun/h2_frame_parser.zig
 src/bun.js/api/bun/lshpack.zig
 src/bun.js/api/bun/process.zig
 src/bun.js/api/bun/socket.zig
+src/bun.js/api/bun/socket/Handlers.zig
+src/bun.js/api/bun/socket/Listener.zig
 src/bun.js/api/bun/socket/SocketAddress.zig
+src/bun.js/api/bun/socket/tls_socket_functions.zig
+src/bun.js/api/bun/socket/WindowsNamedPipeContext.zig
 src/bun.js/api/bun/spawn.zig
 src/bun.js/api/bun/spawn/stdio.zig
 src/bun.js/api/bun/ssl_wrapper.zig

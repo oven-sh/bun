@@ -50,7 +50,7 @@ const BlockList = $zig("node_net_binding.zig", "BlockList");
 const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
-const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);

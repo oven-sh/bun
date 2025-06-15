@@ -53,11 +53,10 @@ pub fn cpus(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     };
 
     return cpusImpl(global) catch {
-        const err = JSC.SystemError{
+        return JSC.SystemError.throw(global, .{
             .message = bun.String.static("Failed to get CPU information"),
             .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR)),
-        };
-        return global.throwValue(err.toErrorInstance(global));
+        });
     };
 }
 
@@ -302,7 +301,7 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             .message = bun.String.static("no such process"),
             .code = bun.String.static("ESRCH"),
             .errno = comptime switch (bun.Environment.os) {
-                else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                else => @intFromEnum(std.posix.E.SRCH),
                 .windows => libuv.UV_ESRCH,
             },
             .syscall = bun.String.static("uv_os_getpriority"),
@@ -471,14 +470,12 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
     var interface_start: ?*c.ifaddrs = null;
     const rc = c.getifaddrs(&interface_start);
     if (rc != 0) {
-        const err = JSC.SystemError{
+        return JSC.SystemError.throw(globalThis, .{
             .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
             .code = bun.String.static("ERR_SYSTEM_ERROR"),
             .errno = @intFromEnum(std.posix.errno(rc)),
             .syscall = bun.String.static("getifaddrs"),
-        };
-
-        return globalThis.throwValue(err.toErrorInstance(globalThis));
+        });
     }
     defer c.freeifaddrs(interface_start);
 
@@ -653,14 +650,13 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
     var count: c_int = undefined;
     const err = libuv.uv_interface_addresses(&ifaces, &count);
     if (err != 0) {
-        const sys_err = JSC.SystemError{
+        return JSC.SystemError.throw(globalThis, .{
             .message = bun.String.static("uv_interface_addresses failed"),
             .code = bun.String.static("ERR_SYSTEM_ERROR"),
             //.info = info,
             .errno = err,
             .syscall = bun.String.static("uv_interface_addresses"),
-        };
-        return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+        });
     }
     defer libuv.uv_free_interface_addresses(ifaces, count);
 
@@ -825,7 +821,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("no such process"),
                 .code = bun.String.static("ESRCH"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                    else => @intFromEnum(std.posix.E.SRCH),
                     .windows => libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
@@ -837,7 +833,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("permission denied"),
                 .code = bun.String.static("EACCES"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.ACCES)),
+                    else => @intFromEnum(std.posix.E.ACCES),
                     .windows => libuv.UV_EACCES,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
@@ -849,7 +845,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("operation not permitted"),
                 .code = bun.String.static("EPERM"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                    else => @intFromEnum(std.posix.E.SRCH),
                     .windows => libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
@@ -902,13 +898,12 @@ pub fn uptime(global: *JSC.JSGlobalObject) bun.JSError!f64 {
             var uptime_value: f64 = undefined;
             const err = libuv.uv_uptime(&uptime_value);
             if (err != 0) {
-                const sys_err = JSC.SystemError{
+                return JSC.SystemError.throw(global, .{
                     .message = bun.String.static("failed to get system uptime"),
                     .code = bun.String.static("ERR_SYSTEM_ERROR"),
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
-                };
-                return global.throwValue(sys_err.toErrorInstance(global));
+                });
             }
             return uptime_value;
         },

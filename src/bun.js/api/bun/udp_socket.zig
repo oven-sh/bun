@@ -333,12 +333,11 @@ pub const UDPSocket = struct {
             defer this.deinit();
             if (err != 0) {
                 const code = @tagName(bun.sys.SystemErrno.init(@as(c_int, @intCast(err))).?);
-                const sys_err = JSC.SystemError{
-                    .errno = err,
+                const error_value = JSC.SystemError.createJS(globalThis, .{
+                    .errno = @intCast(err),
                     .code = bun.String.static(code),
                     .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
-                };
-                const error_value = sys_err.toErrorInstance(globalThis);
+                });
                 error_value.put(globalThis, "address", bun.String.createUTF8ForJS(globalThis, config.hostname));
                 return globalThis.throwValue(error_value);
             }

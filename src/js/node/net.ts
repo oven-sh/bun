@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -231,7 +231,7 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
-    self.emit("error", error);
+    if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   open(socket) {
     const self = socket.data;
@@ -360,7 +360,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const { pauseOnConnect, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
     const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket._requestCert = requestCert;
@@ -409,12 +409,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       _socket.pause();
     }
 
-    if (typeof connectionListener === "function") {
-      this.pauseOnConnect = pauseOnConnect;
-      if (!isTLS) {
-        connectionListener.$call(self, _socket);
-      }
-    }
     self.emit("connection", _socket);
     // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
     if (!pauseOnConnect && !isTLS) {
@@ -455,10 +449,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     } else {
       self.authorized = true;
     }
-    const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-    if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
-    }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
@@ -474,7 +464,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (!data) return;
 
     if (data._hadError) return;
-    data._hadError = true;
     const bunTLS = this[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
@@ -498,7 +487,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);
@@ -625,8 +613,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
-
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   timeout(socket) {
@@ -681,14 +667,14 @@ function kConnectPipe(self, req, address) {
 function Socket(options?) {
   if (!(this instanceof Socket)) return new Socket(options);
 
-  const {
+  let {
     socket,
     signal,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
     keepAlive = false,
-    keepAliveInitialDelay = 0,
+    keepAliveInitialDelay,
     ...opts
   } = options || {};
 
@@ -697,6 +683,11 @@ function Socket(options?) {
     throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
+  if (keepAliveInitialDelay !== undefined) {
+    validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
+    if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+  }
 
   if (options?.fd !== undefined) {
     validateInt32(options.fd, "options.fd", 0);
@@ -1101,6 +1092,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;
@@ -1508,6 +1500,8 @@ function lookupAndConnect(self, options) {
   const { localAddress, localPort } = options;
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
+
+  validateString(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);
@@ -2059,10 +2053,10 @@ function createConnectionError(req, status) {
 
 type MaybeListener = SocketListener<unknown> | null;
 
-function Server();
-function Server(options?: null | undefined);
-function Server(connectionListener: () => {});
-function Server(options: ServerOpts, connectionListener?: () => {});
+function Server(): void;
+function Server(options?: null | undefined): void;
+function Server(connectionListener: () => {}): void;
+function Server(options: ServerOpts, connectionListener?: () => {}): void;
 function Server(options?, connectionListener?) {
   if (!(this instanceof Server)) {
     return new Server(options, connectionListener);
@@ -2076,7 +2070,14 @@ function Server(options?, connectionListener?) {
   } else if (options == null || typeof options === "object") {
     options = { ...options };
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+  if (typeof connectionListener === "function") {
+    if (typeof this[bunTlsSymbol] === "function") {
+      this.on("secureConnection", connectionListener);
+    } else {
+      this.on("connection", connectionListener);
+    }
   }
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
@@ -2105,7 +2106,6 @@ function Server(options?, connectionListener?) {
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
 
-  options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
 
   if (options.blockList) {
@@ -2435,6 +2435,16 @@ Server.prototype[kRealListen] = function (
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
   setTimeout(emitListeningNextTick, 1, this);
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
 };
 
 Server.prototype.getsockname = function getsockname(out) {

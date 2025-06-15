@@ -507,6 +507,7 @@ function Server(options, secureConnectionListener): void {
     return new Server(options, secureConnectionListener);
   }
 
+  this[buntls] = () => {}; // for detection, overwrote below
   NetServer.$apply(this, [options, secureConnectionListener]);
 
   this.key = undefined;
@@ -641,6 +642,7 @@ $toClass(Server, "Server", NetServer);
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
+
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_MIN_VERSION = "TLSv1.2",

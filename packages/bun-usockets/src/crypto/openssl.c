@@ -141,8 +141,7 @@ int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   loop_ssl_data->last_write_was_msg_more =
       loop_ssl_data->msg_more || length == 16413;
-  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length,
-                                loop_ssl_data->last_write_was_msg_more);
+  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length, loop_ssl_data->last_write_was_msg_more, NULL);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -1608,11 +1607,11 @@ static void us_internal_zero_ssl_data_for_connected_socket_before_onopen(struct 
 // TODO does this need more changes?
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* is_connecting) {
+    int port, int options, int socket_ext_size, int* is_connecting, int *error) {
   struct us_internal_ssl_socket_t *s = (struct us_internal_ssl_socket_t *)us_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size, is_connecting);
+          socket_ext_size, is_connecting, error);
   if (*is_connecting && s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
   }
@@ -1621,11 +1620,11 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
 }
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
-    size_t pathlen, int options, int socket_ext_size) {
+    size_t pathlen, int options, int socket_ext_size, int *error) {
   struct us_socket_t *s = (struct us_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
+          socket_ext_size, error);
   if (s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen((struct us_internal_ssl_socket_t*) s);
   }
@@ -1747,7 +1746,7 @@ int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return 0;
   }
-  return us_socket_write(0, &s->s, data, length, msg_more);
+  return us_socket_write(0, &s->s, data, length, msg_more, NULL);
 }
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,

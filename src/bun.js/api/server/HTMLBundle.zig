@@ -210,6 +210,7 @@ pub const Route = struct {
                 .html => |html| {
                     debug("serving...", .{});
                     var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
+                    this.status_code = cloned_init.status_code;
                     route_clone.status_code = cloned_init.status_code;
                     if (cloned_init.headers) |headers| {
                         debug("getting headers", .{});

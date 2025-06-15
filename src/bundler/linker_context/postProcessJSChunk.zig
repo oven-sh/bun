@@ -657,20 +657,20 @@ pub fn generateEntryPointTailJS(
                                     },
                                     .alias = alias,
                                     .alias_loc = resolved_export.data.name_loc,
-                                }) catch unreachable;
+                                }) catch bun.outOfMemory();
                             }
                         }
 
                         // Filter out exports that are already handled by cross-chunk exports
                         // and deduplicate to prevent duplicate exports in code splitting
-                        var seen_aliases = std.StringHashMap(void).init(temp_allocator);
+                        var seen_aliases = bun.StringHashMap(void).init(temp_allocator);
                         defer seen_aliases.deinit();
 
                         // First, mark aliases that are already exported in cross-chunk exports
                         const cross_chunk_exports = &chunk.content.javascript.exports_to_other_chunks;
                         var iterator = cross_chunk_exports.iterator();
                         while (iterator.next()) |entry| {
-                            seen_aliases.put(entry.value_ptr.*, {}) catch unreachable;
+                            seen_aliases.put(entry.value_ptr.*, {}) catch bun.outOfMemory();
                         }
 
                         var unique_items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);

@@ -64,7 +64,7 @@ ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 RUN --mount=type=bind,from=build,source=/tmp,target=/tmp \
     addgroup -g 1000 bun \
     && adduser -u 1000 -G bun -s /bin/sh -D bun \
-    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
+    && ln -s bun /usr/local/bin/bunx \
     && apk add libgcc libstdc++ \
     && which bun \
     && which bunx \

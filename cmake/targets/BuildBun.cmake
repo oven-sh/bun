@@ -680,13 +680,7 @@ if(WIN32)
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  add_custom_command(
-    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
-    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
-    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
-    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
-  )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
 # --- Executable ---

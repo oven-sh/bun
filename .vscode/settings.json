@@ -168,4 +168,12 @@
     "WebKit/WebInspectorUI": true,
   },
   "git.detectSubmodules": false,
+
+  // Copilot
+  "github.copilot.chat.codeGeneration.instructions": [
+    { "file": "/.cursor/rules/javascriptcore-class.mdc" },
+    { "file": "/docs/contributing/upgrading-webkit.md" },
+    { "file": "/docs/project/bindgen.md" },
+    { "file": "/CONTRIBUTING.md" }
+  ]
 }

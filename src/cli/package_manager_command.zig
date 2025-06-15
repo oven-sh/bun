@@ -126,7 +126,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
-            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(alias for `bun info`)<r>
+            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
             \\  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile

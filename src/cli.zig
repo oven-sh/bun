@@ -702,21 +702,41 @@ pub const Command = struct {
             .InfoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InfoCommand) unreachable;
 
-                // Parse arguments
-                const cli = try PackageManager.CommandLineArguments.parse(allocator, .pm);
+                // Parse arguments manually since the standard flow doesn't work for standalone commands
+                const cli = try PackageManager.CommandLineArguments.parse(allocator, .info);
                 const ctx = try Command.init(allocator, log, .InfoCommand);
                 const pm, _ = try PackageManager.init(
                     ctx,
                     cli,
-                    // TODO: add .info subcommand
-                    PackageManager.Subcommand.pm,
+                    PackageManager.Subcommand.info,
                 );
 
-                const property_path = if (pm.options.positionals.len > 1) pm.options.positionals[1] else null;
-                const package_name = if (pm.options.positionals.len > 0) pm.options.positionals[0] else "";
+                // Handle arguments correctly for standalone info command
+                var package_name: []const u8 = "";
+                var property_path: ?[]const u8 = null;
+                
+                // Find non-flag arguments starting from argv[2] (after "bun info")
+                var arg_idx: usize = 2;
+                var found_package = false;
+                
+                while (arg_idx < bun.argv.len) : (arg_idx += 1) {
+                    const arg = bun.argv[arg_idx];
+                    
+                    // Skip flags
+                    if (arg.len > 0 and arg[0] == '-') {
+                        continue;
+                    }
+                    
+                    if (!found_package) {
+                        package_name = arg;
+                        found_package = true;
+                    } else {
+                        property_path = arg;
+                        break;
+                    }
+                }
 
-                // Call the same logic as "bun pm view"
-                try PmViewCommand.view(allocator, pm, package_name, property_path, pm.options.json_output);
+                try PmViewCommand.view(allocator, pm, package_name, property_path, cli.json_output);
                 return;
             },
             .BuildCommand => {

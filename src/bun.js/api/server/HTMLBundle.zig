@@ -150,6 +150,7 @@ pub const Route = struct {
     }
 
     pub fn respondWithInit(this: *Route, req: *uws.Request, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
+        bun.Output.warn("This feature is in development and requires optimization.", .{});
         this.ref();
         defer this.deref();
 
@@ -182,12 +183,10 @@ pub const Route = struct {
         state: while (true)
             switch (this.state) {
                 .pending => {
-                    debug("pending...", .{});
                     this.scheduleBundle(server) catch bun.outOfMemory();
                     continue :state;
                 },
                 .building => {
-                    debug("building...", .{});
                     const pending = bun.new(PendingResponse, .{
                         .method = method,
                         .resp = resp,
@@ -201,29 +200,17 @@ pub const Route = struct {
                     return;
                 },
                 .err => |log| {
-                    debug("err...", .{});
                     _ = log; // TODO: Surface build errors
                     resp.writeStatus("500 Build Failed");
                     resp.endWithoutBody(false);
                     return;
                 },
                 .html => |html| {
-                    debug("serving...", .{});
                     var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
                     this.status_code = cloned_init.status_code;
                     route_clone.status_code = cloned_init.status_code;
                     if (cloned_init.headers) |headers| {
-                        debug("getting headers", .{});
-                        var extra = Headers.from(headers, bun.default_allocator, .{ .body = &route_clone.blob }) catch bun.outOfMemory();
-                        defer extra.deinit();
-                        const entries = extra.entries.slice();
-                        const names = entries.items(.name);
-                        const values = entries.items(.value);
-                        const buf = extra.buf.items;
-                        for (names, values) |name, val| {
-                            debug("\nname:  {any}\n", .{name});
-                            route_clone.headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
-                        }
+                        applyInitHeaders(&route_clone.headers, headers, &route_clone.blob) catch bun.outOfMemory();
                     }
                     if (is_head) {
                         route_clone.onHEAD(resp);
@@ -566,15 +553,7 @@ pub const Route = struct {
                         this.status_code = _init.status_code;
                         route_clone.status_code = _init.status_code;
                         if (_init.headers) |headers| {
-                            var extra = Headers.from(headers, bun.default_allocator, .{ .body = &route_clone.blob }) catch bun.outOfMemory();
-                            defer extra.deinit();
-                            const entries = extra.entries.slice();
-                            const names = entries.items(.name);
-                            const values = entries.items(.value);
-                            const buf = extra.buf.items;
-                            for (names, values) |name, val| {
-                                route_clone.headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
-                            }
+                            applyInitHeaders(&route_clone.headers, headers, &route_clone.blob) catch bun.outOfMemory();
                         }
                         if (method == .HEAD) {
                             route_clone.onHEAD(resp);
@@ -604,6 +583,18 @@ pub const Route = struct {
                     resp.endWithoutBody(false);
                 },
             }
+        }
+    }
+
+    fn applyInitHeaders(headers_out: *Headers, src_headers: *FetchHeaders, blob: *AnyBlob) !void {
+        var extra = try Headers.from(src_headers, bun.default_allocator, .{ .body = blob });
+        defer extra.deinit();
+        const entries = extra.entries.slice();
+        const names = entries.items(.name);
+        const values = entries.items(.value);
+        const buf = extra.buf.items;
+        for (names, values) |name, val| {
+            try headers_out.append(name.slice(buf), val.slice(buf));
         }
     }
 
@@ -662,6 +653,8 @@ const StaticRoute = @import("./StaticRoute.zig");
 const RefPtr = bun.ptr.RefPtr;
 const ResponseInit = JSC.WebCore.Response.Init;
 const Headers = bun.http.Headers;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const AnyBlob = JSC.WebCore.Blob.Any;
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

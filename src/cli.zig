@@ -1773,13 +1773,13 @@ pub const Command = struct {
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
             RootCommandMatcher.case("publish") => .PublishCommand,
             RootCommandMatcher.case("audit") => .AuditCommand,
+            RootCommandMatcher.case("info") => .InfoCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
             RootCommandMatcher.case("deploy") => .ReservedCommand,
             RootCommandMatcher.case("cloud") => .ReservedCommand,
-            RootCommandMatcher.case("info") => .InfoCommand,
             RootCommandMatcher.case("config") => .ReservedCommand,
             RootCommandMatcher.case("use") => .ReservedCommand,
             RootCommandMatcher.case("auth") => .ReservedCommand,

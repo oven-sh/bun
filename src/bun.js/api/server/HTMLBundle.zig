@@ -494,7 +494,7 @@ pub const Route = struct {
                         .ref_count = .init(),
                         .blob = blob,
                         .server = server,
-                        .status_code = 200,
+                        .status_code = 202,
                         .headers = headers,
                         .cached_blob_size = blob.size(),
                     });

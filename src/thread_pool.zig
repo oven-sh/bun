@@ -88,26 +88,7 @@ pub const Batch = struct {
     head: ?*Task = null,
     tail: ?*Task = null,
 
-    pub fn pop(this: *Batch) ?*Task {
-        const len = @atomicLoad(usize, &this.len, .monotonic);
-        if (len == 0) {
-            return null;
-        }
-        const task = this.head.?;
-        if (task.node.next) |node| {
-            this.head = @fieldParentPtr("node", node);
-        } else {
-            if (task != this.tail.?) unreachable;
-            this.tail = null;
-            this.head = null;
-        }
-
-        this.len -= 1;
-        if (len == 0) {
-            this.tail = null;
-        }
-        return task;
-    }
+    pub const pop = @compileError("Iterate through .head in a while loop");
 
     /// Create a batch from a single task.
     pub fn from(task: *Task) Batch {

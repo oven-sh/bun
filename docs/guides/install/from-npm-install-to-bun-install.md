@@ -142,20 +142,13 @@ $ bun outdated
 
 ## List installed packages
 
-To list installed packages, you can use `bun pm ls`. This will list all the packages that are installed in the `node_modules` folder using Bun's lockfile as the source of truth. You can pass the `-a` flag to list all installed packages, including transitive dependencies.
+To list installed packages, you can use `bun list`. This will list all the packages that are installed in the `node_modules` folder using Bun's lockfile as the source of truth. You can pass the `-a` flag to list all installed packages, including transitive dependencies. It's also available as an alias `bun pm ls`.
 
-```sh
-# List top-level installed packages:
-$ bun pm ls
-my-pkg node_modules (781)
-├── @types/node@20.16.5
-├── @types/react@18.3.8
-├── @types/react-dom@18.3.0
-├── eslint@8.57.1
-├── eslint-config-next@14.2.8
+```bash
+$ bun list
+elysia node_modules (v1.0.27)
 
-# List all installed packages:
-$ bun pm ls -a
+$ bun list -a
 my-pkg node_modules
 ├── @alloc/quick-lru@5.2.0
 ├── @isaacs/cliui@8.0.2

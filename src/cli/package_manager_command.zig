@@ -123,7 +123,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile <d>(alias for `bun list`)<r>
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry

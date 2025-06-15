@@ -34,37 +34,30 @@ $ bun pm bin -g
 <$HOME>/.bun/bin
 ```
 
-## ls
+## List packages
 
-To print a list of installed dependencies in the current project and their resolved versions, excluding their dependencies.
+List installed packages in the current project and their dependencies.
+
+```bash
+$ bun list
+```
+
+This is the primary way to list packages. You can also use the alias:
 
 ```bash
 $ bun pm ls
-/path/to/project node_modules (135)
-├── eslint@8.38.0
-├── react@18.2.0
-├── react-dom@18.2.0
-├── typescript@5.0.4
-└── zod@3.21.4
 ```
 
-To print all installed dependencies, including nth-order dependencies.
+By default, this command only lists top-level dependencies. To list the entire dependency tree:
+
+```bash
+$ bun list --all
+```
+
+Alternative:
 
 ```bash
 $ bun pm ls --all
-/path/to/project node_modules (135)
-├── @eslint-community/eslint-utils@4.4.0
-├── @eslint-community/regexpp@4.5.0
-├── @eslint/eslintrc@2.0.2
-├── @eslint/js@8.38.0
-├── @nodelib/fs.scandir@2.1.5
-├── @nodelib/fs.stat@2.0.5
-├── @nodelib/fs.walk@1.2.8
-├── acorn@8.8.2
-├── acorn-jsx@5.3.2
-├── ajv@6.12.6
-├── ansi-regex@5.0.1
-├── ...
 ```
 
 ## whoami

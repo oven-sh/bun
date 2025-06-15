@@ -129,6 +129,7 @@ pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
+pub const ListCommand = @import("./cli/list_command.zig").ListCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1376,6 +1377,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>audit<r>                          Check installed packages for vulnerabilities
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
+        \\  <b><blue>list<r>                           List installed packages in the current project
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>publish<r>                        Publish a package to the npm registry
@@ -1768,6 +1770,7 @@ pub const Command = struct {
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
             RootCommandMatcher.case("publish") => .PublishCommand,
             RootCommandMatcher.case("audit") => .AuditCommand,
+            RootCommandMatcher.case("list") => .ListCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1782,8 +1785,6 @@ pub const Command = struct {
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .ReservedCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -1808,6 +1809,7 @@ pub const Command = struct {
         "pm",
         "x",
         "repl",
+        "list",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -1955,6 +1957,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
+                return;
+            },
+            .ListCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .ListCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .ListCommand);
+
+                try ListCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
@@ -2338,6 +2347,7 @@ pub const Command = struct {
         InstallCommand,
         InstallCompletionsCommand,
         LinkCommand,
+        ListCommand,
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
@@ -2372,6 +2382,7 @@ pub const Command = struct {
                 .InstallCommand => 'i',
                 .InstallCompletionsCommand => 'C',
                 .LinkCommand => 'l',
+                .ListCommand => 'L',
                 .PackageManagerCommand => 'P',
                 .RemoveCommand => 'R',
                 .RunCommand => 'r',
@@ -2609,7 +2620,28 @@ pub const Command = struct {
                     Output.pretty(intro_text, .{});
                     Output.flush();
                 },
+                Command.Tag.ListCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun list<r> <cyan>[flags]<r>
+                        \\  List installed packages in the current project
+                        \\
+                        \\<b>Flags<r>:
+                        \\  <cyan>--all<r>      List the entire dependency tree
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>List top-level dependencies<r>
+                        \\  <b><green>bun list<r>
+                        \\
+                        \\  <d>List the entire dependency tree<r>
+                        \\  <b><green>bun list<r> <cyan>--all<r>
+                        \\
+                        \\<b>Alias:<r> <b><green>bun pm ls<r>
+                        \\
+                    ;
 
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
                 Command.Tag.GetCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", .{});
                     Output.flush();
@@ -2665,6 +2697,7 @@ pub const Command = struct {
                 .OutdatedCommand,
                 .PublishCommand,
                 .AuditCommand,
+                .ListCommand,
                 => true,
                 else => false,
             };
@@ -2685,6 +2718,7 @@ pub const Command = struct {
                 .OutdatedCommand,
                 .PublishCommand,
                 .AuditCommand,
+                .ListCommand,
                 => true,
                 else => false,
             };
@@ -2707,6 +2741,7 @@ pub const Command = struct {
             .OutdatedCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
+            .ListCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2723,6 +2758,7 @@ pub const Command = struct {
             .OutdatedCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
+            .ListCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2740,6 +2776,7 @@ pub const Command = struct {
             .OutdatedCommand = false,
             .PublishCommand = false,
             .AuditCommand = false,
+            .ListCommand = false,
         });
     };
 };

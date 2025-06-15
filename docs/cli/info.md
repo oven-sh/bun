@@ -1,7 +1,3 @@
----
-title: bun info
----
-
 `bun info` displays package metadata from the npm registry.
 
 ## Usage

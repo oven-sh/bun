@@ -185,17 +185,21 @@ bool MessagePortChannel::hasAnyMessagesPendingOrInFlight() const
     return m_messageBatchesInFlight || !m_pendingMessages[0].isEmpty() || !m_pendingMessages[1].isEmpty();
 }
 
-std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort(const MessagePortIdentifier port)
+void MessagePortChannel::tryTakeMessageForPort(const MessagePortIdentifier port, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&& callback)
 {
+    ASSERT(isMainThread());
+
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    if (m_pendingMessages[i].isEmpty())
-        return std::nullopt;
+    if (m_pendingMessages[i].isEmpty()) {
+        callback(std::nullopt);
+        return;
+    }
 
     auto message = m_pendingMessages[i].first();
     m_pendingMessages[i].removeAt(0);
-    return WTFMove(message);
+    callback(WTFMove(message));
 }
 
 } // namespace WebCore

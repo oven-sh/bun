@@ -44,6 +44,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include <wtf/threads/BinarySemaphore.h>
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -238,7 +239,11 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
+    WTF::ensureOnMainThread(
+        [this]() {
+            MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
+        }
+    );
 
     removeAllEventListeners();
 }
@@ -339,13 +344,29 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
     if (!context || context->activeDOMObjectsAreSuspended() || !isEntangled())
         return jsUndefined();
 
-    std::optional<MessageWithMessagePorts> messageWithPorts = MessagePortChannelProvider::fromContext(*context).tryTakeMessageForPort(m_identifier);
+    std::optional<MessageWithMessagePorts> result;
+    BinarySemaphore semaphore;
 
-    if (!messageWithPorts)
+    auto callback = [&](std::optional<MessageWithMessagePorts>&& messageWithPorts) {
+        printf("got message\n");
+        result = WTFMove(messageWithPorts);
+        semaphore.signal();
+    };
+
+    WTF::ensureOnMainThread([identifier = m_identifier, callback = WTFMove(callback), context]() mutable {
+        printf("taking message on main thread\n");
+        MessagePortChannelProvider::fromContext(*context).tryTakeMessageForPort(identifier, WTFMove(callback));
+    });
+
+    printf("waiting for message\n");
+
+    semaphore.wait();
+
+    if (!result)
         return jsUndefined();
 
-    auto ports = MessagePort::entanglePorts(*context, WTFMove(messageWithPorts->transferredPorts));
-    auto message = messageWithPorts->message.releaseNonNull();
+    auto ports = MessagePort::entanglePorts(*context, WTFMove(result->transferredPorts));
+    auto message = result->message.releaseNonNull();
     return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTFMove(ports), SerializationErrorMode::NonThrowing);
 }
 

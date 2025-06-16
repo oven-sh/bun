@@ -96,9 +96,9 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
     });
 }
 
-std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)
+void MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&& callback)
 {
-    return m_registry.tryTakeMessageForPort(port);
+    m_registry.tryTakeMessageForPort(port, WTFMove(callback));
 }
 
 } // namespace WebCore

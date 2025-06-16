@@ -357,8 +357,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     templ += `
 
   void ${className}::ref() {
-    if (!m_sinkPtr)
-      return;
+    if (!m_sinkPtr) {
+        return;
+    }
 
     m_refCount++;
     if (m_refCount == 1) {
@@ -367,14 +368,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
   }
 
   void ${className}::unref() {
-    if (!m_sinkPtr)
-      return;
+    if (!m_sinkPtr) {
+        return;
+    }
 
-      m_refCount = std::max(0, m_refCount - 1);
-      if (!m_refCount)
-      {
+    m_refCount = std::max(0, m_refCount - 1);
+    if (!m_refCount) {
         ${name}__updateRef(m_sinkPtr, false);
-      }
+    }
   }
 
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))

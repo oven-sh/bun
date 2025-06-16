@@ -2,7 +2,7 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
-const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
 const { validateString } = require("internal/validators");

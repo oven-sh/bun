@@ -430,7 +430,7 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
-    return createBuffer(lexicalGlobalObject, data.data(), data.size());
+    return createBuffer(lexicalGlobalObject, data.begin(), data.size());
 }
 
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)

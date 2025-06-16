@@ -120,6 +120,24 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     jsc_vm.autoGarbageCollect();
 }
 
+pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    const Context = struct {
+        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.JSValue,
+        pub fn callback(context: *@This()) void {
+            _ = context.globalThis.bunVM().handledPromise(context.globalThis, context.promise);
+            context.promise.unprotect();
+            bun.default_allocator.destroy(context);
+        }
+    };
+    JSC.markBinding(@src());
+    const promise_js = promise.toJS();
+    promise_js.protect();
+    const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+    context.* = .{ .globalThis = global, .promise = promise_js };
+    global.bunVM().eventLoop().enqueueTask(JSC.ManagedTask.New(Context, Context.callback).init(context));
+}
+
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
     if (jsc_vm.plugin_runner != null) {
         return;

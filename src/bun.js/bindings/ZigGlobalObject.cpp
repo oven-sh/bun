@@ -1317,6 +1317,8 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
     Bun__reportUnhandledError(globalObject, JSValue::encode(JSValue(exception)));
 }
 
+extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
@@ -1330,9 +1332,12 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
         break;
     case JSPromiseRejectionOperation::Handle:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
             return unhandledPromise.get() == promise;
         });
+        if (removed) break;
+        // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
+        Bun__handleHandledPromise(globalObj, promise);
         break;
     }
 }

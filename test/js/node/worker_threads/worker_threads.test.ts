@@ -1,8 +1,9 @@
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it, mock, test } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { Readable } from "node:stream";
+import { duplexPair, Readable, Writable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -108,8 +109,10 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();
-  expect(worker.stdout).toBeNull();
-  expect(worker.stderr).toBeNull();
+  expect(worker.stdout).toBeInstanceOf(Readable);
+  expect(worker.stderr).toBeInstanceOf(Readable);
+  expect(Object.getOwnPropertyDescriptor(Worker.prototype, "stdout")?.get).toBeFunction();
+  expect(Object.getOwnPropertyDescriptor(Worker.prototype, "stderr")?.get).toBeFunction();
   expect(worker.performance).toBeDefined();
   expect(worker.terminate).toBeFunction();
   expect(worker.postMessage).toBeFunction();
@@ -280,7 +283,8 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
+// debug builds use way more memory and do not give useful results for this test
+test.skipIf(isDebug)("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
@@ -420,6 +424,345 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
+});
+
+describe("stdio", () => {
+  type OutputStream = "stdout" | "stderr";
+
+  function readToEnd(stream: Readable): Promise<string> {
+    let data = "";
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    stream.on("error", reject);
+    stream.on("data", chunk => {
+      expect(chunk).toBeInstanceOf(Buffer);
+      data += chunk.toString("utf8");
+    });
+    stream.on("end", () => resolve(data));
+    return promise;
+  }
+
+  function overrideProcessStdio<S extends OutputStream>(which: S, stream: Writable): Disposable {
+    const originalStream = process[which];
+    // stream is missing the `fd` property that the real process streams have, but we
+    // don't need it
+    // @ts-expect-error
+    process[which] = stream;
+    return {
+      [Symbol.dispose]() {
+        process[which] = originalStream;
+      },
+    };
+  }
+
+  function captureProcessStdio<S extends OutputStream>(
+    stream: S,
+  ): Disposable & { data: Promise<string>; end: () => void } {
+    const [streamToInstall, streamToObserve] = duplexPair();
+
+    return {
+      ...overrideProcessStdio(stream, streamToInstall),
+      data: readToEnd(streamToObserve),
+      end: () => streamToInstall.end(),
+    };
+  }
+
+  describe.each<OutputStream>(["stdout", "stderr"])("%s", stream => {
+    it(`process.${stream} written in worker writes to parent process.${stream}`, async () => {
+      using capture = captureProcessStdio(stream);
+      const worker = new Worker(
+        String.raw/* js */ `
+          import assert from "node:assert";
+          process.${stream}.write("hello", (err) => {
+            assert.strictEqual(err, null);
+            process.${stream}.write("\ncallback 1");
+          });
+          // " world"
+          process.${stream}.write(new Uint16Array([0x7720, 0x726f, 0x646c]), (err) => {
+            assert.strictEqual(err, null);
+            process.${stream}.write("\ncallback 2");
+          });
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      capture.end();
+      expect(await capture.data).toBe("hello world\ncallback 1\ncallback 2");
+    });
+
+    it(`process.${stream} written in worker writes to worker.${stream} in parent`, async () => {
+      const worker = new Worker(`process.${stream}.write("hello");`, { eval: true });
+      const resultPromise = readToEnd(worker[stream]);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      expect(await resultPromise).toBe("hello");
+    });
+
+    it(`can still receive data on worker.${stream} if you override it later`, async () => {
+      const worker = new Worker(`process.${stream}.write("hello");`, { eval: true });
+      const resultPromise = readToEnd(worker[stream]);
+      Object.defineProperty(worker, stream, { value: undefined });
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      expect(await resultPromise).toBe("hello");
+    });
+
+    const consoleFunction = stream == "stdout" ? "log" : "error";
+
+    it(`console.${consoleFunction} in worker writes to both streams in parent`, async () => {
+      using capture = captureProcessStdio(stream);
+      const worker = new Worker(`console.${consoleFunction}("hello");`, { eval: true });
+      const resultPromise = readToEnd(worker[stream]);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      capture.end();
+      expect(await capture.data).toBe("hello\n");
+      expect(await resultPromise).toBe("hello\n");
+    });
+
+    describe(`with ${stream}: true option`, () => {
+      it(`writes to worker.${stream} but not process.${stream}`, async () => {
+        using capture = captureProcessStdio(stream);
+        const worker = new Worker(`process.${stream}.write("hello");`, { eval: true, [stream]: true });
+        const resultPromise = readToEnd(worker[stream]);
+        const [code] = await once(worker, "exit");
+        expect(code).toBe(0);
+        capture.end();
+        expect(await capture.data).toBe("");
+        expect(await resultPromise).toBe("hello");
+      });
+    });
+
+    it("worker write() doesn't wait for parent _write() to complete", async () => {
+      const sharedBuffer = new SharedArrayBuffer(4);
+      const sharedArray = new Int32Array(sharedBuffer);
+      const { promise, resolve } = Promise.withResolvers();
+
+      const writeFn = mock((chunk: Buffer, encoding: string, callback: () => void) => {
+        expect(chunk).toEqual(Buffer.from("hello"));
+        expect(encoding).toBe("buffer");
+        // wait for worker to indicate that its write() callback ran
+        Atomics.wait(sharedArray, 0, 0);
+        // now run the callback
+        callback();
+        // and resolve our promise
+        resolve();
+      });
+
+      class DelayStream extends Writable {
+        _write(data: Buffer, encoding: string, callback: () => void) {
+          return writeFn(data, encoding, callback);
+        }
+      }
+
+      using override = overrideProcessStdio(stream, new DelayStream());
+      const worker = new Worker(
+        /* js */ `
+          import { workerData } from "node:worker_threads";
+          const sharedArray = new Int32Array(workerData);
+          import assert from "node:assert";
+          process.${stream}.write("hello", "utf8", (err) => {
+            assert.strictEqual(err, null);
+            // tell parent that our callback has run
+            Atomics.store(sharedArray, 0, 1);
+            Atomics.notify(sharedArray, 0, 1);
+          });
+        `,
+        { eval: true, workerData: sharedBuffer },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      await promise;
+      expect(writeFn).toHaveBeenCalledTimes(1);
+    });
+
+    it(`console uses overridden process.${stream} in worker`, async () => {
+      const worker = new Worker(
+        /* js */ `
+          import { Writable } from "node:stream";
+          const original = process.${stream};
+          class WrapStream extends Writable {
+            _write(chunk, encoding, callback) {
+              original.write("[wrapped] " + chunk.toString());
+              callback();
+            }
+          }
+          process.${stream} = new WrapStream();
+          console.${consoleFunction}("hello");
+        `,
+        { eval: true, [stream]: true },
+      );
+      const resultPromise = readToEnd(worker[stream]);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      expect(await resultPromise).toBe("[wrapped] hello\n");
+    });
+
+    it("has no fd", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.${stream}.fd, undefined);
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+  });
+
+  describe("console", () => {
+    it("all functions are captured", async () => {
+      const worker = new Worker(
+        /* js */ `
+        console.assert();
+        console.assert(false);
+        // TODO: https://github.com/oven-sh/bun/issues/19953
+        // this should be "Assertion failed: should be true," not "should be true"
+        // but we still want to make sure it is captured in workers
+        console.assert(false, "should be true");
+        console.debug("debug");
+        console.error("error");
+        console.info("info");
+        console.log("log");
+        console.table([{ a: 5 }]);
+        // TODO: https://github.com/oven-sh/bun/issues/19952
+        // this goes to the wrong place but we still want to make sure it is captured in workers
+        console.trace("trace");
+        console.warn("warn");
+      `,
+        { eval: true, stdout: true, stderr: true },
+      );
+      // normalize the random blob URL and lines and columns from internal modules
+      const stdout = (await readToEnd(worker.stdout))
+        .replace(/blob:[0-9a-f\-]{36}/, "blob:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+        .replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
+      const stderr = await readToEnd(worker.stderr);
+
+      let expectedStdout = `debug
+info
+log
+┌───┬───┐
+│   │ a │
+├───┼───┤
+│ 0 │ 5 │
+└───┴───┘
+trace
+      at blob:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:15:17
+      at loadAndEvaluateModule (line:col)
+`;
+      if (isDebug) {
+        expectedStdout += `      at asyncFunctionResume (line:col)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
+      at promiseReactionJob (line:col)
+`;
+      }
+
+      expect(stdout).toBe(expectedStdout);
+      expect(stderr).toBe(`Assertion failed
+Assertion failed
+should be true
+error
+warn
+`);
+    });
+
+    it("handles exceptions", async () => {
+      const cases = [
+        {
+          code: /* js */ `process.stdout.write = () => { throw new Error("write()"); }; console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "write()",
+          },
+        },
+        {
+          code: /* js */ `process.stdout.write = 6; console.log("hello");`,
+          expectedException: {
+            name: "TypeError",
+            message: expect.stringMatching(/is not a function.*is 6/),
+          },
+        },
+        {
+          code: /* js */ `Object.defineProperty(process.stdout, "write", { get() { throw new Error("write getter"); } }); console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "write getter",
+          },
+        },
+        {
+          code: /* js */ `Object.defineProperty(process, "stdout", { get() { throw new Error("stdout getter"); } }); console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "stdout getter",
+          },
+        },
+      ];
+
+      for (const { code, expectedException } of cases) {
+        const worker = new Worker(code, { eval: true, stdout: true });
+        const stdoutPromise = readToEnd(worker.stdout);
+        const [exception] = await once(worker, "error");
+        expect(exception).toMatchObject(expectedException);
+        expect(await stdoutPromise).toBe("");
+      }
+    });
+
+    // blocked on more JS internals that use `process` while it has been overridden
+    it.todo("works if the entire process object is overridden", async () => {
+      const worker = new Worker(/* js */ `process = 5; console.log("hello");`, { eval: true, stdout: true });
+      expect(await readToEnd(worker.stdout)).toBe("hello\n");
+    });
+  });
+
+  describe("stdin", () => {
+    it("by default, process.stdin is readable and worker.stdin is null", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.stdin.constructor.name, "ReadableWorkerStdio");
+        `,
+        { eval: true },
+      );
+      expect(worker.stdin).toBeNull();
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+
+    it("has no fd", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.stdin.fd, undefined);
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+
+    it.todo("does not keep the event loop alive if worker does not listen for events", async () => {});
+    it.todo("hangs if parent does not call end()", async () => {});
+
+    it("child can read data from parent", async () => {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const worker = new Worker("process.stdin.pipe(process.stdout)", { stdin: true, stdout: true, eval: true });
+      expect(worker.stdin!.constructor.name).toBe("WritableWorkerStdio");
+      worker.on("error", reject);
+      worker.stdout.on("data", chunk => {
+        chunks.push(chunk);
+        if (chunks.length == 2) resolve();
+        if (chunks.length > 2) throw new Error("too much data");
+      });
+      worker.stdin!.write("hello");
+      // " world"
+      worker.stdin!.write(new Uint16Array([0x7720, 0x726f, 0x646c]));
+      await promise;
+      expect(chunks).toEqual([Buffer.from("hello"), Buffer.from(" world")]);
+      worker.stdin!.end();
+    });
   });
 });
 

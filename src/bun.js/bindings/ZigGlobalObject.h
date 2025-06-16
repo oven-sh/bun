@@ -25,6 +25,7 @@ class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
+class Worker;
 } // namespace WebCore
 
 namespace Bun {
@@ -397,6 +398,10 @@ public:
         barrier.set(vm(), this, func);
         return func;
     }
+
+    // Return the Worker object if this global object is running in a worker, or nullptr
+    // if it is not.
+    WebCore::Worker* worker();
 
     bool asyncHooksNeedsCleanup = false;
     double INSPECT_MAX_BYTES = 50;

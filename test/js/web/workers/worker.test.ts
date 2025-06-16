@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -294,6 +294,66 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+  });
+
+  describe("stdio", () => {
+    test("process stdio in worker does not go to process stdio in parent", async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "worker-fixture-process-stdio.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.exited;
+      expect(proc.exitCode).toBe(0);
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      expect(stdout).toBe("stdout");
+      expect(stderr).toBe("stderr");
+    });
+
+    test("console functions in worker do not go to process stdio in worker or parent", async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "worker-fixture-console.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.exited;
+      expect(proc.exitCode).toBe(0);
+      // normalize lines and columns from internal modules
+      const stdout = (await new Response(proc.stdout).text()).replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
+      const stderr = await new Response(proc.stderr).text();
+
+      let expectedStdout = `debug
+info
+log
+┌───┬───┐
+│   │ a │
+├───┼───┤
+│ 0 │ 5 │
+└───┴───┘
+trace
+      at ${__dirname}${path.sep}worker-fixture-console.js:39:11
+      at loadAndEvaluateModule (line:col)
+`;
+      if (isDebug) {
+        expectedStdout += `      at asyncFunctionResume (line:col)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
+      at promiseReactionJob (line:col)
+`;
+      }
+
+      expect(stdout).toBe(expectedStdout);
+      expect(stderr).toBe(`Assertion failed
+Assertion failed
+should be true
+error
+warn
+`);
     });
   });
 });

@@ -2102,6 +2102,11 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachi
     }
 }
 
+export fn Bun__VirtualMachine__getWorker(vm: *VirtualMachine) ?*anyopaque {
+    const worker = vm.worker orelse return null;
+    return worker.cpp_worker;
+}
+
 pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;

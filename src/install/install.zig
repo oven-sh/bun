@@ -2320,12 +2320,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                 // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
                 // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-                switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+                switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                     .err => |err_| brk: {
                         var err = err_;
                         if (err.getErrno() == .EXIST) {
                             _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
-                            switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+                            switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                                 .err => |e| err = e,
                                 .result => break :brk,
                             }

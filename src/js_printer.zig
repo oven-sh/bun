@@ -3081,10 +3081,117 @@ fn NewPrinter(
                     p.printStringCharactersUTF8(name, '"');
                     p.print('"');
                 },
-
-                .e_jsx_element,
-                .e_private_identifier,
-                => {
+                .e_jsx_element => |e_| {
+                    // Print raw JSX in preserve mode
+                    p.print("<");
+                    if (e_.tag) |tag_expr| {
+                        switch (tag_expr.data) {
+                            .e_identifier => |id| {
+                                // component or HTMLElement identifier
+                                p.printSymbol(id.ref);
+                            },
+                            .e_string => |str| {
+                                if (str.isUTF8()) {
+                                    p.print(str.data);
+                                } else {
+                                    p.printIdentifierUTF16(str.slice16()) catch unreachable;
+                                }
+                            },
+                            else => {
+                                // fallback
+                                p.printExpr(tag_expr, Level.member, ExprFlag.None());
+                            },
+                        }
+                    }
+                    // Props and spreads
+                    const props = e_.properties.slice();
+                    for (props) |prop| {
+                        if (prop.kind == .spread) {
+                            p.print(" {...");
+                            p.printExpr(prop.value.?, Level.lowest, ExprFlag.None());
+                            p.print("}");
+                        } else {
+                            p.print(" ");
+                            // Print JSX attribute keys as identifiers
+                            switch (prop.key.?.data) {
+                                .e_string => |str| {
+                                    if (str.isUTF8()) {
+                                        p.print(str.data);
+                                    } else {
+                                        p.printIdentifierUTF16(str.slice16()) catch unreachable;
+                                    }
+                                },
+                                .e_identifier => |id| {
+                                    p.printSymbol(id.ref);
+                                },
+                                else => {
+                                    // For complex expressions, fall back to regular printing
+                                    p.printExpr(prop.key.?, Level.lowest, ExprFlag.None());
+                                },
+                            }
+                            if (prop.value) |v| {
+                                p.print("=");
+                                // JSX attribute values: strings can be quoted, everything else needs braces
+                                switch (v.data) {
+                                    .e_string => {
+                                        p.printExpr(v, Level.lowest, ExprFlag.None());
+                                    },
+                                    else => {
+                                        p.print("{");
+                                        p.printExpr(v, Level.lowest, ExprFlag.None());
+                                        p.print("}");
+                                    },
+                                }
+                            }
+                        }
+                    }
+                    // Children
+                    const children = e_.children.slice();
+                    if (children.len == 0) {
+                        p.print("/>");
+                    } else {
+                        p.print(">");
+                        for (children) |child| {
+                            switch (child.data) {
+                                .e_string => |s| {
+                                    if (s.isUTF8()) {
+                                        p.print(s.data);
+                                    } else {
+                                        p.printIdentifierUTF16(s.slice16()) catch unreachable;
+                                    }
+                                },
+                                .e_jsx_element => {
+                                    p.printExpr(child, Level.lowest, ExprFlag.None());
+                                },
+                                else => {
+                                    p.print("{");
+                                    p.printExpr(child, Level.lowest, ExprFlag.None());
+                                    p.print("}");
+                                },
+                            }
+                        }
+                        p.print("</");
+                        if (e_.tag) |tag_expr| {
+                            switch (tag_expr.data) {
+                                .e_identifier => |id| {
+                                    p.printSymbol(id.ref);
+                                },
+                                .e_string => |str| {
+                                    if (str.isUTF8()) {
+                                        p.print(str.data);
+                                    } else {
+                                        p.printIdentifierUTF16(str.slice16()) catch unreachable;
+                                    }
+                                },
+                                else => {
+                                    p.printExpr(tag_expr, Level.lowest, ExprFlag.None());
+                                },
+                            }
+                        }
+                        p.print(">");
+                    }
+                },
+                .e_private_identifier => |_| {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },
@@ -5177,7 +5284,7 @@ fn NewPrinter(
             writer: Writer,
             import_records: []const ImportRecord,
             opts: Options,
-            renamer: bun.renamer.Renamer,
+            renamer: rename.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
             var printer = Printer{

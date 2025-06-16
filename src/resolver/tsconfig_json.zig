@@ -199,7 +199,6 @@ pub const TSConfigJSON = struct {
                     const str_lower = allocator.alloc(u8, str.len) catch unreachable;
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
-                    // - We don't support "preserve" yet
                     if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime.runtime;
                         result.jsx_flags.insert(.runtime);
@@ -215,7 +214,8 @@ pub const TSConfigJSON = struct {
             // Parse "jsxImportSource"
             if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    if (str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
+                    if (result.jsx.runtime != .preserve and str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
+                        // jsx:preserve takes precedence over jsxImportSource
                         result.jsx.runtime = .solid;
                         result.jsx_flags.insert(.runtime);
                     }

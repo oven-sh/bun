@@ -1002,8 +1002,10 @@ pub const Bunfig = struct {
                     } else if (strings.eqlComptime(value, "react-jsxDEV")) {
                         jsx_runtime = api.JsxRuntime.automatic;
                         jsx_dev = true;
+                    } else if (strings.eqlComptime(value, "preserve")) {
+                        jsx_runtime = Api.JsxRuntime.preserve;
                     } else {
-                        try this.addError(expr.loc, "Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported");
+                        try this.addError(expr.loc, "Invalid jsx runtime, only 'react', 'solid', 'react-jsx', 'react-jsxDEV', or 'preserve' are supported");
                     }
                 }
             }

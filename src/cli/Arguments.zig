@@ -33,6 +33,8 @@ pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
         return Api.JsxRuntime.classic;
     } else if (strings.eqlComptime(str, "solid")) {
         return Api.JsxRuntime.solid;
+    } else if (strings.eqlComptime(str, "preserve")) {
+        return Api.JsxRuntime.preserve;
     } else {
         return error.InvalidJSXRuntime;
     }

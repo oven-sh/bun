@@ -777,6 +777,9 @@ pub const api = struct {
         /// solid
         solid,
 
+        /// preserve
+        preserve,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

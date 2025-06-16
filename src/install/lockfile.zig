@@ -915,8 +915,6 @@ pub fn hoist(
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
-    var path_buf: bun.PathBuffer = undefined;
-
     var builder = Tree.Builder(method){
         .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
@@ -927,7 +925,7 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .path_buf = &path_buf,
+        .filter_path_buf = .init(FileSystem.instance.top_level_dir),
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };
@@ -937,7 +935,6 @@ pub fn hoist(
         Tree.invalid_id,
         method,
         &builder,
-        if (method == .filter) manager.options.log_level,
     );
 
     // This goes breadth-first
@@ -947,7 +944,6 @@ pub fn hoist(
             item.hoist_root_id,
             method,
             &builder,
-            if (method == .filter) manager.options.log_level,
         );
     }
 

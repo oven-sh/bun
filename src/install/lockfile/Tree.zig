@@ -244,7 +244,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
-        path_buf: []u8,
+        filter_path_buf: bun.AbsPath(.{ .normalize_slashes = true }),
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -300,6 +300,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
             }
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
+            this.filter_path_buf.deinit();
 
             // take over the `builder.list` pointer for only trees
             if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -316,13 +317,119 @@ pub fn Builder(comptime method: BuilderMethod) type {
     };
 }
 
+pub fn isFilteredDependencyOrWorkspace(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: []const WorkspaceFilter,
+    install_root_dependencies: bool,
+    filter_path: *bun.AbsPath(.{ .normalize_slashes = true }),
+    manager: *const PackageManager,
+    lockfile: *const Lockfile,
+) bool {
+    const pkg_id = lockfile.buffers.resolutions.items[dep_id];
+    if (pkg_id >= lockfile.packages.len) {
+        return true;
+    }
+
+    const pkgs = lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const pkg_metas = pkgs.items(.meta);
+    const pkg_resolutions = pkgs.items(.resolution);
+
+    const dep = lockfile.buffers.dependencies.items[dep_id];
+    const res = &pkg_resolutions[pkg_id];
+
+    if (pkg_metas[pkg_id].isDisabled()) {
+        if (manager.options.log_level.isVerbose()) {
+            const meta = &pkg_metas[pkg_id];
+            const name = lockfile.str(&pkg_names[pkg_id]);
+            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
+            } else if (!meta.os.isMatch()) {
+                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
+            } else if (!meta.arch.isMatch()) {
+                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
+            }
+        }
+        return true;
+    }
+
+    if (dep.behavior.isBundled()) {
+        return true;
+    }
+
+    const dep_features = switch (res.tag) {
+        .root, .workspace, .folder => manager.options.local_package_features,
+        else => manager.options.remote_package_features,
+    };
+
+    if (!dep.behavior.isEnabled(dep_features)) {
+        return true;
+    }
+
+    if (manager.subcommand != .install or parent_pkg_id != 0) {
+        return false;
+    }
+
+    // filtering only applies to the root package dependencies.
+    if (!dep.behavior.isWorkspaceOnly()) {
+        if (!install_root_dependencies) {
+            return true;
+        }
+
+        return false;
+    }
+
+    var workspace_matched = workspace_filters.len == 0;
+
+    for (workspace_filters) |filter| {
+        const filter_path_scope = filter_path.save();
+        defer filter_path_scope.restore();
+
+        const pattern, const name_or_path = switch (filter) {
+            .all => {
+                workspace_matched = true;
+                continue;
+            },
+            .name => |name_pattern| .{
+                name_pattern,
+                pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items),
+            },
+            .path => |path_pattern| path_pattern: {
+                if (res.tag != .workspace) {
+                    return false;
+                }
+
+                filter_path.append(res.value.workspace.slice(lockfile.buffers.string_bytes.items));
+
+                break :path_pattern .{ path_pattern, filter_path.slice() };
+            },
+        };
+
+        switch (bun.glob.match(undefined, pattern, name_or_path)) {
+            .match, .negate_match => workspace_matched = true,
+
+            .negate_no_match => {
+                // always skip if a pattern specifically says "!<name|path>"
+                workspace_matched = false;
+                break;
+            },
+
+            .no_match => {
+                // keep looking
+            },
+        }
+    }
+
+    return !workspace_matched;
+}
+
 pub fn processSubtree(
     this: *const Tree,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
     comptime method: BuilderMethod,
     builder: *Builder(method),
-    log_level: if (method == .filter) PackageManager.Options.LogLevel else void,
 ) SubtreeError!void {
     const parent_pkg_id = switch (dependency_id) {
         root_dep_id => 0,
@@ -350,8 +457,6 @@ pub fn processSubtree(
 
     const pkgs = builder.lockfile.packages.slice();
     const pkg_resolutions = pkgs.items(.resolution);
-    const pkg_metas = pkgs.items(.meta);
-    const pkg_names = pkgs.items(.name);
 
     builder.sort_buf.clearRetainingCapacity();
     try builder.sort_buf.ensureUnusedCapacity(builder.allocator, resolution_list.len);
@@ -376,100 +481,16 @@ pub fn processSubtree(
 
         // filter out disabled dependencies
         if (comptime method == .filter) {
-            if (builder.lockfile.isResolvedDependencyDisabled(
+            if (isFilteredDependencyOrWorkspace(
                 dep_id,
-                switch (pkg_resolutions[parent_pkg_id].tag) {
-                    .root, .workspace, .folder => builder.manager.options.local_package_features,
-                    else => builder.manager.options.remote_package_features,
-                },
-                &pkg_metas[pkg_id],
+                parent_pkg_id,
+                builder.workspace_filters,
+                builder.install_root_dependencies,
+                &builder.filter_path_buf,
+                builder.manager,
+                builder.lockfile,
             )) {
-                if (log_level.isVerbose()) {
-                    const meta = &pkg_metas[pkg_id];
-                    const name = builder.lockfile.str(&pkg_names[pkg_id]);
-                    if (!meta.os.isMatch() and !meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
-                    } else if (!meta.os.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
-                    } else if (!meta.arch.isMatch()) {
-                        Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
-                    }
-                }
-
                 continue;
-            }
-
-            if (builder.manager.subcommand == .install) dont_skip: {
-                // only do this when parent is root. workspaces are always dependencies of the root
-                // package, and the root package is always called with `processSubtree`
-                if (parent_pkg_id == 0 and builder.workspace_filters.len > 0) {
-                    if (!builder.dependencies[dep_id].behavior.isWorkspaceOnly()) {
-                        if (builder.install_root_dependencies) {
-                            break :dont_skip;
-                        }
-
-                        continue;
-                    }
-
-                    var match = false;
-
-                    for (builder.workspace_filters) |workspace_filter| {
-                        const res_id = builder.resolutions[dep_id];
-
-                        const pattern, const path_or_name = switch (workspace_filter) {
-                            .name => |pattern| .{ pattern, pkg_names[res_id].slice(builder.buf()) },
-
-                            .path => |pattern| path: {
-                                const res = &pkg_resolutions[res_id];
-                                if (res.tag != .workspace) {
-                                    break :dont_skip;
-                                }
-                                const res_path = res.value.workspace.slice(builder.buf());
-
-                                // occupy `builder.path_buf`
-                                var abs_res_path = strings.withoutTrailingSlash(bun.path.joinAbsStringBuf(
-                                    FileSystem.instance.top_level_dir,
-                                    builder.path_buf,
-                                    &.{res_path},
-                                    .auto,
-                                ));
-
-                                if (comptime Environment.isWindows) {
-                                    abs_res_path = abs_res_path[Path.windowsVolumeNameLen(abs_res_path)[0]..];
-                                    Path.dangerouslyConvertPathToPosixInPlace(u8, builder.path_buf[0..abs_res_path.len]);
-                                }
-
-                                break :path .{
-                                    pattern,
-                                    abs_res_path,
-                                };
-                            },
-
-                            .all => {
-                                match = true;
-                                continue;
-                            },
-                        };
-
-                        switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
-                            .match, .negate_match => match = true,
-
-                            .negate_no_match => {
-                                // always skip if a pattern specifically says "!<name>"
-                                match = false;
-                                break;
-                            },
-
-                            .no_match => {
-                                // keep current
-                            },
-                        }
-                    }
-
-                    if (!match) {
-                        continue;
-                    }
-                }
             }
         }
 

@@ -63,14 +63,13 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         const pkg_dependency_slices = pkgs.items(.dependencies);
         const pkg_resolutions = pkgs.items(.resolution);
         const pkg_names = pkgs.items(.name);
-        const pkg_metas = pkgs.items(.meta);
 
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
         const string_buf = lockfile.buffers.string_bytes.items;
 
-        var filter_path: bun.AbsPath(.{ .normalize_slashes = true }) = .init(FileSystem.instance.top_level_dir);
-        defer filter_path.deinit();
+        var filter_path_buf: bun.AbsPath(.{ .normalize_slashes = true }) = .init(FileSystem.instance.top_level_dir);
+        defer filter_path_buf.deinit();
 
         var nodes: Store.Node.List = .empty;
 
@@ -215,95 +214,20 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
             peer_dep_ids.clearRetainingCapacity();
             for (dep_ids_sort_buf.items) |dep_id| {
-                const pkg_id = resolutions[dep_id];
-
-                if (pkg_id >= pkgs.len) {
+                if (Tree.isFilteredDependencyOrWorkspace(
+                    dep_id,
+                    entry.pkg_id,
+                    workspace_filters,
+                    install_root_dependencies,
+                    &filter_path_buf,
+                    manager,
+                    lockfile,
+                )) {
                     continue;
                 }
 
+                const pkg_id = resolutions[dep_id];
                 const dep = dependencies[dep_id];
-                const res = &pkg_resolutions[pkg_id];
-
-                {
-                    // packages disabled with --omit, os, arch, or if they're bundled (included in package tarball)
-
-                    if (pkg_metas[pkg_id].isDisabled()) {
-                        if (manager.options.log_level.isVerbose()) {
-                            const meta = &pkg_metas[pkg_id];
-                            const name = lockfile.str(&pkg_names[pkg_id]);
-                            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
-                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
-                            } else if (!meta.os.isMatch()) {
-                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
-                            } else if (!meta.arch.isMatch()) {
-                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
-                            }
-                        }
-                        continue;
-                    }
-
-                    const dep_features = switch (res.tag) {
-                        .root, .workspace, .folder => manager.options.local_package_features,
-                        else => manager.options.remote_package_features,
-                    };
-
-                    if (dep.behavior.isBundled() or !dep.behavior.isEnabled(dep_features)) {
-                        continue;
-                    }
-                }
-
-                // filtering only applies to the root package dependencies.
-                if (manager.subcommand == .install and entry.pkg_id == 0) dont_filter: {
-                    if (!dep.behavior.isWorkspaceOnly()) {
-                        if (!install_root_dependencies) {
-                            continue;
-                        }
-
-                        break :dont_filter;
-                    }
-
-                    var match = workspace_filters.len == 0;
-
-                    for (workspace_filters) |filter| {
-                        const filter_path_scope = filter_path.save();
-                        defer filter_path_scope.restore();
-
-                        const pattern, const name_or_path = switch (filter) {
-                            .all => {
-                                match = true;
-                                continue;
-                            },
-                            .name => |name_pattern| .{ name_pattern, pkg_names[pkg_id].slice(string_buf) },
-                            .path => |path_pattern| path_pattern: {
-                                if (res.tag != .workspace) {
-                                    break :dont_filter;
-                                }
-
-                                filter_path.append(res.value.workspace.slice(string_buf));
-
-                                break :path_pattern .{ path_pattern, filter_path.slice() };
-                            },
-                        };
-
-                        switch (bun.glob.match(undefined, pattern, name_or_path)) {
-                            .match, .negate_match => match = true,
-
-                            .negate_no_match => {
-                                // always skip if a pattern specifically says "!<name>"
-                                match = false;
-                                break;
-                            },
-
-                            .no_match => {
-                                // keep looking
-                            },
-                        }
-                    }
-
-                    if (!match) {
-                        continue;
-                    }
-                }
 
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`

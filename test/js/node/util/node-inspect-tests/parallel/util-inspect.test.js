@@ -3088,8 +3088,8 @@ test("no assertion failures 3", () => {
       "Fhqwhgads {\n" +
         "  constructor: <ref *1> [Function: Fhqwhgads] {\n" +
         "    [length]: 0,\n" +
-        "    [prototype]: { [constructor]: [Circular *1] },\n" +
-        "    [name]: 'Fhqwhgads'\n" +
+        "    [name]: 'Fhqwhgads',\n" +
+        "    [prototype]: { [constructor]: [Circular *1] }\n" +
         "  }\n" +
         "}",
     );

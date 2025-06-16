@@ -1,37 +1,47 @@
 #include "root.h"
+#include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
 #include "wtf/DebugHeap.h"
-#include "Strong.h"
-namespace Bun {
+#include "ZigGlobalObject.h"
 
-#if ENABLE(MALLOC_BREAKDOWN)
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StrongRef);
-#endif
-
+extern "C" void Bun__StrongRef__delete(JSC::JSValue* handleSlot)
+{
+    if (handleSlot) {
+        *handleSlot = JSC::JSValue();
+        JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
+    }
 }
 
-extern "C" void Bun__StrongRef__delete(Bun::StrongRef* strongRef)
+extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    delete strongRef;
+    auto& vm = globalObject->vm();
+    auto handleSlot = vm.heap.handleSet()->allocate();
+    auto value = JSC::JSValue::decode(encodedValue);
+
+    vm.heap.handleSet()->heapFor(handleSlot)->writeBarrier<true>(handleSlot, value);
+    *handleSlot = value;
+    return handleSlot;
 }
 
-extern "C" Bun::StrongRef* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* handleSlot)
 {
-    return new Bun::StrongRef(globalObject->vm(), JSC::JSValue::decode(encodedValue));
+    return handleSlot && *handleSlot ? JSC::JSValue::encode(*handleSlot) : JSC::JSValue::encode(JSC::JSValue());
 }
 
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(Bun::StrongRef* strongRef)
+extern "C" void Bun__StrongRef__set(JSC::JSValue* handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
-    return JSC::JSValue::encode(strongRef->m_cell.get());
+    auto& vm = globalObject->vm();
+    auto decodedValue = JSC::JSValue::decode(value);
+    vm.heap.handleSet()->heapFor(handleSlot)->writeBarrier<true>(handleSlot, decodedValue);
+    *handleSlot = decodedValue;
 }
 
-extern "C" void Bun__StrongRef__set(Bun::StrongRef* strongRef, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+extern "C" void Bun__StrongRef__clear(JSC::JSValue* handleSlot)
 {
-    strongRef->m_cell.set(globalObject->vm(), JSC::JSValue::decode(value));
-}
-
-extern "C" void Bun__StrongRef__clear(Bun::StrongRef* strongRef)
-{
-    strongRef->m_cell.clear();
+    if (handleSlot && *handleSlot) {
+        auto& vm = handleSlot->asCell()->vm();
+        *handleSlot = JSC::JSValue();
+        vm.heap.handleSet()->heapFor(handleSlot)->writeBarrier<true>(handleSlot, JSC::JSValue());
+    }
 }

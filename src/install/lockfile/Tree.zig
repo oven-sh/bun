@@ -367,11 +367,12 @@ pub fn isFilteredDependencyOrWorkspace(
         return true;
     }
 
+    // Filtering only applies to the root package dependencies. Also
+    // --filter has a different meaning if a new package is being installed.
     if (manager.subcommand != .install or parent_pkg_id != 0) {
         return false;
     }
 
-    // filtering only applies to the root package dependencies.
     if (!dep.behavior.isWorkspaceOnly()) {
         if (!install_root_dependencies) {
             return true;
@@ -383,8 +384,8 @@ pub fn isFilteredDependencyOrWorkspace(
     var workspace_matched = workspace_filters.len == 0;
 
     for (workspace_filters) |filter| {
-        const filter_path_scope = filter_path.save();
-        defer filter_path_scope.restore();
+        const filter_path_reset = filter_path.save();
+        defer filter_path_reset.restore();
 
         const pattern, const name_or_path = switch (filter) {
             .all => {

@@ -444,6 +444,9 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
                     if (info.peers.eql(&curr_peers, &eql_ctx)) {
                         // dedupe! depend on the already created entry
+                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
+                            continue :next_entry;
+                        }
                         const entries = store.slice();
                         const entry_dependencies = entries.items(.dependencies);
                         const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
@@ -465,7 +468,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
             const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
-            const new_entry_is_workspace_only = !new_entry_is_root and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly();
 
             const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
                 .empty
@@ -482,7 +484,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
-                if (new_entry_is_workspace_only) {
+                if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly()) {
                     // skip implicit workspace dependencies on the root.
                     break :skip_adding_dependency;
                 }
@@ -680,7 +682,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             const maybe_entry_node_modules_dir: ?FD = null;
             defer if (maybe_entry_node_modules_dir) |entry_node_modules_dir| entry_node_modules_dir.close();
 
-            std.debug.print("entry: '{s}'\n", .{entry_node_modules_path.slice()});
+            // std.debug.print("entry: '{s}'\n", .{entry_node_modules_path.slice()});
             for (dependencies.slice()) |store_dep| {
                 const dep_scope = dep_path.save();
                 defer dep_scope.restore();
@@ -707,7 +709,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 defer inner_entry_scope.restore();
                 entry_node_modules_path.append(dep_dep_name.slice(string_buf));
 
-                std.debug.print(" - '{s}' -> '{s}'\n", .{ entry_node_modules_path.slice(), target_path.slice() });
+                // std.debug.print(" - '{s}' -> '{s}'\n", .{ entry_node_modules_path.slice(), target_path.slice() });
 
                 bun.sys.symlinkOrJunction(
                     entry_node_modules_path.sliceZ(),

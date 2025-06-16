@@ -2329,7 +2329,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callfra
         stream.done(globalThis);
     }
     this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -2347,7 +2347,7 @@ pub fn onFileStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfram
     if (strong.get(globalThis)) |stream| {
         stream.cancel(globalThis);
     }
-    return .undefined;
+    return .js_undefined;
 }
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFn(onFileStreamResolveRequestStream);
@@ -2911,7 +2911,7 @@ pub fn getName(
     _: JSC.JSValue,
     globalThis: *JSC.JSGlobalObject,
 ) JSValue {
-    return if (this.getNameString()) |name| name.toJS(globalThis) else .undefined;
+    return if (this.getNameString()) |name| name.toJS(globalThis) else .js_undefined;
 }
 
 pub fn setName(
@@ -3017,7 +3017,7 @@ export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
 }
 
 pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const store = this.store orelse return JSC.JSValue.jsUndefined();
+    const store = this.store orelse return .js_undefined;
     // TODO: make this async for files
     return switch (store.data) {
         .file => |*file| {
@@ -3037,7 +3037,7 @@ pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, callback: *JSC.Call
             };
         },
         .s3 => S3File.getStat(this, globalThis, callback),
-        else => JSC.JSValue.jsUndefined(),
+        else => .js_undefined,
     };
 }
 pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {

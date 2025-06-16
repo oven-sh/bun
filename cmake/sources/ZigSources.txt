@@ -32,7 +32,11 @@ src/bun.js/api/bun/h2_frame_parser.zig
 src/bun.js/api/bun/lshpack.zig
 src/bun.js/api/bun/process.zig
 src/bun.js/api/bun/socket.zig
+src/bun.js/api/bun/socket/Handlers.zig
+src/bun.js/api/bun/socket/Listener.zig
 src/bun.js/api/bun/socket/SocketAddress.zig
+src/bun.js/api/bun/socket/tls_socket_functions.zig
+src/bun.js/api/bun/socket/WindowsNamedPipeContext.zig
 src/bun.js/api/bun/spawn.zig
 src/bun.js/api/bun/spawn/stdio.zig
 src/bun.js/api/bun/ssl_wrapper.zig
@@ -56,6 +60,7 @@ src/bun.js/api/JSBundler.zig
 src/bun.js/api/JSTranspiler.zig
 src/bun.js/api/server.zig
 src/bun.js/api/server/AnyRequestContext.zig
+src/bun.js/api/server/FileRoute.zig
 src/bun.js/api/server/HTMLBundle.zig
 src/bun.js/api/server/HTTPStatusText.zig
 src/bun.js/api/server/InspectorBunFrontendDevServerAgent.zig
@@ -200,6 +205,9 @@ src/bun.js/node/util/parse_args_utils.zig
 src/bun.js/node/util/parse_args.zig
 src/bun.js/node/util/validators.zig
 src/bun.js/node/win_watcher.zig
+src/bun.js/node/zlib/NativeBrotli.zig
+src/bun.js/node/zlib/NativeZlib.zig
+src/bun.js/node/zlib/NativeZstd.zig
 src/bun.js/ProcessAutoKiller.zig
 src/bun.js/rare_data.zig
 src/bun.js/ResolveMessage.zig
@@ -259,6 +267,7 @@ src/bundler/Chunk.zig
 src/bundler/DeferredBatchTask.zig
 src/bundler/entry_points.zig
 src/bundler/Graph.zig
+src/bundler/HTMLImportManifest.zig
 src/bundler/linker_context/computeChunks.zig
 src/bundler/linker_context/computeCrossChunkDependencies.zig
 src/bundler/linker_context/convertStmtsForChunk.zig
@@ -475,6 +484,7 @@ src/fd.zig
 src/feature_flags.zig
 src/fmt.zig
 src/fs.zig
+src/fs/stat_hash.zig
 src/futex.zig
 src/generated_perf_trace_events.zig
 src/generated_versions_list.zig

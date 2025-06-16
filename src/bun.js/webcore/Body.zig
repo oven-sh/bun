@@ -175,7 +175,7 @@ pub const PendingValue = struct {
 
                             break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
                                 .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
-                                .URLEncoded => .undefined,
+                                .URLEncoded => .js_undefined,
                             });
                         },
                         else => unreachable,
@@ -306,7 +306,7 @@ pub const Value = union(Tag) {
                 .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                 .Message => |message| message.toErrorInstance(globalObject),
                 // do a early return in this case we don't need to create a new Strong
-                .JSValue => |js_value| return js_value.get() orelse JSC.JSValue.jsUndefined(),
+                .JSValue => |js_value| return js_value.get() orelse .js_undefined,
             };
             this.* = .{ .JSValue = .create(js_value, globalObject) };
             return js_value;
@@ -1503,7 +1503,7 @@ pub const ValueBufferer = struct {
         var args = callframe.arguments_old(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1511,7 +1511,7 @@ pub const ValueBufferer = struct {
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     fn handleRejectStream(sink: *@This(), err: JSValue, is_async: bool) void {

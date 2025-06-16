@@ -436,14 +436,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 const curr_peers = node_peers[entry.node_id.get()];
                 const curr_dep_id = node_dep_ids[entry.node_id.get()];
 
+                const eql_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                    .string_buf = string_buf,
+                    .pkg_names = pkg_names,
+                };
+
                 for (dedupe_entry.value_ptr.items) |info| {
                     if (info.dep_id != invalid_dependency_id and curr_dep_id != invalid_dependency_id) {
                         const curr_dep = dependencies[curr_dep_id];
                         const existing_dep = dependencies[info.dep_id];
-
-                        if (curr_dep.name_hash != existing_dep.name_hash) {
-                            continue;
-                        }
 
                         if (existing_dep.isWorkspaceDep() and curr_dep.isWorkspaceDep()) {
                             if (existing_dep.behavior.isWorkspaceOnly() != curr_dep.behavior.isWorkspaceOnly()) {
@@ -452,16 +453,18 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                         }
                     }
 
-                    if (info.peers.eql(&curr_peers)) {
+                    if (info.peers.eql(&curr_peers, &eql_ctx)) {
                         // dedupe! depend on the already created entry
                         const entries = store.slice();
-                        const entry_dep_names = entries.items(.dep_name);
                         const entry_dependencies = entries.items(.dependencies);
                         const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
                             .string_buf = string_buf,
-                            .dep_names = entry_dep_names,
+                            .dependencies = dependencies,
                         };
-                        entry_dependencies[entry.entry_parent_id.get()].insertAssumeCapacity(info.entry_id, &ctx);
+                        entry_dependencies[entry.entry_parent_id.get()].insertAssumeCapacity(
+                            .{ .id = info.entry_id, .dep_id = curr_dep_id },
+                            &ctx,
+                        );
                         continue :next_entry;
                     }
                 }
@@ -500,13 +503,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 }
 
                 const entries = store.slice();
-                const entry_dep_names = entries.items(.dep_name);
                 const entry_dependencies = entries.items(.dependencies);
                 const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
                     .string_buf = string_buf,
-                    .dep_names = entry_dep_names,
+                    .dependencies = dependencies,
                 };
-                entry_dependencies[entry_parent_id].insertAssumeCapacity(entry_id, &ctx);
+                entry_dependencies[entry_parent_id].insertAssumeCapacity(
+                    .{ .id = entry_id, .dep_id = new_entry_dep_id },
+                    &ctx,
+                );
             }
 
             try dedupe_entry.value_ptr.append(lockfile.allocator, .{
@@ -635,7 +640,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
     {
         const entries = store.slice();
-        const entry_dep_names = entries.items(.dep_name);
         const entry_pkg_ids = entries.items(.pkg_id);
         const entry_parent_ids = entries.items(.parent_id);
         const entry_dependencies = entries.items(.dependencies);
@@ -684,15 +688,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             defer if (maybe_entry_node_modules_dir) |entry_node_modules_dir| entry_node_modules_dir.close();
 
             std.debug.print("entry: '{s}'\n", .{entry_node_modules_path.slice()});
-            for (dependencies.slice()) |store_dep_id| {
-                bun.debugAssert(!entry_is_workspace_only[store_dep_id.get()]);
+            for (dependencies.slice()) |store_dep| {
+                bun.debugAssert(!entry_is_workspace_only[store_dep.id.get()]);
 
                 const dep_scope = dep_path.save();
                 defer dep_scope.restore();
 
-                const dep_pkg_id = entry_pkg_ids[store_dep_id.get()];
-                const dep_name = entry_dep_names[store_dep_id.get()];
-                const dep_peers = entry_peers[store_dep_id.get()];
+                const dep_pkg_id = entry_pkg_ids[store_dep.id.get()];
+                const dep_name = lockfile.buffers.dependencies.items[store_dep.dep_id].name;
+                const dep_peers = entry_peers[store_dep.id.get()];
 
                 const dep_pkg_name = pkg_names[dep_pkg_id];
 
@@ -817,38 +821,53 @@ const Store = struct {
 
         pub const List = bun.MultiArrayList(Entry);
 
-        pub const Dependencies = OrderedArraySet(Id, DependenciesOrderedArraySetCtx);
+        const DependenciesItem = struct {
+            id: Id,
+            dep_id: DependencyID,
+        };
+        pub const Dependencies = OrderedArraySet(DependenciesItem, DependenciesOrderedArraySetCtx);
 
         const DependenciesOrderedArraySetCtx = struct {
             string_buf: string,
-            dep_names: []const String,
+            dependencies: []const Dependency,
 
-            pub fn eql(l_item: Id, r_item: Id) bool {
-                return l_item == r_item;
+            pub fn eql(ctx: *const DependenciesOrderedArraySetCtx, l_item: DependenciesItem, r_item: DependenciesItem) bool {
+                if (l_item.id != r_item.id) {
+                    return false;
+                }
+
+                const dependencies = ctx.dependencies;
+                const l_dep = dependencies[l_item.dep_id];
+                const r_dep = dependencies[r_item.dep_id];
+
+                return l_dep.name_hash == r_dep.name_hash;
             }
 
-            pub fn order(ctx: *const DependenciesOrderedArraySetCtx, l: Id, r: Id) std.math.Order {
-                if (l == r) {
+            pub fn order(ctx: *const DependenciesOrderedArraySetCtx, l: DependenciesItem, r: DependenciesItem) std.math.Order {
+                const dependencies = ctx.dependencies;
+                const l_dep = dependencies[l.dep_id];
+                const r_dep = dependencies[r.dep_id];
+
+                if (l.id == r.id and l_dep.name_hash == r_dep.name_hash) {
                     return .eq;
                 }
 
                 // TODO: y r doing
-                if (l == .invalid) {
-                    if (r == .invalid) {
+                if (l.id == .invalid) {
+                    if (r.id == .invalid) {
                         return .eq;
                     }
                     return .lt;
-                } else if (r == .invalid) {
-                    if (l == .invalid) {
+                } else if (r.id == .invalid) {
+                    if (l.id == .invalid) {
                         return .eq;
                     }
                     return .gt;
                 }
 
                 const string_buf = ctx.string_buf;
-                const dep_names = ctx.dep_names;
-                const l_dep_name = dep_names[l.get()];
-                const r_dep_name = dep_names[r.get()];
+                const l_dep_name = l_dep.name;
+                const r_dep_name = r_dep.name;
 
                 return l_dep_name.order(&r_dep_name, string_buf, string_buf);
             }
@@ -961,13 +980,13 @@ const Store = struct {
                 return this.list.items;
             }
 
-            pub fn eql(l: *const @This(), r: *const @This()) bool {
+            pub fn eql(l: *const @This(), r: *const @This(), ctx: *const Ctx) bool {
                 if (l.list.items.len != r.list.items.len) {
                     return false;
                 }
 
                 for (l.list.items, r.list.items) |l_item, r_item| {
-                    if (!Ctx.eql(l_item, r_item)) {
+                    if (!ctx.eql(l_item, r_item)) {
                         return false;
                     }
                 }
@@ -978,7 +997,7 @@ const Store = struct {
             pub fn insert(this: *@This(), allocator: std.mem.Allocator, new: T, ctx: *const Ctx) OOM!void {
                 for (0..this.list.items.len) |i| {
                     const existing = this.list.items[i];
-                    if (Ctx.eql(new, existing)) {
+                    if (ctx.eql(new, existing)) {
                         return;
                     }
 
@@ -998,7 +1017,7 @@ const Store = struct {
             pub fn insertAssumeCapacity(this: *@This(), new: T, ctx: *const Ctx) void {
                 for (0..this.list.items.len) |i| {
                     const existing = this.list.items[i];
-                    if (Ctx.eql(new, existing)) {
+                    if (ctx.eql(new, existing)) {
                         return;
                     }
 
@@ -1041,7 +1060,8 @@ const Store = struct {
                 string_buf: string,
                 pkg_names: []const String,
 
-                pub fn eql(l_item: TransitivePeer, r_item: TransitivePeer) bool {
+                pub fn eql(ctx: *const OrderedArraySetCtx, l_item: TransitivePeer, r_item: TransitivePeer) bool {
+                    _ = ctx;
                     return l_item.pkg_id == r_item.pkg_id;
                 }
 

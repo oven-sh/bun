@@ -46,16 +46,16 @@ pub fn init(
     return script;
 }
 
-pub fn start(this: *Stmt) void {
+pub fn start(this: *Stmt) Yield {
     if (bun.Environment.allow_assert) {
         assert(this.idx == 0);
         assert(this.last_exit_code == null);
         assert(this.currently_executing == null);
     }
-    this.next();
+    return this.next();
 }
 
-pub fn next(this: *Stmt) void {
+pub fn next(this: *Stmt) Yield {
     if (this.idx >= this.node.exprs.len)
         return this.parent.childDone(this, this.last_exit_code orelse 0);
 
@@ -64,50 +64,51 @@ pub fn next(this: *Stmt) void {
         .binary => {
             const binary = Binary.init(this.base.interpreter, this.base.shell, child.binary, Binary.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(binary);
-            binary.start();
+            return binary.start();
         },
         .cmd => {
             const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(cmd);
-            cmd.start();
+            return cmd.start();
         },
         .pipeline => {
             const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
             this.currently_executing = ChildPtr.init(pipeline);
-            pipeline.start();
+            return pipeline.start();
         },
         .assign => |assigns| {
             var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
             assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
-            assign_machine.start();
+            return assign_machine.start();
         },
         .subshell => {
             switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
                 .result => |shell_state| {
                     var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    script.start();
+                    return script.start();
                 },
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
+                    return .failed;
                 },
             }
         },
         .@"if" => {
             const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
-            if_clause.start();
+            return if_clause.start();
         },
         .condexpr => {
             const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, child.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
-            condexpr.start();
+            return condexpr.start();
         },
         .@"async" => {
             const @"async" = Async.init(this.base.interpreter, this.base.shell, child.@"async", Async.ParentPtr.init(this), this.io.copy());
-            @"async".start();
+            return @"async".start();
         },
     }
 }
 
-pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     const data = child.ptr.repr.data;
     log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
     this.last_exit_code = exit_code;
@@ -116,7 +117,7 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) void {
     log("{d} {d}", .{ data, data2 });
     child.deinit();
     this.currently_executing = null;
-    this.next();
+    return this.next();
 }
 
 pub fn deinit(this: *Stmt) void {
@@ -128,8 +129,12 @@ pub fn deinit(this: *Stmt) void {
     this.base.interpreter.allocator.destroy(this);
 }
 
+const std = @import("std");
 const bun = @import("bun");
 
+const Allocator = std.mem.Allocator;
+
+const Yield = bun.shell.Yield;
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;

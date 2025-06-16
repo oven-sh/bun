@@ -166,24 +166,22 @@ pub const ShellMvBatchedTask = struct {
     }
 };
 
-pub fn start(this: *Mv) Maybe(void) {
+pub fn start(this: *Mv) Yield {
     return this.next();
 }
 
-pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .{ .waiting_write_err = .{ .exit_code = exit_code } };
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn next(this: *Mv) Maybe(void) {
+pub fn next(this: *Mv) Yield {
     while (!(this.state == .done or this.state == .err)) {
         switch (this.state) {
             .idle => {
@@ -210,10 +208,10 @@ pub fn next(this: *Mv) Maybe(void) {
                     },
                 };
                 this.state.check_target.task.task.schedule();
-                return Maybe(void).success;
+                return .suspended;
             },
             .check_target => {
-                if (this.state.check_target.state == .running) return Maybe(void).success;
+                if (this.state.check_target.state == .running) return .suspended;
                 const check_target = &this.state.check_target;
 
                 if (comptime bun.Environment.allow_assert) {
@@ -296,36 +294,32 @@ pub fn next(this: *Mv) Maybe(void) {
                     t.task.schedule();
                 }
 
-                return Maybe(void).success;
+                return .suspended;
             },
             // Shouldn't happen
             .executing => {},
             .waiting_write_err => {
-                return Maybe(void).success;
+                return .failed;
             },
             .done, .err => unreachable,
         }
     }
 
     switch (this.state) {
-        .done => this.bltn().done(0),
-        else => this.bltn().done(1),
+        .done => return this.bltn().done(0),
+        else => return this.bltn().done(1),
     }
-
-    return Maybe(void).success;
 }
 
-pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) Yield {
     defer if (e) |err| err.deref();
     switch (this.state) {
         .waiting_write_err => {
             if (e != null) {
                 this.state = .err;
-                _ = this.next();
-                return;
+                return this.next();
             }
-            this.bltn().done(this.state.waiting_write_err.exit_code);
-            return;
+            return this.bltn().done(this.state.waiting_write_err.exit_code);
         },
         else => @panic("Invalid state"),
     }
@@ -500,6 +494,7 @@ const assert = bun.assert;
 const std = @import("std");
 const bun = @import("bun");
 const shell = bun.shell;
+const Yield = shell.Yield;
 const ExitCode = shell.ExitCode;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;

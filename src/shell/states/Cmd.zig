@@ -87,7 +87,7 @@ pub const ShellAsyncSubprocessDone = struct {
     pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
         log("{} runFromMainThread", .{this});
         defer this.deinit();
-        this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0);
+        this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
     }
 
     pub fn deinit(this: *ShellAsyncSubprocessDone) void {
@@ -219,13 +219,13 @@ pub fn isSubproc(this: *Cmd) bool {
 
 /// If starting a command results in an error (failed to find executable in path for example)
 /// then it should write to the stderr of the entire shell script process
-pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) void {
+pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) Yield {
     const handler = struct {
         fn enqueueCb(ctx: *Cmd) void {
             ctx.state = .waiting_write_err;
         }
     };
-    this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+    return this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
 }
 
 pub fn init(
@@ -256,17 +256,16 @@ pub fn init(
     return cmd;
 }
 
-pub fn next(this: *Cmd) void {
+pub fn next(this: *Cmd) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding_assigns = undefined };
                 Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
-                this.state.expanding_assigns.start();
-                return; // yield execution
+                return this.state.expanding_assigns.start();
             },
             .expanding_assigns => {
-                return; // yield execution
+                return .suspended;
             },
             .expanding_redirect => {
                 if (this.state.expanding_redirect.idx >= 1) {
@@ -305,14 +304,11 @@ pub fn next(this: *Cmd) void {
                     this.io.copy(),
                 );
 
-                this.state.expanding_redirect.expansion.start();
-                return;
+                return this.state.expanding_redirect.expansion.start();
             },
             .expanding_args => {
                 if (this.state.expanding_args.idx >= this.node.name_and_args.len) {
-                    this.transitionToExecStateAndYield();
-                    // yield execution to subproc
-                    return;
+                    return this.transitionToExecStateAndYield();
                 }
 
                 this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
@@ -330,51 +326,45 @@ pub fn next(this: *Cmd) void {
 
                 this.state.expanding_args.idx += 1;
 
-                this.state.expanding_args.expansion.start();
-                // yield execution to expansion
-                return;
+                return this.state.expanding_args.expansion.start();
             },
             .waiting_write_err => {
-                return;
+                bun.shell.unreachableState("Cmd.next", "waiting_write_err");
             },
             .exec => {
-                // yield execution to subproc/builtin
-                return;
+                bun.shell.unreachableState("Cmd.next", "exec");
             },
             .done => unreachable,
         }
     }
 
     if (this.state == .done) {
-        this.parent.childDone(this, this.exit_code.?);
-        return;
+        return this.parent.childDone(this, this.exit_code.?);
     }
 
-    this.parent.childDone(this, 1);
-    return;
+    return this.parent.childDone(this, 1);
 }
 
-fn transitionToExecStateAndYield(this: *Cmd) void {
+fn transitionToExecStateAndYield(this: *Cmd) Yield {
     this.state = .exec;
-    this.initSubproc();
+    return this.initSubproc();
 }
 
-pub fn start(this: *Cmd) void {
+pub fn start(this: *Cmd) Yield {
     log("cmd start {x}", .{@intFromPtr(this)});
-    return this.next();
+    return .{ .cmd = this };
 }
 
-pub fn onIOWriterChunk(this: *Cmd, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Cmd, _: usize, e: ?JSC.SystemError) Yield {
     if (e) |err| {
         this.base.throw(&bun.shell.ShellErr.newSys(err));
-        return;
+        return .failed;
     }
     assert(this.state == .waiting_write_err);
-    this.parent.childDone(this, 1);
-    return;
+    return this.parent.childDone(this, 1);
 }
 
-pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Assigns)) {
         if (exit_code != 0) {
             const err = this.state.expanding_assigns.state.err;
@@ -382,8 +372,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
             defer err.deinit(bun.default_allocator);
 
             this.state.expanding_assigns.deinit();
-            this.writeFailingError("{}\n", .{err});
-            return;
+            return this.writeFailingError("{}\n", .{err});
         }
 
         this.state.expanding_assigns.deinit();
@@ -392,8 +381,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
                 .expansion = undefined,
             },
         };
-        this.next();
-        return;
+        return .{ .cmd = this };
     }
 
     if (child.ptr.is(Expansion)) {
@@ -405,8 +393,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
                 else => @panic("Invalid state"),
             };
             defer err.deinit(bun.default_allocator);
-            this.writeFailingError("{}\n", .{err});
-            return;
+            return this.writeFailingError("{}\n", .{err});
         }
         // Handling this case from the shell spec:
         // "If there is no command name, but the command contained a
@@ -423,14 +410,13 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
         {
             this.exit_code = e.out_exit_code;
         }
-        this.next();
-        return;
+        return .{ .cmd = this };
     }
 
     @panic("Expected Cmd child to be Assigns or Expansion. This indicates a bug in Bun. Please file a GitHub issue. ");
 }
 
-fn initSubproc(this: *Cmd) void {
+fn initSubproc(this: *Cmd) Yield {
     log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
     var arena = &this.spawn_arena;
@@ -466,8 +452,7 @@ fn initSubproc(this: *Cmd) void {
             // BUT, if the expansion contained a single command
             // substitution (third example above), then we need to
             // return the exit code of that command substitution.
-            this.parent.childDone(this, this.exit_code orelse 0);
-            return;
+            return this.parent.childDone(this, this.exit_code orelse 0);
         };
 
         const first_arg_len = std.mem.len(first_arg);
@@ -481,7 +466,7 @@ fn initSubproc(this: *Cmd) void {
 
         if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
             const cwd = this.base.shell.cwd_fd;
-            const coro_result = Builtin.init(
+            const maybe_yield = Builtin.init(
                 this,
                 this.base.interpreter,
                 b,
@@ -493,7 +478,7 @@ fn initSubproc(this: *Cmd) void {
                 cwd,
                 &this.io,
             );
-            if (coro_result == .yield) return;
+            if (maybe_yield) |yield| return yield;
 
             if (comptime bun.Environment.allow_assert) {
                 assert(this.exec == .bltn);
@@ -501,14 +486,7 @@ fn initSubproc(this: *Cmd) void {
 
             log("Builtin name: {s}", .{@tagName(this.exec)});
 
-            switch (this.exec.bltn.start()) {
-                .result => {},
-                .err => |e| {
-                    this.writeFailingError("bun: {s}: {s}", .{ @tagName(this.exec.bltn.kind), e.toShellSystemError().message });
-                    return;
-                },
-            }
-            return;
+            return this.exec.bltn.start();
         }
 
         const path_buf = bun.PathBufferPool.get();
@@ -517,8 +495,7 @@ fn initSubproc(this: *Cmd) void {
             if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                 break :blk bun.selfExePath() catch break :blk2;
             }
-            this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
-            return;
+            return this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
         };
 
         const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
@@ -561,11 +538,11 @@ fn initSubproc(this: *Cmd) void {
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
                     const blob = blob__.dupe();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return;
+                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no) catch return .failed;
                     } else if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return;
+                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no) catch return .failed;
                     } else if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return;
+                        spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no) catch return .failed;
                     }
                 } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;
@@ -573,24 +550,23 @@ fn initSubproc(this: *Cmd) void {
                 } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                     req.getBodyValue().toBlobIfPossible();
                     if (this.node.redirect.stdin) {
-                        spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return;
+                        spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no) catch return .failed;
                     }
                     if (this.node.redirect.stdout) {
-                        spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return;
+                        spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no) catch return .failed;
                     }
                     if (this.node.redirect.stderr) {
-                        spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return;
+                        spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no) catch return .failed;
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
                     global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)}) catch {}; // TODO: propagate
-                    return;
+                    return .failed;
                 }
             },
             .atom => {
                 if (this.redirection_file.items.len == 0) {
-                    this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
-                    return;
+                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.argv.items[0] orelse "<unknown>"});
                 }
                 const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                 log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});
@@ -628,13 +604,14 @@ fn initSubproc(this: *Cmd) void {
         .result => this.exec.subproc.child,
         .err => |*e| {
             this.exec = .none;
-            this.writeFailingError("{}\n", .{e});
-            return;
+            return this.writeFailingError("{}\n", .{e});
         },
     };
     subproc.ref();
-    this.spawn_arena_freed = true;
-    arena.deinit();
+    defer {
+        this.spawn_arena_freed = true;
+        arena.deinit();
+    }
 
     if (did_exit_immediately) {
         if (subproc.process.hasExited()) {
@@ -646,6 +623,8 @@ fn initSubproc(this: *Cmd) void {
             subproc.process.wait(false);
         }
     }
+
+    return .suspended;
 }
 
 fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {
@@ -708,8 +687,7 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     log("cmd exit code={d} has_finished={any} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
     if (has_finished) {
         this.state = .done;
-        this.next();
-        return;
+        this.next().run();
     }
 }
 
@@ -752,7 +730,7 @@ pub fn bufferedInputClose(this: *Cmd) void {
     this.exec.subproc.buffered_closed.close(this, .stdin);
 }
 
-pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.SystemError) void {
+pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.SystemError) Yield {
     switch (kind) {
         .stdout => this.bufferedOutputCloseStdout(err),
         .stderr => this.bufferedOutputCloseStderr(err),
@@ -764,10 +742,12 @@ pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.Syste
                 .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.base.eventLoop()),
             });
             async_subprocess_done.enqueue();
+            return .suspended;
         } else {
-            this.parent.childDone(this, this.exit_code orelse 0);
+            return this.parent.childDone(this, this.exit_code orelse 0);
         }
     }
+    return .suspended;
 }
 
 pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?JSC.SystemError) void {
@@ -805,6 +785,7 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 
 const Allocator = std.mem.Allocator;

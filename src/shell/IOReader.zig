@@ -67,14 +67,14 @@ pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
 }
 
 /// Idempotent function to start the reading
-pub fn start(this: *IOReader) void {
+pub fn start(this: *IOReader) Yield {
     if (bun.Environment.isPosix) {
         if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
             if (this.reader.start(this.fd, true).asErr()) |e| {
                 this.onReaderError(e);
             }
         }
-        return;
+        return .suspended;
     }
 
     if (this.is_reading) return;
@@ -267,6 +267,7 @@ const ReadChunkAction = bun.shell.interpret.ReadChunkAction;
 const std = @import("std");
 const bun = @import("bun");
 const shell = bun.shell;
+const Yield = shell.Yield;
 
 const Interpreter = bun.shell.Interpreter;
 const log = bun.shell.interpret.log;

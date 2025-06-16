@@ -39,6 +39,7 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const Yield = shell.Yield;
 
 pub const Pipe = [2]bun.FileDescriptor;
 const shell = bun.shell;
@@ -86,6 +87,11 @@ const assert = bun.assert;
 /// Functions which accept a `_: OutputNeedsIOSafeGuard` parameter can
 /// safely assume the stdout/stderr they are working with require IO.
 pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
+
+/// Similar to `OutputNeedsIOSafeGuard` but to ensure a function is
+/// called at the "top" of the call-stack relative to the interpreter's
+/// execution.
+pub const CallstackGuard = enum(u0) { __i_know_what_i_am_doing };
 
 pub const ExitCode = u16;
 
@@ -553,19 +559,20 @@ pub const Interpreter = struct {
             enqueueCb: fn (c: @TypeOf(ctx)) void,
             comptime fmt: []const u8,
             args: anytype,
-        ) void {
+        ) Yield {
             const io: *IO.OutKind = &@field(ctx.io, "stderr");
             switch (io.*) {
                 .fd => |x| {
                     enqueueCb(ctx);
-                    x.writer.enqueueFmt(ctx, x.captured, fmt, args);
+                    return x.writer.enqueueFmt(ctx, x.captured, fmt, args);
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
                     bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
-                    ctx.parent.childDone(ctx, 1);
+                    return ctx.parent.childDone(ctx, 1);
                 },
-                .ignore => {},
+                // FIXME: This is not correct? This would just make the entire shell hang I think?
+                .ignore => @panic("FIXME: zack"),
             }
         }
     };
@@ -745,8 +752,8 @@ pub const Interpreter = struct {
         };
 
         // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
-        defer bun.default_allocator.destroy(pathbuf);
+        const pathbuf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(pathbuf);
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
@@ -1022,7 +1029,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start();
+        root.start().run();
 
         return Maybe(void).success;
     }
@@ -1039,7 +1046,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start();
+        root.start().run();
         if (globalThis.hasException()) return error.JSError;
 
         return .undefined;
@@ -1060,22 +1067,22 @@ pub const Interpreter = struct {
         @"async".actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
-            this.finish(this.exit_code.?);
+            this.finish(this.exit_code.?).run();
         }
     }
 
-    pub fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
+    pub fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) Yield {
         if (child.ptr.is(Script)) {
             const script = child.as(Script);
             script.deinitFromInterpreter();
             this.exit_code = exit_code;
-            if (this.async_commands_executing == 0) this.finish(exit_code);
-            return;
+            if (this.async_commands_executing == 0) return this.finish(exit_code);
+            return .suspended;
         }
         @panic("Bad child");
     }
 
-    pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
+    pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) Yield {
         log("finish {d}", .{exit_code});
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
@@ -1104,6 +1111,8 @@ pub const Interpreter = struct {
             this.flags.done = true;
             this.exit_code = exit_code;
         }
+
+        return .done;
     }
 
     fn errored(this: *ThisInterpreter, the_error: ShellError) void {
@@ -1366,15 +1375,14 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         /// Starts the state node.
-        pub fn start(this: @This()) void {
+        pub fn start(this: @This()) Yield {
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
                     Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
-                    casted.start();
-                    return;
+                    return casted.start();
                 }
             }
             unknownTag(this.tagInt());
@@ -1398,7 +1406,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         /// Signals to the state node that one of its children completed with the
         /// given exit code
-        pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) void {
+        pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) Yield {
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -1409,15 +1417,14 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                         break :brk ChildPtr.init(child);
                     };
                     var casted = this.as(Ty);
-                    casted.childDone(child_ptr, exit_code);
-                    return;
+                    return casted.childDone(child_ptr, exit_code);
                 }
             }
             unknownTag(this.tagInt());
         }
 
-        pub fn unknownTag(tag: Ptr.TagInt) void {
-            if (bun.Environment.allow_assert) std.debug.panic("Bad tag: {d}\n", .{tag});
+        pub fn unknownTag(tag: Ptr.TagInt) noreturn {
+            return bun.Output.panic("Unknown tag for shell state node: {d}\n", .{tag});
         }
 
         pub fn tagInt(this: @This()) Ptr.TagInt {
@@ -1638,7 +1645,8 @@ pub const ShellSyscall = struct {
 
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            var buf: bun.PathBuffer = undefined;
+            var buf: bun.PathBuffer = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
             const path = switch (getPath(dir, path_, &buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
@@ -1657,7 +1665,8 @@ pub const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    var buf: bun.PathBuffer = undefined;
+                    var buf: bun.PathBuffer = bun.PathBufferPool.get();
+                    defer bun.PathBufferPool.put(buf);
                     const p = switch (getPath(dir, path, &buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
@@ -1673,7 +1682,8 @@ pub const ShellSyscall = struct {
                 };
             }
 
-            var buf: bun.PathBuffer = undefined;
+            var buf: bun.PathBuffer = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
             const p = switch (getPath(dir, path, &buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },
@@ -1717,11 +1727,11 @@ pub const ShellSyscall = struct {
 pub fn OutputTask(
     comptime Parent: type,
     comptime vtable: struct {
-        writeErr: *const fn (*Parent, childptr: anytype, []const u8) CoroutineResult,
+        writeErr: *const fn (*Parent, childptr: anytype, []const u8) ?Yield,
         onWriteErr: *const fn (*Parent) void,
-        writeOut: *const fn (*Parent, childptr: anytype, *OutputSrc) CoroutineResult,
+        writeOut: *const fn (*Parent, childptr: anytype, *OutputSrc) ?Yield,
         onWriteOut: *const fn (*Parent) void,
-        onDone: *const fn (*Parent) void,
+        onDone: *const fn (*Parent) Yield,
     },
 ) type {
     return struct {
@@ -1733,59 +1743,49 @@ pub fn OutputTask(
             done,
         },
 
-        pub fn deinit(this: *@This()) void {
+        pub fn deinit(this: *@This()) Yield {
             if (comptime bun.Environment.allow_assert) assert(this.state == .done);
-            vtable.onDone(this.parent);
-            this.output.deinit();
-            bun.destroy(this);
+            log("OutputTask({s}, 0x{x}) deinit", .{ @typeName(Parent), @intFromPtr(this) });
+            defer bun.destroy(this);
+            defer this.output.deinit();
+            return vtable.onDone(this.parent);
         }
 
-        pub fn start(this: *@This(), errbuf: ?[]const u8) void {
+        pub fn start(this: *@This(), errbuf: ?[]const u8) Yield {
+            log("OutputTask({s}, 0x{x}) start errbuf={s}", .{ @typeName(Parent), @intFromPtr(this), if (errbuf) |err| err[0..@min(128, err.len)] else "null" });
             this.state = .waiting_write_err;
             if (errbuf) |err| {
-                switch (vtable.writeErr(this.parent, this, err)) {
-                    .cont => {
-                        this.next();
-                    },
-                    .yield => return,
-                }
-                return;
+                if (vtable.writeErr(this.parent, this, err)) |yield| return yield;
+                return this.next();
             }
             this.state = .waiting_write_out;
-            switch (vtable.writeOut(this.parent, this, &this.output)) {
-                .cont => {
-                    vtable.onWriteOut(this.parent);
-                    this.state = .done;
-                    this.deinit();
-                },
-                .yield => return,
-            }
+            if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+            vtable.onWriteOut(this.parent);
+            this.state = .done;
+            return this.deinit();
         }
 
-        pub fn next(this: *@This()) void {
+        pub fn next(this: *@This()) Yield {
             switch (this.state) {
                 .waiting_write_err => {
                     vtable.onWriteErr(this.parent);
                     this.state = .waiting_write_out;
-                    switch (vtable.writeOut(this.parent, this, &this.output)) {
-                        .cont => {
-                            vtable.onWriteOut(this.parent);
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .yield => return,
-                    }
+                    if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    return this.deinit();
                 },
                 .waiting_write_out => {
                     vtable.onWriteOut(this.parent);
                     this.state = .done;
-                    this.deinit();
+                    return this.deinit();
                 },
                 .done => @panic("Invalid state"),
             }
         }
 
-        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?JSC.SystemError) Yield {
+            log("OutputTask({s}, 0x{x}) onIOWriterChunk", .{ @typeName(Parent), @intFromPtr(this) });
             if (err) |e| {
                 e.deref();
             }
@@ -1794,19 +1794,15 @@ pub fn OutputTask(
                 .waiting_write_err => {
                     vtable.onWriteErr(this.parent);
                     this.state = .waiting_write_out;
-                    switch (vtable.writeOut(this.parent, this, &this.output)) {
-                        .cont => {
-                            vtable.onWriteOut(this.parent);
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .yield => return,
-                    }
+                    if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    return this.deinit();
                 },
                 .waiting_write_out => {
                     vtable.onWriteOut(this.parent);
                     this.state = .done;
-                    this.deinit();
+                    return this.deinit();
                 },
                 .done => @panic("Invalid state"),
             }
@@ -1904,7 +1900,12 @@ pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
         .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
-        // macos allows regular files to be pollable: ISREG(mode) == true
-        .mac => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.S.ISREG(mode) or posix.isatty(fd.native()),
+        // macos DOES NOT allow regular files to be pollable
+        .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
     };
+}
+
+pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
+    @branchHint(.cold);
+    return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }

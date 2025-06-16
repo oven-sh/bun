@@ -24,20 +24,18 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn writeFailingError(this: *Cat, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+pub fn writeFailingError(this: *Cat, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn start(this: *Cat) Maybe(void) {
+pub fn start(this: *Cat) Yield {
     const filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |filepath_args| filepath_args,
         .err => |e| {
@@ -47,8 +45,7 @@ pub fn start(this: *Cat) Maybe(void) {
                 .unsupported => |unsupported| this.bltn().fmtErrorArena(.cat, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
-            _ = this.writeFailingError(buf, 1);
-            return Maybe(void).success;
+            return this.writeFailingError(buf, 1);
         },
     };
 
@@ -66,12 +63,10 @@ pub fn start(this: *Cat) Maybe(void) {
         };
     }
 
-    _ = this.next();
-
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn next(this: *Cat) void {
+pub fn next(this: *Cat) Yield {
     switch (this.state) {
         .idle => @panic("Invalid state"),
         .exec_stdin => {
@@ -79,17 +74,13 @@ pub fn next(this: *Cat) void {
                 this.state.exec_stdin.in_done = true;
                 const buf = this.bltn().readStdinNoIO();
                 if (this.bltn().stdout.needsIO()) |safeguard| {
-                    this.bltn().stdout.enqueue(this, buf, safeguard);
-                } else {
-                    _ = this.bltn().writeNoIO(.stdout, buf);
-                    this.bltn().done(0);
-                    return;
+                    return this.bltn().stdout.enqueue(this, buf, safeguard);
                 }
-                return;
+                _ = this.bltn().writeNoIO(.stdout, buf);
+                return this.bltn().done(0);
             }
             this.bltn().stdin.fd.addReader(this);
-            this.bltn().stdin.fd.start();
-            return;
+            return this.bltn().stdin.fd.start();
         },
         .exec_filepath_args => {
             var exec = &this.state.exec_filepath_args;
@@ -107,9 +98,8 @@ pub fn next(this: *Cat) void {
                 .result => |fd| fd,
                 .err => |e| {
                     const buf = this.bltn().taskErrorToString(.cat, e);
-                    _ = this.writeFailingError(buf, 1);
-                    exec.deinit();
-                    return;
+                    defer exec.deinit();
+                    return this.writeFailingError(buf, 1);
                 },
             };
 
@@ -118,14 +108,14 @@ pub fn next(this: *Cat) void {
             exec.chunks_queued = 0;
             exec.reader = reader;
             exec.reader.?.addReader(this);
-            exec.reader.?.start();
+            return exec.reader.?.start();
         },
-        .waiting_write_err => return,
-        .done => this.bltn().done(0),
+        .waiting_write_err => return .failed,
+        .done => return this.bltn().done(0),
     }
 }
 
-pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) Yield {
     debug("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
@@ -144,7 +134,7 @@ pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
                     }
                     this.state.exec_stdin.in_done = true;
                 }
-                this.bltn().done(e.getErrno());
+                return this.bltn().done(e.getErrno());
             },
             .exec_filepath_args => {
                 var exec = &this.state.exec_filepath_args;
@@ -152,22 +142,21 @@ pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
                     r.removeReader(this);
                 }
                 exec.deinit();
-                this.bltn().done(e.getErrno());
+                return this.bltn().done(e.getErrno());
             },
-            .waiting_write_err => this.bltn().done(e.getErrno()),
+            .waiting_write_err => return this.bltn().done(e.getErrno()),
             else => @panic("Invalid state"),
         }
-        return;
     }
 
     switch (this.state) {
         .exec_stdin => {
             this.state.exec_stdin.chunks_done += 1;
             if (this.state.exec_stdin.in_done and (this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued)) {
-                this.bltn().done(0);
-                return;
+                return this.bltn().done(0);
             }
             // Need to wait for more chunks to be written
+            return .suspended;
         },
         .exec_filepath_args => {
             this.state.exec_filepath_args.chunks_done += 1;
@@ -175,18 +164,20 @@ pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
                 this.state.exec_filepath_args.out_done = true;
             }
             if (this.state.exec_filepath_args.in_done and this.state.exec_filepath_args.out_done) {
-                this.next();
-                return;
+                return this.next();
             }
             // Wait for reader to be done
-            return;
+            return .suspended;
         },
-        .waiting_write_err => this.bltn().done(1),
+        .waiting_write_err => return this.bltn().done(1),
         else => @panic("Invalid state"),
     }
 }
 
 pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
+    {
+        @panic("FIXME zack");
+    }
     debug("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
     switch (this.state) {
         .exec_stdin => {
@@ -211,6 +202,9 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
 }
 
 pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) void {
+    {
+        @panic("FIXME zack");
+    }
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
         break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -342,6 +336,7 @@ const Opts = struct {
 
 const debug = bun.Output.scoped(.ShellCat, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

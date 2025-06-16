@@ -12,6 +12,7 @@ pub inline fn eventLoop(this: *const Base) JSC.EventLoopHandle {
     return this.interpreter.event_loop;
 }
 
+/// FIXME: We should get rid of this
 pub fn throw(this: *const Base, err: *const bun.shell.ShellErr) void {
     throwShellErr(err, this.eventLoop()) catch {}; //TODO:
 }

@@ -519,6 +519,17 @@ pub const Error = struct {
         return null;
     }
 
+    pub fn msg(this: Error) ?[]const u8 {
+        if (this.getErrorCodeTagName()) |resolved_errno| {
+            const code, const system_errno = resolved_errno;
+            if (coreutils_error_map.get(system_errno)) |label| {
+                return label;
+            }
+            return code;
+        }
+        return null;
+    }
+
     /// Simpler formatting which does not allocate a message
     pub fn toShellSystemError(this: Error) SystemError {
         @setEvalBranchQuota(1_000_000);

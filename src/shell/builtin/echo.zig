@@ -7,7 +7,7 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn start(this: *Echo) Maybe(void) {
+pub fn start(this: *Echo) Yield {
     const args = this.bltn().argsSlice();
 
     var has_leading_newline: bool = false;
@@ -29,28 +29,25 @@ pub fn start(this: *Echo) Maybe(void) {
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .waiting;
-        this.bltn().stdout.enqueue(this, this.output.items[0..], safeguard);
-        return Maybe(void).success;
+        return this.bltn().stdout.enqueue(this, this.output.items[0..], safeguard);
     }
     _ = this.bltn().writeNoIO(.stdout, this.output.items[0..]);
     this.state = .done;
-    this.bltn().done(0);
-    return Maybe(void).success;
+    return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting);
     }
 
     if (e != null) {
         defer e.?.deref();
-        this.bltn().done(e.?.getErrno());
-        return;
+        return this.bltn().done(e.?.getErrno());
     }
 
     this.state = .done;
-    this.bltn().done(0);
+    return this.bltn().done(0);
 }
 
 pub fn deinit(this: *Echo) void {
@@ -66,6 +63,7 @@ pub inline fn bltn(this: *Echo) *Builtin {
 // --
 const log = bun.Output.scoped(.echo, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;

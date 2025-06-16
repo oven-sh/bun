@@ -5,26 +5,20 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 
 const std = @import("std");
 const logger = bun.logger;
 const options = @import("options.zig");
-const js_ast = bun.JSAst;
 const RegularExpression = bun.RegularExpression;
-const builtin = @import("builtin");
 const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const transpiler = bun.transpiler;
-const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const FilterRun = @import("./cli/filter_run.zig");
 
@@ -34,7 +28,6 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
-const OOM = bun.OOM;
 
 pub var Bun__Node__ProcessTitle: ?string = null;
 
@@ -714,19 +707,19 @@ pub const Command = struct {
                 // Handle arguments correctly for standalone info command
                 var package_name: []const u8 = "";
                 var property_path: ?[]const u8 = null;
-                
+
                 // Find non-flag arguments starting from argv[2] (after "bun info")
                 var arg_idx: usize = 2;
                 var found_package = false;
-                
+
                 while (arg_idx < bun.argv.len) : (arg_idx += 1) {
                     const arg = bun.argv[arg_idx];
-                    
+
                     // Skip flags
                     if (arg.len > 0 and arg[0] == '-') {
                         continue;
                     }
-                    
+
                     if (!found_package) {
                         package_name = arg;
                         found_package = true;

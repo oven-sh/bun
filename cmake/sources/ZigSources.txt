@@ -493,7 +493,6 @@ src/Global.zig
 src/grapheme.zig
 src/heap_breakdown.zig
 src/highway.zig
-src/paths.zig
 src/hive_array.zig
 src/hmac.zig
 src/HTMLScanner.zig
@@ -580,6 +579,7 @@ src/options.zig
 src/output.zig
 src/OutputFile.zig
 src/patch.zig
+src/paths.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

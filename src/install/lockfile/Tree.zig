@@ -338,6 +338,7 @@ pub fn isFilteredDependencyOrWorkspace(
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
     const res = &pkg_resolutions[pkg_id];
+    const parent_res = &pkg_resolutions[parent_pkg_id];
 
     if (pkg_metas[pkg_id].isDisabled()) {
         if (manager.options.log_level.isVerbose()) {
@@ -358,7 +359,7 @@ pub fn isFilteredDependencyOrWorkspace(
         return true;
     }
 
-    const dep_features = switch (res.tag) {
+    const dep_features = switch (parent_res.tag) {
         .root, .workspace, .folder => manager.options.local_package_features,
         else => manager.options.remote_package_features,
     };

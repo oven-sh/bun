@@ -6,11 +6,9 @@ const PackageManager = install.PackageManager;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const Dependency = install.Dependency;
-const Package = Lockfile.Package;
 const PackageInstall = install.PackageInstall;
 const sys = bun.sys;
 const FD = bun.FD;
-const File = sys.File;
 const Output = bun.Output;
 const Global = bun.Global;
 const Resolution = install.Resolution;
@@ -20,13 +18,9 @@ const String = Semver.String;
 const invalid_package_id = install.invalid_package_id;
 const invalid_dependency_id = install.invalid_dependency_id;
 const FileSystem = bun.fs.FileSystem;
-const strings = bun.strings;
-const Environment = bun.Environment;
 const string = bun.string;
-const DependencySlice = Lockfile.DependencySlice;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;
-const PackageNameHash = install.PackageNameHash;
 
 // const IsolatedInstaller = struct {
 //     manager: *PackageManager,

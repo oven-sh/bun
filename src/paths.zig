@@ -4,7 +4,6 @@ const PathBuffer = bun.PathBuffer;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const Environment = bun.Environment;
 const path = bun.path;
 const strings = bun.strings;
 

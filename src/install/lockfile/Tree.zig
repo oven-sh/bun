@@ -650,7 +650,6 @@ const DependencyID = install.DependencyID;
 const DependencyIDList = Lockfile.DependencyIDList;
 const Environment = bun.Environment;
 const ExternalSlice = Lockfile.ExternalSlice;
-const FileSystem = bun.fs.FileSystem;
 const Lockfile = install.Lockfile;
 const OOM = bun.OOM;
 const Output = bun.Output;
@@ -670,7 +669,6 @@ const invalid_package_id = install.invalid_package_id;
 const logger = bun.logger;
 const string = []const u8;
 const stringZ = bun.stringZ;
-const strings = bun.strings;
 const z_allocator = bun.z_allocator;
 
 const bun = @import("bun");

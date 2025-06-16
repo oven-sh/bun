@@ -8228,7 +8228,7 @@ pub const Macro = struct {
 
         switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
             .rejected => |result| {
-                _ = vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+                vm.unhandledRejection(vm.global, result, loaded_result.asValue());
                 vm.disableMacroMode();
                 return error.MacroLoadError;
             },
@@ -8539,7 +8539,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
+                            this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

@@ -116,7 +116,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    _ = jsc_vm.unhandledRejection(global, result, promise.toJS());
+    jsc_vm.unhandledRejection(global, result, promise.toJS());
     jsc_vm.autoGarbageCollect();
 }
 

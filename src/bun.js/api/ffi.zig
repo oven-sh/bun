@@ -595,7 +595,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object: JSValue = object.getOwn(globalThis, "symbols") orelse .jsUndefined();
+        const symbols_object: JSValue = object.getOwn(globalThis, "symbols") orelse .js_undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -807,7 +807,7 @@ pub const FFI = struct {
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
         var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
@@ -866,7 +866,7 @@ pub const FFI = struct {
     ) bun.JSError!JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return .jsUndefined();
+            return .js_undefined;
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -894,7 +894,7 @@ pub const FFI = struct {
         //     bun.default_allocator.free(relocated_bytes_to_free);
         // }
 
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
@@ -1143,7 +1143,7 @@ pub const FFI = struct {
 
     pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
-        return .jsUndefined();
+        return .js_undefined;
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object_value: JSC.JSValue) JSC.JSValue {

@@ -26,7 +26,7 @@ pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug)
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
-pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
     debug_allocator_data.allocator
 else
     default_allocator;

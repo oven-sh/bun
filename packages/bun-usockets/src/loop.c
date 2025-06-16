@@ -128,7 +128,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             if (context->iterator == s && long_ticks == s->long_timeout) {
                 s->long_timeout = 255;
                 if (context->on_socket_long_timeout != NULL) context->on_socket_long_timeout(s);
-            }   
+            }
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */
             if (s == context->iterator) {
@@ -398,20 +398,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
                         char cmsg_buf[CMSG_SPACE(sizeof(int))];
-                        
+
                         iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
 
-                        msg.msg_flags = 0;                        
+                        msg.msg_flags = 0;
                         msg.msg_iov = &iov;
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
                         msg.msg_controllen = CMSG_LEN(sizeof(int));
                         msg.msg_control = cmsg_buf;
-                        
+
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
-                        
+
                         // Extract file descriptor if present
                         if (length > 0 && msg.msg_controllen > 0) {
                             struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
@@ -439,14 +439,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
                         if (
-                            s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH && 
-                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) && 
+                            s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
+                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
                             !us_socket_is_closed(0, s)
                         ) {
                             repeat_recv_count += error == 0;
 
                             // When not hung up, read a maximum of 10 times to avoid starving other sockets
-                            // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT 
+                            // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
                             if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
                                 continue;
                             }
@@ -486,7 +486,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-            } 
+            }
             /* Such as epollerr or EV_ERROR */
             if (error && s) {
                 /* Todo: decide what code we give here */

@@ -539,6 +539,7 @@ _bun_update_completion() {
         '--save[Save to package.json]' \
         '--dry-run[Don'"'"'t install anything]' \
         '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--latest[Updates dependencies to latest version, regardless of compatibility]' \
         '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \

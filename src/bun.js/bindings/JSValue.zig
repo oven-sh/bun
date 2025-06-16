@@ -1472,23 +1472,6 @@ pub const JSValue = enum(i64) {
         return zig_str;
     }
 
-    /// Equivalent to `obj.property` in JavaScript.
-    /// Reminder: `undefined` is a value!
-    ///
-    /// Prefer `get` in new code, as this function is incapable of returning an exception
-    pub fn get_unsafe(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (comptime bun.Environment.isDebug) {
-            if (BuiltinName.has(property)) {
-                Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
-            }
-        }
-
-        return switch (JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len))) {
-            .js_undefined, .zero, .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
-    }
-
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
     /// throw. Null indicates the property does not exist. JavaScript undefined
     /// and JavaScript null can exist as a property and is different than zig

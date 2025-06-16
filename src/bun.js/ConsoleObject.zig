@@ -2568,7 +2568,7 @@ pub const Formatter = struct {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(bun.webcore.FetchHeaders) != null) {
-                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
+                    if (try value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
                         const prev_quote_keys = this.quote_keys;
@@ -2586,7 +2586,7 @@ pub const Formatter = struct {
                         );
                     }
                 } else if (value.as(JSC.DOMFormData) != null) {
-                    if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
+                    if (try value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                         const prev_quote_keys = this.quote_keys;
                         this.quote_keys = true;
                         defer this.quote_keys = prev_quote_keys;
@@ -2702,7 +2702,7 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
             },
             .Map => {
-                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                 const length = length_value.toInt32();
 
                 const prev_quote_strings = this.quote_strings;
@@ -2809,7 +2809,7 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .Set => {
-                const length_value = value.get_unsafe(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
+                const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                 const length = length_value.toInt32();
 
                 const prev_quote_strings = this.quote_strings;
@@ -2852,7 +2852,7 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .toJSON => {
-                if (value.get_unsafe(this.globalThis, "toJSON")) |func| brk: {
+                if (try value.get(this.globalThis, "toJSON")) |func| brk: {
                     const result = func.call(this.globalThis, value, &.{}) catch {
                         this.globalThis.clearException();
                         break :brk;
@@ -2893,7 +2893,7 @@ pub const Formatter = struct {
             },
             .Event => {
                 const event_type_value: JSValue = brk: {
-                    const value_ = value.get_unsafe(this.globalThis, "type") orelse break :brk .js_undefined;
+                    const value_ = try value.get(this.globalThis, "type") orelse break :brk .js_undefined;
                     if (value_.isString()) {
                         break :brk value_;
                     }
@@ -3026,7 +3026,7 @@ pub const Formatter = struct {
 
                 defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
-                if (value.get_unsafe(this.globalThis, "type")) |type_value| {
+                if (try value.get(this.globalThis, "type")) |type_value| {
                     const _tag = try Tag.getAdvanced(type_value, this.globalThis, .{
                         .hide_global = true,
                         .disable_inspect_custom = this.disable_inspect_custom,
@@ -3059,7 +3059,7 @@ pub const Formatter = struct {
                 writer.writeAll(tag_name_slice.slice());
                 if (enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
-                if (value.get_unsafe(this.globalThis, "key")) |key_value| {
+                if (try value.get(this.globalThis, "key")) |key_value| {
                     if (!key_value.isUndefinedOrNull()) {
                         if (needs_space)
                             writer.writeAll(" key=")
@@ -3079,7 +3079,7 @@ pub const Formatter = struct {
                     }
                 }
 
-                if (value.get_unsafe(this.globalThis, "props")) |props| {
+                if (try value.get(this.globalThis, "props")) |props| {
                     const prev_quote_strings = this.quote_strings;
                     defer this.quote_strings = prev_quote_strings;
                     this.quote_strings = true;
@@ -3092,7 +3092,7 @@ pub const Formatter = struct {
                     }).init(this.globalThis, props_obj);
                     defer props_iter.deinit();
 
-                    const children_prop = props.get_unsafe(this.globalThis, "children");
+                    const children_prop = try props.get(this.globalThis, "children");
                     if (props_iter.len > 0) {
                         {
                             this.indent += 1;

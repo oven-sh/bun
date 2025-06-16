@@ -632,7 +632,7 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
         }
 
         // Does this entry already exist?
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);
@@ -746,7 +746,7 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
 
         // Does this entry already exist?
         const interface_name = bun.span(iface.name);
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
             const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);

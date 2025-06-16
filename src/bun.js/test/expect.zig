@@ -5471,7 +5471,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
     pub fn customPrint(_: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, writer: anytype, comptime dontThrow: bool) !bool {
         const matcher_fn: JSValue = js.matcherFnGetCached(thisValue) orelse return false;
-        if (matcher_fn.get_unsafe(globalThis, "toAsymmetricMatcher")) |fn_value| {
+        if (try matcher_fn.get(globalThis, "toAsymmetricMatcher")) |fn_value| {
             if (fn_value.jsType().isFunction()) {
                 const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse return false;
                 var stack_fallback = std.heap.stackFallback(256, globalThis.allocator());

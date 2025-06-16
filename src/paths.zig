@@ -38,6 +38,7 @@ const Error = error{MaxPathExceeded};
 
 const Options = struct {
     check_length: CheckLength = .assume_always_less_than_max_path,
+    normalize_slashes: bool = false,
 
     const CheckLength = enum {
         assume_always_less_than_max_path,
@@ -98,11 +99,25 @@ pub fn RelPath(comptime opts: Options) type {
 
             if (needs_separator) {
                 this.buf[this.len] = std.fs.path.sep;
-                @memcpy(this.buf[this.len + 1 ..][0..trimmed.len], trimmed);
-                this.len += @intCast(trimmed.len + 1);
+                this.len += 1;
+            }
+
+            this.appendCharacters(trimmed);
+        }
+
+        // check length beforehand
+        fn appendCharacters(this: *@This(), bytes: string) void {
+            if (opts.normalize_slashes) {
+                for (bytes) |c| {
+                    switch (c) {
+                        '/', '\\' => this.buf[this.len] = std.fs.path.sep,
+                        else => this.buf[this.len] = c,
+                    }
+                    this.len += 1;
+                }
             } else {
-                @memcpy(this.buf[0..trimmed.len], trimmed);
-                this.len += @intCast(trimmed.len);
+                @memcpy(this.buf[this.len..][0..bytes.len], bytes);
+                this.len += @intCast(bytes.len);
             }
         }
 
@@ -186,8 +201,8 @@ pub fn AbsPath(comptime opts: Options) type {
 
             const trimmed = trimTrailingSlashes(abs_input_path);
 
-            @memcpy(this.buf[0..trimmed.len], trimmed);
-            this.len = trimmed.len;
+            this.len = 0;
+            this.appendCharacters(trimmed);
         }
 
         pub fn initEmpty() callconv(bun.callconv_inline) @This() {
@@ -209,8 +224,7 @@ pub fn AbsPath(comptime opts: Options) type {
             }
 
             var this: @This() = .{ .buf = bun.PathBufferPool.get(), .len = 0 };
-            @memcpy(this.buf[0..trimmed.len], trimmed);
-            this.len = @intCast(trimmed.len);
+            this.appendCharacters(trimmed);
 
             return this;
         }
@@ -249,8 +263,25 @@ pub fn AbsPath(comptime opts: Options) type {
             }
 
             this.buf[this.len] = std.fs.path.sep;
-            @memcpy(this.buf[this.len + 1 ..][0..trimmed.len], trimmed);
-            this.len += @intCast(trimmed.len + 1);
+            this.len += 1;
+
+            this.appendCharacters(trimmed);
+        }
+
+        // check length beforehand
+        fn appendCharacters(this: *@This(), bytes: string) void {
+            if (opts.normalize_slashes) {
+                for (bytes) |c| {
+                    switch (c) {
+                        '/', '\\' => this.buf[this.len] = std.fs.path.sep,
+                        else => this.buf[this.len] = c,
+                    }
+                    this.len += 1;
+                }
+            } else {
+                @memcpy(this.buf[this.len..][0..bytes.len], bytes);
+                this.len += @intCast(bytes.len);
+            }
         }
 
         /// Append a component

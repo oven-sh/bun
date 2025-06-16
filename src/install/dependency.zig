@@ -165,6 +165,8 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+// Needed when a dependency uses workspace: protocol and isn't
+// marked with workspace behavior.
 pub fn isWorkspaceDep(this: *const Dependency) bool {
     return this.behavior.isWorkspace() or this.version.tag == .workspace;
 }

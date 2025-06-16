@@ -23,7 +23,6 @@ const FileSystem = bun.fs.FileSystem;
 const strings = bun.strings;
 const Environment = bun.Environment;
 const string = bun.string;
-const path = bun.path;
 const DependencySlice = Lockfile.DependencySlice;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;
@@ -54,8 +53,6 @@ const PackageNameHash = install.PackageNameHash;
 const modules_dir_name = ".bun";
 
 pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependencies: bool, workspace_filters: []const WorkspaceFilter) OOM!PackageInstall.Summary {
-    _ = install_root_dependencies;
-    _ = workspace_filters;
     bun.Analytics.Features.isolated_bun_install += 1;
 
     const lockfile = manager.lockfile;
@@ -67,11 +64,13 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         const pkg_resolutions = pkgs.items(.resolution);
         const pkg_names = pkgs.items(.name);
         const pkg_metas = pkgs.items(.meta);
-        _ = pkg_metas;
 
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
         const string_buf = lockfile.buffers.string_bytes.items;
+
+        var filter_path: bun.AbsPath(.{ .normalize_slashes = true }) = .init(FileSystem.instance.top_level_dir);
+        defer filter_path.deinit();
 
         var nodes: Store.Node.List = .empty;
 
@@ -223,22 +222,88 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 }
 
                 const dep = dependencies[dep_id];
+                const res = &pkg_resolutions[pkg_id];
 
-                // TODO: filtering and removing duplicates
-                // {
-                //     // filtering
-                //     if (pkg_metas[pkg_id].isDisabled()) {
-                //         continue;
-                //     }
+                {
+                    // packages disabled with --omit, os, arch, or if they're bundled (included in package tarball)
 
-                //     if (dep.behavior.isBundled() or !dep.behavior.isEnabled(manager.options.remote_package_features)) {
-                //         continue;
-                //     }
+                    if (pkg_metas[pkg_id].isDisabled()) {
+                        if (manager.options.log_level.isVerbose()) {
+                            const meta = &pkg_metas[pkg_id];
+                            const name = lockfile.str(&pkg_names[pkg_id]);
+                            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
+                            } else if (!meta.os.isMatch()) {
+                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' os mismatch", .{name});
+                            } else if (!meta.arch.isMatch()) {
+                                Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu mismatch", .{name});
+                            }
+                        }
+                        continue;
+                    }
 
-                //     // if (manager.subcommand == .install) {
+                    const dep_features = switch (res.tag) {
+                        .root, .workspace, .folder => manager.options.local_package_features,
+                        else => manager.options.remote_package_features,
+                    };
 
-                //     // }
-                // }
+                    if (dep.behavior.isBundled() or !dep.behavior.isEnabled(dep_features)) {
+                        continue;
+                    }
+                }
+
+                // filtering only applies to the root package dependencies.
+                if (manager.subcommand == .install and entry.pkg_id == 0) dont_filter: {
+                    if (!dep.behavior.isWorkspaceOnly()) {
+                        if (!install_root_dependencies) {
+                            continue;
+                        }
+
+                        break :dont_filter;
+                    }
+
+                    var match = workspace_filters.len == 0;
+
+                    for (workspace_filters) |filter| {
+                        const filter_path_scope = filter_path.save();
+                        defer filter_path_scope.restore();
+
+                        const pattern, const name_or_path = switch (filter) {
+                            .all => {
+                                match = true;
+                                continue;
+                            },
+                            .name => |name_pattern| .{ name_pattern, pkg_names[pkg_id].slice(string_buf) },
+                            .path => |path_pattern| path_pattern: {
+                                if (res.tag != .workspace) {
+                                    break :dont_filter;
+                                }
+
+                                filter_path.append(res.value.workspace.slice(string_buf));
+
+                                break :path_pattern .{ path_pattern, filter_path.slice() };
+                            },
+                        };
+
+                        switch (bun.glob.match(undefined, pattern, name_or_path)) {
+                            .match, .negate_match => match = true,
+
+                            .negate_no_match => {
+                                // always skip if a pattern specifically says "!<name>"
+                                match = false;
+                                break;
+                            },
+
+                            .no_match => {
+                                // keep looking
+                            },
+                        }
+                    }
+
+                    if (!match) {
+                        continue;
+                    }
+                }
 
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`
@@ -475,7 +540,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
-            const new_entry_dep_name: String = if (new_entry_is_root) .{} else dependencies[new_entry_dep_id].name;
             const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
             const new_entry_is_workspace_only = !new_entry_is_root and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly();
 
@@ -485,12 +549,9 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 try .initCapacity(lockfile.allocator, node_nodes[entry.node_id.get()].items.len);
 
             const new_entry: Store.Entry = .{
-                .pkg_id = pkg_id,
-                .dep_name = new_entry_dep_name,
+                .node_id = entry.node_id,
                 .parent_id = entry.entry_parent_id,
-                .is_workspace_only = new_entry_is_workspace_only,
                 .dependencies = new_entry_dependencies,
-                .peers = node_peers[entry.node_id.get()],
             };
 
             const entry_id: Store.Entry.Id = .from(@intCast(store.len));
@@ -550,7 +611,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         break :store .{ store, nodes };
     };
-    _ = nodes;
 
     const cwd = FD.cwd();
 
@@ -639,12 +699,14 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
     // defer ctx.deinit();
 
     {
+        const nodes_slice = nodes.slice();
+        const node_pkg_ids = nodes_slice.items(.pkg_id);
+        const node_peers = nodes_slice.items(.peers);
+
         const entries = store.slice();
-        const entry_pkg_ids = entries.items(.pkg_id);
+        const entry_node_ids = entries.items(.node_id);
         const entry_parent_ids = entries.items(.parent_id);
         const entry_dependencies = entries.items(.dependencies);
-        const entry_peers = entries.items(.peers);
-        const entry_is_workspace_only = entries.items(.is_workspace_only);
 
         const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -669,18 +731,25 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         // find leaves and queue their tarball tasks first in order
         // to unblock scripts fastest.
         for (
-            entry_pkg_ids,
+            entry_node_ids,
             entry_parent_ids,
             entry_dependencies,
-            entry_peers,
             0..,
-        ) |pkg_id, parent_id, dependencies, peers, _entry_id| {
+        ) |
+            node_id,
+            parent_id,
+            dependencies,
+            _entry_id,
+        | {
             const entry_scope = entry_node_modules_path.save();
             defer entry_scope.restore();
 
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
             _ = parent_id;
             _ = entry_id;
+
+            const pkg_id = node_pkg_ids[node_id.get()];
+            const peers = node_peers[node_id.get()];
 
             Store.Entry.appendNodeModulesStorePath(&entry_node_modules_path, pkg_id, peers, string_buf, pkg_names, pkg_resolutions);
 
@@ -689,14 +758,15 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
             std.debug.print("entry: '{s}'\n", .{entry_node_modules_path.slice()});
             for (dependencies.slice()) |store_dep| {
-                bun.debugAssert(!entry_is_workspace_only[store_dep.id.get()]);
-
                 const dep_scope = dep_path.save();
                 defer dep_scope.restore();
 
-                const dep_pkg_id = entry_pkg_ids[store_dep.id.get()];
-                const dep_name = lockfile.buffers.dependencies.items[store_dep.dep_id].name;
-                const dep_peers = entry_peers[store_dep.id.get()];
+                const dep_node_id = entry_node_ids[store_dep.id.get()];
+                const dep_pkg_id = node_pkg_ids[dep_node_id.get()];
+                const dep_dep = lockfile.buffers.dependencies.items[store_dep.dep_id];
+                bun.debugAssert(!dep_dep.behavior.isWorkspaceOnly());
+                const dep_dep_name = dep_dep.name;
+                const dep_peers = node_peers[dep_node_id.get()];
 
                 const dep_pkg_name = pkg_names[dep_pkg_id];
 
@@ -711,7 +781,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
                 const inner_entry_scope = entry_node_modules_path.save();
                 defer inner_entry_scope.restore();
-                entry_node_modules_path.append(dep_name.slice(string_buf));
+                entry_node_modules_path.append(dep_dep_name.slice(string_buf));
 
                 std.debug.print(" - '{s}' -> '{s}'\n", .{ entry_node_modules_path.slice(), target_path.slice() });
 
@@ -801,23 +871,11 @@ const Store = struct {
     // a module depends on a workspace, a symlink is created pointing outside the store
     // directory to the workspace.
     pub const Entry = struct {
-
-        // TODO: Delete `dep_name`, `pkg_id`, `peers`, and `is_workspace_only`.
-        // They can be replaced with a single `node_id: Node.Id`.
-
-        /// Dependency the package originates from. Using `dep_name`
-        /// instead of `dep_id` because entries are deduplicated and
-        /// may not share the same dependency (name will be the same though)
-        dep_name: String,
-        /// The resolved package
-        pkg_id: PackageID,
-
+        // Used to get dependency name for destination path and peers
+        // for store path
+        node_id: Node.Id,
         parent_id: Id,
         dependencies: Dependencies,
-        peers: Node.Peers,
-
-        /// Does this entry originate from a isWorkspaceOnly node?
-        is_workspace_only: bool,
 
         pub const List = bun.MultiArrayList(Entry);
 

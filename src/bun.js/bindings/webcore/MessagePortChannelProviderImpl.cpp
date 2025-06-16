@@ -41,7 +41,7 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 
 void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didCreateMessagePortChannel(local, remote);
     });
@@ -49,7 +49,7 @@ void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePo
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didEntangleLocalToRemote(local, remote, Process::identifier());
     });
@@ -57,7 +57,7 @@ void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(cons
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
 {
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didDisentangleMessagePort(local);
     });
@@ -65,7 +65,7 @@ void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortId
 
 void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifier& local)
 {
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
         if (CheckedPtr registry = weakRegistry.get())
             registry->didCloseMessagePort(local);
     });
@@ -73,7 +73,7 @@ void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifi
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget](ScriptExecutionContext& context) mutable {
         CheckedPtr registry = weakRegistry.get();
         if (!registry)
             return;
@@ -90,7 +90,7 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)](ScriptExecutionContext& context) mutable {
         if (CheckedPtr registry = weakRegistry.get())
             registry->takeAllMessagesForPort(port, WTFMove(callback));
     });

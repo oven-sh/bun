@@ -220,7 +220,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
     return true;
 }
 
-bool ScriptExecutionContext::postTaskOnMainThreadAndWait(Function<void(ScriptExecutionContext&)>&& task)
+bool ScriptExecutionContext::ensureOnMainThreadAndWait(Function<void(ScriptExecutionContext&)>&& task)
 {
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
 

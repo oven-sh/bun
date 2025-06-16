@@ -239,7 +239,7 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    ScriptExecutionContext::postTaskOnMainThreadAndWait(
+    ScriptExecutionContext::ensureOnMainThreadAndWait(
         [this](ScriptExecutionContext&) {
             MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
         });
@@ -350,7 +350,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
         result = WTFMove(messageWithPorts);
     };
 
-    ScriptExecutionContext::postTaskOnMainThreadAndWait([identifier = m_identifier, callback](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::ensureOnMainThreadAndWait([identifier = m_identifier, callback](ScriptExecutionContext& context) mutable {
         printf("taking message on main thread\n");
         MessagePortChannelProvider::fromContext(context).tryTakeMessageForPort(identifier, WTFMove(callback));
     });

@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`reportError 1`] = `
 "1 | reportError(new Error("reportError Test!"));

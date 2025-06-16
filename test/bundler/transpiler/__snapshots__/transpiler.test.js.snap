@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`Bun.Transpiler using statements work right 1`] = `
 "let __bun_temp_ref_1$ = [];

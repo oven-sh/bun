@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`next build works: bun 1`] = `
 {

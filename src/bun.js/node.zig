@@ -36,6 +36,7 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
+pub const FSEvents = @import("node/fs_events.zig");
 const stat = @import("node/Stat.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
@@ -197,7 +198,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
 
-                    void => .undefined,
+                    void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
                     JSC.ArrayBuffer => r.toJS(globalObject, null),

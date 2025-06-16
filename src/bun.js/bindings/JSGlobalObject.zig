@@ -481,9 +481,8 @@ pub const JSGlobalObject = opaque {
         message: bun.String,
         error_array: JSValue,
     ) JSValue {
-        if (bun.Environment.allow_assert)
-            bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .undefined);
+        if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -686,7 +685,7 @@ pub const JSGlobalObject = opaque {
     };
 
     pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
-        if (value == .undefined or value == .zero) {
+        if (value.isUndefined() or value == .zero) {
             return default;
         }
 

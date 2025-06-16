@@ -63,6 +63,7 @@ const BunBuildOptions = struct {
     /// `./build/codegen` or equivalent
     codegen_path: []const u8,
     no_llvm: bool,
+    override_no_export_cpp_apis: bool,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -95,6 +96,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
+        opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -206,6 +208,7 @@ pub fn build(b: *Build) !void {
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -217,6 +220,7 @@ pub fn build(b: *Build) !void {
         .codegen_path = codegen_path,
         .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
+        .override_no_export_cpp_apis = override_no_export_cpp_apis,
 
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -476,6 +480,7 @@ fn addMultiCheck(
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
+                .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
 
             var obj = addBunObject(b, &options);
@@ -507,6 +512,8 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
+
+    translate_c.addIncludePath(b.path("vendor/zstd/lib"));
 
     if (target.result.os.tag == .windows) {
         // translate-c is unable to translate the unsuffixed windows functions

@@ -309,7 +309,7 @@ pub const StatWatcher = struct {
             if (obj.js_this != .zero) {
                 return obj.js_this;
             }
-            return .undefined;
+            return .js_undefined;
         }
     };
 
@@ -318,7 +318,7 @@ pub const StatWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -326,7 +326,7 @@ pub const StatWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     /// Stops file watching but does not free the instance.
@@ -341,7 +341,7 @@ pub const StatWatcher = struct {
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
-        return .undefined;
+        return .js_undefined;
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
@@ -408,7 +408,7 @@ pub const StatWatcher = struct {
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
@@ -444,7 +444,7 @@ pub const StatWatcher = struct {
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,

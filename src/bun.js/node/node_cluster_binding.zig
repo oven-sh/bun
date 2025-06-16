@@ -60,7 +60,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
             const arguments_ = callframe_.arguments_old(1).slice();
             const ex = arguments_[0];
             Process__emitErrorEvent(globalThis_, ex.toError() orelse ex);
-            return .undefined;
+            return .js_undefined;
         }
     };
 
@@ -84,7 +84,7 @@ pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     child_singleton.worker = .create(arguments[0], globalThis);
     child_singleton.cb = .create(arguments[1], globalThis);
     try child_singleton.flush(globalThis);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) bun.JSError!void {
@@ -216,11 +216,11 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(3).ptr;
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
-    const ipc_data = subprocess.ipc() orelse return .undefined;
+    const ipc_data = subprocess.ipc() orelse return .js_undefined;
     // TODO: remove these strongs.
     ipc_data.internal_msg_queue.worker = .create(arguments[1], globalThis);
     ipc_data.internal_msg_queue.cb = .create(arguments[2], globalThis);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess: *JSC.Subprocess, message: JSC.JSValue) bun.JSError!void {
@@ -275,7 +275,7 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     } else {
         vm.channel_ref.unref(vm);
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {

@@ -50,7 +50,7 @@ const BlockList = $zig("node_net_binding.zig", "BlockList");
 const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
-const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
@@ -1708,12 +1708,12 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   if (localAddress || localPort) {
     if (addressType === 4) {
-      localAddress ||= DEFAULT_IPV4_ADDR;
+      localAddress ||= "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress ||= DEFAULT_IPV6_ADDR;
+      localAddress ||= "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }

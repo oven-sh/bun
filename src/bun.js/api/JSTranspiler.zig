@@ -419,7 +419,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             if (TSConfigJSON.parse(
                 allocator,
                 &transpiler.log,
-                logger.Source.initPathString("tsconfig.json", transpiler.tsconfig_buf),
+                &logger.Source.initPathString("tsconfig.json", transpiler.tsconfig_buf),
                 &JSC.VirtualMachine.get().transpiler.resolver.caches.json,
             ) catch null) |parsed_tsconfig| {
                 transpiler.tsconfig = parsed_tsconfig;
@@ -453,7 +453,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 
             if (out.isEmpty()) break :macros;
             transpiler.macros_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
-            const source = logger.Source.initPathString("macros.json", transpiler.macros_buf);
+            const source = &logger.Source.initPathString("macros.json", transpiler.macros_buf);
             const json = (JSC.VirtualMachine.get().transpiler.resolver.caches.json.parseJSON(
                 &transpiler.log,
                 source,
@@ -461,7 +461,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                 .json,
                 false,
             ) catch null) orelse break :macros;
-            transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
+            transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, source);
         }
     }
 
@@ -769,7 +769,7 @@ pub fn finalize(this: *JSTranspiler) void {
 
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
     const name = this.transpiler_options.default_loader.stdinName();
-    const source = logger.Source.initPathString(name, code);
+    const source = &logger.Source.initPathString(name, code);
 
     const jsx = if (this.transpiler_options.tsconfig != null)
         this.transpiler_options.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
@@ -784,7 +784,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
         .loader = loader orelse this.transpiler_options.default_loader,
         .jsx = jsx,
         .path = source.path,
-        .virtual_source = &source,
+        .virtual_source = source,
         .replace_exports = this.transpiler_options.runtime.replace_exports,
         .macro_js_ctx = macro_js_ctx,
         // .allocator = this.

@@ -29,9 +29,9 @@ const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_handle_reply)(void*);
     // static void (*getaddrinfo_async_cancel)(mach_port_t);
     // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    const GetaddrinfoAsyncStart = fn (*?*anyopaque, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
-    const GetaddrinfoAsyncHandleReply = fn (?**anyopaque) callconv(.C) i32;
-    const GetaddrinfoAsyncCancel = fn (?**anyopaque) callconv(.C) void;
+    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
+    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.C) i32;
+    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.C) void;
 
     var handle: ?*anyopaque = null;
     var loaded = false;
@@ -117,7 +117,7 @@ const LibInfo = struct {
             return promise_value;
         }
 
-        bun.assert(request.backend.libinfo.machport != null);
+        bun.assert(request.backend.libinfo.machport != 0);
         var poll = bun.Async.FilePoll.init(
             this.vm,
             // TODO: WHAT?????????
@@ -131,7 +131,7 @@ const LibInfo = struct {
             this.vm.event_loop_handle.?,
             .machport,
             .one_shot,
-            .fromNative(@intCast(@intFromPtr(request.backend.libinfo.machport))),
+            .fromNative(@bitCast(request.backend.libinfo.machport)),
         );
         bun.assert(rc == .result);
 
@@ -805,15 +805,15 @@ pub const GetAddrInfoRequest = struct {
 
         pub const LibInfo = struct {
             file_poll: ?*bun.Async.FilePoll = null,
-            machport: ?*anyopaque = null,
+            machport: bun.mach_port = 0,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(bun.mach_port, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *GetAddrInfoRequest) void {
                 if (comptime !Environment.isMac)
                     unreachable;
                 bun.JSC.markBinding(@src());
 
-                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, bun.api.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
+                if (!getaddrinfo_send_reply(this.backend.libinfo.machport, bun.api.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
                     log("onMachportChange: getaddrinfo_send_reply failed", .{});
                     getAddrInfoAsyncCallback(-1, null, this);
                 }
@@ -1232,11 +1232,11 @@ pub const InternalDNS = struct {
 
         pub const MacAsyncDNS = struct {
             file_poll: ?*bun.Async.FilePoll = null,
-            machport: ?*anyopaque = null,
+            machport: bun.mach_port = 0,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(bun.mach_port, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *Request) void {
-                if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
+                if (!getaddrinfo_send_reply(this.libinfo.machport, LibInfo.getaddrinfo_async_handle_reply().?)) {
                     libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
                 }
             }
@@ -1603,7 +1603,7 @@ pub const InternalDNS = struct {
     pub fn lookupLibinfo(req: *Request, loop: JSC.EventLoopHandle) bool {
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
 
-        var machport: ?*anyopaque = null;
+        var machport: bun.mach_port = 0;
         var service_buf: [bun.fmt.fastDigitCount(std.math.maxInt(u16)) + 2]u8 = undefined;
         const service: ?[*:0]const u8 = if (req.key.port > 0)
             (std.fmt.bufPrintZ(&service_buf, "{d}", .{req.key.port}) catch unreachable).ptr
@@ -1621,12 +1621,11 @@ pub const InternalDNS = struct {
             req,
         );
 
-        if (errno != 0 or machport == null) {
+        if (errno != 0 or machport == 0) {
             return false;
         }
 
-        const fake_fd: i32 = @intCast(@intFromPtr(machport));
-        var poll = bun.Async.FilePoll.init(loop, .fromNative(fake_fd), .{}, InternalDNSRequest, req);
+        var poll = bun.Async.FilePoll.init(loop, .fromNative(@bitCast(machport)), .{}, InternalDNSRequest, req);
         const rc = poll.register(loop.loop(), .machport, true);
 
         if (rc == .err) {
@@ -1657,7 +1656,7 @@ pub const InternalDNS = struct {
             else
                 null;
             const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return;
-            var machport: ?*anyopaque = null;
+            var machport: bun.mach_port = 0;
             var hints = getHints();
             hints.flags.ADDRCONFIG = false;
 
@@ -1788,7 +1787,7 @@ pub const InternalDNS = struct {
         };
 
         prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z, port);
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8, port: u16) void {
@@ -2763,7 +2762,7 @@ pub const DNSResolver = struct {
 
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
-                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
+                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
 
@@ -3246,13 +3245,13 @@ pub const DNSResolver = struct {
         const first_af = try setChannelLocalAddress(channel, globalThis, arguments[0]);
 
         if (arguments.len < 2 or arguments[1].isUndefined()) {
-            return .undefined;
+            return .js_undefined;
         }
 
         const second_af = try setChannelLocalAddress(channel, globalThis, arguments[1]);
 
         if (first_af != second_af) {
-            return .undefined;
+            return .js_undefined;
         }
 
         switch (first_af) {
@@ -3312,7 +3311,7 @@ pub const DNSResolver = struct {
                 const err = c_ares.Error.get(r).?;
                 return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
             }
-            return .undefined;
+            return .js_undefined;
         }
 
         const allocator = bun.default_allocator;
@@ -3371,7 +3370,7 @@ pub const DNSResolver = struct {
             return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn setGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3403,7 +3402,7 @@ pub const DNSResolver = struct {
         _ = callframe;
         const channel = try this.getChannelOrError(globalThis);
         c_ares.ares_cancel(channel);
-        return .undefined;
+        return .js_undefined;
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.

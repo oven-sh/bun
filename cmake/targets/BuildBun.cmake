@@ -42,6 +42,29 @@ else()
   set(CONFIGURE_DEPENDS "")
 endif()
 
+# --- Dependencies ---
+
+set(BUN_DEPENDENCIES
+  BoringSSL
+  Brotli
+  Cares
+  Highway
+  LibDeflate
+  LolHtml
+  Lshpack
+  Mimalloc
+  TinyCC
+  Zlib
+  LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
+  Zstd
+)
+
+include(CloneZstd)
+# foreach(dependency ${BUN_DEPENDENCIES})
+#   include(Clone${dependency})
+# endforeach()
+
 # --- Codegen ---
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -582,6 +605,7 @@ register_command(
     ${BUN_ZIG_OUTPUT}
   TARGETS
     clone-zig
+    clone-zstd
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -649,20 +673,14 @@ if(WIN32)
   else()
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
-  set(BUN_ICO_PATH ${CWD}/src/bun.ico)
   configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
+  set(BUN_ICO_PATH ${CODEGEN_PATH}/bun.ico)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  add_custom_command(
-    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
-    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
-    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
-    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
-  )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
 endif()
 
 # --- Executable ---
@@ -893,6 +911,9 @@ if(NOT WIN32)
 else()
   target_compile_options(${bun} PUBLIC
     -Wno-nullability-completeness
+    -Wno-inconsistent-dllimport
+    -Wno-incompatible-pointer-types
+    -Wno-deprecated-declarations
   )
 endif()
 
@@ -1050,22 +1071,6 @@ if(NOT WEBKIT_LOCAL AND NOT APPLE)
 endif()
 
 # --- Dependencies ---
-
-set(BUN_DEPENDENCIES
-  BoringSSL
-  Brotli
-  Cares
-  Highway
-  LibDeflate
-  LolHtml
-  Lshpack
-  Mimalloc
-  TinyCC
-  Zlib
-  LibArchive # must be loaded after zlib
-  HdrHistogram # must be loaded after zlib
-  Zstd
-)
 
 if(WIN32)
   list(APPEND BUN_DEPENDENCIES Libuv)

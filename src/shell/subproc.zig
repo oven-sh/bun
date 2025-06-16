@@ -241,8 +241,8 @@ pub const ShellSubprocess = struct {
         pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
             return switch (this.*) {
                 .fd => |fd| JSValue.jsNumber(fd),
-                .memfd, .ignore => JSValue.jsUndefined(),
-                .buffer, .inherit => JSValue.jsUndefined(),
+                .memfd, .ignore => .js_undefined,
+                .buffer, .inherit => .js_undefined,
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
@@ -1295,7 +1295,7 @@ pub const PipeReader = struct {
                 return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSC.JSValue.undefined;
+                return .js_undefined;
             },
         }
     }

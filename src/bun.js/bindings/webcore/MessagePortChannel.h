@@ -71,13 +71,13 @@ private:
 
     CheckedRef<MessagePortChannelRegistry> checkedRegistry() const;
 
-    MessagePortIdentifier m_ports[2];
-    bool m_isClosed[2] { false, false };
-    std::optional<ProcessIdentifier> m_processes[2];
-    RefPtr<MessagePortChannel> m_entangledToProcessProtectors[2];
-    Vector<MessageWithMessagePorts> m_pendingMessages[2];
-    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
-    RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
+    std::array<MessagePortIdentifier, 2> m_ports;
+    std::array<bool, 2> m_isClosed { false, false };
+    std::array<std::optional<ProcessIdentifier>, 2> m_processes;
+    std::array<RefPtr<MessagePortChannel>, 2> m_entangledToProcessProtectors;
+    std::array<Vector<MessageWithMessagePorts>, 2> m_pendingMessages;
+    std::array<UncheckedKeyHashSet<RefPtr<MessagePortChannel>>, 2> m_pendingMessagePortTransfers;
+    std::array<RefPtr<MessagePortChannel>, 2> m_pendingMessageProtectors;
     uint64_t m_messageBatchesInFlight { 0 };
 
     CheckedRef<MessagePortChannelRegistry> m_registry;

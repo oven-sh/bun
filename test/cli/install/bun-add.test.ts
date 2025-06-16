@@ -441,6 +441,48 @@ it("should handle @scoped names", async () => {
   }
 });
 
+it.skipIf(process.platform !== "win32")("should handle escaped @scoped names on Windows", async () => {
+  const urls: string[] = [];
+  setHandler(async request => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  // Test with escaped @ symbol, as Windows shells might pass it
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "\\@bar/baz"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
+  expect(await new Response(stdout).text()).toEqual(expect.stringContaining("bun add v1."));
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should add dependency with capital letters", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -601,7 +643,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -2268,4 +2310,70 @@ it("should add local tarball dependency", async () => {
   expect(package_json.version).toBe("0.0.3");
   expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
     await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle escaped @scoped names on Windows", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "1.0.0": {},
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // On Windows, the shell may escape the @ symbol as \@
+  // This test verifies the fix for the bug where escaped @ symbols
+  // would cause "Do not pass posix paths to Windows APIs" error
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", isWindows ? "\\@types/test" : "@types/test"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("panic");
+  expect(err).not.toContain("Do not pass posix paths to Windows APIs");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed @types/test@1.0.0",
+    "",
+    "1 package installed",
+  ]);
+
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/@types%2ftest`, `${root_url}/@types/test-1.0.0.tgz`]);
+  expect(requested).toBe(2);
+
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@types"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@types"))).toEqual(["test"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@types", "test"))).toEqual(["package.json"]);
+
+  expect(await file(join(package_dir, "node_modules", "@types", "test", "package.json")).json()).toEqual({
+    name: "@types/test",
+    version: "1.0.0",
+  });
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "@types/test": "^1.0.0",
+    },
+  });
+
+  await access(join(package_dir, "bun.lockb"));
 });

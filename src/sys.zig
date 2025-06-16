@@ -919,7 +919,7 @@ pub const mkdirat = if (Environment.isWindows)
 else
     mkdiratPosix;
 
-pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Maybe(void) {
+pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: [:0]const u16, _: i32) Maybe(void) {
     const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .create = true });
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
@@ -2621,8 +2621,13 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
-    if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
+/// Symlinks on Windows can be relative or absolute, and junctions can
+/// only be absolute. Passing `null` for `abs_fallback_junction_target`
+/// is saying `target` is already absolute.
+pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8, abs_fallback_junction_target: ?[:0]const u8) Maybe(void) {
+    if (comptime !Environment.isWindows) {
+        return symlink(target, dest);
+    }
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         const sym16 = bun.WPathBufferPool.get();
@@ -2638,14 +2643,26 @@ pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
                 return Maybe(void).success;
             },
             .err => |err| {
-                if (err.getErrno() == .EXIST) {
-                    return .{ .err = err };
+                switch (err.getErrno()) {
+                    .EXIST, .NOENT => {
+                        // if the destination already exists, or a component
+                        // of the destination doesn't exist, return the error
+                        // without trying junctions.
+                        return .{ .err = err };
+                    },
+                    else => {
+                        // fallthrough to junction
+                    },
                 }
             },
         }
     }
 
-    return sys_uv.symlinkUV(target, dest, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION);
+    return sys_uv.symlinkUV(
+        abs_fallback_junction_target orelse target,
+        dest,
+        bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
+    );
 }
 
 pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSymlinkOptions) Maybe(void) {
@@ -2671,6 +2688,14 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
 
             if (errno.toSystemErrno()) |err| {
+                if (err == .ENOENT) {
+                    return .{
+                        .err = .{
+                            .errno = @intFromEnum(err),
+                            .syscall = .symlink,
+                        },
+                    };
+                }
                 WindowsSymlinkOptions.has_failed_to_create_symlink = true;
                 return .{
                     .err = .{

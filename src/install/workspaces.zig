@@ -29,135 +29,38 @@ const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;
 const PackageNameHash = install.PackageNameHash;
 
-const IsolatedInstaller = struct {
-    manager: *PackageManager,
-    lockfile: *Lockfile,
+// const IsolatedInstaller = struct {
+//     manager: *PackageManager,
+//     lockfile: *Lockfile,
 
-    root_node_modules_dir: FD,
-    is_new_root_node_modules_dir: bool,
-    bun_modules_dir: FD,
-    is_new_bun_modules_dir: bool,
+//     root_node_modules_dir: FD,
+//     is_new_root_node_modules_dir: bool,
+//     bun_modules_dir: FD,
+//     is_new_bun_modules_dir: bool,
 
-    // workspace_dir: FD,
-    // workspace_node_modules_dir: FD,
-    // is_new_workspace_node_modules: bool,
+//     // workspace_dir: FD,
+//     // workspace_node_modules_dir: FD,
+//     // is_new_workspace_node_modules: bool,
 
-    cwd_path: bun.AbsPath(.{}),
-    bun_modules_path: bun.AbsPath(.{}),
+//     cwd_path: bun.AbsPath(.{}),
+//     bun_modules_path: bun.AbsPath(.{}),
 
-    pub fn deinit(this: *IsolatedInstaller) void {
-        this.cwd_path.deinit();
-        this.bun_modules_path.deinit();
-    }
-};
+//     pub fn deinit(this: *IsolatedInstaller) void {
+//         this.cwd_path.deinit();
+//         this.bun_modules_path.deinit();
+//     }
+// };
+
+const modules_dir_name = ".bun";
 
 pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependencies: bool, workspace_filters: []const WorkspaceFilter) OOM!PackageInstall.Summary {
     _ = install_root_dependencies;
     _ = workspace_filters;
     bun.Analytics.Features.isolated_bun_install += 1;
 
-    const original_trees = manager.lockfile.buffers.trees;
-    const original_tree_dep_ids = manager.lockfile.buffers.hoisted_dependencies;
-
-    // manager.lockfile.isolate(
-    //     manager.log,
-    //     manager,
-    //     install_root_dependencies,
-    //     workspace_filters,
-    // ) catch |err| switch (err) {
-    //     error.OutOfMemory => |oom| return oom,
-    //     error.DependencyLoop => {
-    //         @panic("oops!");
-    //     },
-    // };
-
-    defer {
-        manager.lockfile.buffers.trees = original_trees;
-        manager.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids;
-    }
-
     const lockfile = manager.lockfile;
 
-    const cwd = FD.cwd();
-
-    const root_node_modules_dir, const is_new_root_node_modules, const bun_modules_dir, const is_new_bun_modules = root_dirs: {
-        const node_modules_path = bun.OSPathLiteral("node_modules");
-        const bun_modules_path = bun.OSPathLiteral("node_modules/.bun");
-        const existing_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                new_root_node_modules_dir,
-                true,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        const existing_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
-            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
-                Global.exit(1);
-            };
-
-            break :root_dirs .{
-                existing_root_node_modules_dir,
-                false,
-                new_bun_modules_dir,
-                true,
-            };
-        };
-
-        break :root_dirs .{
-            existing_root_node_modules_dir,
-            false,
-            existing_bun_modules_dir,
-            false,
-        };
-    };
-
-    const cwd_path: bun.AbsPath(.{}) = .init(FileSystem.instance.top_level_dir);
-    var bun_modules_path = cwd_path.clone();
-    bun_modules_path.append("node_modules/.bun");
-
-    var ctx: IsolatedInstaller = .{
-        .manager = manager,
-        .lockfile = lockfile,
-
-        .root_node_modules_dir = root_node_modules_dir,
-        .is_new_root_node_modules_dir = is_new_root_node_modules,
-        .bun_modules_dir = bun_modules_dir,
-        .is_new_bun_modules_dir = is_new_bun_modules,
-
-        .cwd_path = cwd_path.move(),
-        .bun_modules_path = bun_modules_path.move(),
-    };
-    defer ctx.deinit();
-
-    const store = store: {
+    const store, const nodes = store: {
         var timer = std.time.Timer.start() catch unreachable;
         const pkgs = lockfile.packages.slice();
         const pkg_dependency_slices = pkgs.items(.dependencies);
@@ -172,13 +75,13 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         var nodes: Store.Node.List = .empty;
 
-        const NodeEntry = struct {
+        const QueuedNode = struct {
             parent_id: Store.Node.Id,
             dep_id: DependencyID,
             pkg_id: PackageID,
         };
 
-        var node_queue: std.fifo.LinearFifo(NodeEntry, .Dynamic) = .init(lockfile.allocator);
+        var node_queue: std.fifo.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
         defer node_queue.deinit();
 
         try node_queue.writeItem(.{
@@ -190,19 +93,19 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         var dep_ids_sort_buf: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer dep_ids_sort_buf.deinit(lockfile.allocator);
 
-        // Used by leaves and workspace dependencies. They can be deduplicated early
+        // Used by leaves and linked dependencies. They can be deduplicated early
         // because peers won't change them.
         //
         // In the pnpm repo without this map: 772,471 nodes
         //                 and with this map: 314,022 nodes
-        var dedupe: std.AutoHashMapUnmanaged(PackageID, Store.Node.Id) = .empty;
-        defer dedupe.deinit(lockfile.allocator);
+        var early_dedupe: std.AutoHashMapUnmanaged(PackageID, Store.Node.Id) = .empty;
+        defer early_dedupe.deinit(lockfile.allocator);
 
         var peer_dep_ids: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer peer_dep_ids.deinit(lockfile.allocator);
 
-        var visited_node_ids: std.ArrayListUnmanaged(Store.Node.Id) = .empty;
-        defer visited_node_ids.deinit(lockfile.allocator);
+        var visited_parent_node_ids: std.ArrayListUnmanaged(Store.Node.Id) = .empty;
+        defer visited_parent_node_ids.deinit(lockfile.allocator);
 
         // First pass: create full dependency tree with resolved peers
         node_queue: while (node_queue.readItem()) |entry| {
@@ -226,29 +129,57 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             }
 
             const node_id: Store.Node.Id = .from(@intCast(nodes.len));
-
             const pkg_deps = pkg_dependency_slices[entry.pkg_id];
 
+            var skip_dependencies_of_workspace_node = false;
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or (entry_dep.behavior.isWorkspace() and !entry_dep.behavior.isWorkspaceOnly())) {
-                    const dedupe_entry = try dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
-                    const dedupe_node_id = dedupe_entry.value_ptr;
+                if (pkg_deps.len == 0 or entry_dep.isWorkspaceDep()) dont_dedupe: {
+                    const dedupe_entry = try early_dedupe.getOrPut(lockfile.allocator, entry.pkg_id);
                     if (dedupe_entry.found_existing) {
-                        nodes.items(.nodes)[entry.parent_id.get()].appendAssumeCapacity(dedupe_node_id.*);
+                        const dedupe_node_id = dedupe_entry.value_ptr.*;
+
+                        const nodes_slice = nodes.slice();
+                        const node_nodes = nodes_slice.items(.nodes);
+                        const node_dep_ids = nodes_slice.items(.dep_id);
+
+                        const dedupe_dep_id = node_dep_ids[dedupe_node_id.get()];
+                        const dedupe_dep = dependencies[dedupe_dep_id];
+
+                        if (dedupe_dep.name_hash != entry_dep.name_hash) {
+                            break :dont_dedupe;
+                        }
+
+                        if (dedupe_dep.isWorkspaceDep() and entry_dep.isWorkspaceDep()) {
+                            if (dedupe_dep.behavior.isWorkspaceOnly() != entry_dep.behavior.isWorkspaceOnly()) {
+                                // only attach the dependencies to one of the workspaces
+                                skip_dependencies_of_workspace_node = true;
+                                break :dont_dedupe;
+                            }
+                        }
+
+                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(dedupe_node_id);
                         continue;
                     }
 
-                    dedupe_node_id.* = node_id;
+                    dedupe_entry.value_ptr.* = node_id;
                 }
             }
+
+            const new_node_nodes: std.ArrayListUnmanaged(Store.Node.Id), const new_node_dependencies: std.ArrayListUnmanaged(Ids) = if (skip_dependencies_of_workspace_node)
+                .{ .empty, .empty }
+            else
+                .{
+                    try .initCapacity(lockfile.allocator, pkg_deps.len),
+                    try .initCapacity(lockfile.allocator, pkg_deps.len),
+                };
 
             try nodes.append(lockfile.allocator, .{
                 .pkg_id = entry.pkg_id,
                 .dep_id = entry.dep_id,
                 .parent_id = entry.parent_id,
-                .nodes = try .initCapacity(lockfile.allocator, pkg_deps.len),
-                .dependencies = try .initCapacity(lockfile.allocator, pkg_deps.len),
+                .nodes = new_node_nodes,
+                .dependencies = new_node_dependencies,
             });
 
             const nodes_slice = nodes.slice();
@@ -261,11 +192,8 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 node_nodes[parent_id].appendAssumeCapacity(node_id);
             }
 
-            if (entry.dep_id != invalid_dependency_id) {
-                const entry_dep = dependencies[entry.dep_id];
-                if (entry_dep.behavior.isWorkspace() and !entry_dep.behavior.isWorkspaceOnly()) {
-                    continue;
-                }
+            if (skip_dependencies_of_workspace_node) {
+                continue;
             }
 
             dep_ids_sort_buf.clearRetainingCapacity();
@@ -346,10 +274,8 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     // can satisfy it's own peers.
                     var curr_id = node_id;
 
-                    visited_node_ids.clearRetainingCapacity();
+                    visited_parent_node_ids.clearRetainingCapacity();
                     while (curr_id != .invalid) {
-                        try visited_node_ids.append(lockfile.allocator, curr_id);
-
                         for (node_dependencies[curr_id.get()].items) |ids| {
                             const dep = dependencies[ids.dep_id];
 
@@ -407,20 +333,23 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                             const best_version = resolutions[peer_dep_id];
 
                             if (best_version == ids.pkg_id) {
-                                _ = visited_node_ids.pop();
                                 break :resolved_pkg_id .{ ids.pkg_id, true };
                             }
 
                             // add the remaining parent ids
-                            curr_id = node_parent_ids[curr_id.get()];
                             while (curr_id != .invalid) {
-                                try visited_node_ids.append(lockfile.allocator, curr_id);
+                                try visited_parent_node_ids.append(lockfile.allocator, curr_id);
                                 curr_id = node_parent_ids[curr_id.get()];
                             }
 
                             break :resolved_pkg_id .{ best_version, true };
                         }
 
+                        // TODO: prevent marking workspace and symlink deps with transitive peers
+
+                        // add to visited parents after searching for a peer resolution.
+                        // if a node resolves a transitive peer, it can still be deduplicated
+                        try visited_parent_node_ids.append(lockfile.allocator, curr_id);
                         curr_id = node_parent_ids[curr_id.get()];
                     }
 
@@ -435,23 +364,21 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
                 bun.debugAssert(resolved_pkg_id != invalid_package_id);
 
-                for (visited_node_ids.items) |visited_parent_id| {
-                    try node_peers[visited_parent_id.get()].append(
-                        lockfile.allocator,
-                        .{
-                            .dep_id = peer_dep_id,
-                            .pkg_id = resolved_pkg_id,
-                            .auto_installed = auto_installed,
-                        },
-                        .{
-                            .string_buf = string_buf,
-                            .pkg_names = pkg_names,
-                        },
-                    );
+                for (visited_parent_node_ids.items) |visited_parent_id| {
+                    const ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                        .string_buf = string_buf,
+                        .pkg_names = pkg_names,
+                    };
+                    const peer: Store.Node.TransitivePeer = .{
+                        .dep_id = peer_dep_id,
+                        .pkg_id = resolved_pkg_id,
+                        .auto_installed = auto_installed,
+                    };
+                    try node_peers[visited_parent_id.get()].insert(lockfile.allocator, peer, &ctx);
                 }
 
-                if (visited_node_ids.items.len != 1) {
-                    // visited parents length == 1 means the node satisfied it's own
+                if (visited_parent_node_ids.items.len != 0) {
+                    // visited parents length == 0 means the node satisfied it's own
                     // peer. don't queue.
                     node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
                     try node_queue.writeItem(.{
@@ -469,13 +396,14 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         timer.reset();
 
-        const PlacedInfo = struct {
-            store_id: Store.Entry.Id,
-            peers: Store.Node.TransitivePeer.OrderedList,
+        const DedupeInfo = struct {
+            entry_id: Store.Entry.Id,
+            dep_id: DependencyID,
+            peers: Store.OrderedArraySet(Store.Node.TransitivePeer, Store.Node.TransitivePeer.OrderedArraySetCtx),
         };
 
-        var placed: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(PlacedInfo)) = .empty;
-        defer placed.deinit(lockfile.allocator);
+        var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
+        defer dedupe.deinit(lockfile.allocator);
 
         const nodes_slice = nodes.slice();
         const node_pkg_ids = nodes_slice.items(.pkg_id);
@@ -485,28 +413,56 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         var store: Store.Entry.List = .empty;
 
-        var store_queue: std.fifo.LinearFifo(struct { node_id: Store.Node.Id, store_parent_id: Store.Entry.Id }, .Dynamic) = .init(lockfile.allocator);
-        defer store_queue.deinit();
+        const QueuedEntry = struct {
+            node_id: Store.Node.Id,
+            entry_parent_id: Store.Entry.Id,
+        };
+        var entry_queue: std.fifo.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
+        defer entry_queue.deinit();
 
-        try store_queue.writeItem(.{
+        try entry_queue.writeItem(.{
             .node_id = .from(0),
-            .store_parent_id = .invalid,
+            .entry_parent_id = .invalid,
         });
 
-        // Second pass: deduplicate nodes when the pkg_id and peer set match an existing entry
-        next_store: while (store_queue.readItem()) |entry| {
+        // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
+        next_entry: while (entry_queue.readItem()) |entry| {
             const pkg_id = node_pkg_ids[entry.node_id.get()];
 
-            const placed_entry = try placed.getOrPut(lockfile.allocator, pkg_id);
-            if (!placed_entry.found_existing) {
-                placed_entry.value_ptr.* = .{};
+            const dedupe_entry = try dedupe.getOrPut(lockfile.allocator, pkg_id);
+            if (!dedupe_entry.found_existing) {
+                dedupe_entry.value_ptr.* = .{};
             } else {
                 const curr_peers = node_peers[entry.node_id.get()];
-                for (placed_entry.value_ptr.items) |info| {
+                const curr_dep_id = node_dep_ids[entry.node_id.get()];
+
+                for (dedupe_entry.value_ptr.items) |info| {
+                    if (info.dep_id != invalid_dependency_id and curr_dep_id != invalid_dependency_id) {
+                        const curr_dep = dependencies[curr_dep_id];
+                        const existing_dep = dependencies[info.dep_id];
+
+                        if (curr_dep.name_hash != existing_dep.name_hash) {
+                            continue;
+                        }
+
+                        if (existing_dep.isWorkspaceDep() and curr_dep.isWorkspaceDep()) {
+                            if (existing_dep.behavior.isWorkspaceOnly() != curr_dep.behavior.isWorkspaceOnly()) {
+                                continue;
+                            }
+                        }
+                    }
+
                     if (info.peers.eql(&curr_peers)) {
                         // dedupe! depend on the already created entry
-                        store.items(.dependencies)[entry.store_parent_id.get()].appendAssumeCapacity(info.store_id);
-                        continue :next_store;
+                        const entries = store.slice();
+                        const entry_dep_names = entries.items(.dep_name);
+                        const entry_dependencies = entries.items(.dependencies);
+                        const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
+                            .string_buf = string_buf,
+                            .dep_names = entry_dep_names,
+                        };
+                        entry_dependencies[entry.entry_parent_id.get()].insertAssumeCapacity(info.entry_id, &ctx);
+                        continue :next_entry;
                     }
                 }
 
@@ -515,34 +471,54 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
-            const is_root = new_entry_dep_id == invalid_dependency_id;
-            const new_entry_dep_name: String = if (is_root) .{} else dependencies[new_entry_dep_id].name;
+            const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
+            const new_entry_dep_name: String = if (new_entry_is_root) .{} else dependencies[new_entry_dep_id].name;
+            const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].isWorkspaceDep();
+            const new_entry_is_workspace_only = !new_entry_is_root and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly();
+
+            const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
+                .empty
+            else
+                try .initCapacity(lockfile.allocator, node_nodes[entry.node_id.get()].items.len);
 
             const new_entry: Store.Entry = .{
                 .pkg_id = pkg_id,
                 .dep_name = new_entry_dep_name,
-                .parent_id = entry.store_parent_id,
-                .is_workspace_only = if (is_root) false else dependencies[new_entry_dep_id].behavior.isWorkspaceOnly(),
-                // starts empty, filled when visiting the dependencies
-                .dependencies = try .initCapacity(lockfile.allocator, node_nodes[entry.node_id.get()].items.len),
+                .parent_id = entry.entry_parent_id,
+                .is_workspace_only = new_entry_is_workspace_only,
+                .dependencies = new_entry_dependencies,
+                .peers = node_peers[entry.node_id.get()],
             };
 
-            const store_id: Store.Entry.Id = .from(@intCast(store.len));
+            const entry_id: Store.Entry.Id = .from(@intCast(store.len));
             try store.append(lockfile.allocator, new_entry);
 
-            if (entry.store_parent_id.tryGet()) |store_parent_id| {
-                store.items(.dependencies)[store_parent_id].appendAssumeCapacity(store_id);
+            if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
+                if (new_entry_is_workspace_only) {
+                    // skip implicit workspace dependencies on the root.
+                    break :skip_adding_dependency;
+                }
+
+                const entries = store.slice();
+                const entry_dep_names = entries.items(.dep_name);
+                const entry_dependencies = entries.items(.dependencies);
+                const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
+                    .string_buf = string_buf,
+                    .dep_names = entry_dep_names,
+                };
+                entry_dependencies[entry_parent_id].insertAssumeCapacity(entry_id, &ctx);
             }
 
-            try placed_entry.value_ptr.append(lockfile.allocator, .{
-                .store_id = store_id,
+            try dedupe_entry.value_ptr.append(lockfile.allocator, .{
+                .entry_id = entry_id,
+                .dep_id = new_entry_dep_id,
                 .peers = node_peers[entry.node_id.get()],
             });
 
             for (node_nodes[entry.node_id.get()].items) |node_id| {
-                try store_queue.writeItem(.{
+                try entry_queue.writeItem(.{
                     .node_id = node_id,
-                    .store_parent_id = store_id,
+                    .entry_parent_id = entry_id,
                 });
             }
         }
@@ -565,10 +541,97 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
         });
 
-        Store.Node.deinitList(&nodes, lockfile.allocator);
+        // Store.Node.deinitList(&nodes, lockfile.allocator);
 
-        break :store store;
+        break :store .{ store, nodes };
     };
+    _ = nodes;
+
+    const cwd = FD.cwd();
+
+    const root_node_modules_dir, const is_new_root_node_modules, const bun_modules_dir, const is_new_bun_modules = root_dirs: {
+        const node_modules_path = bun.OSPathLiteral("node_modules");
+        const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ modules_dir_name);
+        const existing_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
+            sys.mkdirat(cwd, node_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create the './node_modules' directory", .{});
+                Global.exit(1);
+            };
+
+            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
+                Global.exit(1);
+            };
+
+            const new_root_node_modules_dir = sys.openatOSPath(cwd, node_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to open the './node_modules' directory", .{});
+                Global.exit(1);
+            };
+
+            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
+                Global.exit(1);
+            };
+
+            break :root_dirs .{
+                new_root_node_modules_dir,
+                true,
+                new_bun_modules_dir,
+                true,
+            };
+        };
+
+        const existing_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch {
+            sys.mkdirat(cwd, bun_modules_path, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to create the './node_modules/.bun' directory", .{});
+                Global.exit(1);
+            };
+
+            const new_bun_modules_dir = sys.openatOSPath(cwd, bun_modules_path, bun.O.DIRECTORY | bun.O.RDONLY, 0o755).unwrap() catch |err| {
+                Output.err(err, "failed to open the './node_modules/.bun' directory", .{});
+                Global.exit(1);
+            };
+
+            break :root_dirs .{
+                existing_root_node_modules_dir,
+                false,
+                new_bun_modules_dir,
+                true,
+            };
+        };
+
+        break :root_dirs .{
+            existing_root_node_modules_dir,
+            false,
+            existing_bun_modules_dir,
+            false,
+        };
+    };
+    _ = root_node_modules_dir;
+    _ = is_new_root_node_modules;
+    _ = bun_modules_dir;
+    _ = is_new_bun_modules;
+
+    // const cwd_path: bun.AbsPath(.{}) = .init(FileSystem.instance.top_level_dir);
+    // defer cwd_path.deinit();
+
+    // var bun_modules_path = cwd_path.clone();
+    // defer bun_modules_path.deinit();
+    // bun_modules_path.append("node_modules/" ++ modules_dir_name);
+
+    // var ctx: IsolatedInstaller = .{
+    //     .manager = manager,
+    //     .lockfile = lockfile,
+
+    //     .root_node_modules_dir = root_node_modules_dir,
+    //     .is_new_root_node_modules_dir = is_new_root_node_modules,
+    //     .bun_modules_dir = bun_modules_dir,
+    //     .is_new_bun_modules_dir = is_new_bun_modules,
+
+    //     .cwd_path = cwd_path.move(),
+    //     .bun_modules_path = bun_modules_path.move(),
+    // };
+    // defer ctx.deinit();
 
     {
         const entries = store.slice();
@@ -576,6 +639,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         const entry_pkg_ids = entries.items(.pkg_id);
         const entry_parent_ids = entries.items(.parent_id);
         const entry_dependencies = entries.items(.dependencies);
+        const entry_peers = entries.items(.peers);
         const entry_is_workspace_only = entries.items(.is_workspace_only);
 
         const string_buf = lockfile.buffers.string_bytes.items;
@@ -583,50 +647,133 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         const pkgs = lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
         const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_bins = pkgs.items(.bin);
+        _ = pkg_bins;
 
-        var store_path = ctx.cwd_path.move();
-        defer ctx.cwd_path = store_path.move();
+        var seen_workspaces: std.AutoHashMapUnmanaged(PackageID, void) = .empty;
+        defer seen_workspaces.deinit(lockfile.allocator);
 
-        var dep_path = store_path.clone();
+        var entry_node_modules_path: bun.AbsPath(.{}) = .init(FileSystem.instance.top_level_dir);
+        defer entry_node_modules_path.deinit();
+
+        var dep_path = entry_node_modules_path.clone();
         defer dep_path.deinit();
 
-        var rel_target_path: bun.RelPath(.{}) = .init();
-        defer rel_target_path.deinit();
+        var target_path: bun.RelPath(.{}) = .init();
+        defer target_path.deinit();
 
+        // find leaves and queue their tarball tasks first in order
+        // to unblock scripts fastest.
         for (
-            entry_dep_names,
             entry_pkg_ids,
             entry_parent_ids,
             entry_dependencies,
-            entry_is_workspace_only,
+            entry_peers,
             0..,
-        ) |dep_name, pkg_id, parent_id, dependencies, is_workspace_only, _store_id| {
-            const store_path_reset_offset = store_path.len;
-            defer store_path.len = store_path_reset_offset;
+        ) |pkg_id, parent_id, dependencies, peers, _entry_id| {
+            const entry_scope = entry_node_modules_path.save();
+            defer entry_scope.restore();
 
-            const store_id: Store.Entry.Id = .from(@intCast(_store_id));
-            _ = dep_name;
+            const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
             _ = parent_id;
-            _ = is_workspace_only;
-            _ = store_id;
+            _ = entry_id;
 
-            Store.Entry.appendPath(&store_path, pkg_id, string_buf, pkg_names, pkg_resolutions);
+            Store.Entry.appendNodeModulesStorePath(&entry_node_modules_path, pkg_id, peers, string_buf, pkg_names, pkg_resolutions);
 
-            // ensureCached(manager, pkg_res);
+            const maybe_entry_node_modules_dir: ?FD = null;
+            defer if (maybe_entry_node_modules_dir) |entry_node_modules_dir| entry_node_modules_dir.close();
 
-            std.debug.print("entry: '{s}'\n", .{store_path.slice()});
-            for (dependencies.items) |store_dep_id| {
-                const dep_path_reset_offset = dep_path.len;
-                defer dep_path.len = dep_path_reset_offset;
+            std.debug.print("entry: '{s}'\n", .{entry_node_modules_path.slice()});
+            for (dependencies.slice()) |store_dep_id| {
+                bun.debugAssert(!entry_is_workspace_only[store_dep_id.get()]);
+
+                const dep_scope = dep_path.save();
+                defer dep_scope.restore();
 
                 const dep_pkg_id = entry_pkg_ids[store_dep_id.get()];
-                const dep_dep_name = entry_dep_names[store_dep_id.get()];
+                const dep_name = entry_dep_names[store_dep_id.get()];
+                const dep_peers = entry_peers[store_dep_id.get()];
 
-                Store.Entry.appendPath(&dep_path, entry_pkg_ids[dep_pkg_id], string_buf, pkg_names, pkg_resolutions);
+                const dep_pkg_name = pkg_names[dep_pkg_id];
 
-                store_path.relative(&dep_path, &rel_target_path);
+                Store.Entry.appendNodeModulesStorePath(&dep_path, dep_pkg_id, dep_peers, string_buf, pkg_names, pkg_resolutions);
 
-                std.debug.print(" - '{s}' -> '{s}'\n", .{ dep_dep_name.slice(string_buf), rel_target_path.slice() });
+                entry_node_modules_path.relative(&dep_path, &target_path);
+
+                const target_scope = target_path.save();
+                defer target_scope.restore();
+                target_path.append(dep_pkg_name.slice(string_buf));
+                dep_path.append(dep_pkg_name.slice(string_buf));
+
+                const inner_entry_scope = entry_node_modules_path.save();
+                defer inner_entry_scope.restore();
+                entry_node_modules_path.append(dep_name.slice(string_buf));
+
+                std.debug.print(" - '{s}' -> '{s}'\n", .{ entry_node_modules_path.slice(), target_path.slice() });
+
+                bun.sys.symlinkOrJunction(
+                    entry_node_modules_path.sliceZ(),
+                    target_path.sliceZ(),
+                    dep_path.sliceZ(),
+                ).unwrap() catch |err1| switch (err1) {
+                    else => {
+                        Output.err(err1, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                            entry_node_modules_path.slice(),
+                            dep_path.slice(),
+                        });
+                        Global.exit(1);
+                    },
+                    error.ENOENT => {
+                        // ensure the directory exists and try again
+                        const undo_scope = entry_node_modules_path.save();
+                        entry_node_modules_path.undo(1);
+                        cwd.makePath(u8, entry_node_modules_path.slice()) catch |node_modules_err| {
+                            Output.err(node_modules_err, "failed to create node_modules for {s}@{}", .{
+                                pkg_names[pkg_id].slice(string_buf),
+                                pkg_resolutions[pkg_id].fmt(string_buf, .posix),
+                            });
+                            Global.exit(1);
+                        };
+
+                        undo_scope.restore();
+                        bun.sys.symlinkOrJunction(
+                            entry_node_modules_path.sliceZ(),
+                            target_path.sliceZ(),
+                            dep_path.sliceZ(),
+                        ).unwrap() catch |err2| {
+                            Output.err(err2, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                                entry_node_modules_path.slice(),
+                                dep_path.slice(),
+                            });
+                            Global.exit(1);
+                        };
+                    },
+                    error.EEXIST => {
+                        // TODO: options:
+                        //  1. Immediately try deleting the existing file/directory/link, then create a new link.
+                        //  2. Try to read the existing link. If it's not equal to the expected path (or isn't a link), delete
+                        //     and create a new link.
+                        //  3. Assume the link already exists and do nothing.
+                        //  4. Keep track of new packages. If it's a new package that didn't exist in the previous
+                        //     lockfile, option 1. If it's an existing package, option 2.
+
+                        std.fs.deleteTreeAbsolute(entry_node_modules_path.slice()) catch {
+                            // ignore errors
+                        };
+
+                        bun.sys.symlinkOrJunction(
+                            entry_node_modules_path.sliceZ(),
+                            target_path.sliceZ(),
+                            dep_path.sliceZ(),
+                        ).unwrap() catch |err2| {
+                            Output.err(err2, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                                entry_node_modules_path.slice(),
+                                dep_path.slice(),
+                            });
+                            Global.exit(1);
+                        };
+                    },
+                };
             }
         }
     }
@@ -650,6 +797,10 @@ const Store = struct {
     // a module depends on a workspace, a symlink is created pointing outside the store
     // directory to the workspace.
     pub const Entry = struct {
+
+        // TODO: Delete `dep_name`, `pkg_id`, `peers`, and `is_workspace_only`.
+        // They can be replaced with a single `node_id: Node.Id`.
+
         /// Dependency the package originates from. Using `dep_name`
         /// instead of `dep_id` because entries are deduplicated and
         /// may not share the same dependency (name will be the same though)
@@ -658,12 +809,50 @@ const Store = struct {
         pkg_id: PackageID,
 
         parent_id: Id,
-        dependencies: std.ArrayListUnmanaged(Id) = .empty,
+        dependencies: Dependencies,
+        peers: Node.Peers,
 
         /// Does this entry originate from a isWorkspaceOnly node?
         is_workspace_only: bool,
 
         pub const List = bun.MultiArrayList(Entry);
+
+        pub const Dependencies = OrderedArraySet(Id, DependenciesOrderedArraySetCtx);
+
+        const DependenciesOrderedArraySetCtx = struct {
+            string_buf: string,
+            dep_names: []const String,
+
+            pub fn eql(l_item: Id, r_item: Id) bool {
+                return l_item == r_item;
+            }
+
+            pub fn order(ctx: *const DependenciesOrderedArraySetCtx, l: Id, r: Id) std.math.Order {
+                if (l == r) {
+                    return .eq;
+                }
+
+                // TODO: y r doing
+                if (l == .invalid) {
+                    if (r == .invalid) {
+                        return .eq;
+                    }
+                    return .lt;
+                } else if (r == .invalid) {
+                    if (l == .invalid) {
+                        return .eq;
+                    }
+                    return .gt;
+                }
+
+                const string_buf = ctx.string_buf;
+                const dep_names = ctx.dep_names;
+                const l_dep_name = dep_names[l.get()];
+                const r_dep_name = dep_names[r.get()];
+
+                return l_dep_name.order(&r_dep_name, string_buf, string_buf);
+            }
+        };
 
         pub const Id = enum(u32) {
             invalid = max,
@@ -686,27 +875,29 @@ const Store = struct {
             }
         };
 
-        pub fn appendPath(
+        pub fn appendNodeModulesStorePath(
             prefix: *bun.AbsPath(.{}),
-            entry_pkg_id: PackageID,
+            pkg_id: PackageID,
+            peers: Node.Peers,
             string_buf: string,
-            names: []const String,
-            resolutions: []const Resolution,
+            pkg_names: []const String,
+            pkg_resolutions: []const Resolution,
         ) void {
-            const res = resolutions[entry_pkg_id];
-            switch (res.tag) {
+            const pkg_res = pkg_resolutions[pkg_id];
+            switch (pkg_res.tag) {
                 .root => {
                     prefix.append("node_modules");
                 },
                 .workspace => {
-                    prefix.appendFmt("{}", .{res.value.workspace.fmtPath(string_buf, .{ .replace_slashes = false })});
+                    prefix.appendFmt("{s}", .{pkg_res.value.workspace.slice(string_buf)});
+                    prefix.append("node_modules");
                 },
                 else => {
-                    const name = names[entry_pkg_id];
-                    prefix.appendFmt("node_modules/.bun/{s}@{}/node_modules/{s}", .{
-                        name.fmtPath(string_buf, .{ .replace_slashes = true }),
-                        res.fmt(string_buf, .posix),
-                        name.fmtPath(string_buf, .{ .replace_slashes = false }),
+                    const pkg_name = pkg_names[pkg_id];
+                    prefix.appendFmt("node_modules/" ++ modules_dir_name ++ "/{s}@{}{}/node_modules", .{
+                        pkg_name.fmtStorePath(string_buf),
+                        pkg_res.fmt(string_buf, .posix),
+                        Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
                     });
                 },
             }
@@ -751,82 +942,156 @@ const Store = struct {
         }
     };
 
-    // A possibly non-unique node used to represent the full dependency tree
+    fn OrderedArraySet(comptime T: type, comptime Ctx: type) type {
+        return struct {
+            list: std.ArrayListUnmanaged(T) = .empty,
+
+            pub const empty: @This() = .{};
+
+            pub fn initCapacity(allocator: std.mem.Allocator, n: usize) OOM!@This() {
+                const list: std.ArrayListUnmanaged(T) = try .initCapacity(allocator, n);
+                return .{ .list = list };
+            }
+
+            pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+                this.list.deinit(allocator);
+            }
+
+            pub fn slice(this: *const @This()) []const T {
+                return this.list.items;
+            }
+
+            pub fn eql(l: *const @This(), r: *const @This()) bool {
+                if (l.list.items.len != r.list.items.len) {
+                    return false;
+                }
+
+                for (l.list.items, r.list.items) |l_item, r_item| {
+                    if (!Ctx.eql(l_item, r_item)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            pub fn insert(this: *@This(), allocator: std.mem.Allocator, new: T, ctx: *const Ctx) OOM!void {
+                for (0..this.list.items.len) |i| {
+                    const existing = this.list.items[i];
+                    if (Ctx.eql(new, existing)) {
+                        return;
+                    }
+
+                    const order = ctx.order(new, existing);
+
+                    bun.debugAssert(order != .eq);
+
+                    if (order == .lt) {
+                        try this.list.insert(allocator, i, new);
+                        return;
+                    }
+                }
+
+                try this.list.append(allocator, new);
+            }
+
+            pub fn insertAssumeCapacity(this: *@This(), new: T, ctx: *const Ctx) void {
+                for (0..this.list.items.len) |i| {
+                    const existing = this.list.items[i];
+                    if (Ctx.eql(new, existing)) {
+                        return;
+                    }
+
+                    const order = ctx.order(new, existing);
+
+                    bun.debugAssert(order != .eq);
+
+                    if (order == .lt) {
+                        this.list.insertAssumeCapacity(i, new);
+                        return;
+                    }
+                }
+
+                this.list.appendAssumeCapacity(new);
+            }
+        };
+    }
+
+    // A node used to represent the full dependency tree. Uniqueness is determined
+    // from `pkg_id` and `peers`
     pub const Node = struct {
         dep_id: DependencyID,
         pkg_id: PackageID,
         parent_id: Id,
-        dependencies: std.ArrayListUnmanaged(Ids) = .empty,
 
-        peers: TransitivePeer.OrderedList = .{},
+        dependencies: std.ArrayListUnmanaged(Ids) = .empty,
+        peers: Peers = .empty,
+
+        // each node in this list becomes a symlink in the package's node_modules
         nodes: std.ArrayListUnmanaged(Id) = .empty,
+
+        const Peers = OrderedArraySet(TransitivePeer, TransitivePeer.OrderedArraySetCtx);
 
         const TransitivePeer = struct {
             dep_id: DependencyID,
             pkg_id: PackageID,
             auto_installed: bool,
 
-            pub const OrderedList = struct {
-                list: std.ArrayListUnmanaged(TransitivePeer) = .empty,
+            const OrderedArraySetCtx = struct {
+                string_buf: string,
+                pkg_names: []const String,
 
-                pub fn deinit(this: *OrderedList, allocator: std.mem.Allocator) void {
-                    this.list.deinit(allocator);
+                pub fn eql(l_item: TransitivePeer, r_item: TransitivePeer) bool {
+                    return l_item.pkg_id == r_item.pkg_id;
                 }
 
-                pub fn eql(l: *const OrderedList, r: *const OrderedList) bool {
-                    if (l.list.items.len != r.list.items.len) {
-                        return false;
+                pub fn order(ctx: *const OrderedArraySetCtx, l: TransitivePeer, r: TransitivePeer) std.math.Order {
+                    const l_pkg_id = l.pkg_id;
+                    const r_pkg_id = r.pkg_id;
+                    if (l_pkg_id == r_pkg_id) {
+                        return .eq;
                     }
 
-                    for (l.list.items, r.list.items) |l_item, r_item| {
-                        if (l_item.pkg_id != r_item.pkg_id) {
-                            return false;
-                        }
-                    }
+                    const string_buf = ctx.string_buf;
+                    const pkg_names = ctx.pkg_names;
+                    const l_pkg_name = pkg_names[l_pkg_id];
+                    const r_pkg_name = pkg_names[r_pkg_id];
 
-                    return true;
-                }
-
-                pub fn contains(this: *const OrderedList, item: TransitivePeer, context: anytype) bool {
-                    for (this.list.items) |existing| {
-                        if (context.eql(item, existing)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-
-                pub fn append(
-                    this: *OrderedList,
-                    allocator: std.mem.Allocator,
-                    new: TransitivePeer,
-                    bufs: struct {
-                        string_buf: string,
-                        pkg_names: []const String,
-                    },
-                ) OOM!void {
-                    const new_pkg_name = bufs.pkg_names[new.pkg_id];
-                    for (0..this.list.items.len) |i| {
-                        const existing = this.list.items[i];
-                        if (new.pkg_id == existing.pkg_id) {
-                            return;
-                        }
-
-                        const existing_pkg_name = bufs.pkg_names[existing.pkg_id];
-
-                        const order = new_pkg_name.order(&existing_pkg_name, bufs.string_buf, bufs.string_buf);
-
-                        bun.debugAssert(order != .eq);
-
-                        if (order == .lt) {
-                            try this.list.insert(allocator, i, new);
-                            return;
-                        }
-                    }
-
-                    try this.list.append(allocator, new);
+                    return l_pkg_name.order(&r_pkg_name, string_buf, string_buf);
                 }
             };
+
+            const StorePathFormatter = struct {
+                peers: []const TransitivePeer,
+                string_buf: string,
+                pkg_names: []const String,
+                pkg_resolutions: []const Resolution,
+
+                pub fn format(this: StorePathFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+                    if (this.peers.len > 0) {
+                        try writer.writeByte('_');
+                    }
+                    for (this.peers, 0..) |peer, i| {
+                        try writer.print("{}@{}", .{
+                            this.pkg_names[peer.pkg_id].fmtStorePath(this.string_buf),
+                            this.pkg_resolutions[peer.pkg_id].fmtStorePath(this.string_buf),
+                        });
+
+                        if (i != this.peers.len - 1) {
+                            try writer.writeByte('+');
+                        }
+                    }
+                }
+            };
+
+            pub fn fmtStorePath(peers: []const TransitivePeer, string_buf: string, pkg_names: []const String, pkg_resolutions: []const Resolution) StorePathFormatter {
+                return .{
+                    .peers = peers,
+                    .string_buf = string_buf,
+                    .pkg_names = pkg_names,
+                    .pkg_resolutions = pkg_resolutions,
+                };
+            }
         };
 
         pub const List = bun.MultiArrayList(Node);

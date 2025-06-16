@@ -128,6 +128,31 @@ pub fn initializeMiniStore() void {
     }
 }
 
+pub const StorePathFormatter = struct {
+    str: string,
+
+    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        // if (!this.opts.replace_slashes) {
+        //     try writer.writeAll(this.str);
+        //     return;
+        // }
+
+        for (this.str) |c| {
+            switch (c) {
+                '/' => try writer.writeByte('+'),
+                '\\' => try writer.writeByte('+'),
+                else => try writer.writeByte(c),
+            }
+        }
+    }
+};
+
+pub fn fmtStorePath(str: string) StorePathFormatter {
+    return .{
+        .str = str,
+    };
+}
+
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });

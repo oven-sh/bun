@@ -3635,6 +3635,15 @@ pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     }
 }
 
+pub inline fn move(val: anytype) switch (@typeInfo(@TypeOf(val))) {
+    .pointer => |p| p.child,
+    else => @compileError("unexpected move type"),
+} {
+    const tmp = val.*;
+    @constCast(val).* = undefined;
+    return tmp;
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -3764,14 +3773,5 @@ pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
-
-pub fn move(dest: []u8, src: []const u8) void {
-    if (comptime Environment.allow_assert) {
-        if (src.len != dest.len) {
-            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
-        }
-    }
-    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
-}
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;

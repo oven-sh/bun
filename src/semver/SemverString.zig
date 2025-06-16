@@ -135,7 +135,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             const str = formatter.str;
             try writer.writeAll(str.slice(formatter.buf));
         }
@@ -164,36 +164,34 @@ pub const String = extern struct {
         }
     };
 
-    pub inline fn fmtPath(self: *const String, buf: []const u8, opts: PathFormatter.Options) PathFormatter {
+    pub inline fn fmtStorePath(self: *const String, buf: []const u8) StorePathFormatter {
         return .{
             .buf = buf,
             .str = self,
-            .opts = opts,
         };
     }
 
-    const PathFormatter = struct {
+    pub const StorePathFormatter = struct {
         str: *const String,
         buf: string,
-        opts: Options,
 
-        pub const Options = struct {
-            replace_slashes: bool,
-        };
+        // pub const Options = struct {
+        //     replace_slashes: bool,
+        // };
 
-        pub fn format(formatter: PathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            if (formatter.opts.replace_slashes) {
-                for (formatter.str.slice(formatter.buf)) |c| {
-                    switch (c) {
-                        '/' => try writer.writeByte('+'),
-                        '\\' => try writer.writeByte('+'),
-                        else => try writer.writeByte(c),
-                    }
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            // if (!this.opts.replace_slashes) {
+            //     try writer.writeAll(this.str.slice(this.buf));
+            //     return;
+            // }
+
+            for (this.str.slice(this.buf)) |c| {
+                switch (c) {
+                    '/' => try writer.writeByte('+'),
+                    '\\' => try writer.writeByte('+'),
+                    else => try writer.writeByte(c),
                 }
-                return;
             }
-
-            try writer.writeAll(formatter.str.slice(formatter.buf));
         }
     };
 

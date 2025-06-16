@@ -293,10 +293,51 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
     }
+
+    pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
+        return .{
+            .repo = this,
+            .label = label,
+            .string_buf = string_buf,
+        };
+    }
+
+    pub const StorePathFormatter = struct {
+        repo: *const Repository,
+        label: string,
+        string_buf: string,
+
+        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+
+            if (!this.repo.owner.isEmpty()) {
+                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
+                try writer.writeByte('+');
+            } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
+                // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
+                try writer.writeAll("ssh:++");
+            }
+
+            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+
+            if (!this.repo.resolved.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                var resolved = this.repo.resolved.slice(this.string_buf);
+                if (strings.lastIndexOfChar(resolved, '-')) |i| {
+                    resolved = resolved[i + 1 ..];
+                }
+                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+            } else if (!this.repo.committish.isEmpty()) {
+                try writer.writeByte('+'); // this would be '#' but it's not valid on windows
+                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+            }
+        }
+    };
 
     pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
         return .{
@@ -310,7 +351,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 

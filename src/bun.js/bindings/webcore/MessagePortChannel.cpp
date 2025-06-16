@@ -157,7 +157,7 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
     size_t i = port == m_ports[0] ? 0 : 1;
 
     if (m_pendingMessages[i].isEmpty()) {
-        callback({ }, [] { });
+        callback({}, [] {});
         return;
     }
 

@@ -242,8 +242,7 @@ void MessagePort::close()
     WTF::ensureOnMainThread(
         [this]() {
             MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
-        }
-    );
+        });
 
     removeAllEventListeners();
 }

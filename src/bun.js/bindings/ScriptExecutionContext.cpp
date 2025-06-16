@@ -8,6 +8,7 @@
 #include "BunClientData.h"
 #include "EventLoopTask.h"
 #include "BunBroadcastChannelRegistry.h"
+#include <wtf/threads/BinarySemaphore.h>
 #include <wtf/LazyRef.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -216,6 +217,28 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
     }
 
     context->postTaskConcurrently(WTFMove(task));
+    return true;
+}
+
+bool ScriptExecutionContext::postTaskOnMainThreadAndWait(Function<void(ScriptExecutionContext&)>&& task)
+{
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
+
+    if (WTF::isMainThread()) {
+        task(*context);
+        return true;
+    }
+
+    BinarySemaphore semaphore;
+
+    context->postTaskConcurrently(
+        [task = WTFMove(task), &semaphore](ScriptExecutionContext& context) {
+            task(context);
+            semaphore.signal();
+        }
+    );
+
+    semaphore.wait();
     return true;
 }
 

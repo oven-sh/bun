@@ -216,7 +216,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
         return false;
     }
 
-    if (context && context->isContextThread()) {
+    if (WTF::isMainThread()) {
         task(*context);
         return true;
     }

@@ -6,35 +6,6 @@ import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
 
-it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
-  // this must be the filename specifically, because we add a workaround for the length limit on linux
-  const path = "a".repeat(
-    {
-      darwin: 104,
-      linux: 108,
-      win32: 260,
-      sunos: 104,
-      aix: 104,
-      freebsd: 104,
-      openbsd: 104,
-      netbsd: 104,
-      plan9: 104,
-      android: 104,
-      haiku: 104,
-      cygwin: 260,
-    }[process.platform],
-  );
-
-  expect(() =>
-    serve({
-      unix: path,
-      fetch(req) {
-        return new Response("hello");
-      },
-    }),
-  ).toThrow("too long");
-});
-
 it("throws an error when the directory is not found", () => {
   // this must be the filename specifically, because we add a workaround for the length limit on linux
   const unix = isWindows

@@ -1039,13 +1039,13 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 
             // if the path is just a single character, or the path is too long, we cannot use this method
             if (dirname_len < 2 || (path_len - dirname_len + 1) >= sizeof(server_address->sun_path)) {
-                if (error != NULL) *error = ENAMETOOLONG;
+                if (error != NULL) *error = EINVAL;
                 return LIBUS_SOCKET_ERROR;
             }
 
             char dirname_buf[4096];
             if (dirname_len + 1 > sizeof(dirname_buf)) {
-                if (error != NULL) *error = ENAMETOOLONG;
+                if (error != NULL) *error = EINVAL;
                 return LIBUS_SOCKET_ERROR;
             }
 

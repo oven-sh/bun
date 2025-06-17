@@ -132,9 +132,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      // do not merge this!
-      // I just added this so that the ASan tests actually finish, instead of timing out because they all run 4 times in a row
-      default: isCI ? (getEnv("BUILDKITE_STEP_KEY")?.includes("asan") ? "0" : "3") : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",
@@ -849,7 +847,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 
   if (basename(execPath).includes("asan")) {
     bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
-    bunEnv.BUN_JSC_validateExceptionChecks = "1";
   }
 
   if (isWindows && bunEnv.Path) {

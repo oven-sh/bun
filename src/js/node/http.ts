@@ -1,5 +1,5 @@
 const { validateInteger } = require("internal/validators");
-const { Agent, globalAgent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
 const { ClientRequest } = require("node:_http_client");
 const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
@@ -60,12 +60,22 @@ const http_exports = {
     validateInteger(max, "max", 1);
     $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
-  globalAgent,
   ClientRequest,
   OutgoingMessage,
   WebSocket,
   CloseEvent,
   MessageEvent,
 };
+
+Object.defineProperty(http_exports, "globalAgent", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    return Agent.globalAgent;
+  },
+  set(value) {
+    Agent.globalAgent = value;
+  },
+});
 
 export default http_exports;

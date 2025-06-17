@@ -9,6 +9,7 @@ src/bun.js/api/JSBundler.classes.ts
 src/bun.js/api/postgres.classes.ts
 src/bun.js/api/S3Client.classes.ts
 src/bun.js/api/S3Stat.classes.ts
+src/bun.js/api/ResumableSink.classes.ts
 src/bun.js/api/server.classes.ts
 src/bun.js/api/Shell.classes.ts
 src/bun.js/api/ShellArgs.classes.ts

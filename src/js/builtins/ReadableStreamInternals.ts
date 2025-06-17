@@ -758,6 +758,63 @@ export function assignToStream(stream, sink) {
   return $readStreamIntoSink(stream, sink, true);
 }
 
+$linkTimeConstant;
+export function drainStreamIntoDrainableSink(stream, sink) {
+  const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+  let error: Error | null = null;
+  let closed = false;
+  try {
+    // always call start even if reader throws
+
+    sink.start({ highWaterMark });
+
+    var reader = stream.getReader();
+    async function drainReaderIntoSink() {
+      if (error || closed) return;
+
+      try {
+        while (true) {
+          var { value, done } = await reader.read();
+          if (closed) break;
+
+          if (value) {
+            // write returns false under backpressure
+            if (!sink.write(value)) break;
+          }
+          if (done) {
+            closed = true;
+            // clean end
+            return sink.end();
+          }
+        }
+      } catch (e: any) {
+        error = e;
+        closed = true;
+        // end with the error
+        sink.end(e);
+      }
+    }
+
+    function cancelStream(reason) {
+      let wasClosed = closed;
+      closed = true;
+      if (!error && !wasClosed && stream.$state !== $streamClosed) {
+        $readableStreamCancel(stream, reason);
+      }
+    }
+    // drain is called when the backpressure is release so we can continue draining
+    // cancel is called if closed or errored by the other side
+    sink.setHandlers(drainReaderIntoSink, cancelStream);
+
+    drainReaderIntoSink();
+  } catch (e: any) {
+    error = e;
+    closed = true;
+    // end with the error
+    sink.end(e);
+  }
+}
+
 export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
   var didClose = false;
   var didThrow = false;

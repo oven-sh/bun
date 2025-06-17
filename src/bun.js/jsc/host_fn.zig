@@ -103,7 +103,8 @@ pub fn toJSHostCall(
     return normal;
 }
 
-/// Convert the return value of a function returning a maybe-empty JSValue into an error union
+/// Convert the return value of a function returning a maybe-empty JSValue into an error union.
+/// The wrapped function must return an empty JSValue if and only if it has thrown an exception.
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions

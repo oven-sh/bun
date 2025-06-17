@@ -1049,17 +1049,19 @@ const Template = enum {
                 }
             };
 
-            // if we did create the CLAUDE.md, then symlinks the
-            // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
-            // sync if you change it locally. we use a symlink for the cursor
-            // rule in this case so that the github UI for CLAUDE.md (which may
-            // appear prominently in repos) doesn't show a file path.
-            if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
-                @"create CLAUDE.md" = false;
-                bun.makePath(std.fs.cwd(), ".cursor/rules") catch {};
-                bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
-                Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
-                Output.flush();
+            if (comptime !Environment.isWindows) {
+                // if we did create the CLAUDE.md, then symlinks the
+                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
+                // sync if you change it locally. we use a symlink for the cursor
+                // rule in this case so that the github UI for CLAUDE.md (which may
+                // appear prominently in repos) doesn't show a file path.
+                if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
+                    @"create CLAUDE.md" = false;
+                    bun.makePath(std.fs.cwd(), ".cursor/rules") catch {};
+                    bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
+                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
+                    Output.flush();
+                }
             }
         }
 

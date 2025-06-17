@@ -2555,8 +2555,8 @@ fn NewSocket(comptime ssl: bool) type {
                     this.handleError(JSC.SystemError.createJS(this.handlers.globalObject, .{
                         .errno = @bitCast(errno),
                         .code = .static(@tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno)))),
-                        .message = .static("idk what goes here"),
-                        .syscall = .static("send"),
+                        .message = bun.String.createFormat("{s} {s}", .{ "write", @tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno))) }) catch bun.outOfMemory(),
+                        .syscall = .static("write"),
                     }));
                     return error.CalledOnError;
                 }

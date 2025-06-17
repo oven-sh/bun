@@ -1028,13 +1028,15 @@ const Template = enum {
     }
 
     pub fn createAgentRule() void {
-        var did_create_agent_rule = false;
         var @"create CLAUDE.md" = Template.isClaudeCodeInstalled() and
             // Never overwrite CLAUDE.md
             !bun.sys.exists("CLAUDE.md");
 
         if (Template.getCursorRule()) |template_file| {
-            // If both Cursor & Claude is installed, make the cursor rule a symlink to ../../CLAUDE.md
+            var did_create_agent_rule = false;
+
+            // If both Cursor & Claude is installed, make the cursor rule a
+            // symlink to ../../CLAUDE.md
             const asset_path = if (@"create CLAUDE.md") "CLAUDE.md" else template_file.path;
             const result = InitCommand.Assets.createNew(asset_path, template_file.contents);
             did_create_agent_rule = true;
@@ -1047,7 +1049,11 @@ const Template = enum {
                 }
             };
 
-            // if we did create the CLAUDE.md, then symlink the .cursor/rules/*.mdc -> CLAUDE.md
+            // if we did create the CLAUDE.md, then symlinks the
+            // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
+            // sync if you change it locally. we use a symlink for the cursor
+            // rule in this case so that the github UI for CLAUDE.md (which may
+            // appear prominently in repos) doesn't show a file path.
             if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
                 @"create CLAUDE.md" = false;
                 bun.makePath(std.fs.cwd(), ".cursor/rules") catch {};

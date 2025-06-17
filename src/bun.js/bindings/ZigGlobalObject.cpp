@@ -4420,10 +4420,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
     } else if (handler == Bun__NodeHTTPRequest__onReject) {
         return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onReject;
-    } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
-    } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
     } else if (handler == Bun__S3UploadStream__onResolveRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveRequestStream;
     } else if (handler == Bun__S3UploadStream__onRejectRequestStream) {

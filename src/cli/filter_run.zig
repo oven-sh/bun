@@ -535,8 +535,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
     // Check if elide-lines is used in a non-terminal environment
     if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
-        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
-        Global.exit(1);
+        Output.warn("<r><yellow>warn<r>: --elide-lines will have no effect in non-terminal environments", .{});
+        ctx.bundler_options.elide_lines = null;
     }
 
     // initialize the handles

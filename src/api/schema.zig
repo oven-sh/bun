@@ -1626,7 +1626,6 @@ pub const Api = struct {
             .{ "warn", .warn },
             .{ "none", .none },
             .{ "warn-with-error-code", .warn_with_error_code },
-            .{ "bun", .bun },
         });
     };
 

@@ -201,7 +201,10 @@ pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) Api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
+    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
+        false => .bun,
+        true => .throw,
+    };
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {

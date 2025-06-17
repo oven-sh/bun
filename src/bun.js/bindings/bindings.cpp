@@ -6587,11 +6587,7 @@ extern "C" void CatchScope__construct(
     ASSERT(size >= sizeof(CatchScope));
     ASSERT(alignment >= alignof(CatchScope));
     ASSERT((uintptr_t)ptr % alignment == 0);
-    // wipe out the entire array in the hope of causing (and detecting)
-    // stack corruption if Zig's array is too small
-    memset(ptr, 0xaa, size);
 
-// TODO how important is the stack pointer passed here?
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
     new (ptr) JSC::CatchScope(JSC::getVM(globalObject),
         ExceptionEventLocation { currentStackPointer(), function, file, line });

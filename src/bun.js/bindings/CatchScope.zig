@@ -18,7 +18,6 @@
 const CatchScope = @This();
 
 /// TODO determine size and alignment automatically
-/// do not merge this struct with a manual size and alignment!
 const size = 56;
 const alignment = 8;
 

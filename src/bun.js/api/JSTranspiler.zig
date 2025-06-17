@@ -6,7 +6,6 @@ const JSC = bun.JSC;
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const ZigString = JSC.ZigString;
-const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;

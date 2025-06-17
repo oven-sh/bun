@@ -1494,7 +1494,10 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
+                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse {
+                        if (error_) |err| err.* = bun.sys.SystemErrno.ENOENT.to_uv_errno();
+                        return error.ConnectionFailed;
+                    };
                     this.onOpen(socket);
                 },
             }

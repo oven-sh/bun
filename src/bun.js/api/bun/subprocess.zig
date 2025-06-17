@@ -2391,12 +2391,7 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_t.fromFd(
-                jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                @sizeOf(*IPC.SendQueue),
-                posix_ipc_fd.cast(),
-                1,
-            )) |socket| {
+            if (uws.us_socket_t.fromFd(jsc_vm.rareData().spawnIPCContext(jsc_vm), @sizeOf(*IPC.SendQueue), posix_ipc_fd.cast(), 1)) |socket| {
                 subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);
             }

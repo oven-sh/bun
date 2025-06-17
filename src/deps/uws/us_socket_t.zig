@@ -224,12 +224,7 @@ pub const c = struct {
     pub extern fn us_socket_get_fd(s: ?*us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
     pub extern fn us_socket_verify_error(ssl: i32, context: *us_socket_t) uws.us_bun_verify_error_t;
     pub extern fn us_socket_upgrade_to_tls(s: *us_socket_t, new_context: *SocketContext, sni: ?[*:0]const u8) ?*us_socket_t;
-    pub extern fn us_socket_from_fd(
-        ctx: *SocketContext,
-        ext_size: c_int,
-        fd: uws.LIBUS_SOCKET_DESCRIPTOR,
-        is_ipc: c_int,
-    ) ?*us_socket_t;
+    pub extern fn us_socket_from_fd(ctx: *SocketContext, ext_size: c_int, fd: uws.LIBUS_SOCKET_DESCRIPTOR, is_ipc: c_int) ?*us_socket_t;
     pub extern fn us_socket_get_error(ssl: i32, s: *uws.us_socket_t) c_int;
     pub extern fn us_socket_is_established(ssl: i32, s: *uws.us_socket_t) i32;
 };

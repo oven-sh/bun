@@ -9,7 +9,7 @@ it("should throw when a socket from a file descriptor has a bad file descriptor"
   const open = jest.fn();
   const close = jest.fn();
   const data = jest.fn();
-  const connectError = jest.fn(() => {});
+  const connectError = jest.fn();
   {
     expect(
       async () =>
@@ -213,7 +213,7 @@ it("should reject on connection error, calling both connectError() and rejecting
   var data = {};
   connect({
     data,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     port: 55555,
     socket: {
       connectError(socket, error) {
@@ -288,7 +288,7 @@ it("should handle connection error", done => {
   var data = {};
   connect({
     data,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
     port: 55555,
     socket: {
       connectError(socket, error) {

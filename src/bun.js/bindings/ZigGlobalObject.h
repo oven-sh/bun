@@ -336,7 +336,7 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
-
+    JSC::EncodedJSValue assignStreamToResumableSink(JSValue stream, JSValue sink);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -449,6 +449,7 @@ public:
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
+    V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \

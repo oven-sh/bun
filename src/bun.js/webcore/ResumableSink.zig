@@ -37,7 +37,7 @@ pub fn ResumableSink(
             self.ensureStillAlive();
             const js_stream = stream.toJS();
             js_stream.ensureStillAlive();
-            _ = Bun__drainStreamIntoResumableSink(globalThis, js_stream, self);
+            _ = Bun__assignStreamIntoResumableSink(globalThis, js_stream, self);
             if (globalThis.hasException()) {
                 return bun.JSError.JSError;
             }
@@ -163,4 +163,4 @@ const bun = @import("bun");
 const FetchTasklet = @import("./fetch.zig").FetchTasklet;
 
 const JSC = bun.JSC;
-extern fn Bun__drainStreamIntoResumableSink(globalThis: *JSC.JSGlobalObject, stream: JSC.JSValue, sink: JSC.JSValue) JSC.JSValue;
+extern fn Bun__assignStreamIntoResumableSink(globalThis: *JSC.JSGlobalObject, stream: JSC.JSValue, sink: JSC.JSValue) JSC.JSValue;

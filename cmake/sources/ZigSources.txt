@@ -673,12 +673,16 @@ src/StaticHashMap.zig
 src/string_immutable.zig
 src/string_types.zig
 src/string.zig
+src/string/escapeHTML.zig
 src/string/HashedString.zig
 src/string/MutableString.zig
+src/string/paths.zig
 src/string/PathString.zig
 src/string/SmolStr.zig
 src/string/StringBuilder.zig
 src/string/StringJoiner.zig
+src/string/unicode.zig
+src/string/visible.zig
 src/string/WTFStringImpl.zig
 src/sync.zig
 src/sys_uv.zig

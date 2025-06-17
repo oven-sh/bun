@@ -7225,6 +7225,7 @@ pub const PackageManager = struct {
         pack,
         publish,
         audit,
+        info,
 
         // bin,
         // hash,
@@ -7258,6 +7259,7 @@ pub const PackageManager = struct {
             return switch (this) {
                 .audit,
                 .pm,
+                .info,
                 => true,
                 else => false,
             };

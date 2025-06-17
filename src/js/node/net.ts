@@ -361,10 +361,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass(options) as NetSocket | TLSSocket;
+    const _socket = new SClass({ ...options, isServer: true }) as NetSocket | TLSSocket;
     _socket.isServer = true;
-    _socket._requestCert = requestCert;
-    _socket._rejectUnauthorized = rejectUnauthorized;
+    _socket._requestCert = requestCert ?? _socket._requestCert;
+    _socket._rejectUnauthorized = rejectUnauthorized ?? _socket._rejectUnauthorized;
 
     _socket[kAttach](this.localPort, socket);
 
@@ -2597,6 +2597,7 @@ function initSocketHandle(self) {
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {
     self._handle[owner_symbol] = self;
+    self._configureHandle?.();
   }
 }
 

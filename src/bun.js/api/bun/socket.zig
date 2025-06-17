@@ -897,7 +897,7 @@ pub const Listener = struct {
         socket.setTimeout(120);
     }
 
-    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) bun.JSError!JSValue {
+    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, context: JSValue) bun.JSError!JSValue {
         if (!this.ssl) {
             return global.throwInvalidArguments("addServerName requires SSL support", .{});
         }
@@ -915,7 +915,7 @@ pub const Listener = struct {
             return global.throwInvalidArguments("hostname pattern cannot be empty", .{});
         }
 
-        if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, tls)) |ssl_config| {
+        if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, context)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
             this.socket_context.?.removeServerName(true, server_name);
             this.socket_context.?.addServerName(true, server_name, ssl_config.asUSockets());
@@ -2846,7 +2846,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const request_cert = request_cert_js.toBoolean();
-            const reject_unauthorized = request_cert_js.toBoolean();
+            const reject_unauthorized = reject_unauthorized_js.toBoolean();
             var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
             if (this.handlers.is_server) {
                 if (request_cert) {

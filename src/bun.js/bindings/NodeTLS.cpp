@@ -136,11 +136,9 @@ NodeTLSSecureContext::~NodeTLSSecureContext() = default;
 
 void NodeTLSSecureContext::setCACert(const ncrypto::BIOPointer& bio)
 {
-    if (!bio) {
-        return;
-    }
+    ASSERT(bio);
 
-    while (ncrypto::X509Pointer x509 = ncrypto::X509Pointer(PEM_read_bio_X509_AUX(bio.get(), nullptr, ncrypto::NoPasswordCallback, nullptr))) {
+    while (ncrypto::X509Pointer x509 { PEM_read_bio_X509_AUX(bio.get(), nullptr, ncrypto::NoPasswordCallback, nullptr) }) {
         RELEASE_ASSERT(X509_STORE_add_cert(getCertStore(), x509.get()) == 1);
         RELEASE_ASSERT(SSL_CTX_add_client_CA(context(), x509.get()) == 1);
     }
@@ -156,13 +154,17 @@ void NodeTLSSecureContext::setRootCerts()
 
 bool NodeTLSSecureContext::applySNI(SSL* ssl)
 {
-    // TODO(@heimskr): ERR_clear_error()?
-    X509* x509 = SSL_get_certificate(ssl);
+    SSL_CTX* ctx = context();
+
+    X509* x509 = [ctx] {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+        return SSL_CTX_get0_certificate(ctx);
+    }();
+
     if (!x509) {
         return false;
     }
 
-    SSL_CTX* ctx = context();
     EVP_PKEY* pkey = SSL_CTX_get0_privatekey(ctx);
     STACK_OF(X509) * chain;
 
@@ -235,7 +237,7 @@ int NodeTLSSecureContext::ticketCompatibilityCallback(SSL* ssl, unsigned char* n
     return 1;
 }
 
-// https://github.com/190n/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L112
+// https://github.com/nodejs/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L112
 static int useCertificateChain(SSL_CTX* ctx, ncrypto::X509Pointer&& x, STACK_OF(X509) * extra_certs, ncrypto::X509Pointer* cert, ncrypto::X509Pointer* issuer_)
 {
     RELEASE_ASSERT(!*issuer_);
@@ -285,7 +287,7 @@ static int useCertificateChain(SSL_CTX* ctx, ncrypto::X509Pointer&& x, STACK_OF(
     return ret;
 }
 
-// https://github.com/190n/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L183
+// https://github.com/nodejs/node/blob/5812a61a68d50c65127beb68dd4dfb0242e3c5c9/src/crypto/crypto_context.cc#L183
 static int useCertificateChain(SSL_CTX* ctx, ncrypto::BIOPointer&& in, ncrypto::X509Pointer* cert, ncrypto::X509Pointer* issuer)
 {
     ERR_clear_error();
@@ -366,7 +368,7 @@ bool NodeTLSSecureContext::addCert(JSGlobalObject* globalObject, ThrowScope& sco
     }
 
     if (useCertificateChain(context(), std::move(bio), &m_cert, &m_issuer) == 0) {
-        return throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set certificate");
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set certificate");
         return false;
     }
 
@@ -380,13 +382,22 @@ JSC_DEFINE_HOST_FUNCTION(secureContextInit, (JSGlobalObject * globalObject, Call
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ArgList args(callFrame);
-    JSValue secureProtocolValue = args.at(0);
+    JSValue optionsValue = args.at(0);
     JSValue minVersionValue = args.at(1);
     JSValue maxVersionValue = args.at(2);
+
+    if (!optionsValue.isObject()) {
+        return throwArgumentTypeError(*globalObject, scope, 0, "options"_s, "SecureContext"_s, "init"_s, "object"_s);
+    }
 
     int minVersion = minVersionValue.toInt32(globalObject);
     int maxVersion = maxVersionValue.toInt32(globalObject);
     const SSL_METHOD* method = TLS_method();
+
+    JSObject* options = JSC::asObject(optionsValue);
+
+    JSValue secureProtocolValue = options->get(globalObject, Identifier::fromString(vm, "secureProtocol"_s));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (secureProtocolValue.isString()) {
         String secureProtocol = secureProtocolValue.toWTFString(globalObject);
@@ -461,6 +472,24 @@ JSC_DEFINE_HOST_FUNCTION(secureContextInit, (JSGlobalObject * globalObject, Call
         }
     }
 
+    auto getTriState = [&](ASCIILiteral name) -> WTF::TriState {
+        JSValue value = options->get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, WTF::TriState::Indeterminate);
+
+        if (value.isBoolean()) {
+            return triState(value.asBoolean());
+        }
+
+        if (!value.isUndefined()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("options."_s, name), "boolean"_s, value);
+        }
+
+        return WTF::TriState::Indeterminate;
+    };
+
+    WTF::TriState requestCert = getTriState("requestCert");
+    RETURN_IF_EXCEPTION(scope, {});
+
     thisObject->context(SSL_CTX_new(method));
     SSL_CTX* context = thisObject->context();
 
@@ -471,6 +500,18 @@ JSC_DEFINE_HOST_FUNCTION(secureContextInit, (JSGlobalObject * globalObject, Call
     SSL_CTX_set_app_data(context, thisObject);
     SSL_CTX_set_options(context, SSL_OP_NO_SSLv2);
     SSL_CTX_set_options(context, SSL_OP_NO_SSLv3);
+
+    if (requestCert != TriState::True) {
+        SSL_CTX_set_verify(context, SSL_VERIFY_NONE, nullptr);
+    } else {
+        WTF::TriState rejectUnauthorized = getTriState("rejectUnauthorized");
+        RETURN_IF_EXCEPTION(scope, {});
+        if (rejectUnauthorized == WTF::TriState::True) {
+            SSL_CTX_set_verify(context, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+        } else {
+            SSL_CTX_set_verify(context, SSL_VERIFY_PEER, nullptr);
+        }
+    }
 
 #if OPENSSL_VERSION_MAJOR >= 3
     // TODO(@heimskr): OPENSSL_VERSION_MAJOR doesn't appear to be defined anywhere.
@@ -554,11 +595,11 @@ JSC_DEFINE_HOST_FUNCTION(secureContextAddCACert, (JSGlobalObject * globalObject,
 
     int written = ncrypto::BIOPointer::Write(&bio, cert.span());
     if (written < 0 || static_cast<size_t>(written) != cert.length()) {
-        return JSC::encodedJSUndefined();
+        return JSValue::encode(jsBoolean(false));
     }
 
     thisObject->setCACert(bio);
-    return JSC::encodedJSUndefined();
+    return JSValue::encode(jsBoolean(true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(secureContextSetECDHCurve, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -632,7 +673,7 @@ JSC_DEFINE_HOST_FUNCTION(secureContextSetKey, (JSGlobalObject * globalObject, Ca
         return throwCryptoError(globalObject, scope, ERR_get_error(), "SSL_CTX_use_PrivateKey");
     }
 
-    return JSC::encodedJSUndefined();
+    return JSValue::encode(jsBoolean(true));
 }
 
 static const HashTableValue NodeTLSSecureContextPrototypeTableValues[] = {

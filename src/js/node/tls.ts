@@ -222,9 +222,9 @@ var InternalSecureContext = class SecureContext {
   secureOptions;
 
   constructor(options) {
-    const { honorCipherOrder, minVersion, maxVersion, secureProtocol } = options;
+    const { honorCipherOrder, minVersion, maxVersion } = options;
 
-    this.context = new NodeTLSSecureContext(secureProtocol, minVersion, maxVersion);
+    this.context = new NodeTLSSecureContext(options);
 
     if (options) {
       let { cert } = options;
@@ -285,7 +285,7 @@ var InternalSecureContext = class SecureContext {
     }
 
     this.context.init(
-      secureProtocol,
+      options,
       toV("minimum", minVersion, DEFAULT_MIN_VERSION),
       toV("maximum", maxVersion, DEFAULT_MAX_VERSION),
     );
@@ -504,7 +504,6 @@ function toBuf(val, encoding?: BufferEncoding | "buffer") {
 function addCACerts(context, certs, name) {
   ArrayPrototypeForEach.$call(certs, cert => {
     validateKeyOrCertOption(name, cert);
-    context.addCACert(cert);
   });
 }
 
@@ -526,7 +525,6 @@ function setKey(context, key, passphrase, name) {
   if (passphrase !== undefined && passphrase !== null) {
     validateString(passphrase, `${name}.passphrase`);
   }
-  context.setKey(key, passphrase);
 }
 
 function processCiphers(ciphers, name) {
@@ -608,7 +606,7 @@ function TLSSocket(socket?, options?) {
   }
 
   if (typeof options === "object") {
-    const { ALPNProtocols, SNICallback: sni } = options;
+    const { ALPNProtocols, SNICallback: sni, rejectUnauthorized, requestCert } = options;
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
@@ -618,12 +616,21 @@ function TLSSocket(socket?, options?) {
       this._SNICallback = sni;
     }
 
+    if (typeof rejectUnauthorized !== "undefined") {
+      this._rejectUnauthorized = rejectUnauthorized;
+    }
+
+    if (typeof requestCert !== "undefined") {
+      this._requestCert = requestCert;
+    }
+
     if (isNetSocketOrDuplex) {
       this._handle = socket;
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;
     }
   }
+
   this[ksecureContext] = options.secureContext || createSecureContext(options);
   this.authorized = false;
   this.secureConnecting = true;
@@ -633,9 +640,12 @@ function TLSSocket(socket?, options?) {
   this[ksession] = options.session || null;
 
   this.once("connect", socket => {
-    if (socket?.isServer) {
-      this._handle.certCallback = loadSNI.bind(this);
-      this._handle.enableCertCallback();
+    if (socket) {
+      socket._handle?.setVerifyMode(!!socket._requestCert || !socket.isServer, !!socket._rejectUnauthorized);
+      if (socket.isServer) {
+        socket._handle.certCallback = loadSNI.bind(socket);
+        socket._handle.enableCertCallback();
+      }
     }
   });
 }
@@ -644,6 +654,12 @@ $toClass(TLSSocket, "TLSSocket", NetSocket);
 TLSSocket.prototype._start = function _start() {
   // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
   this.connect();
+};
+
+TLSSocket.prototype._configureHandle = function _configureHandle() {
+  if (typeof this._rejectUnauthorized !== "undefined") {
+    this._handle.setVerifyMode(!!this._requestCert || !this.isServer, !!this._rejectUnauthorized);
+  }
 };
 
 TLSSocket.prototype.getSession = function getSession() {
@@ -815,6 +831,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._SNICallback = SNICallback;
   this.server = this;
+  this._contexts = [];
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -830,6 +847,7 @@ function Server(options, secureConnectionListener): void {
     } else {
       if (!contexts) contexts = new Map();
       contexts.set(hostname, context);
+      this._contexts.push(context);
     }
   };
 
@@ -933,7 +951,6 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
-        foo: "bar",
       },
       TLSSocket,
     ];

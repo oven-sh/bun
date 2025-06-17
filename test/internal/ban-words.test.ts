@@ -36,7 +36,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
   "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1858 },
 
-  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
+  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 179 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 102 },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },

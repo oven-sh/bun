@@ -3,7 +3,7 @@ import { define } from "../../codegen/class-definitions";
 function generate(name) {
   return define({
     name: name,
-    construct: false,
+    construct: true,
     finalize: true,
     configurable: false,
     klass: {},

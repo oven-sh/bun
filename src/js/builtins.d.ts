@@ -344,7 +344,7 @@ declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
 declare function $assignToStream(): TODO;
-declare function $drainStreamIntoResumableSink(): TODO;
+declare function $assignStreamIntoResumableSink(): TODO;
 declare function $associatedReadableByteStreamController(): TODO;
 declare function $autoAllocateChunkSize(): TODO;
 declare function $backpressure(): TODO;

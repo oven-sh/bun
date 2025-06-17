@@ -430,10 +430,15 @@ fn initSubproc(this: *Cmd) Yield {
     const args = args: {
         this.args.append(null) catch bun.outOfMemory();
 
-        if (bun.Environment.allow_assert) {
+        log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
+        if (bun.Environment.isDebug) {
             for (this.args.items) |maybe_arg| {
                 if (maybe_arg) |arg| {
-                    log("ARG: {s}\n", .{arg});
+                    if (bun.sliceTo(arg, 0).len > 80) {
+                        log("ARG: {s}...\n", .{arg[0..80]});
+                    } else {
+                        log("ARG: {s}\n", .{arg});
+                    }
                 }
             }
         }

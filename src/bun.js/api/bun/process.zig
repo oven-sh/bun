@@ -8,6 +8,7 @@ const uv = bun.windows.libuv;
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
 const Maybe = JSC.Maybe;
+const log = bun.Output.scoped(.PROCESS, false);
 
 const win_rusage = struct {
     utime: struct {
@@ -990,6 +991,13 @@ pub const PosixSpawnOptions = struct {
     /// and posix_spawnp(2) will behave as a more
     /// featureful execve(2).
     use_execve_on_macos: bool = false,
+    /// If we need to call `socketpair()`, this
+    /// sets SO_NOSIGPIPE when true.
+    ///
+    /// If false, this avoids setting SO_NOSIGPIPE
+    /// for stdout. This is used to preserve
+    /// consistent shell semantics.
+    no_sigpipe: bool = true,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1347,7 +1355,18 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
+                    // FIXME: our end should be non-blocking, other end should NOT
+                    const pair = if (!options.no_sigpipe and (i == 1 or i == 2)) try bun.sys.socketpairForShell(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap() else try bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap();
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
@@ -1391,6 +1410,14 @@ pub fn spawnProcessPosix(
 
                 if (!options.sync) {
                     try bun.sys.setNonblocking(fds[0]).unwrap();
+                }
+
+                log("actions.dup2({d}, {d})", .{ fds[1].cast(), fileno.cast() });
+                if (comptime Environment.isMac) {
+                    var val: c_int = 0;
+                    var len: std.c.socklen_t = @sizeOf(c_int);
+                    _ = std.c.getsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &val, &len);
+                    bun.assert(val == 0);
                 }
 
                 try actions.dup2(fds[1], fileno);

@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -974,6 +974,15 @@ describe("deno_task", () => {
     TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
       .fileEquals("output.txt", "1\n")
       .runAsTest("pipe with redirect stderr to file");
+
+    if (isPosix) {
+      TestBuilder.command`ls . | echo hi`.exitCode(0).stdout("hi\n").runAsTest("broken pipe builtin");
+      TestBuilder.command`grep hi src/js_parser.zig | echo hi`
+        .exitCode(0)
+        .stdout("hi\n")
+        .stderr("")
+        .runAsTest("broken pipe subproc");
+    }
   });
 
   describe("redirects", async function igodf() {

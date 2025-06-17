@@ -221,8 +221,8 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            return std.fmt.formatType(str.slice(), fmt, options, writer, 1);
+        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return writer.print("{s}", .{str.slice()});
         }
 
         /// Free this `Cow`'s allocation if it is owned.

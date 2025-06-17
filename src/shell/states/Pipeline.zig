@@ -245,7 +245,9 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
     log("Pipeline(0x{x}) check exited_count={d} cmds.len={d}", .{ @intFromPtr(this), this.exited_count, this.cmds.?.len });
     if (this.exited_count >= this.cmds.?.len) {
         var last_exit_code: ExitCode = 0;
-        for (this.cmds.?) |cmd_or_result| {
+        var i: i64 = @as(i64, @intCast(this.cmds.?.len)) - 1;
+        while (i > 0) : (i -= 1) {
+            const cmd_or_result = this.cmds.?[@intCast(i)];
             if (cmd_or_result == .result) {
                 last_exit_code = cmd_or_result.result;
                 break;
@@ -286,7 +288,7 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
             pipe[0] = .fromUV(fds[0]);
             pipe[1] = .fromUV(fds[1]);
         } else {
-            switch (bun.sys.socketpair(
+            switch (bun.sys.socketpairForShell(
                 std.posix.AF.UNIX,
                 std.posix.SOCK.STREAM,
                 0,

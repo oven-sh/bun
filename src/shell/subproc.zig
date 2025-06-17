@@ -797,6 +797,8 @@ pub const ShellSubprocess = struct {
             }
         }
 
+        const no_sigpipe = if (shellio.stdout) |iowriter| !iowriter.flags.is_socket else true;
+
         var spawn_options = bun.spawn.SpawnOptions{
             .cwd = spawn_args.cwd,
             .stdin = switch (spawn_args.stdio[0].asSpawnOption(0)) {
@@ -823,6 +825,8 @@ pub const ShellSubprocess = struct {
                     } };
                 },
             },
+
+            .no_sigpipe = no_sigpipe,
 
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,

@@ -34,7 +34,7 @@ concurrent_task2: JSC.EventLoopTask,
 is_writing: bool = false,
 async_deinit: AsyncDeinitWriter = .{},
 started: bool = false,
-flags: InitFlags = .{},
+flags: Flags = .{},
 
 const debug = bun.Output.scoped(.IOWriter, true);
 
@@ -69,14 +69,15 @@ pub fn refSelf(this: *IOWriter) *IOWriter {
     return this;
 }
 
-pub const InitFlags = packed struct(u8) {
+pub const Flags = packed struct(u8) {
     pollable: bool = false,
     nonblocking: bool = false,
     is_socket: bool = false,
-    __unused: u5 = 0,
+    broken_pipe: bool = false,
+    __unused: u4 = 0,
 };
 
-pub fn init(fd: bun.FileDescriptor, flags: InitFlags, evtloop: JSC.EventLoopHandle) *IOWriter {
+pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: JSC.EventLoopHandle) *IOWriter {
     const this = bun.new(IOWriter, .{
         .ref_count = .init(),
         .fd = fd,
@@ -268,73 +269,51 @@ pub fn doFileWrite(this: *IOWriter) Yield {
     assert(bun.Environment.isPosix);
     assert(!this.flags.pollable);
     assert(this.writer_idx < this.writers.len());
+
     defer this.setWriting(false);
     this.skipDead();
 
     const child = this.writers.get(this.writer_idx);
     assert(!child.isDead());
 
-    const MAX_WRITES = 8;
-    var writes: usize = 0;
-    while (writes < MAX_WRITES) : (writes += 1) {
-        const buf = this.getBuffer();
-        var done = false;
-        const amt = switch (drainBufferedData(this, buf, std.math.maxInt(u32), false)) {
-            .done => |amt| amt: {
-                done = true;
-                break :amt amt;
-            },
-            .wrote => |amt| amt,
-            .pending => bun.unreachablePanic("drainBufferedData in IOWriter.doFileWrite should not happen", .{}),
-            .err => |e| {
-                this.onError(e);
-                return .done;
-            },
-        };
-        if (child.bytelist) |bl| {
-            const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
-            bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
-        }
-        child.written += amt;
-        if (!child.wroteEverything()) {
-            assert(!done);
-            continue;
-        }
-        return this.bump(child);
-    }
+    const buf = this.getBuffer();
+    assert(buf.len > 0);
 
-    this.setWriting(true);
-    if (this.evtloop == .js) {
-        this.evtloop.js.enqueueTaskConcurrent(this.concurrent_task2.js.from(this, .manual_deinit));
-    } else {
-        this.evtloop.mini.enqueueTaskConcurrent(this.concurrent_task2.mini.from(this, "runFromMainThreadMini"));
-    }
-    return .suspended;
-}
-
-fn handleWriteFd(this: *IOWriter, child: Writer, done: bool, amount: usize, should_continue: *bool) struct { Yield, bool } {
+    var done = false;
+    const writeResult = drainBufferedData(this, buf, std.math.maxInt(u32), false);
+    const amt = switch (writeResult) {
+        .done => |amt| amt: {
+            done = true;
+            break :amt amt;
+        },
+        // .wrote can be returned if an error was encountered but there we wrote
+        // some data before it happened. In that case, onError will also be
+        // called so we should just return.
+        .wrote => |amt| amt: {
+            if (this.err != null) return .done;
+            break :amt amt;
+        },
+        // This is returned when we hit EAGAIN which should not be the case
+        // when writing to files unless we opened the file with non-blocking
+        // mode
+        .pending => bun.unreachablePanic("drainBufferedData returning .pending in IOWriter.doFileWrite should not happen", .{}),
+        .err => |e| {
+            this.onError(e);
+            return .done;
+        },
+    };
     if (child.bytelist) |bl| {
-        const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
+        const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
         bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
     }
-
-    this.total_bytes_written += amount;
-    child.written += amount;
-
-    if (done) {
-        const not_fully_written = !this.isLastIdx(this.writer_idx) or child.written < child.len;
-        if (bun.Environment.allow_assert and not_fully_written) {
-            bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data, check that onError is thrown", .{ @intFromPtr(this), this.fd });
-        }
-        return .{ .done, false };
+    child.written += amt;
+    if (!child.wroteEverything()) {
+        bun.assert(writeResult == .done);
+        // This should never happen if we are here. The only case where we get
+        // partial writes is when an error is encountered
+        bun.unreachablePanic("IOWriter.doFileWrite: child.wroteEverything() is false. This is unexpected behavior and indicates a bug in Bun. Please file a GitHub issue.", .{});
     }
-
-    if (child.written >= child.len) {
-        return .{ this.bump(child), false };
-    }
-
-    should_continue.* = true;
-    return .{ .suspended, true };
+    return this.bump(child);
 }
 
 pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatus) void {
@@ -354,10 +333,32 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
         this.total_bytes_written += amount;
         child.written += amount;
         if (status == .end_of_file) {
-            const not_fully_written = !this.isLastIdx(this.writer_idx) or child.written < child.len;
-            if (bun.Environment.allow_assert and not_fully_written) {
-                bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data, check that onError is thrown", .{ @intFromPtr(this), this.fd });
-            }
+            const not_fully_written = if (this.isLastIdx(this.writer_idx)) true else child.written < child.len;
+            // We wrote everything
+            if (!not_fully_written) return;
+
+            // We did not write everything.
+            // This seems to happen in a pipeline where the command which
+            // _reads_ the output of the previous command closes before the
+            // previous command.
+            //
+            // Example: `ls . | echo hi`
+            //
+            // 1. We call `socketpair()` and give `ls .` a socket to _write_ to and `echo hi` a socket to _read_ from
+            // 2. `ls .` executes first, but has to do some async work and so is suspended
+            // 3. `echo hi` then executes and finishes first (since it does less work) and closes its socket
+            // 4. `ls .` does its thing and then tries to write to its socket
+            // 5. Because `echo hi` closed its socket, when `ls .` does `send(...)` it will return EPIPE
+            // 6. Inside our PipeWriter abstraction this gets returned as bun.io.WriteStatus.end_of_file
+            //
+            // So what should we do? In a normal shell, `ls .` would receive the SIGPIPE signal and exit.
+            // We don't support signals right now. In fact we don't even have a way to kill the shell.
+            //
+            // So for a quick hack we're just going to have all writes return an error.
+            bun.assert(this.flags.is_socket);
+            bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data", .{ @intFromPtr(this), this.fd });
+            this.flags.broken_pipe = true;
+            this.brokenPipeForWriters();
             return;
         }
 
@@ -379,6 +380,26 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
             this.writer.registerPoll();
         }
     }
+}
+
+pub fn brokenPipeForWriters(this: *IOWriter) void {
+    bun.assert(this.flags.broken_pipe);
+    var offset: usize = 0;
+    for (this.writers.sliceMutable()) |*w| {
+        if (w.isDead()) {
+            offset += w.len;
+            continue;
+        }
+        log("IOWriter(0x{x}, fd={}) brokenPipeForWriters {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(w.ptr.ptr.tag()), @intFromPtr(w.ptr.ptr.ptr()) });
+        const err: JSC.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
+        w.ptr.onIOWriterChunk(0, err).run();
+        offset += w.len;
+    }
+
+    this.total_bytes_written = 0;
+    this.writers.clearRetainingCapacity();
+    this.buf.clearRetainingCapacity();
+    this.writer_idx = 0;
 }
 
 pub fn wroteEverything(this: *IOWriter) bool {
@@ -589,6 +610,7 @@ fn enqueueFile(this: *IOWriter) Yield {
 ///
 /// You MUST have already added the data to `this.buf`!!
 pub fn enqueueInternal(this: *IOWriter) Yield {
+    bun.assert(!this.flags.broken_pipe);
     if (!this.flags.pollable) return this.enqueueFile();
     switch (this.write()) {
         .suspended => return .suspended,
@@ -601,8 +623,19 @@ pub fn enqueueInternal(this: *IOWriter) Yield {
     }
 }
 
+pub fn handleBrokenPipe(this: *IOWriter, ptr: ChildPtr) ?Yield {
+    if (this.flags.broken_pipe) {
+        const err: JSC.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
+        log("IOWriter(0x{x}, fd={}) broken pipe {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(ptr.ptr.tag()), @intFromPtr(ptr.ptr.ptr()) });
+        return .{ .on_io_writer_chunk = .{ .child = ptr.asAnyOpaque(), .written = 0, .err = err } };
+    }
+    return null;
+}
+
 pub fn enqueue(this: *IOWriter, ptr: anytype, bytelist: ?*bun.ByteList, buf: []const u8) Yield {
     const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
+    if (this.handleBrokenPipe(childptr)) |yield| return yield;
+
     if (buf.len == 0) {
         log("IOWriter(0x{x}, fd={}) enqueue EMPTY", .{ @intFromPtr(this), this.fd });
         return .{ .on_io_writer_chunk = .{ .child = childptr.asAnyOpaque(), .written = 0, .err = null } };
@@ -641,9 +674,13 @@ pub fn enqueueFmt(
     var buf_writer = this.buf.writer(bun.default_allocator);
     const start = this.buf.items.len;
     buf_writer.print(fmt, args) catch bun.outOfMemory();
+
+    const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
+    if (this.handleBrokenPipe(childptr)) |yield| return yield;
+
     const end = this.buf.items.len;
     const writer: Writer = .{
-        .ptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr),
+        .ptr = childptr,
         .len = end - start,
         .bytelist = bytelist,
     };

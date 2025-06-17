@@ -2933,6 +2933,7 @@ pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32
 
 pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
+        log("setNoSigpipe({})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
             .result => .{ .result = {} },
             .err => |err| .{ .err = err },
@@ -2943,13 +2944,40 @@ pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
 }
 
 const socketpair_t = if (Environment.isLinux) i32 else c_uint;
+const NonblockingStatus = enum { blocking, nonblocking };
 
 /// libc socketpair() except it defaults to:
 /// - SOCK_CLOEXEC on Linux
 /// - SO_NOSIGPIPE on macOS
 ///
 /// On POSIX it otherwise makes it do O_CLOEXEC.
-pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: enum { blocking, nonblocking }) Maybe([2]bun.FileDescriptor) {
+pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, false);
+}
+
+/// We can't actually use SO_NOSIGPIPE for the stdout of a
+/// subprocess we don't control because they have different
+/// semantics.
+///
+/// For example, when running the shell script:
+/// `grep hi src/js_parser/zig | echo hi`,
+///
+/// The `echo hi` command will terminate first and close its
+/// end of the socketpair.
+///
+/// With SO_NOSIGPIPE, when `grep` continues and tries to write to
+/// stdout, `ESIGPIPE` is returned and then `grep` handles this
+/// and prints `grep: stdout: Broken pipe`
+///
+/// So the solution is to NOT set SO_NOGSIGPIPE in that scenario.
+///
+/// I think this only applies to stdout/stderr, not stdin. `read(...)`
+/// and `recv(...)` do not return EPIPE as error codes.
+pub fn socketpairForShell(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, true);
+}
+
+pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, for_shell: bool) Maybe([2]bun.FileDescriptor) {
     if (comptime !Environment.isPosix) @compileError("linux only!");
 
     var fds_i: [2]syscall.fd_t = .{ 0, 0 };
@@ -2991,10 +3019,25 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
             }
 
             if (comptime Environment.isMac) {
-                inline for (0..2) |i| {
-                    switch (setNoSigpipe(.fromNative(fds_i[i]))) {
+                // See the comment on `socketpairForShell` for why we do this
+                if (for_shell) {
+                    // `fds_i[0]` is the file descriptor we are going to read
+                    // from in this Bun process. We WANT to set SO_NOSIGPIPE
+                    // because otherwise broken pipe will crass the Bun process.
+                    //
+                    // `fds_i[1]` is the file descriptor we are going to give to
+                    // the spawned process. We do NOT want to set S_NOGSIGPIPE
+                    // as that does not match with what normal shells do.
+                    switch (setNoSigpipe(.fromNative(fds_i[0]))) {
                         .err => |err| break :err err,
                         else => {},
+                    }
+                } else {
+                    inline for (0..2) |i| {
+                        switch (setNoSigpipe(.fromNative(fds_i[i]))) {
+                            .err => |err| break :err err,
+                            else => {},
+                        }
                     }
                 }
             }

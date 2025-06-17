@@ -331,7 +331,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     var arena = std.heap.ArenaAllocator.init(alloc);
     const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
 
     incrPendingActivityFlag(&this.has_pending_activity);
@@ -354,7 +354,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     var arena = std.heap.ArenaAllocator.init(alloc);
     var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
     defer globWalker.deinit(true);
 

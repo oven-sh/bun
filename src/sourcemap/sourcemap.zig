@@ -1146,7 +1146,7 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
 
 pub fn appendSourceMappingURLRemote(
     origin: URL,
-    source: Logger.Source,
+    source: *const Logger.Source,
     asset_prefix_path: []const u8,
     comptime Writer: type,
     writer: Writer,
@@ -1228,7 +1228,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContents(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
@@ -1245,7 +1245,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         offset: usize,

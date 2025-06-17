@@ -50,15 +50,15 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
 
     bool isEd25519 = identifier == CryptoAlgorithmIdentifier::Ed25519;
     if (isEd25519) {
-        ED25519_keypair(public_key.data(), private_key.data());
+        ED25519_keypair(public_key.begin(), private_key.begin());
     } else {
-        X25519_keypair(public_key.data(), private_key.data());
+        X25519_keypair(public_key.begin(), private_key.begin());
     }
 
     bool isPublicKeyExtractable = true;
     auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTFMove(public_key), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
-    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.data(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
+    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.begin(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
     ASSERT(privateKey);
     return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
 }
@@ -127,7 +127,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
         return nullptr;
     ++index;
 
-    return create(identifier, namedCurve, CryptoKeyType::Public, std::span<const uint8_t> { keyData.data() + index, keyData.size() - index }, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Public, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
 }
 
 constexpr uint8_t OKPOIDFirstByte = 6;
@@ -175,7 +175,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
     result.append(BitStringMark);
     addEncodedASN1Length(result, keySize + 1);
     result.append(InitialOctet);
-    result.append(std::span { platformKey().data(), platformKey().size() });
+    result.append(std::span { platformKey().begin(), platformKey().size() });
 
     ASSERT(result.size() == totalSize);
 
@@ -254,7 +254,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
     if (keyData.size() < index + 1)
         return nullptr;
 
-    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.data() + index, keyData.size() - index }, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
@@ -284,7 +284,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
     addEncodedASN1Length(result, keySize + 2);
     result.append(OctetStringMark);
     addEncodedASN1Length(result, keySize);
-    result.append(std::span { exportKey().data(), exportKey().size() });
+    result.append(std::span { exportKey().begin(), exportKey().size() });
 
     ASSERT(result.size() == totalSize);
 
@@ -306,7 +306,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PublicFromPrivate(const KeyMateri
     auto publicKey = KeyMaterial(ED25519_PUBLIC_KEY_LEN);
     uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
 
-    ED25519_keypair_from_seed(publicKey.data(), privateKey, seed.data());
+    ED25519_keypair_from_seed(publicKey.begin(), privateKey, seed.begin());
 
     return publicKey;
 }
@@ -315,7 +315,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::x25519PublicFromPrivate(const KeyMateria
 {
     auto publicKey = KeyMaterial(X25519_PUBLIC_VALUE_LEN);
 
-    X25519_public_from_private(publicKey.data(), privateKey.data());
+    X25519_public_from_private(publicKey.begin(), privateKey.begin());
 
     return publicKey;
 }
@@ -325,7 +325,7 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& see
     uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
     auto privateKey = KeyMaterial(ED25519_PRIVATE_KEY_LEN);
 
-    ED25519_keypair_from_seed(publicKey, privateKey.data(), seed.data());
+    ED25519_keypair_from_seed(publicKey, privateKey.begin(), seed.begin());
 
     return privateKey;
 }
@@ -349,9 +349,9 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const
     if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
         ASSERT(m_exportKey);
         const auto& exportKey = *m_exportKey;
-        return Vector<uint8_t>(std::span { exportKey.data(), exportKey.size() });
+        return Vector<uint8_t>(exportKey.span());
     }
-    return KeyMaterial(std::span { m_data.data(), m_data.size() });
+    return KeyMaterial(m_data.span());
 }
 
 } // namespace WebCore

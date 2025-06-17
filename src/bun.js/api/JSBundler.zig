@@ -88,7 +88,7 @@ pub const JSBundler = struct {
             if (try config.getArray(globalThis, "plugins")) |array| {
                 const length = array.getLength(globalThis);
                 var iter = array.arrayIterator(globalThis);
-                var onstart_promise_array: JSValue = JSValue.undefined;
+                var onstart_promise_array: JSValue = .js_undefined;
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
@@ -201,7 +201,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.get(globalThis, "env")) |env| {
-                if (env != .undefined) {
+                if (!env.isUndefined()) {
                     if (env == .null or env == .false or (env.isNumber() and env.asNumber() == 0)) {
                         this.env_behavior = .disable;
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {

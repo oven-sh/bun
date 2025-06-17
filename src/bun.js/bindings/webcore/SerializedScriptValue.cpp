@@ -2228,7 +2228,7 @@ private:
     {
         uint32_t size = vector.size();
         write(size);
-        writeLittleEndian(m_buffer, vector.data(), size);
+        writeLittleEndian(m_buffer, vector.begin(), size);
     }
 
     // void write(const File& file)
@@ -4542,7 +4542,7 @@ private:
         }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
-        const uint8_t* data = buffer.data();
+        const uint8_t* data = buffer.begin();
 
         auto cert = d2i_X509(&ptr, &data, buffer.size());
         if (!cert) {
@@ -5992,7 +5992,7 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 
     this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        { this->m_data.data(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
+        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
             protectedThis->deref();
         }));
 

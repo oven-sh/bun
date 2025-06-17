@@ -61,7 +61,7 @@ pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *J
         break :blk (try SocketAddress.initFromAddrFamily(globalThis, address_js, family_js))._addr;
     };
     try this.da_rules.insert(0, .{ .addr = address });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -86,7 +86,7 @@ pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC
         }
     }
     try this.da_rules.insert(0, .{ .range = .{ .start = start, .end = end } });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -107,7 +107,7 @@ pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JS
         else => {},
     }
     try this.da_rules.insert(0, .{ .subnet = .{ .network = network, .prefix = prefix } });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

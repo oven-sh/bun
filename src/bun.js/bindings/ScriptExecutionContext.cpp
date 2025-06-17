@@ -232,7 +232,7 @@ bool ScriptExecutionContext::ensureOnMainThreadAndWait(Function<void(ScriptExecu
     if (!context) {
         return false;
     }
-    
+
     if (WTF::isMainThread()) {
         task(*context);
         return true;
@@ -244,8 +244,7 @@ bool ScriptExecutionContext::ensureOnMainThreadAndWait(Function<void(ScriptExecu
         [task = WTFMove(task), &semaphore](ScriptExecutionContext& context) {
             task(context);
             semaphore.signal();
-        }
-    );
+        });
 
     semaphore.wait();
     return true;

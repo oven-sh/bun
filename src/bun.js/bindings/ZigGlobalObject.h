@@ -373,8 +373,6 @@ public:
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
-        Bun__FetchTasklet__onRejectRequestStream,
-        Bun__FetchTasklet__onResolveRequestStream,
         Bun__S3UploadStream__onRejectRequestStream,
         Bun__S3UploadStream__onResolveRequestStream,
         Bun__FileStreamWrapper__onRejectRequestStream,

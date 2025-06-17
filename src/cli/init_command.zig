@@ -1057,7 +1057,7 @@ const Template = enum {
                 // appear prominently in repos) doesn't show a file path.
                 if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
                     @"create CLAUDE.md" = false;
-                    bun.makePath(std.fs.cwd(), ".cursor/rules") catch {};
+                    bun.makePath(.cwd(), ".cursor/rules") catch {};
                     bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
                     Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
                     Output.flush();

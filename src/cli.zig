@@ -175,7 +175,7 @@ pub const Arguments = struct {
 
     const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
-        clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+        clap.parseParam("-C, --cwd <STR>                   Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
         clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
     } ++ (if (builtin.have_error_return_tracing) [_]ParamType{

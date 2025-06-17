@@ -828,11 +828,7 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
         }
 
-        var pass = value.hasOwnPropertyValue(globalThis, expected);
-
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var pass = try value.hasOwnPropertyValue(globalThis, expected);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -891,17 +887,13 @@ pub const Expect = struct {
             while (i < count) : (i += 1) {
                 const key = try expected.getIndex(globalThis, i);
 
-                if (!value.hasOwnPropertyValue(globalThis, key)) {
+                if (!try value.hasOwnPropertyValue(globalThis, key)) {
                     break :brk false;
                 }
             }
 
             break :brk true;
         };
-
-        if (globalThis.hasException()) {
-            return .zero;
-        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -953,7 +945,7 @@ pub const Expect = struct {
 
         const count = try expected.getLength(globalObject);
 
-        var keys = value.keys(globalObject);
+        var keys = try value.keys(globalObject);
         if (try keys.getLength(globalObject) == count) {
             var itr = try keys.arrayIterator(globalObject);
             outer: {
@@ -1023,14 +1015,10 @@ pub const Expect = struct {
         while (i < count) : (i += 1) {
             const key = try expected.getIndex(globalThis, i);
 
-            if (value.hasOwnPropertyValue(globalThis, key)) {
+            if (try value.hasOwnPropertyValue(globalThis, key)) {
                 pass = true;
                 break;
             }
-        }
-
-        if (globalThis.hasException()) {
-            return .zero;
         }
 
         if (not) pass = !pass;
@@ -1078,7 +1066,7 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            const values = value.values(globalObject);
+            const values = try value.values(globalObject);
             var itr = try values.arrayIterator(globalObject);
             while (try itr.next()) |item| {
                 if (try item.jestDeepEquals(expected, globalObject)) {
@@ -1136,7 +1124,7 @@ pub const Expect = struct {
         var pass = true;
 
         if (!value.isUndefinedOrNull()) {
-            const values = value.values(globalObject);
+            const values = try value.values(globalObject);
             var itr = try expected.arrayIterator(globalObject);
             const count = try values.getLength(globalObject);
 
@@ -1200,7 +1188,7 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            var values = value.values(globalObject);
+            var values = try value.values(globalObject);
             var itr = try expected.arrayIterator(globalObject);
             const count = try values.getLength(globalObject);
             const expectedLength = try expected.getLength(globalObject);
@@ -1270,7 +1258,7 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            var values = value.values(globalObject);
+            var values = try value.values(globalObject);
             var itr = try expected.arrayIterator(globalObject);
             const count = try values.getLength(globalObject);
 

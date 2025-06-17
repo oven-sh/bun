@@ -770,24 +770,24 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__keys(globalThis: *JSGlobalObject, value: JSValue) JSValue;
-    pub fn keys(value: JSValue, globalThis: *JSGlobalObject) JSValue {
-        return JSC__JSValue__keys(
+    pub fn keys(value: JSValue, globalThis: *JSGlobalObject) JSError!JSValue {
+        return fromJSHostCall(globalThis, @src(), JSC__JSValue__keys, .{
             globalThis,
             value,
-        );
+        });
     }
 
     extern fn JSC__JSValue__values(globalThis: *JSGlobalObject, value: JSValue) JSValue;
     /// This is `Object.values`.
     /// `value` is assumed to be not empty, undefined, or null.
-    pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSError!JSValue {
         if (comptime bun.Environment.allow_assert) {
             bun.assert(!value.isEmptyOrUndefinedOrNull());
         }
-        return JSC__JSValue__values(
+        return fromJSHostCall(globalThis, @src(), JSC__JSValue__values, .{
             globalThis,
             value,
-        );
+        });
     }
 
     extern "c" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
@@ -795,7 +795,14 @@ pub const JSValue = enum(i64) {
     /// Returns true if the object has the property, false otherwise
     ///
     /// If the object is not an object, it will crash. **You must check if the object is an object before calling this function.**
-    pub const hasOwnPropertyValue = JSC__JSValue__hasOwnPropertyValue;
+    pub fn hasOwnPropertyValue(this: JSValue, global: *JSGlobalObject, key: JSValue) JSError!bool {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
+        const result = JSC__JSValue__hasOwnPropertyValue(this, global, key);
+        try scope.returnIfException();
+        return result;
+    }
 
     pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSError!JSArrayIterator {
         return JSArrayIterator.init(this, global);
@@ -1064,7 +1071,7 @@ pub const JSValue = enum(i64) {
             return false;
         }
 
-        return this.jsType().isObject() and try keys(this, globalObject).getLength(globalObject) == 0;
+        return this.jsType().isObject() and try (try this.keys(globalObject)).getLength(globalObject) == 0;
     }
 
     extern fn JSC__JSValue__isClass(this: JSValue, global: *JSGlobalObject) bool;

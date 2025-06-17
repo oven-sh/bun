@@ -1412,14 +1412,6 @@ pub fn spawnProcessPosix(
                     try bun.sys.setNonblocking(fds[0]).unwrap();
                 }
 
-                log("actions.dup2({d}, {d})", .{ fds[1].cast(), fileno.cast() });
-                if (comptime Environment.isMac) {
-                    var val: c_int = 0;
-                    var len: std.c.socklen_t = @sizeOf(c_int);
-                    _ = std.c.getsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &val, &len);
-                    bun.assert(val == 0);
-                }
-
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);

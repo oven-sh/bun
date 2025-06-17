@@ -334,8 +334,7 @@ pub fn checkTargetTaskDone(this: *Mv, task: *ShellMvCheckTargetTask) void {
     }
 
     this.state.check_target.state = .done;
-    _ = this.next();
-    return;
+    this.next().run();
 }
 
 pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
@@ -365,8 +364,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
         }
         this.state = .done;
 
-        _ = this.next();
-        return;
+        this.next().run();
     }
 }
 

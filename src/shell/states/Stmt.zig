@@ -52,7 +52,7 @@ pub fn start(this: *Stmt) Yield {
         assert(this.last_exit_code == null);
         assert(this.currently_executing == null);
     }
-    return this.next();
+    return .{ .stmt = this };
 }
 
 pub fn next(this: *Stmt) Yield {

@@ -31,17 +31,25 @@ pub const Yield = union(enum) {
     failed,
     done,
 
-    threadlocal var _dbg_catch_exec_within_exec: if (Environment.isDebug) bool else u0 = if (Environment.isDebug) false else 0;
+    /// Used in debug to ensure that we aren't blowing up the call stack by
+    /// using recursion to continue execution state in the shell
+    threadlocal var _dbg_catch_exec_within_exec: if (Environment.isDebug) usize else u0 = 0;
+
+    /// Ideally this should be 1, but since we actually call the `resolve` of the Promise in
+    ///  Interpreter.finish it could actually result in another shell script running.
+    const MAX_DEPTH = 2;
 
     pub fn isDone(this: *const Yield) bool {
         return this.* == .done;
     }
 
     pub fn run(this: Yield) void {
-        bun.debugAssert(!_dbg_catch_exec_within_exec);
-        if (comptime Environment.isDebug) _dbg_catch_exec_within_exec = true;
+        log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+        bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
+        if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
         defer {
-            if (comptime Environment.isDebug) _dbg_catch_exec_within_exec = false;
+            log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+            if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
         // A pipeline essentially creates multiple threads of execution, so

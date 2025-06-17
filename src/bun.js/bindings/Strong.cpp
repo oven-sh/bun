@@ -5,12 +5,10 @@
 #include "wtf/DebugHeap.h"
 #include "ZigGlobalObject.h"
 
-extern "C" void Bun__StrongRef__delete(JSC::JSValue* handleSlot)
+extern "C" void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
 {
-    if (handleSlot) {
-        // deallocate() will correctly remove the handle from the strong list if it's currently on it.
-        JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
-    }
+    // deallocate() will correctly remove the handle from the strong list if it's currently on it.
+    JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
 }
 
 extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
@@ -28,13 +26,12 @@ extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, 
     return handleSlot;
 }
 
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* handleSlot)
+extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* _Nonnull handleSlot)
 {
-    // If handleSlot is null, return an empty JSValue. Otherwise, return the value it points to.
-    return handleSlot ? JSC::JSValue::encode(*handleSlot) : JSC::JSValue::encode(JSC::JSValue());
+    return JSC::JSValue::encode(*handleSlot);
 }
 
-extern "C" void Bun__StrongRef__set(JSC::JSValue* handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = globalObject->vm();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
@@ -47,12 +44,10 @@ extern "C" void Bun__StrongRef__set(JSC::JSValue* handleSlot, JSC::JSGlobalObjec
     *handleSlot = value;
 }
 
-extern "C" void Bun__StrongRef__clear(JSC::JSValue* handleSlot)
+extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot)
 {
-    if (handleSlot && *handleSlot) {
-        // The write barrier must be called *before* the value is cleared
-        // to correctly remove the handle from the strong list if it held a cell.
-        JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, JSC::JSValue());
-        *handleSlot = JSC::JSValue();
-    }
+    // The write barrier must be called *before* the value is cleared
+    // to correctly remove the handle from the strong list if it held a cell.
+    JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, JSC::JSValue());
+    *handleSlot = JSC::JSValue();
 }

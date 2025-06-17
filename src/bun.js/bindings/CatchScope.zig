@@ -107,7 +107,9 @@ pub fn returnIfException(self: *CatchScope) bun.JSError!void {
 
 /// Asserts there has not been any exception thrown.
 pub fn assertNoException(self: *CatchScope) void {
-    if (self.exception()) |e| self.assertionFailure(e);
+    if (Environment.allow_assert) {
+        if (self.exception()) |e| self.assertionFailure(e);
+    }
 }
 
 /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
@@ -136,11 +138,16 @@ pub fn debugAssertExceptionPresenceMatches(self: *CatchScope, should_have_except
 /// If termination exception, returns JSExecutionTerminated (so you can `try`)
 /// If non-termination exception, assertion failure.
 pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
+    bun.assert(self.enabled);
     return if (self.exception()) |e|
         if (jsc.JSValue.fromCell(e).isTerminationException(self.global.vm()))
             error.JSExecutionTerminated
-        else
+        else if (Environment.allow_assert)
             self.assertionFailure(e)
+        else
+            // we got an exception other than the termination one, but we can't assert.
+            // treat this like the termination exception so we still bail out
+            error.JSExecutionTerminated
     else {};
 }
 

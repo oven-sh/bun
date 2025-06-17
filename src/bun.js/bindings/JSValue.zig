@@ -1257,6 +1257,7 @@ pub const JSValue = enum(i64) {
     pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
         var scope: CatchScope = undefined;
         scope.init(globalThis, @src(), .assertions_only);
+        defer scope.deinit();
         const maybe_string = JSC__JSValue__toStringOrNull(this, globalThis);
         scope.assertExceptionPresenceMatches(maybe_string == null);
         return maybe_string orelse error.JSError;

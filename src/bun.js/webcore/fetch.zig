@@ -61,10 +61,10 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
 };
 
 pub const FetchTasklet = struct {
-    pub const FetchTaskletStream = JSC.WebCore.NetworkSink;
+    pub const ResumableSink = JSC.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, false);
-    sink: ?*FetchTaskletStream.JSSink = null,
+    sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
     metadata: ?http.HTTPResponseMetadata = null,
@@ -242,19 +242,14 @@ pub const FetchTasklet = struct {
     }
 
     fn clearSink(this: *FetchTasklet) void {
-        if (this.sink) |wrapper| {
+        if (this.sink) |sink| {
             this.sink = null;
-
-            wrapper.sink.done = true;
-            wrapper.sink.ended = true;
-            wrapper.sink.finalize();
-            wrapper.detach();
-            wrapper.sink.finalizeAndDestroy();
+            sink.deref();
         }
     }
 
     fn clearData(this: *FetchTasklet) void {
-        log("clearData", .{});
+        log("clearData ", .{});
         const allocator = this.memory_reporter.allocator();
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
@@ -339,136 +334,25 @@ pub const FetchTasklet = struct {
         return null;
     }
 
-    pub fn onResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var args = callframe.arguments_old(2);
-        var this: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
-        defer this.deref();
-        if (this.request_body == .ReadableStream) {
-            var readable_stream_ref = this.request_body.ReadableStream;
-            this.request_body.ReadableStream = .{};
-            defer readable_stream_ref.deinit();
-            if (readable_stream_ref.get(globalThis)) |stream| {
-                stream.done(globalThis);
-                this.clearSink();
-            }
-        }
-
-        return .js_undefined;
-    }
-
-    pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callframe.arguments_old(2);
-        var this = args.ptr[args.len - 1].asPromisePtr(@This());
-        defer this.deref();
-        const err = args.ptr[0];
-        if (this.request_body == .ReadableStream) {
-            var readable_stream_ref = this.request_body.ReadableStream;
-            this.request_body.ReadableStream = .{};
-            defer readable_stream_ref.deinit();
-            if (readable_stream_ref.get(globalThis)) |stream| {
-                stream.cancel(globalThis);
-                this.clearSink();
-            }
-        }
-
-        this.abortListener(err);
-        return .js_undefined;
-    }
-    comptime {
-        const jsonResolveRequestStream = JSC.toJSHostFn(onResolveRequestStream);
-        @export(&jsonResolveRequestStream, .{ .name = "Bun__FetchTasklet__onResolveRequestStream" });
-        const jsonRejectRequestStream = JSC.toJSHostFn(onRejectRequestStream);
-        @export(&jsonRejectRequestStream, .{ .name = "Bun__FetchTasklet__onRejectRequestStream" });
-    }
-
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-            this.ref(); // lets only unref when sink is done
-
             const globalThis = this.global_this;
-            var response_stream = FetchTaskletStream.new(.{
-                .task = .{ .fetch = this },
-                .buffer = .{},
-                .globalThis = globalThis,
-            }).toSink();
-            var signal = &response_stream.sink.signal;
-            this.sink = response_stream;
 
-            signal.* = FetchTaskletStream.JSSink.SinkSignal.init(JSValue.zero);
-
-            // explicitly set it to a dead pointer
-            // we use this memory address to disable signals being sent
-            signal.clear();
-            bun.assert(signal.isDead());
-
-            // We are already corked!
-            const assignment_result: JSValue = FetchTaskletStream.JSSink.assignToStream(
-                globalThis,
-                stream.value,
-                response_stream,
-                @as(**anyopaque, @ptrCast(&signal.ptr)),
-            );
-
-            assignment_result.ensureStillAlive();
-
-            // assert that it was updated
-            bun.assert(!signal.isDead());
-
-            if (assignment_result.toError()) |err_value| {
-                response_stream.detach();
-                this.sink = null;
-                response_stream.sink.finalizeAndDestroy();
-                return this.abortListener(err_value);
-            }
-
-            if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-                assignment_result.ensureStillAlive();
-                // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if (assignment_result.asAnyPromise()) |promise| {
-                    switch (promise.status(globalThis.vm())) {
-                        .pending => {
-                            this.ref();
-                            assignment_result.then(
-                                globalThis,
-                                this,
-                                onResolveRequestStream,
-                                onRejectRequestStream,
-                            );
-                        },
-                        .fulfilled => {
-                            var readable_stream_ref = this.request_body.ReadableStream;
-                            this.request_body.ReadableStream = .{};
-                            defer {
-                                stream.done(globalThis);
-                                this.clearSink();
-                                readable_stream_ref.deinit();
-                            }
-                        },
-                        .rejected => {
-                            var readable_stream_ref = this.request_body.ReadableStream;
-                            this.request_body.ReadableStream = .{};
-                            defer {
-                                stream.cancel(globalThis);
-                                this.clearSink();
-                                readable_stream_ref.deinit();
-                            }
-
-                            this.abortListener(promise.result(globalThis.vm()));
-                        },
-                    }
-                    return;
-                } else {
-                    // if is not a promise we treat it as Error
-                    response_stream.detach();
-                    this.sink = null;
-                    response_stream.sink.finalizeAndDestroy();
-                    return this.abortListener(assignment_result);
-                }
-            }
+            const sink = ResumableSink.init(globalThis, stream, this) catch |err| {
+                _ = globalThis.takeException(err);
+                // if this is reached we also reach the onEnd
+                // so we can just return, sink will be deinit'd safely
+                return;
+            };
+            this.ref(); // lets only unref when sink is done
+            // make sure the sink is alive so we can abort/resume
+            sink.ref();
+            this.sink = sink;
         }
     }
+
     pub fn onBodyReceived(this: *FetchTasklet) void {
         const success = this.result.isSuccess();
         const globalThis = this.global_this;
@@ -1267,7 +1151,7 @@ pub const FetchTasklet = struct {
         this.abort_reason.set(this.global_this, reason);
         this.abortTask();
         if (this.sink) |wrapper| {
-            wrapper.sink.abort();
+            wrapper.cancel(reason);
             return;
         }
     }
@@ -1277,6 +1161,35 @@ pub const FetchTasklet = struct {
             http.http_thread.scheduleRequestWrite(http_, data, ended);
         } else if (data.len != 3) {
             bun.default_allocator.free(data);
+        }
+    }
+
+    pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
+        if (this.http) |http_| {
+            // encode the data as a chunked transfer-encoding body
+            const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch bun.outOfMemory();
+            // lets limit buffering more than 2 chunks at a time
+            http.http_thread.scheduleRequestWrite(http_, chunk, false);
+            return false; // pause until the chunk is written
+        }
+        return true;
+    }
+
+    pub fn writeEndRequest(this: *FetchTasklet, err: ?JSC.JSValue) void {
+        this.clearSink();
+        defer this.deref();
+        if (err) |jsError| {
+            if (this.signal_store.aborted.load(.monotonic)) {
+                return;
+            }
+            jsError.ensureStillAlive();
+            this.abort_reason.set(this.global_this, jsError);
+            this.abortTask();
+        } else {
+            if (this.http) |http_| {
+                // we for now assume that will always be chunked encoded but we can change this in the future
+                http.http_thread.scheduleRequestWrite(http_, http.end_of_chunked_http1_1_encoding_response_body, true);
+            }
         }
     }
 

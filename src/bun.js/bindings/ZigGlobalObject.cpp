@@ -3569,6 +3569,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" EncodedJSValue Bun__drainStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink)
+{
+    auto& vm = globalObject->vm();
+    // JSC::JSFunction* function = globalObject->m_assignToStream.get();
+    // if (!function) {
+    JSC::JSFunction* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsDrainStreamIntoDrainableSinkCodeGenerator(vm)), globalObject);
+    // globalObject->m_assignToStream.set(vm, globalObject, function);
+    // }
+
+    auto callData = JSC::getCallData(function);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(stream));
+    arguments.append(JSValue::decode(sink));
+
+    WTF::NakedPtr<JSC::Exception> returnedException = nullptr;
+
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, JSC::jsUndefined(), arguments, returnedException);
+    if (auto* exception = returnedException.get()) {
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     auto& vm = this->vm();

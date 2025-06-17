@@ -1277,8 +1277,8 @@ pub const Listener = struct {
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 var error_: i32 = 0;
                 socket.doConnect(connection, &error_) catch {
-                    if (!Environment.isWindows) socket.handleConnectError(error_, true);
-                    if (Environment.isWindows) socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
+                    bun.assert(error_ > 0);
+                    socket.handleConnectError(error_, true);
                     return promise_value;
                 };
 
@@ -1656,10 +1656,8 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_uint = if (is_errno) @intCast(errno) else if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+            const errno_: c_uint = if (is_errno) @intCast(errno) else if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
             const code_ = bun.String.static(if (is_errno) @tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno))) else if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) "ENOENT" else "ECONNREFUSED");
-            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
-            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
@@ -1709,7 +1707,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
             JSC.markBinding(@src());
-            this.handleConnectError(errno, false); //need to verify uws
+            this.handleConnectError(errno, true);
         }
 
         pub fn markActive(this: *This) void {
@@ -2326,7 +2324,7 @@ fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice(), null);
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
@@ -3751,7 +3749,7 @@ pub const DuplexUpgradeContext = struct {
             }
         } else {
             if (this.tls) |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED), true);
+                tls.handleConnectError(bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno(), true);
             }
         }
     }
@@ -3784,11 +3782,11 @@ pub const DuplexUpgradeContext = struct {
                                 bun.outOfMemory();
                             },
                             else => {
-                                const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+                                const errno = bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno();
                                 if (this.tls) |tls| {
                                     const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
-                                    tls.handleConnectError(errno, false); //need to verify uws
+                                    tls.handleConnectError(errno, true);
                                     tls.onClose(socket, errno, null);
                                 }
                             },
@@ -4050,10 +4048,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         } else {
             switch (this.socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(err.errno, false); //need to verify uws
+                    tls.handleConnectError(err.errno, true);
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(err.errno, false); //need to verify uws
+                    tcp.handleConnectError(err.errno, true);
                 },
                 else => {},
             }
@@ -4152,10 +4150,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT), true);
+                    tls.handleConnectError(bun.sys.SystemErrno.ENOENT.to_uv_errno(), true);
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT), true);
+                    tcp.handleConnectError(bun.sys.SystemErrno.ENOENT.to_uv_errno(), true);
                 },
                 .none => {},
             }
@@ -4172,10 +4170,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT), true);
+                    tls.handleConnectError(bun.sys.SystemErrno.ENOENT.to_uv_errno(), true);
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT), true);
+                    tcp.handleConnectError(bun.sys.SystemErrno.ENOENT.to_uv_errno(), true);
                 },
                 .none => {},
             }

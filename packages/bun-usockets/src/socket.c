@@ -289,12 +289,12 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
 }
 
 /* This is not available for SSL sockets as it makes no sense. */
-int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length, int *error) {
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return 0;
     }
 
-    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length, error);
     if (written != header_length + payload_length) {
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }

@@ -25,6 +25,7 @@
 // here everything about the syscalls are inline-wrapped and included
 
 #include "libusockets.h"
+#include "internal/internal.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -214,7 +215,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags);
 #endif
-ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length);
+ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length, int *error);
 int bsd_would_block();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket

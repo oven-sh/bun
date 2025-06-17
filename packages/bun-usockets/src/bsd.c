@@ -742,7 +742,7 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
-ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length, int *error) {
     struct iovec chunks[2];
 
     chunks[0].iov_base = (char *)header;
@@ -756,15 +756,18 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
         if (UNLIKELY(IS_EINTR(written))) {
             continue;
         }
+        if (written < 0) {
+            if (error != NULL) *error = LIBUS_ERR;
+        }
 
         return written;
     }
 }
 #else
-ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t written = bsd_send(fd, header, header_length, 0);
+ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length, int *error) {
+    ssize_t written = bsd_send(fd, header, header_length, 0, error);
     if (written == header_length) {
-        ssize_t second_write = bsd_send(fd, payload, payload_length, 0);
+        ssize_t second_write = bsd_send(fd, payload, payload_length, 0, error);
         if (second_write > 0) {
             written += second_write;
         }
@@ -837,7 +840,10 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     do
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
-    if (error != NULL) *error = LIBUS_ERR;
+    if (result == -1) {
+        if (error != NULL) *error = LIBUS_ERR;
+        return -1;
+    }
 
     return result;
 }
@@ -1237,11 +1243,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
         if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
             *err = LIBUS_ERR;
-#endif
         }
         bsd_close_socket(listenFd);
         freeaddrinfo(result);
@@ -1359,6 +1361,7 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
                 continue;
             }
             default: {
+                if (error != NULL) *error = us_wsa_to_libuv_errno(err);
                 return err;
             }
         }

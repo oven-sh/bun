@@ -145,8 +145,8 @@ pub const us_socket_t = opaque {
         return rc;
     }
 
-    pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8) i32 {
-        const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len);
+    pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8, error_: ?*i32) i32 {
+        const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len, error_);
         debug("us_socket_write2({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), first.len, second.len, rc });
         return rc;
     }
@@ -206,7 +206,7 @@ pub const c = struct {
 
     pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32, msg_more: i32, error_: ?*i32) i32;
     pub extern fn us_socket_ipc_write_fd(s: ?*us_socket_t, data: [*c]const u8, length: i32, fd: i32) i32;
-    pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize, error_: ?*i32) i32;
     pub extern fn us_socket_raw_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32, msg_more: i32) i32;
     pub extern fn us_socket_flush(ssl: i32, s: ?*us_socket_t) void;
 

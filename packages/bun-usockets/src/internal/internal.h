@@ -63,8 +63,9 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifdef _WIN32
+int us_wsa_to_libuv_errno(int);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
-#define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ERR us_wsa_to_libuv_errno(WSAGetLastError())
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)

@@ -638,6 +638,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    error = us_wsa_to_libuv_errno(error);
                     break;
                 }
             }

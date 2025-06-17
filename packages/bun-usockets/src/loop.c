@@ -286,7 +286,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
+                us_internal_socket_after_open((struct us_socket_t *) p, (error || eof) ? ECONNREFUSED : 0);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;

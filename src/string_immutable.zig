@@ -2350,10 +2350,8 @@ pub const log = bun.Output.scoped(.STR, true);
 pub const grapheme = @import("./grapheme.zig");
 
 const std = @import("std");
-const expect = std.testing.expect;
 const Environment = @import("./env.zig");
 const string = bun.string;
-const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 const js_lexer = @import("./js_lexer.zig");
 const OOM = bun.OOM;

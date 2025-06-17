@@ -455,7 +455,6 @@ const hasPrefixComptime = strings.hasPrefixComptime;
 const hasPrefixComptimeType = strings.hasPrefixComptimeType;
 const trimPrefixComptime = strings.trimPrefixComptime;
 const copyUTF16IntoUTF8 = strings.copyUTF16IntoUTF8;
-const eqlComptime = strings.eqlComptime;
 const eqlComptimeT = strings.eqlComptimeT;
 const string = []const u8;
 const assert = bun.assert;

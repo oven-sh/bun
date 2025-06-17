@@ -179,7 +179,7 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: *JSC.JSObject, 
         2);
     while (try object_iter.next()) |key| {
         var value = object_iter.value;
-        if (value == .undefined) continue;
+        if (value.isUndefined()) continue;
 
         const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
 
@@ -237,7 +237,7 @@ pub fn createResourceUsageObject(this: *Subprocess, globalObject: *JSGlobalObjec
             }
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     };
 
     const resource_usage = ResourceUsage{
@@ -486,7 +486,7 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
             },
-            .buffer => |buf| {
+            .buffer => |*buf| {
                 buf.deinit(bun.default_allocator);
             },
             else => {},
@@ -517,11 +517,10 @@ const Readable = union(enum) {
                 const own = buffer.takeSlice(bun.default_allocator) catch {
                     globalThis.throwOutOfMemory() catch return .zero;
                 };
-                const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
-                return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
-                return JSValue.jsUndefined();
+                return .js_undefined;
             },
         }
     }
@@ -552,7 +551,7 @@ const Readable = union(enum) {
                 return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSValue.jsUndefined();
+                return .js_undefined;
             },
         }
     }
@@ -592,7 +591,7 @@ pub fn asyncDispose(
 ) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
-        return .undefined;
+        return .js_undefined;
     }
 
     const this_jsvalue = callframe.this();
@@ -700,7 +699,7 @@ pub fn kill(
         },
     }
 
-    return JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn hasKilled(this: *const Subprocess) bool {
@@ -727,12 +726,12 @@ fn closeProcess(this: *Subprocess) void {
 
 pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsRef();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsUnref();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn onStdinDestroyed(this: *Subprocess) void {
@@ -762,7 +761,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
     _ = globalThis;
     _ = callframe;
     this.disconnectIPC(true);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
@@ -775,25 +774,16 @@ pub fn pid(this: *const Subprocess) i32 {
     return @intCast(this.process.pid);
 }
 
-pub fn getPid(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getPid(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.pid());
 }
 
-pub fn getKilled(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.hasKilled());
 }
 
-pub fn getStdio(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-) JSValue {
-    const array = JSValue.createEmptyArray(global, 0);
+pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
+    const array = try JSValue.createEmptyArray(global, 0);
     array.push(global, .null);
     array.push(global, .null); // TODO: align this with options
     array.push(global, .null); // TODO: align this with options
@@ -1096,6 +1086,12 @@ pub const PipeReader = struct {
         const out = this.reader._buffer;
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
+
+        if (out.capacity > 0 and out.items.len == 0) {
+            out.deinit();
+            return &.{};
+        }
+
         return out.items;
     }
 
@@ -1118,9 +1114,8 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
                 _ = err; // autofix
@@ -1138,7 +1133,7 @@ pub const PipeReader = struct {
                 return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSC.JSValue.undefined;
+                return .js_undefined;
             },
         }
     }
@@ -1396,8 +1391,8 @@ const Writable = union(enum) {
     pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
         return switch (this.*) {
             .fd => |fd| fd.toJS(globalThis),
-            .memfd, .ignore => JSValue.jsUndefined(),
-            .buffer, .inherit => JSValue.jsUndefined(),
+            .memfd, .ignore => .js_undefined,
+            .buffer, .inherit => .js_undefined,
             .pipe => |pipe| {
                 this.* = .{ .ignore = {} };
                 if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
@@ -1602,9 +1597,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     if (status == .err)
                         status.err.toJSC(globalThis)
                     else
-                        .undefined;
+                        .js_undefined;
 
-                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
+                const this_value: JSValue = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .js_undefined else this_jsvalue;
                 this_value.ensureStillAlive();
 
                 const args = [_]JSValue{
@@ -2396,7 +2391,7 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_from_fd(
+            if (uws.us_socket_t.fromFd(
                 jsc_vm.rareData().spawnIPCContext(jsc_vm),
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),

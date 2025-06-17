@@ -12,7 +12,7 @@ const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
@@ -186,3 +186,10 @@ export const decodeURIComponentSIMD = $newCppFunction(
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+
+interface setSocketOptionsFn {
+  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
+  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
+}
+
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);

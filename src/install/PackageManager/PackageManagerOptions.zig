@@ -19,6 +19,7 @@ do: Do = .{},
 positionals: []const string = &[_]string{},
 update: Update = .{},
 dry_run: bool = false,
+link_workspace_packages: bool = true,
 remote_package_features: Features = .{
     .optional_dependencies = true,
 },
@@ -204,6 +205,9 @@ pub fn load(
     if (bun_install_) |config| {
         if (config.default_registry) |registry| {
             base = registry;
+        }
+        if (config.link_workspace_packages) |link_workspace_packages| {
+            this.link_workspace_packages = link_workspace_packages;
         }
     }
 
@@ -637,7 +641,6 @@ const logger = bun.logger;
 const OOM = bun.OOM;
 const FD = bun.FD;
 
-
 const Api = bun.Schema.Api;
 const Path = bun.path;
 
@@ -645,7 +648,6 @@ const DotEnv = bun.DotEnv;
 const URL = bun.URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
-
 
 const Npm = bun.install.Npm;
 

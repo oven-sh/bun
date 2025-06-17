@@ -2574,7 +2574,7 @@ pub const Resolver = struct {
         // then it will be undefined memory if we parse another tsconfig.json late
         const key_path = Fs.Path.init(r.fs.dirname_store.append(string, file) catch unreachable);
 
-        const source = logger.Source.initPathString(key_path.text, entry.contents);
+        const source = &logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
         var result = (try TSConfigJSON.parse(bun.default_allocator, r.log, source, &r.caches.json)) orelse return null;
@@ -3491,7 +3491,7 @@ pub const Resolver = struct {
             .{root_path},
         ) catch bun.outOfMemory()) catch bun.outOfMemory();
 
-        return bun.String.toJSArray(globalObject, list.items);
+        return bun.String.toJSArray(globalObject, list.items) catch .zero;
     }
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {

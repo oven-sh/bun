@@ -1,7 +1,8 @@
 /// ABI-compatible with EncodedJSValue
 /// In the future, this type will exclude `zero`, encoding it as `error.JSError` instead.
 pub const JSValue = enum(i64) {
-    undefined = 0xa,
+    // fields here are prefixed so they're not accidentally mixed up with Zig's undefined/null/etc.
+    js_undefined = 0xa,
     null = 0x2,
     true = FFI.TrueI64,
     false = 0x6,
@@ -39,362 +40,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub const is_pointer = false;
-    pub const JSType = enum(u8) {
-        Cell = 0,
-        Structure = 1,
-        String = 2,
-        HeapBigInt = 3,
-        Symbol = 4,
-        GetterSetter = 5,
-        CustomGetterSetter = 6,
-        APIValueWrapper = 7,
-        NativeExecutable = 8,
-        ProgramExecutable = 9,
-        ModuleProgramExecutable = 10,
-        EvalExecutable = 11,
-        FunctionExecutable = 12,
-        UnlinkedFunctionExecutable = 13,
-        UnlinkedProgramCodeBlock = 14,
-        UnlinkedModuleProgramCodeBlock = 15,
-        UnlinkedEvalCodeBlock = 16,
-        UnlinkedFunctionCodeBlock = 17,
-        CodeBlock = 18,
-        JSImmutableButterfly = 19,
-        JSSourceCode = 20,
-        JSScriptFetcher = 21,
-        JSScriptFetchParameters = 22,
-        Object = 23,
-        FinalObject = 24,
-        JSCallee = 25,
-        JSFunction = 26,
-        InternalFunction = 27,
-        NullSetterFunction = 28,
-        BooleanObject = 29,
-        NumberObject = 30,
-        ErrorInstance = 31,
-        GlobalProxy = 32,
-        DirectArguments = 33,
-        ScopedArguments = 34,
-        ClonedArguments = 35,
-        Array = 36,
-        DerivedArray = 37,
-        ArrayBuffer = 38,
-        Int8Array = 39,
-        Uint8Array = 40,
-        Uint8ClampedArray = 41,
-        Int16Array = 42,
-        Uint16Array = 43,
-        Int32Array = 44,
-        Uint32Array = 45,
-        Float16Array = 46,
-        Float32Array = 47,
-        Float64Array = 48,
-        BigInt64Array = 49,
-        BigUint64Array = 50,
-        DataView = 51,
-        GlobalObject = 52,
-        GlobalLexicalEnvironment = 53,
-        LexicalEnvironment = 54,
-        ModuleEnvironment = 55,
-        StrictEvalActivation = 56,
-        WithScope = 57,
-        DisposableStack = 58,
-        ModuleNamespaceObject = 59,
-        ShadowRealm = 60,
-        RegExpObject = 61,
-        JSDate = 62,
-        ProxyObject = 63,
-        Generator = 64,
-        AsyncGenerator = 65,
-        JSArrayIterator = 66,
-        Iterator = 67,
-        IteratorHelper = 68,
-        MapIterator = 69,
-        SetIterator = 70,
-        StringIterator = 71,
-        WrapForValidIterator = 72,
-        RegExpStringIterator = 73,
-        AsyncFromSyncIterator = 74,
-        JSPromise = 75,
-        Map = 76,
-        Set = 77,
-        WeakMap = 78,
-        WeakSet = 79,
-        WebAssemblyModule = 80,
-        WebAssemblyInstance = 81,
-        WebAssemblyGCObject = 82,
-        StringObject = 83,
-        DerivedStringObject = 84,
-        InternalFieldTuple = 85,
-
-        MaxJS = 0b11111111,
-        Event = 0b11101111,
-        DOMWrapper = 0b11101110,
-
-        /// This means that we don't have Zig bindings for the type yet, but it
-        /// implements .toJSON()
-        JSAsJSONType = 0b11110000 | 1,
-        _,
-
-        pub const min_typed_array: JSType = .Int8Array;
-        pub const max_typed_array: JSType = .DataView;
-
-        pub fn canGet(this: JSType) bool {
-            return switch (this) {
-                .Array,
-                .ArrayBuffer,
-                .BigInt64Array,
-                .BigUint64Array,
-                .BooleanObject,
-                .DOMWrapper,
-                .DataView,
-                .DerivedArray,
-                .DerivedStringObject,
-                .ErrorInstance,
-                .Event,
-                .FinalObject,
-                .Float32Array,
-                .Float16Array,
-                .Float64Array,
-                .GlobalObject,
-                .Int16Array,
-                .Int32Array,
-                .Int8Array,
-                .InternalFunction,
-                .JSArrayIterator,
-                .AsyncGenerator,
-                .JSDate,
-                .JSFunction,
-                .Generator,
-                .Map,
-                .MapIterator,
-                .JSPromise,
-                .Set,
-                .SetIterator,
-                .IteratorHelper,
-                .Iterator,
-                .StringIterator,
-                .WeakMap,
-                .WeakSet,
-                .ModuleNamespaceObject,
-                .NumberObject,
-                .Object,
-                .ProxyObject,
-                .RegExpObject,
-                .ShadowRealm,
-                .StringObject,
-                .Uint16Array,
-                .Uint32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                .WebAssemblyModule,
-                .WebAssemblyInstance,
-                .WebAssemblyGCObject,
-                => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isObject(this: JSType) bool {
-            // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
-            return @intFromEnum(this) >= @intFromEnum(JSType.Object);
-        }
-
-        pub fn isFunction(this: JSType) bool {
-            return switch (this) {
-                .JSFunction, .FunctionExecutable, .InternalFunction => true,
-                else => false,
-            };
-        }
-
-        pub fn isTypedArrayOrArrayBuffer(this: JSType) bool {
-            return switch (this) {
-                .ArrayBuffer,
-                .BigInt64Array,
-                .BigUint64Array,
-                .Float32Array,
-                .Float16Array,
-                .Float64Array,
-                .Int16Array,
-                .Int32Array,
-                .Int8Array,
-                .Uint16Array,
-                .Uint32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                => true,
-                else => false,
-            };
-        }
-
-        pub fn isArrayBufferLike(this: JSType) bool {
-            return switch (this) {
-                .DataView,
-                .ArrayBuffer,
-                .BigInt64Array,
-                .BigUint64Array,
-                .Float32Array,
-                .Float16Array,
-                .Float64Array,
-                .Int16Array,
-                .Int32Array,
-                .Int8Array,
-                .Uint16Array,
-                .Uint32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                => true,
-                else => false,
-            };
-        }
-
-        pub fn toC(this: JSType) C_API.JSTypedArrayType {
-            return switch (this) {
-                .Int8Array => .kJSTypedArrayTypeInt8Array,
-                .Int16Array => .kJSTypedArrayTypeInt16Array,
-                .Int32Array => .kJSTypedArrayTypeInt32Array,
-                .Uint8Array => .kJSTypedArrayTypeUint8Array,
-                .Uint8ClampedArray => .kJSTypedArrayTypeUint8ClampedArray,
-                .Uint16Array => .kJSTypedArrayTypeUint16Array,
-                .Uint32Array => .kJSTypedArrayTypeUint32Array,
-                .Float32Array => .kJSTypedArrayTypeFloat32Array,
-                .Float64Array => .kJSTypedArrayTypeFloat64Array,
-                .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
-                .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
-                .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
-                // .DataView => .kJSTypedArrayTypeDataView,
-                else => .kJSTypedArrayTypeNone,
-            };
-        }
-
-        pub fn isHidden(this: JSType) bool {
-            return switch (this) {
-                .APIValueWrapper,
-                .NativeExecutable,
-                .ProgramExecutable,
-                .ModuleProgramExecutable,
-                .EvalExecutable,
-                .FunctionExecutable,
-                .UnlinkedFunctionExecutable,
-                .UnlinkedProgramCodeBlock,
-                .UnlinkedModuleProgramCodeBlock,
-                .UnlinkedEvalCodeBlock,
-                .UnlinkedFunctionCodeBlock,
-                .CodeBlock,
-                .JSImmutableButterfly,
-                .JSSourceCode,
-                .JSScriptFetcher,
-                .JSScriptFetchParameters,
-                => true,
-                else => false,
-            };
-        }
-
-        pub const LastMaybeFalsyCellPrimitive = JSType.HeapBigInt;
-        pub const LastJSCObject = JSType.DerivedStringObject; // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
-
-        pub inline fn isString(this: JSType) bool {
-            return this == .String;
-        }
-
-        pub inline fn isStringObject(this: JSType) bool {
-            return this == .StringObject;
-        }
-
-        pub inline fn isDerivedStringObject(this: JSType) bool {
-            return this == .DerivedStringObject;
-        }
-
-        pub inline fn isStringObjectLike(this: JSType) bool {
-            return this == .StringObject or this == .DerivedStringObject;
-        }
-
-        pub inline fn isStringLike(this: JSType) bool {
-            return switch (this) {
-                .String, .StringObject, .DerivedStringObject => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isArray(this: JSType) bool {
-            return switch (this) {
-                .Array, .DerivedArray => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isArrayLike(this: JSType) bool {
-            return switch (this) {
-                .Array,
-                .DerivedArray,
-
-                .ArrayBuffer,
-                .BigInt64Array,
-                .BigUint64Array,
-                .Float32Array,
-                .Float16Array,
-                .Float64Array,
-                .Int16Array,
-                .Int32Array,
-                .Int8Array,
-                .Uint16Array,
-                .Uint32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isSet(this: JSType) bool {
-            return switch (this) {
-                .Set, .WeakSet => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isMap(this: JSType) bool {
-            return switch (this) {
-                .Map, .WeakMap => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isIndexable(this: JSType) bool {
-            return switch (this) {
-                .Object,
-                .FinalObject,
-                .Array,
-                .DerivedArray,
-                .ErrorInstance,
-                .JSFunction,
-                .InternalFunction,
-
-                .ArrayBuffer,
-                .BigInt64Array,
-                .BigUint64Array,
-                .Float32Array,
-                .Float16Array,
-                .Float64Array,
-                .Int16Array,
-                .Int32Array,
-                .Int8Array,
-                .Uint16Array,
-                .Uint32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                => true,
-                else => false,
-            };
-        }
-
-        pub inline fn isArguments(this: JSType) bool {
-            return switch (this) {
-                .DirectArguments, .ClonedArguments, .ScopedArguments => true,
-                else => false,
-            };
-        }
-    };
+    pub const JSType = @import("./JSType.zig").JSType;
 
     pub inline fn cast(ptr: anytype) JSValue {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
@@ -690,8 +336,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__createEmptyArray(global: *JSGlobalObject, len: usize) JSValue;
-    pub fn createEmptyArray(global: *JSGlobalObject, len: usize) JSValue {
-        return JSC__JSValue__createEmptyArray(global, len);
+    pub fn createEmptyArray(global: *JSGlobalObject, len: usize) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostValue(JSC__JSValue__createEmptyArray(global, len));
     }
 
     extern fn JSC__JSValue__putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void;
@@ -897,8 +543,9 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
     }
 
+    /// this must have been created by fromPtrAddress()
     pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
-        return asPtr(this, T);
+        return @ptrFromInt(this.asPtrAddress());
     }
 
     extern fn JSC__JSValue__createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue;
@@ -976,7 +623,7 @@ pub const JSValue = enum(i64) {
         return switch (comptime Number) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
-            f32, f64 => jsNumberFromDouble(@as(f64, number)),
+            f32, f64 => jsDoubleNumber(@as(f64, number)),
             u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
@@ -1032,9 +679,6 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__jsDoubleNumber(i: f64) JSValue;
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return JSC__JSValue__jsDoubleNumber(i);
-    }
 
     extern fn JSC__JSValue__jsEmptyString(globalThis: *JSGlobalObject) JSValue;
     pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
@@ -1052,10 +696,6 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__jsTDZValue() JSValue;
     pub inline fn jsTDZValue() JSValue {
         return JSC__JSValue__jsTDZValue();
-    }
-
-    pub inline fn jsUndefined() JSValue {
-        return JSValue.undefined;
     }
 
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
@@ -1149,7 +789,7 @@ pub const JSValue = enum(i64) {
         return JSArrayIterator.init(this, global);
     }
 
-    pub fn jsNumberFromDouble(i: f64) JSValue {
+    pub fn jsDoubleNumber(i: f64) JSValue {
         return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
     }
     extern fn JSC__JSValue__jsNumberFromChar(i: u8) JSValue;
@@ -1169,7 +809,7 @@ pub const JSValue = enum(i64) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -1185,7 +825,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@floatFromInt(i));
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
@@ -1246,7 +886,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
-        return this == .undefined;
+        return @intFromEnum(this) == 0xa;
     }
     pub inline fn isNull(this: JSValue) bool {
         return this == .null;
@@ -1449,7 +1089,7 @@ pub const JSValue = enum(i64) {
 
     pub inline fn isCell(this: JSValue) bool {
         return switch (this) {
-            .zero, .undefined, .null, .true, .false => false,
+            .zero, .js_undefined, .null, .true, .false => false,
             else => (@as(u64, @bitCast(@intFromEnum(this))) & FFI.NotCellMask) == 0,
         };
     }
@@ -1725,7 +1365,7 @@ pub const JSValue = enum(i64) {
 
         return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
             .zero => error.JSError,
-            .undefined, .property_does_not_exist_on_object => null,
+            .js_undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1756,7 +1396,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
-
+    extern fn JSC__JSValue__getPropertyValue(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
         return JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
@@ -1787,9 +1427,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
-        if (comptime bun.Environment.allow_assert)
-            bun.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
-        return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
+        return this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
@@ -1810,7 +1448,7 @@ pub const JSValue = enum(i64) {
         }
 
         return switch (JSC__JSValue__getIfPropertyExistsImpl(this, global, property.ptr, @intCast(property.len))) {
-            .undefined, .zero, .property_does_not_exist_on_object => null,
+            .js_undefined, .zero, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1824,6 +1462,9 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
+    ///
+    /// Cannot handle property names that are numeric indexes. (For this use `getPropertyValue` instead.)
+    ///
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
@@ -1843,7 +1484,27 @@ pub const JSValue = enum(i64) {
             // since there are false positives, the better path is to make them
             // negatives, as the number of places that desire throwing on
             // existing undefined is extremely small, but non-zero.
-            .undefined => null,
+            .js_undefined => null,
+            else => |val| val,
+        };
+    }
+
+    /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// and JavaScript null can exist as a property and is different than zig
+    /// `null` (property does not exist).
+    ///
+    /// Can handle numeric index property names.
+    ///
+    /// If you know that the property name is not an integer index, use `get` instead.
+    ///
+    pub inline fn getPropertyValue(target: JSValue, global: *JSGlobalObject, property_name: []const u8) bun.JSError!?JSValue {
+        if (bun.Environment.isDebug) bun.assert(target.isObject());
+
+        return switch (JSC__JSValue__getPropertyValue(target, global, property_name.ptr, @intCast(property_name.len))) {
+            .zero => error.JSError,
+            .property_does_not_exist_on_object => null,
+            .js_undefined => null,
             else => |val| val,
         };
     }
@@ -1866,7 +1527,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         if (getOwn(this, global, property_name)) |prop| {
-            if (prop == .undefined) return null;
+            if (prop.isUndefined()) return null;
             return prop;
         }
 
@@ -1896,7 +1557,7 @@ pub const JSValue = enum(i64) {
             .zero => unreachable,
 
             // Treat undefined and null as unspecified
-            .null, .undefined => null,
+            .null, .js_undefined => null,
 
             // false, 0, are deliberately not included in this list.
             // That would prevent you from passing `0` or `false` to various Bun APIs.
@@ -1924,6 +1585,7 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
+    /// This Cannot handle numeric index property names safely. Please use `getTruthyPropertyValue` instead.
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
         if (try get(this, global, property)) |prop| {
             return truthyPropertyValue(prop);
@@ -1932,12 +1594,20 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
+    /// Get a property value handling numeric index property names safely.
+    pub fn getTruthyPropertyValue(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try getPropertyValue(this, global, property)) |prop| {
+            return truthyPropertyValue(prop);
+        }
+
+        return null;
+    }
     /// Get a value that can be coerced to a string.
     ///
     /// Returns null when the value is:
     /// - JSValue.null
     /// - JSValue.false
-    /// - JSValue.undefined
+    /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
         const prop = try get(this, global, property) orelse return null;
@@ -2133,7 +1803,7 @@ pub const JSValue = enum(i64) {
         const prop = try this.get(global, property_name) orelse return null;
 
         return switch (prop) {
-            .undefined => null,
+            .js_undefined => null,
             .false, .true => prop == .true,
             else => {
                 return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);
@@ -2331,24 +2001,20 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    extern fn JSC__JSValue__asNumber(this: JSValue) f64;
+    /// Asserts this is a number, undefined, null, or a boolean
     pub fn asNumber(this: JSValue) f64 {
+        bun.assert(this.isNumber() or this.isUndefinedOrNull() or this.isBoolean());
         if (this.isInt32()) {
-            return @as(f64, @floatFromInt(this.asInt32()));
-        }
-
-        if (isNumber(this)) {
+            return @floatFromInt(this.asInt32());
+        } else if (isNumber(this)) {
             // Don't need to check for !isInt32() because above
-            return asDouble(this);
-        }
-
-        if (this.isUndefinedOrNull()) {
+            return this.asDouble();
+        } else if (this.isUndefinedOrNull()) {
             return 0.0;
         } else if (this.isBoolean()) {
-            return if (asBoolean(this)) 1.0 else 0.0;
+            return @floatFromInt(@intFromBool(this.asBoolean()));
         }
-
-        return JSC__JSValue__asNumber(this);
+        return std.math.nan(f64); // unreachable in assertion builds
     }
 
     pub fn asDouble(this: JSValue) f64 {
@@ -2356,21 +2022,16 @@ pub const JSValue = enum(i64) {
         return FFI.JSVALUE_TO_DOUBLE(.{ .asJSValue = this });
     }
 
-    pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @as(*Pointer, @ptrFromInt(this.asPtrAddress()));
+    /// Encodes addr as a double. Resulting value can be passed to asPtrAddress.
+    pub fn fromPtrAddress(addr: usize) JSValue {
+        return jsDoubleNumber(@floatFromInt(addr));
     }
 
-    pub fn fromPtrAddress(addr: anytype) JSValue {
-        return jsNumber(@as(f64, @floatFromInt(@as(usize, @bitCast(@as(usize, addr))))));
-    }
-
+    /// Interprets a numeric JSValue as a pointer address. Use on values returned by fromPtrAddress.
     pub fn asPtrAddress(this: JSValue) usize {
-        return @as(usize, @bitCast(@as(usize, @intFromFloat(this.asDouble()))));
+        return @intFromFloat(this.asNumber());
     }
 
-    pub fn fromPtr(addr: anytype) JSValue {
-        return fromPtrAddress(@intFromPtr(addr));
-    }
     extern fn JSC__JSValue__toBoolean(this: JSValue) bool;
     /// Equivalent to the `!!` operator
     pub fn toBoolean(this: JSValue) bool {
@@ -2652,8 +2313,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
         comptime T: type,
         value: T,
-        comptime lifetime: FromAnyLifetime,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const Type = comptime brk: {
             var CurrentType = T;
             if (@typeInfo(T) == .optional) {
@@ -2670,7 +2330,7 @@ pub const JSValue = enum(i64) {
         }
 
         switch (comptime Type) {
-            void => return .undefined,
+            void => return .js_undefined,
             bool => return JSC.JSValue.jsBoolean(if (comptime Type != T) value.* else value),
             *JSC.JSGlobalObject => return value.toJSValue(),
             []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
@@ -2688,7 +2348,7 @@ pub const JSValue = enum(i64) {
             JSC.JSValue => return if (Type != T) value.* else value,
 
             inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
-                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |item, i| {
                     array.putIndex(
                         globalObject,
@@ -2705,9 +2365,9 @@ pub const JSValue = enum(i64) {
                 if (bun.trait.isSlice(Type)) {
                     const Child = comptime std.meta.Child(Type);
 
-                    var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                     for (value, 0..) |*item, i| {
-                        const res = fromAny(globalObject, *Child, item, lifetime);
+                        const res = try fromAny(globalObject, *Child, item);
                         if (res == .zero) return .zero;
                         array.putIndex(
                             globalObject,
@@ -2789,7 +2449,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSObject = JSC.JSObject;
 const JSArrayIterator = JSC.JSArrayIterator;
-const JSFunction = JSC.JSFunction;
 const JSCell = JSC.JSCell;
 
 const AnyPromise = JSC.AnyPromise;

@@ -641,7 +641,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn deinit(this: *@This()) void {
             this.us_socket_context.deinit(ssl);
-            uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
             bun.default_allocator.destroy(this);
         }
 
@@ -655,13 +654,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             try this.initWithOpts(&opts);
         }
 
-        fn initWithOpts(this: *@This(), opts: *const uws.us_bun_socket_context_options_t) InitError!void {
+        fn initWithOpts(this: *@This(), opts: *const uws.SocketContext.BunSocketContextOptions) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
 
             var err: uws.create_bun_socket_error_t = .none;
-            const socket = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
+            const socket = uws.SocketContext.createSSLContext(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
             if (socket == null) {
                 return switch (err) {
                     .load_ca_file => error.LoadCAFile,
@@ -685,7 +684,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            var opts: uws.us_bun_socket_context_options_t = .{
+            var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
@@ -697,19 +696,18 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) void {
             if (comptime ssl) {
-                const opts: uws.us_bun_socket_context_options_t = .{
+                const opts: uws.SocketContext.BunSocketContextOptions = .{
                     // we request the cert so we load root certs and can verify it
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
                 };
                 var err: uws.create_bun_socket_error_t = .none;
-                this.us_socket_context = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
+                this.us_socket_context = uws.SocketContext.createSSLContext(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
 
                 this.sslCtx().setup();
             } else {
-                const opts: uws.us_socket_context_options_t = .{};
-                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
+                this.us_socket_context = uws.SocketContext.createNoSSLContext(http_thread.loop.loop, @sizeOf(usize)).?;
             }
 
             HTTPSocket.configure(
@@ -2939,6 +2937,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_header = false;
     var override_host_header = false;
     var override_user_agent = false;
+    var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
     for (header_names, 0..) |head, i| {
@@ -2975,6 +2974,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             },
             hashHeaderConst("Accept-Encoding") => {
                 override_accept_encoding = true;
+            },
+            hashHeaderConst(chunked_encoded_header.name) => {
+                // We don't want to override chunked encoding header if it was set by the user
+                add_transfer_encoding = false;
             },
             else => {},
         }
@@ -3031,14 +3034,17 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
-            request_headers_buf[header_count] = chunked_encoded_header;
+            if (add_transfer_encoding) {
+                request_headers_buf[header_count] = chunked_encoded_header;
+                header_count += 1;
+            }
         } else {
             request_headers_buf[header_count] = .{
                 .name = content_length_header_name,
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
+            header_count += 1;
         }
-        header_count += 1;
     } else if (original_content_length) |content_length| {
         request_headers_buf[header_count] = .{
             .name = content_length_header_name,
@@ -4786,6 +4792,19 @@ pub const Headers = struct {
             .buf = try this.buf.clone(this.allocator),
             .allocator = this.allocator,
         };
+    }
+
+    pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
+        const entries = this.entries.slice();
+        const names = entries.items(.name);
+        const values = entries.items(.value);
+        for (names, 0..) |name_ptr, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name_ptr), name, true)) {
+                return this.asStr(values[i]);
+            }
+        }
+
+        return null;
     }
 
     pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {

@@ -290,7 +290,7 @@ export async function spawn(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -386,7 +386,7 @@ export function spawnSync(command, options = {}) {
   if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
-      exitCode = exitReason;
+      signalCode = exitReason;
     }
   }
 
@@ -442,9 +442,37 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared\\ntstatus.h";
-  const nthStatus = readFile(ntStatusPath, { cache: true });
+  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
+  if (!existsSync(windowsKitPath)) {
+    return;
+  }
 
+  const windowsKitPaths = readdirSync(windowsKitPath)
+    .filter(filename => isFinite(parseInt(filename)))
+    .sort((a, b) => parseInt(b) - parseInt(a));
+
+  let ntStatusPath;
+  for (const windowsKitPath of windowsKitPaths) {
+    const includePath = `${windowsKitPath}\\Include`;
+    if (!existsSync(includePath)) {
+      continue;
+    }
+
+    const windowsSdkPaths = readdirSync(includePath).sort();
+    for (const windowsSdkPath of windowsSdkPaths) {
+      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
+      if (existsSync(statusPath)) {
+        ntStatusPath = statusPath;
+        break;
+      }
+    }
+  }
+
+  if (!ntStatusPath) {
+    return;
+  }
+
+  const nthStatus = readFile(ntStatusPath, { cache: true });
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
   if (match) {
     const [, exitReason] = match;

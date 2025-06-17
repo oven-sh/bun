@@ -1026,6 +1026,8 @@ pub fn transpileSourceCode(
                 },
             };
 
+            const source = &parse_result.source;
+
             if (parse_result.loader == .wasm) {
                 return transpileSourceCode(
                     jsc_vm,
@@ -1071,7 +1073,7 @@ pub fn transpileSourceCode(
             if (loader == .json) {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createUTF8(parse_result.source.contents),
+                    .source_code = bun.String.createUTF8(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1082,8 +1084,8 @@ pub fn transpileSourceCode(
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = switch (comptime flags) {
-                        .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-                        .print_source => bun.String.init(parse_result.source.contents),
+                        .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
+                        .print_source => bun.String.init(source.contents),
                         else => @compileError("unreachable"),
                     },
                     .specifier = input_specifier,
@@ -1115,7 +1117,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(parse_result.source.contents),
+                    .source_code = bun.String.createLatin1(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -1127,7 +1129,7 @@ pub fn transpileSourceCode(
 
             if (parse_result.empty) {
                 const was_cjs = (loader == .js or loader == .ts) and brk: {
-                    const ext = std.fs.path.extension(parse_result.source.path.text);
+                    const ext = std.fs.path.extension(source.path.text);
                     break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
                 };
                 if (was_cjs) {
@@ -1143,7 +1145,7 @@ pub fn transpileSourceCode(
             }
 
             if (cache.entry) |*entry| {
-                jsc_vm.source_mappings.putMappings(parse_result.source, .{
+                jsc_vm.source_mappings.putMappings(source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
@@ -1167,10 +1169,10 @@ pub fn transpileSourceCode(
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
                     .tag = brk: {
-                        if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
+                        if (entry.metadata.module_type == .cjs and source.path.isFile()) {
                             const actual_package_json: *PackageJSON = package_json orelse brk2: {
                                 // this should already be cached virtually always so it's fine to do this
-                                const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(source.path.name.dir) catch null) orelse
                                     break :brk .javascript;
 
                                 break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1204,7 +1206,7 @@ pub fn transpileSourceCode(
                     return error.UnexpectedPendingResolution;
                 }
 
-                if (parse_result.source.contents_is_recycled) {
+                if (source.contents_is_recycled) {
                     // this shared buffer is about to become owned by the AsyncModule struct
                     jsc_vm.transpiler.resolver.caches.fs.resetSharedBuffer(
                         jsc_vm.transpiler.resolver.caches.fs.sharedBuffer(),
@@ -1334,7 +1336,7 @@ pub fn transpileSourceCode(
 
         //     return ResolvedSource{
         //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
-        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
+        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
         //         .specifier = ZigString.init(specifier),
         //         .source_url = input_specifier.createIfDifferent(path.text),
         //         .tag = ResolvedSource.Tag.wasm,
@@ -2482,7 +2484,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                vm.source_mappings.putMappings(parse_result.source, .{
+                vm.source_mappings.putMappings(&parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
@@ -2631,7 +2633,6 @@ pub const FetchFlags = enum {
         return this != .transpile;
     }
 };
-
 
 pub const HardcodedModule = enum {
     bun,

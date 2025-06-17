@@ -1,4 +1,3 @@
-
 const JSType = JSC.C.JSType;
 
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
@@ -354,7 +353,7 @@ pub const FetchTasklet = struct {
             }
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -373,7 +372,7 @@ pub const FetchTasklet = struct {
         }
 
         this.abortListener(err);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFn(onResolveRequestStream);
@@ -795,7 +794,7 @@ pub const FetchTasklet = struct {
                     const js_hostname = hostname.toJS(globalObject);
                     js_hostname.ensureStillAlive();
                     js_cert.ensureStillAlive();
-                    const check_result = check_server_identity.call(globalObject, .undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
+                    const check_result = check_server_identity.call(globalObject, .js_undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
@@ -1500,7 +1499,7 @@ pub fn Bun__fetchPreconnect_(
     }
 
     bun.http.AsyncHTTP.preconnect(url, true);
-    return .undefined;
+    return .js_undefined;
 }
 
 const StringOrURL = struct {
@@ -2386,7 +2385,7 @@ pub fn Bun__fetch_(
         prepare_body: {
             // is a S3 file we can use chunked here
 
-            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlob(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
+            if (JSC.WebCore.ReadableStream.fromJS(JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &body.AnyBlob.Blob, s3.MultiPartUploadOptions.DefaultPartSize), globalThis)) |stream| {
                 var old = body;
                 defer old.detach();
                 body = .{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis) };

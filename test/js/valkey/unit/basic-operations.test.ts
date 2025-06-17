@@ -293,6 +293,22 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       expect(multipleDelCount).toBe(1); // Only 1 key existed and was deleted
     });
 
+    test("DEL command with multiple keys", async () => {
+      const key1 = ctx.generateKey("del-test-1");
+      const key2 = ctx.generateKey("del-test-2");
+      const key3 = Buffer.from(ctx.generateKey("del-test-3"), "utf-8");
+      const key4 = new Blob([ctx.generateKey("del-test-4")]);
+
+      await ctx.redis.set(key1, "value1");
+      await ctx.redis.set(key2, "value2");
+      await ctx.redis.set(key3, "value3");
+      await ctx.redis.set(key4, "value4");
+
+      const multipleDelCount = await ctx.redis.del(key1, key2, key3, key4);
+      expectType<number>(multipleDelCount, "number");
+      expect(multipleDelCount).toBe(4); // 4 keys were deleted
+    });
+
     test("UNLINK command (asynchronous delete)", async () => {
       const key1 = ctx.generateKey("unlink-test-1");
       const key2 = ctx.generateKey("unlink-test-2");

@@ -560,6 +560,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
 
         // Construct the array
         JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+        RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
 
         mod->m_children.clear();
@@ -1155,7 +1156,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_childrenValue);
-    visitor.appendValues(thisObject->m_children.data(), thisObject->m_children.size());
+    visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

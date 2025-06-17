@@ -106,7 +106,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
-    clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\", or \"bun\" (default)") catch unreachable,
+    clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -583,11 +583,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.option("--unhandled-rejections")) |unhandled_rejections| {
-            const resolved = Api.UnhandledRejections.map.get(unhandled_rejections) orelse {
-                Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\", or \"bun\"\n", .{unhandled_rejections});
+            opts.unhandled_rejections = Api.UnhandledRejections.map.get(unhandled_rejections) orelse {
+                Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\"\n", .{unhandled_rejections});
                 Global.exit(1);
             };
-            opts.unhandled_rejections = resolved;
         }
 
         if (args.option("--port")) |port_str| {

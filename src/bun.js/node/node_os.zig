@@ -129,7 +129,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         while (line_iter.next()) |line| {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
-                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    const cpu = try values.getIndex(globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
@@ -140,26 +140,26 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             } else if (strings.hasPrefixComptime(line, key_model_name)) {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
-                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                const cpu = try values.getIndex(globalThis, cpu_index);
                 cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
-            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+            const cpu = try values.getIndex(globalThis, cpu_index);
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);
-        while (it.next()) |cpu| {
+        while (try it.next()) |cpu| {
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
     // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
     for (0..num_cpus) |cpu_index| {
-        const cpu = JSC.JSObject.getIndex(values, globalThis, @truncate(cpu_index));
+        const cpu = try values.getIndex(globalThis, @truncate(cpu_index));
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});

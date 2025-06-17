@@ -305,7 +305,7 @@ pub const PatchTask = struct {
 
         const pkg_name = this.callback.apply.pkgname;
 
-        const dummy_node_modules: PackageManager.NodeModulesFolder = .{
+        const dummy_node_modules: PackageManager.PackageInstaller.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
             .tree_id = 0,
         };

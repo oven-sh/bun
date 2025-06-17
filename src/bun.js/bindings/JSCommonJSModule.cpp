@@ -1156,7 +1156,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_paths);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_childrenValue);
-    visitor.appendValues(thisObject->m_children.data(), thisObject->m_children.size());
+    visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

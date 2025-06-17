@@ -18,7 +18,6 @@ pub const JSArrayIterator = struct {
         };
     }
 
-    // TODO: this can throw
     pub fn next(this: *JSArrayIterator) !?JSValue {
         if (!(this.i < this.len)) {
             return null;

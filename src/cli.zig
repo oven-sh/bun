@@ -166,6 +166,8 @@ pub const Arguments = struct {
             return Api.JsxRuntime.classic;
         } else if (strings.eqlComptime(str, "solid")) {
             return Api.JsxRuntime.solid;
+        } else if (strings.eqlComptime(str, "preserve")) {
+            return Api.JsxRuntime.preserve;
         } else {
             return error.InvalidJSXRuntime;
         }
@@ -203,7 +205,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
-        clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default), \"classic\", or \"preserve\"") catch unreachable,
         clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{

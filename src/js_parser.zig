@@ -16284,6 +16284,38 @@ fn NewParser_(
                     });
                 },
                 .e_jsx_element => |e_| {
+                    if (p.options.jsx.runtime == .preserve) {
+                        // Preserve raw JSX but still walk its sub-expressions so that
+                        // identifiers and other nodes are visited and resolved.
+
+                        // Tag
+                        if (e_.tag) |t| {
+                            e_.tag = p.visitExpr(t);
+                        }
+
+                        // Props and spreads
+                        const props = e_.properties.slice();
+                        for (props) |*prop| {
+                            if (prop.kind != .spread) {
+                                prop.key = p.visitExpr(prop.key.?);
+                            }
+                            if (prop.value) |v| {
+                                prop.value = p.visitExpr(v);
+                            }
+                            if (prop.initializer) |initializer| {
+                                prop.initializer = p.visitExpr(initializer);
+                            }
+                        }
+
+                        // Children
+                        const children = e_.children.slice();
+                        for (children) |*child| {
+                            child.* = p.visitExpr(child.*);
+                        }
+
+                        // And keep the JSX untouched
+                        return expr;
+                    }
                     switch (comptime jsx_transform_type) {
                         .react => {
                             const tag: Expr = tagger: {

@@ -1205,6 +1205,7 @@ pub const JSX = struct {
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
+        .{ "preserve", RuntimeDevelopmentPair{ .runtime = .preserve, .development = null } },
     });
 
     pub const Pragma = struct {

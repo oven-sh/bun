@@ -978,15 +978,8 @@ pub const ExtractData = struct {
     } = null,
 };
 
-const PkgInstallKind = enum {
-    regular,
-    patch,
-};
-pub const PackageInstall = NewPackageInstall(.regular);
-pub const PreparePatchPackageInstall = NewPackageInstall(.patch);
-pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
-    const do_progress = kind != .patch;
-    const ProgressT = if (do_progress) *Progress else struct {};
+pub const PackageInstall = NewPackageInstall();
+pub fn NewPackageInstall() type {
     return struct {
         /// TODO: Change to bun.FD.Dir
         cache_dir: std.fs.Dir,
@@ -996,30 +989,29 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
         allocator: std.mem.Allocator,
 
-        progress: ProgressT,
+        progress: ?*Progress,
 
         package_name: String,
         package_version: string,
-        patch: Patch = .{},
+        patch: Patch,
+
+        // TODO: this is never read
         file_count: u32 = 0,
         node_modules: *const PackageManager.NodeModulesFolder,
         lockfile: *Lockfile,
 
         const ThisPackageInstall = @This();
 
-        const Patch = switch (kind) {
-            .regular => struct {
-                root_project_dir: ?[]const u8 = null,
-                patch_path: string = undefined,
-                patch_contents_hash: u64 = 0,
+        const Patch = struct {
+            root_project_dir: ?[]const u8 = null,
+            patch_path: string = undefined,
+            patch_contents_hash: u64 = 0,
 
-                pub const NULL = Patch{};
+            pub const NULL = Patch{};
 
-                pub fn isNull(this: Patch) bool {
-                    return this.root_project_dir == null;
-                }
-            },
-            .patch => struct {},
+            pub fn isNull(this: Patch) bool {
+                return this.root_project_dir == null;
+            }
         };
 
         const debug = Output.scoped(.install, true);
@@ -1169,7 +1161,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
                     else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
                 };
-            if (comptime kind == .patch) return verified;
             if (this.patch.isNull()) return verified;
             if (!verified) return false;
             return this.verifyPatchHash(root_node_modules_dir);
@@ -1584,7 +1575,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 pub fn copy(
                     destination_dir_: std.fs.Dir,
                     walker: *Walker,
-                    progress_: ProgressT,
+                    progress_: ?*Progress,
                     to_copy_into1: if (Environment.isWindows) []u16 else void,
                     head1: if (Environment.isWindows) []u16 else void,
                     to_copy_into2: if (Environment.isWindows) []u16 else void,
@@ -1628,9 +1619,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                             }
                                         }
 
-                                        if (comptime do_progress) {
-                                            progress_.root.end();
-                                            progress_.refresh();
+                                        if (progress_) |progress| {
+                                            progress.root.end();
+                                            progress.refresh();
                                         }
 
                                         if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
@@ -1659,9 +1650,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
                                 break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
-                                    if (do_progress) {
-                                        progress_.root.end();
-                                        progress_.refresh();
+                                    if (progress_) |progress| {
+                                        progress.root.end();
+                                        progress.refresh();
                                     }
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
@@ -1676,9 +1667,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             }
 
                             bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
-                                if (do_progress) {
-                                    progress_.root.end();
-                                    progress_.refresh();
+                                if (progress_) |progress| {
+                                    progress.root.end();
+                                    progress.refresh();
                                 }
 
                                 Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
@@ -2371,48 +2362,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         fn patchedPackageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
-            // const patch_hash_prefix = "_patch_hash=";
-            // var patch_hash_part_buf: [patch_hash_prefix.len + max_buntag_hash_buf_len + 1]u8 = undefined;
-            // @memcpy(patch_hash_part_buf[0..patch_hash_prefix.len], patch_hash_prefix);
-            // const hash_str = std.fmt.bufPrint(patch_hash_part_buf[patch_hash_prefix.len..], "{x}", .{patchfile_hash}) catch unreachable;
-            // const patch_hash_part = patch_hash_part_buf[0 .. patch_hash_prefix.len + hash_str.len];
-            // @memcpy(bun.path.join_buf[0..this.cache_dir_subpath.len], this.cache_dir_subpath);
-            // @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + patch_hash_part.len], patch_hash_part);
-            // bun.path.join_buf[this.cache_dir_subpath.len + patch_hash_part.len] = 0;
-            // const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + patch_hash_part.len :0];
             const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false;
             if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
             return !exists;
         }
 
-        pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            switch (comptime kind) {
-                .regular => {
-                    const tracer = bun.perf.trace("PackageInstaller.install");
-                    defer tracer.end();
-                    return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-                },
-                .patch => {
-                    const tracer = bun.perf.trace("PackageInstaller.installPatch");
-                    defer tracer.end();
+        pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
+            const tracer = bun.perf.trace("PackageInstaller.install");
+            defer tracer.end();
 
-                    const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-                    if (result == .fail) return result;
-                    const fd = bun.FD.fromStdDir(destination_dir);
-                    const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
-                    const tag_fd = switch (fd.openat(subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                        .result => |f| f,
-                        .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
-                    };
-                    defer tag_fd.close();
-                    if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e|
-                        return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
-                    return result;
-                },
-            }
-        }
-
-        pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
             // If this fails, we don't care.
             // we'll catch it the next error
             if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
@@ -11413,7 +11371,7 @@ pub const PackageManager = struct {
                             const result = if (resolution.tag == .root)
                                 installer.installFromLink(this.skip_delete, destination_dir)
                             else
-                                installer.install(this.skip_delete, destination_dir, resolution.tag);
+                                installer.install(this.skip_delete, destination_dir, installer.getInstallMethod(), resolution.tag);
 
                             if (result.isFail() and (result.failure.err == error.ENOENT or result.failure.err == error.FileNotFound))
                                 break :result .success;
@@ -11421,7 +11379,7 @@ pub const PackageManager = struct {
                             break :result result;
                         }
 
-                        break :result installer.install(this.skip_delete, destination_dir, resolution.tag);
+                        break :result installer.install(this.skip_delete, destination_dir, installer.getInstallMethod(), resolution.tag);
                     },
                 };
 

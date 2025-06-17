@@ -24,7 +24,6 @@ const ThreadPool = bun.ThreadPool;
 pub const Resolution = @import("./resolution.zig").Resolution;
 
 pub const PackageInstall = bun.install.PackageInstall;
-pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;
 
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
@@ -319,13 +318,14 @@ pub const PatchTask = struct {
         defer this.manager.allocator.free(resolution_label);
 
         // 3. copy the unpatched files into temp dir
-        var pkg_install = PreparePatchPackageInstall{
+        var pkg_install: PackageInstall = .{
             .allocator = bun.default_allocator,
             .cache_dir = this.callback.apply.cache_dir,
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,
             .destination_dir_subpath_buf = tmpname_buf[0..],
-            .progress = .{},
+            .patch = .{},
+            .progress = null,
             .package_name = pkg_name,
             .package_version = resolution_label,
             // dummy value
@@ -333,7 +333,7 @@ pub const PatchTask = struct {
             .lockfile = this.manager.lockfile,
         };
 
-        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, resolution_tag)) {
+        switch (pkg_install.install(true, system_tmpdir, .copyfile, resolution_tag)) {
             .success => {},
             .failure => |reason| {
                 return try log.addErrorFmtOpts(

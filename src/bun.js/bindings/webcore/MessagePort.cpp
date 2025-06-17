@@ -239,7 +239,7 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    ScriptExecutionContext::ensureOnMainThreadAndWait(
+    ScriptExecutionContext::ensureOnMainThread(
         [this](ScriptExecutionContext&) {
             MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
         });
@@ -344,16 +344,18 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
         return jsUndefined();
 
     std::optional<MessageWithMessagePorts> result;
+    BinarySemaphore semaphore;
 
     auto callback = [&](std::optional<MessageWithMessagePorts>&& messageWithPorts) {
-        printf("got message\n");
         result = WTFMove(messageWithPorts);
+        semaphore.signal();
     };
 
-    ScriptExecutionContext::ensureOnMainThreadAndWait([identifier = m_identifier, callback](ScriptExecutionContext& context) mutable {
-        printf("taking message on main thread\n");
+    ScriptExecutionContext::ensureOnMainThread([identifier = m_identifier, callback](ScriptExecutionContext& context) mutable {
         MessagePortChannelProvider::fromContext(context).tryTakeMessageForPort(identifier, WTFMove(callback));
     });
+
+    semaphore.wait();
 
     if (!result)
         return jsUndefined();

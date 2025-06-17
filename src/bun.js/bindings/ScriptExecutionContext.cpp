@@ -216,6 +216,11 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
         return false;
     }
 
+    if (context && context->isContextThread()) {
+        task(*context);
+        return true;
+    }
+
     context->postTaskConcurrently(WTFMove(task));
     return true;
 }
@@ -224,6 +229,10 @@ bool ScriptExecutionContext::ensureOnMainThreadAndWait(Function<void(ScriptExecu
 {
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
 
+    if (!context) {
+        return false;
+    }
+    
     if (WTF::isMainThread()) {
         task(*context);
         return true;

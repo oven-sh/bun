@@ -24,7 +24,7 @@ const ArgsSlice = struct {
     start: u32,
     end: u32,
 
-    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) JSValue {
+    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) bun.JSError!JSValue {
         return this.array.getIndex(globalThis, this.start + i);
     }
 };
@@ -158,7 +158,7 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
     const argv = bun.api.node.process.getArgv(globalThis);
     if (argv.isArray() and exec_argv.isArray()) {
         var iter = try exec_argv.arrayIterator(globalThis);
-        while (iter.next()) |item| {
+        while (try iter.next()) |item| {
             if (item.isString()) {
                 const str = try item.toBunString(globalThis);
                 defer str.deref();
@@ -382,7 +382,7 @@ fn tokenizeArgs(
     const num_args: u32 = args.end - args.start;
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
-        const arg_ref: ValueRef = ValueRef{ .jsvalue = args.get(globalThis, index) };
+        const arg_ref: ValueRef = ValueRef{ .jsvalue = try args.get(globalThis, index) };
         const arg = arg_ref.asBunString(globalThis);
 
         const token_rawtype = classifyToken(arg, options);
@@ -401,7 +401,7 @@ fn tokenizeArgs(
                 while (index < num_args) : (index += 1) {
                     try ctx.handleToken(.{ .positional = .{
                         .index = index,
-                        .value = ValueRef{ .jsvalue = args.get(globalThis, index) },
+                        .value = ValueRef{ .jsvalue = try args.get(globalThis, index) },
                     } });
                 }
                 break; // Finished processing args, leave while loop.
@@ -417,7 +417,7 @@ fn tokenizeArgs(
                 var has_inline_value = true;
                 if (option_type == .string and index + 1 < num_args) {
                     // e.g. '-f', "bar"
-                    value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
+                    value = ValueRef{ .jsvalue = try args.get(globalThis, index + 1) };
                     has_inline_value = false;
                     log("   (lone_short_option consuming next token as value)", .{});
                 }
@@ -451,7 +451,7 @@ fn tokenizeArgs(
                         var has_inline_value = true;
                         if (option_type == .string and index + 1 < num_args) {
                             // e.g. '-f', "bar"
-                            value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
+                            value = ValueRef{ .jsvalue = try args.get(globalThis, index + 1) };
                             has_inline_value = false;
                             log("   (short_option_group short option consuming next token as value)", .{});
                         }
@@ -520,7 +520,7 @@ fn tokenizeArgs(
                 var value: ?JSValue = null;
                 if (option_type == .string and index + 1 < num_args and !negative) {
                     // e.g. '--foo', "bar"
-                    value = args.get(globalThis, index + 1);
+                    value = try args.get(globalThis, index + 1);
                     log("  (consuming next as value)", .{});
                 }
 

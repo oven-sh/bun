@@ -258,7 +258,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
-                    const item = js_obj.getIndex(global, @intCast(i));
+                    const item = try js_obj.getIndex(global, @intCast(i));
                     if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
@@ -366,7 +366,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
-                    const item = js_obj.getIndex(global, @intCast(i));
+                    const item = try js_obj.getIndex(global, @intCast(i));
                     if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
@@ -475,7 +475,7 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
                 var valid_count: u32 = 0;
                 for (0..count) |i| {
-                    const item = js_obj.getIndex(global, @intCast(i));
+                    const item = try js_obj.getIndex(global, @intCast(i));
                     if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();

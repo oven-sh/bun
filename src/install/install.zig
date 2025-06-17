@@ -8259,7 +8259,7 @@ pub const PackageManager = struct {
                     try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
                 var iter = try input.arrayIterator(globalThis);
-                while (iter.next()) |item| {
+                while (try iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;

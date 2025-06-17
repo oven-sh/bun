@@ -554,6 +554,7 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         }
         }
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue decoded = JSC::JSValue::decode(result);
     if (!result) [[unlikely]] {
@@ -594,7 +595,7 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     }
 
     if (str->length() == 0)
-        return constructBufferEmpty(lexicalGlobalObject);
+        RELEASE_AND_RETURN(scope, constructBufferEmpty(lexicalGlobalObject));
 
     JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, view, encoding);
 

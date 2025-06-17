@@ -804,7 +804,7 @@ pub const VectorArrayBuffer = struct {
         bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
-            const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
+            const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
                 return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});

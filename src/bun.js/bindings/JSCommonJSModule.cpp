@@ -1311,7 +1311,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
-    if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
+    auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (result) {
         if (res.success)
             return JSC::JSValue::encode(result);
     }

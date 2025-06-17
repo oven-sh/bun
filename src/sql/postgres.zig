@@ -874,7 +874,7 @@ pub const PostgresRequest = struct {
 
             const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
                 iter.to(@truncate(i));
-                if (iter.next()) |value| {
+                if (try iter.next()) |value| {
                     break :brk value.isString();
                 }
                 if (iter.anyFailed()) {
@@ -905,7 +905,7 @@ pub const PostgresRequest = struct {
         debug("Bind: {} ({d} args)", .{ bun.fmt.quote(name), len });
         iter.to(0);
         var i: usize = 0;
-        while (iter.next()) |value| : (i += 1) {
+        while (try iter.next()) |value| : (i += 1) {
             const tag: types.Tag = brk: {
                 if (i >= len) {
                     // parameter in array but not in parameter_fields
@@ -3089,12 +3089,12 @@ const QueryBindingIterator = union(enum) {
             const globalObject = this.globalObject;
 
             if (this.current_row == .zero) {
-                this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i));
-                if (this.current_row.isEmptyOrUndefinedOrNull()) {
-                    if (!globalObject.hasException())
-                        return globalObject.throw("Expected a row to be returned at index {d}", .{row_i}) catch null;
+                this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i)) catch {
                     this.any_failed = true;
                     return null;
+                };
+                if (this.current_row.isEmptyOrUndefinedOrNull()) {
+                    return globalObject.throw("Expected a row to be returned at index {d}", .{row_i}) catch null;
                 }
             }
 
@@ -3106,12 +3106,12 @@ const QueryBindingIterator = union(enum) {
                 }
             }
 
-            const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i));
-            if (property == .zero or property.isUndefined()) {
-                if (!globalObject.hasException())
-                    return globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i }) catch null;
+            const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i)) catch {
                 this.any_failed = true;
                 return null;
+            };
+            if (property.isUndefined()) {
+                return globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i }) catch null;
             }
 
             const value = this.current_row.getOwnByValue(globalObject, property);
@@ -3125,7 +3125,7 @@ const QueryBindingIterator = union(enum) {
         }
     };
 
-    pub fn next(this: *QueryBindingIterator) ?JSC.JSValue {
+    pub fn next(this: *QueryBindingIterator) !?JSC.JSValue {
         return switch (this.*) {
             .array => |*iter| iter.next(),
             .objects => |*iter| iter.next(),
@@ -3215,7 +3215,7 @@ const Signature = struct {
 
         var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
 
-        while (iter.next()) |value| {
+        while (try iter.next()) |value| {
             if (value.isEmptyOrUndefinedOrNull()) {
                 // Allow postgres to decide the type
                 try fields.append(0);

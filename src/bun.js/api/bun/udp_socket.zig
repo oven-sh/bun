@@ -628,7 +628,7 @@ pub const UDPSocket = struct {
 
         var i: u16 = 0;
         var port: JSValue = .zero;
-        while (iter.next()) |val| : (i += 1) {
+        while (try iter.next()) |val| : (i += 1) {
             if (i >= array_len) {
                 return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
             }

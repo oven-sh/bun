@@ -3718,7 +3718,7 @@ pub fn shellCmdFromJS(
     var string_iter = try string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
-    while (string_iter.next()) |js_value| {
+    while (try string_iter.next()) |js_value| {
         defer i += 1;
         if (!try builder.appendJSValueStr(js_value, false)) {
             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3726,7 +3726,7 @@ pub fn shellCmdFromJS(
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
-            const template_value = template_args.next() orelse {
+            const template_value = try template_args.next() orelse {
                 return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
             try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
@@ -3809,7 +3809,7 @@ pub fn handleTemplateValue(
             var array = try template_value.arrayIterator(globalThis);
             const last = array.len -| 1;
             var i: u32 = 0;
-            while (array.next()) |arr| : (i += 1) {
+            while (try array.next()) |arr| : (i += 1) {
                 try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
                 if (i < last) {
                     const str = bun.String.static(" ");

@@ -245,7 +245,7 @@ pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = try value.arrayIterator(globalThis);
-    while (iter.next()) |item| {
+    while (try iter.next()) |item| {
         if (!item.isString()) {
             return throwErrInvalidArgType(globalThis, name_fmt ++ "[{d}]", name_args ++ .{i}, "string", value);
         }
@@ -258,7 +258,7 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
     var iter = try value.arrayIterator(globalThis);
-    while (iter.next()) |item| {
+    while (try iter.next()) |item| {
         if (!item.isBoolean()) {
             return throwErrInvalidArgType(globalThis, name_fmt ++ "[{d}]", name_args ++ .{i}, "boolean", value);
         }

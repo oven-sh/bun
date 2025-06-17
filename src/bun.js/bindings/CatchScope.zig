@@ -115,12 +115,20 @@ pub fn assertNoException(self: *CatchScope) void {
 /// this function prints a trace of where it was thrown.
 pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
     if (Environment.allow_assert) {
+        // paranoid; will only fail if you manually changed enabled to false
         bun.assert(self.enabled);
         if (should_have_exception) {
             bun.assertf(self.hasException(), "Expected an exception to be thrown", .{});
         } else {
             self.assertNoException();
         }
+    }
+}
+
+/// Same as assertExceptionPresenceMatches, but only in debug mode
+pub fn debugAssertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
+    if (Environment.isDebug) {
+        self.assertExceptionPresenceMatches(should_have_exception);
     }
 }
 

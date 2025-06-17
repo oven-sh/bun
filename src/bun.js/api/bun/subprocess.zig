@@ -1840,12 +1840,12 @@ fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
-    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
     argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
-    while (cmds_array.next()) |value| {
+    while (try cmds_array.next()) |value| {
         const arg = try value.toBunString(globalThis);
         defer arg.deref();
 
@@ -2033,14 +2033,14 @@ pub fn spawnMaybeSync(
                     if (stdio_val.jsType().isArray()) {
                         var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             try stdio[i].extract(globalThis, i, value);
                             if (i == 2)
                                 break;
                         }
                         i += 1;
 
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
                             try new_item.extract(globalThis, i, value);
 

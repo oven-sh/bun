@@ -185,7 +185,7 @@ fn messageWithTypeAndLevel_(
         var tabular_data = vals[0];
         if (tabular_data.isObject()) {
             const properties: JSValue = if (len >= 2 and vals[1].jsType().isArray()) vals[1] else .js_undefined;
-            var table_printer = TablePrinter.init(
+            var table_printer = try TablePrinter.init(
                 global,
                 level,
                 tabular_data,
@@ -277,13 +277,13 @@ pub const TablePrinter = struct {
         level: MessageLevel,
         tabular_data: JSValue,
         properties: JSValue,
-    ) TablePrinter {
+    ) bun.JSError!TablePrinter {
         return TablePrinter{
             .level = level,
             .globalObject = globalObject,
             .tabular_data = tabular_data,
             .properties = properties,
-            .is_iterable = tabular_data.isIterable(globalObject),
+            .is_iterable = try tabular_data.isIterable(globalObject),
             .jstype = tabular_data.jsType(),
             .value_formatter = ConsoleObject.Formatter{
                 .remaining_values = &[_]JSValue{},
@@ -353,8 +353,8 @@ pub const TablePrinter = struct {
 
         // special handling for Map: column with idx=1 is "Keys"
         if (this.jstype.isMap()) {
-            const entry_key = row_value.getIndex(this.globalObject, 0);
-            const entry_value = row_value.getIndex(this.globalObject, 1);
+            const entry_key = try row_value.getIndex(this.globalObject, 0);
+            const entry_value = try row_value.getIndex(this.globalObject, 1);
             columns.items[1].width = @max(columns.items[1].width, this.getWidthForValue(entry_key));
             this.values_col_width = @max(this.values_col_width orelse 0, this.getWidthForValue(entry_value));
             return;
@@ -452,10 +452,10 @@ pub const TablePrinter = struct {
 
             var value = JSValue.zero;
             if (col_idx == 1 and this.jstype.isMap()) { // is the "Keys" column, when iterating a Map?
-                value = row_value.getIndex(this.globalObject, 0);
+                value = try row_value.getIndex(this.globalObject, 0);
             } else if (col_idx == this.values_col_idx) { // is the "Values" column?
                 if (this.jstype.isMap()) {
-                    value = row_value.getIndex(this.globalObject, 1);
+                    value = try row_value.getIndex(this.globalObject, 1);
                 } else if (!row_value.isObject()) {
                     value = row_value;
                 }
@@ -533,7 +533,7 @@ pub const TablePrinter = struct {
         // if the "properties" arg was provided, pre-populate the columns
         if (!this.properties.isUndefined()) {
             var properties_iter = try JSC.JSArrayIterator.init(this.properties, globalObject);
-            while (properties_iter.next()) |value| {
+            while (try properties_iter.next()) |value| {
                 try columns.append(.{
                     .name = try value.toBunString(globalObject),
                 });
@@ -1766,8 +1766,8 @@ pub const Formatter = struct {
                     this.writer.writeAll(" ") catch unreachable;
                 }
                 if (!is_iterator) {
-                    const key = nextValue.getIndex(globalObject, 0);
-                    const value = nextValue.getIndex(globalObject, 1);
+                    const key = nextValue.getIndex(globalObject, 0) catch return;
+                    const value = nextValue.getIndex(globalObject, 1) catch return;
 
                     if (!single_line) {
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
@@ -3210,7 +3210,7 @@ pub const Formatter = struct {
 
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
-                                                    const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
+                                                    const child = try children.getIndex(this.globalThis, @as(u32, @intCast(j)));
                                                     try this.format(try Tag.getAdvanced(child, this.globalThis, .{
                                                         .hide_global = true,
                                                         .disable_inspect_custom = this.disable_inspect_custom,

@@ -196,6 +196,29 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 #define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
 #endif
 
+// Ensure we instantiate the true and false variants of this function
+template bool Bun__deepMatch<true>(
+    JSValue objValue,
+    std::set<EncodedJSValue>* seenObjProperties,
+    JSValue subsetValue,
+    std::set<EncodedJSValue>* seenSubsetProperties,
+    JSGlobalObject* globalObject,
+    ThrowScope* throwScope,
+    MarkedArgumentBuffer* gcBuffer,
+    bool replacePropsWithAsymmetricMatchers,
+    bool isMatchingObjectContaining);
+
+template bool Bun__deepMatch<false>(
+    JSValue objValue,
+    std::set<EncodedJSValue>* seenObjProperties,
+    JSValue subsetValue,
+    std::set<EncodedJSValue>* seenSubsetProperties,
+    JSGlobalObject* globalObject,
+    ThrowScope* throwScope,
+    MarkedArgumentBuffer* gcBuffer,
+    bool replacePropsWithAsymmetricMatchers,
+    bool isMatchingObjectContaining);
+
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
@@ -375,7 +398,9 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
         }
 
-        if (constructorObject->hasInstance(globalObject, otherProp)) {
+        bool hasInstance = constructorObject->hasInstance(globalObject, otherProp);
+        RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+        if (hasInstance) {
             return AsymmetricMatcherResult::PASS;
         }
 
@@ -453,10 +478,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
                     for (unsigned n = 0; n < otherLength; n++) {
                         JSValue otherValue = otherArray->getIndex(globalObject, n);
-                        ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                         Vector<std::pair<JSValue, JSValue>, 16> stack;
                         MarkedArgumentBuffer gcBuffer;
-                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, &scope, true)) {
+                        bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
+                        RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+                        if (foundNow) {
                             found = true;
                             break;
                         }
@@ -479,11 +505,12 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
             if (otherProp.isObject()) {
-                ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 // SAFETY: visited property sets are not required when
                 // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
                 // are both true
-                if (Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, &scope, nullptr, false, true)) {
+                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                RETURN_IF_EXCEPTION(*throwScope, AsymmetricMatcherResult::FAIL);
+                if (match) {
                     return AsymmetricMatcherResult::PASS;
                 }
             }
@@ -686,6 +713,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c1, c2);
+    RETURN_IF_EXCEPTION(*scope, false);
     if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
     if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
@@ -755,7 +783,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArray a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(*scope, false);
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(*scope, false);
 
         size_t propertyLength = a1.size();
         if constexpr (isStrict) {
@@ -1000,23 +1030,28 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+        RETURN_IF_EXCEPTION(*scope, {});
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
-            if (set2->has(globalObject, key1)) {
+            bool has = set2->has(globalObject, key1);
+            RETURN_IF_EXCEPTION(*scope, {});
+            if (has) {
                 continue;
             }
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
             auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+            RETURN_IF_EXCEPTION(*scope, {});
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                RETURN_IF_EXCEPTION(*scope, {});
+                if (equal) {
                     foundMatchingKey = true;
                     break;
                 }
-                RETURN_IF_EXCEPTION(*scope, false);
             }
 
             if (!foundMatchingKey) {
@@ -1040,22 +1075,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
+        RETURN_IF_EXCEPTION(*scope, {});
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
             JSValue value2 = map2->get(globalObject, key1);
+            RETURN_IF_EXCEPTION(*scope, {});
             if (value2.isUndefined()) {
                 // We couldn't find the key in the second map. This may be a false positive due to
                 // how JSValues are represented in JSC, so we need to fall back to a linear search
                 // to be sure.
                 auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+                RETURN_IF_EXCEPTION(*scope, {});
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                    RETURN_IF_EXCEPTION(*scope, {});
+                    if (keysEqual) {
                         foundMatchingKey = true;
                         break;
                     }
-                    RETURN_IF_EXCEPTION(*scope, false);
                 }
 
                 if (!foundMatchingKey) {
@@ -1065,7 +1104,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 // Compare both values below.
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
+            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+            RETURN_IF_EXCEPTION(*scope, {});
+            if (!valuesEqual) {
                 return false;
             }
         }
@@ -1147,11 +1188,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            if (
-                left->errorType() != right->errorType() || // quick check on ctors (does not handle subclasses)
-                left->sanitizedNameString(globalObject) != right->sanitizedNameString(globalObject) || // manual `.name` changes (usually in subclasses)
-                left->sanitizedMessageString(globalObject) != right->sanitizedMessageString(globalObject) // `.message`
-            ) {
+            if (left->errorType() != right->errorType()) {
+                // quick check on ctors (does not handle subclasses)
+                return false;
+            }
+
+            auto leftName = left->sanitizedNameString(globalObject);
+            RETURN_IF_EXCEPTION(*scope, {});
+            auto rightName = right->sanitizedNameString(globalObject);
+            RETURN_IF_EXCEPTION(*scope, {});
+            if (leftName != rightName) {
+                // manual `.name` changes (usually in subclasses)
+                return false;
+            }
+
+            auto leftMessage = left->sanitizedMessageString(globalObject);
+            RETURN_IF_EXCEPTION(*scope, {});
+            auto rightMessage = right->sanitizedMessageString(globalObject);
+            RETURN_IF_EXCEPTION(*scope, {});
+            if (leftMessage != rightMessage) {
+                // `.message`
                 return false;
             }
 
@@ -1161,25 +1217,30 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
-            VM& vm = globalObject->vm();
+            VM& vm = JSC::getVM(globalObject);
 
             // `.cause` is non-enumerable, so it must be checked explicitly.
             // note that an undefined cause is different than a missing cause in
             // strict mode.
             const PropertyName cause(vm.propertyNames->cause);
             if constexpr (isStrict) {
-                if (left->hasProperty(globalObject, cause) != right->hasProperty(globalObject, cause)) {
+                bool leftHasCause = left->hasProperty(globalObject, cause);
+                RETURN_IF_EXCEPTION(*scope, {});
+                bool rightHasCause = right->hasProperty(globalObject, cause);
+                RETURN_IF_EXCEPTION(*scope, {});
+                if (leftHasCause != rightHasCause) {
                     return false;
                 }
             }
             auto leftCause = left->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(*scope, false);
+            RETURN_IF_EXCEPTION(*scope, {});
             auto rightCause = right->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(*scope, false);
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
+            RETURN_IF_EXCEPTION(*scope, {});
+            bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(*scope, {});
+            if (!causesEqual) {
                 return false;
             }
-            RETURN_IF_EXCEPTION(*scope, false);
 
             // check arbitrary enumerable properties. `.stack` is not checked.
             left->materializeErrorInfoIfNeeded(vm);
@@ -1187,9 +1248,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(*scope, false);
+            RETURN_IF_EXCEPTION(*scope, {});
             right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(*scope, false);
+            RETURN_IF_EXCEPTION(*scope, {});
 
             const size_t propertyArrayLength1 = a1.size();
             const size_t propertyArrayLength2 = a2.size();
@@ -1207,14 +1268,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 PropertyName propertyName1 = PropertyName(i1);
 
                 JSValue prop1 = left->get(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (!prop1) [[unlikely]] {
-                    return false;
-                }
+                RETURN_IF_EXCEPTION(*scope, {});
+                ASSERT(prop1);
 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(*scope, false);
+                RETURN_IF_EXCEPTION(*scope, {});
 
                 if constexpr (!isStrict) {
                     if (prop1.isUndefined() && prop2.isEmpty()) {
@@ -1226,11 +1284,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
 
-                if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+                bool propertiesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(*scope, {});
+                if (!propertiesEqual) {
                     return false;
                 }
-
-                RETURN_IF_EXCEPTION(*scope, false);
             }
 
             // for the remaining properties in the other object, make sure they are undefined
@@ -1240,7 +1298,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 PropertyName propertyName2 = PropertyName(i2);
 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
-                RETURN_IF_EXCEPTION(*scope, false);
+                RETURN_IF_EXCEPTION(*scope, {});
 
                 if (!prop2.isUndefined()) {
                     return false;
@@ -1347,9 +1405,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         JSString* s1 = c1->toStringInline(globalObject);
+        RETURN_IF_EXCEPTION(*scope, {});
         JSString* s2 = c2->toStringInline(globalObject);
+        RETURN_IF_EXCEPTION(*scope, {});
 
-        return s1->equal(globalObject, s2);
+        bool stringsEqual = s1->equal(globalObject, s2);
+        RETURN_IF_EXCEPTION(*scope, {});
+        return stringsEqual;
     }
     case JSFunctionType: {
         return false;
@@ -1542,6 +1604,7 @@ bool Bun__deepMatch(
 
     PropertyNameArray subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(*throwScope, false);
 
     // TODO: add fast paths for:
     // - two "simple" objects (using ->forEachProperty in both)
@@ -1555,6 +1618,7 @@ bool Bun__deepMatch(
         }
         PropertyNameArray objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(*throwScope, false);
         if (objProps.size() != subsetProps.size()) {
             return false;
         }
@@ -1582,6 +1646,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
                         obj->putDirectMayBeIndex(globalObject, property, subsetProp);
+                        RETURN_IF_EXCEPTION(*throwScope, false);
                     }
                     // continue to next subset prop
                     continue;
@@ -1595,6 +1660,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
                         subsetObj->putDirectMayBeIndex(globalObject, property, prop);
+                        RETURN_IF_EXCEPTION(*throwScope, false);
                     }
                     // continue to next subset prop
                     continue;
@@ -1647,7 +1713,8 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
     MarkedArgumentBuffer args;
-    return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+    bool result = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+    RELEASE_AND_RETURN(scope, result);
 }
 }
 
@@ -2284,8 +2351,9 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            scope.release(); // zig binding handles exceptions
             if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
-                RELEASE_AND_RETURN(scope, lengthValue.toNumber(globalObject));
+                return lengthValue.toNumber(globalObject);
             }
         }
     }
@@ -2556,19 +2624,6 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__deepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
-{
-    JSValue obj = JSValue::decode(JSValue0);
-    JSValue subset = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    return Bun__deepMatch<false>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
-}
-
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
 {
     JSValue obj = JSValue::decode(JSValue0);
@@ -2579,7 +2634,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
+    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
@@ -2683,11 +2738,16 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
 // CPP_DECL void JSC__PropertyNameArray__release(JSC__PropertyNameArray* arg0);
 size_t JSC__JSObject__getArrayLength(JSC::JSObject* arg0) { return arg0->getArrayLength(); }
 
-JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue jsValue, JSC::JSGlobalObject* arg1,
-    uint32_t arg3)
+JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue jsValue, JSC::JSGlobalObject* globalObject,
+    uint32_t index)
 {
-    ASSERT_NO_PENDING_EXCEPTION(arg1);
-    return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* object = JSC::JSValue::decode(jsValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto value = object->getIndex(globalObject, index);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(value);
 }
 
 JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JSC::JSGlobalObject* arg1,
@@ -4003,10 +4063,13 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
     if (path.isString()) {
         String pathString = path.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         uint32_t length = pathString.length();
 
         if (length == 0) {
-            JSValue prop = value.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+            auto* valueObject = value.toObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue prop = valueObject->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(prop);
         }
@@ -4021,7 +4084,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
         // if "." is the only character, it will search for an empty string twice.
         if (pathString.characterAt(0) == '.') {
-            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+            auto* currPropObject = currProp.toObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4035,7 +4100,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (i == length) {
 
                     if (ic == '.') {
-                        currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+                        auto* currPropObject = currProp.toObject(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
                         RETURN_IF_EXCEPTION(scope, {});
                         return JSValue::encode(currProp);
                     }
@@ -4051,7 +4118,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 UChar previous = ic;
                 ic = pathString.characterAt(i);
                 if (previous == '.' && ic == '.') {
-                    currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+                    auto* currPropObject = currProp.toObject(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
                     RETURN_IF_EXCEPTION(scope, {});
                     if (currProp.isEmpty()) {
                         return JSValue::encode(currProp);
@@ -4074,7 +4143,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             String propNameStr = pathString.substring(i, j - i);
             PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
 
-            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
+            auto* currPropObject = currProp.toObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4089,7 +4160,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
     if (isArray(globalObject, path)) {
         // each item in array is property name, ignore dot/bracket notation
         JSValue currProp = value;
-        forEachInArrayLike(globalObject, path.toObject(globalObject), [&](JSValue item) -> bool {
+        auto* pathObject = path.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
             if (!(item.isString() || item.isNumber())) {
                 currProp = {};
                 return false;
@@ -4100,7 +4173,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
             RETURN_IF_EXCEPTION(scope, {});
 
-            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
+            auto* currPropObject = currProp.toObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return false;
@@ -4108,7 +4183,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
             return true;
         });
-
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(currProp);
     }
 
@@ -5791,11 +5866,11 @@ void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSG
         return;
 
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        auto scope = DECLARE_CATCH_SCOPE(vm);
         JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
         if (scope.exception()) {
             scope.clearException();
@@ -5820,8 +5895,11 @@ void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSG
             continue;
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        if (!object->getPropertySlot(globalObject, property, slot))
+        bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+        scope.clearException();
+        if (!hasProperty) {
             continue;
+        }
 
         if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
             if (property == vm.propertyNames->underscoreProto
@@ -5830,7 +5908,6 @@ void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSG
         }
 
         JSC::JSValue propertyValue = jsUndefined();
-        auto scope = DECLARE_CATCH_SCOPE(vm);
         if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
             if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
                 propertyValue = slot.getPureResult();

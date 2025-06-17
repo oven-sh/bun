@@ -541,7 +541,7 @@ pub const FFI = struct {
             var iter = try value.arrayIterator(globalThis);
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
 
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     for (items.items) |item| {
                         bun.default_allocator.free(@constCast(item));
@@ -631,7 +631,7 @@ pub const FFI = struct {
                 defer flags.deinit();
                 flags.appendSlice(CompileC.default_tcc_options) catch bun.outOfMemory();
 
-                while (iter.next()) |value| {
+                while (try iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
@@ -702,7 +702,7 @@ pub const FFI = struct {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = try source_value.arrayIterator(globalThis);
-                while (iter.next()) |value| {
+                while (try iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
@@ -1257,7 +1257,7 @@ pub const FFI = struct {
             var array = try args.arrayIterator(global);
 
             try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
-            while (array.next()) |val| {
+            while (try array.next()) |val| {
                 if (val.isEmptyOrUndefinedOrNull()) {
                     abi_types.clearAndFree(allocator);
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);

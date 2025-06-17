@@ -28,7 +28,7 @@ fn findPath(
     // for each path
     const found = if (paths_maybe) |paths| found: {
         var iter = try paths.iterator(global);
-        while (iter.next()) |path| {
+        while (try iter.next()) |path| {
             const cur_path = try bun.String.fromJS(path, global);
             defer cur_path.deref();
 

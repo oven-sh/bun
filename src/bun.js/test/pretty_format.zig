@@ -677,8 +677,8 @@ pub const JestPrettyFormat = struct {
                 pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     if (this.formatter.failed) return;
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0) catch return;
+                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1) catch return;
                     this.formatter.writeIndent(Writer, this.writer) catch return;
                     const key_tag = Tag.get(key, globalObject) catch return;
 
@@ -1696,7 +1696,7 @@ pub const JestPrettyFormat = struct {
 
                                                     var j: usize = 0;
                                                     while (j < length) : (j += 1) {
-                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                        const child = try JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
                                                         try this.format(try Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {
                                                             writer.writeAll("\n");

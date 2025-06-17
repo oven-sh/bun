@@ -110,7 +110,7 @@ pub const SplitBundlerOptions = struct {
         const empty_object = JSValue.createEmptyObject(global, 0);
 
         var iter = try plugin_array.arrayIterator(global);
-        while (iter.next()) |plugin_config| {
+        while (try iter.next()) |plugin_config| {
             if (!plugin_config.isObject()) {
                 return global.throwInvalidArguments("Expected plugin to be an object", .{});
             }
@@ -452,7 +452,7 @@ pub const Framework = struct {
 
             var it = try array.arrayIterator(global);
             var i: usize = 0;
-            while (it.next()) |file| : (i += 1) {
+            while (try it.next()) |file| : (i += 1) {
                 if (!file.isObject()) {
                     return global.throwInvalidArguments("'builtInModules[{d}]' is not an object", .{i});
                 }
@@ -486,7 +486,7 @@ pub const Framework = struct {
             var it = try array.arrayIterator(global);
             var i: usize = 0;
             errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
-            while (it.next()) |fsr_opts| : (i += 1) {
+            while (try it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };
@@ -514,7 +514,7 @@ pub const Framework = struct {
                         var it_2 = try exts_js.arrayIterator(global);
                         var i_2: usize = 0;
                         const extensions = try arena.alloc([]const u8, try exts_js.getLength(global));
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
                             const slice = refs.track(try array_item.toSlice(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
                                 return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
@@ -539,7 +539,7 @@ pub const Framework = struct {
                         var it_2 = try array.arrayIterator(global);
                         var i_2: usize = 0;
                         const dirs = try arena.alloc([]const u8, len);
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
                             dirs[i_2] = refs.track(try array_item.toSlice(global, arena));
                         }
                         break :exts dirs;

@@ -367,7 +367,7 @@ pub const CallbackList = union(enum) {
             },
             .callback_array => {
                 var iter = try self.callback_array.arrayIterator(global);
-                while (iter.next()) |item| {
+                while (try iter.next()) |item| {
                     item.callNextTick(global, .{.null});
                 }
                 self.callback_array.unprotect();
@@ -981,8 +981,8 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
         if (serialized_array.isUndefinedOrNull()) {
             handle = .js_undefined;
         } else {
-            const serialized_handle = serialized_array.getIndex(globalObject, 0);
-            const serialized_message = serialized_array.getIndex(globalObject, 1);
+            const serialized_handle = try serialized_array.getIndex(globalObject, 0);
+            const serialized_message = try serialized_array.getIndex(globalObject, 1);
             handle = serialized_handle;
             message = serialized_message;
         }

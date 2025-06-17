@@ -8435,7 +8435,7 @@ pub const Macro = struct {
 
                         errdefer this.allocator.free(array);
                         var i: usize = 0;
-                        while (iter.next()) |item| {
+                        while (try iter.next()) |item| {
                             array[i] = try this.run(item);
                             if (array[i].isMissing())
                                 continue;

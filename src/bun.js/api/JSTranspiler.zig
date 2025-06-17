@@ -360,7 +360,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                 var externals = allocator.alloc(string, count) catch unreachable;
                 var iter = try external.arrayIterator(globalThis);
                 var i: usize = 0;
-                while (iter.next()) |entry| {
+                while (try iter.next()) |entry| {
                     if (!entry.jsType().isStringLike()) {
                         return globalObject.throwInvalidArguments("external must be a string or string[]", .{});
                     }
@@ -553,7 +553,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             const iter = try JSC.JSArrayIterator.init(eliminate, globalThis);
             {
                 var length_iter = iter;
-                while (length_iter.next()) |value| {
+                while (try length_iter.next()) |value| {
                     if (value.isString()) {
                         const length: u32 = @truncate(try value.getLength(globalThis));
                         string_count += @intFromBool(length > 0);
@@ -567,7 +567,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                 try replacements.ensureUnusedCapacity(bun.default_allocator, string_count);
                 {
                     var length_iter = iter;
-                    while (length_iter.next()) |value| {
+                    while (try length_iter.next()) |value| {
                         if (!value.isString()) continue;
                         const str = try value.getZigString(globalThis);
                         if (str.len == 0) continue;
@@ -625,9 +625,9 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
                     }
 
                     if (value.isObject() and try value.getLength(globalObject) == 2) {
-                        const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
+                        const replacementValue = try value.getIndex(globalThis, 1);
                         if (try exportReplacementValue(replacementValue, globalThis)) |to_replace| {
-                            const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
+                            const replacementKey = try value.getIndex(globalThis, 0);
                             var slice = (try (try replacementKey.toSlice(globalThis, bun.default_allocator)).cloneIfNeeded(bun.default_allocator));
                             const replacement_name = slice.slice();
 

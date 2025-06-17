@@ -1419,7 +1419,7 @@ pub const struct_any_reply = struct {
 
         if (response.isArray()) {
             var iterator = try response.arrayIterator(globalThis);
-            while (iterator.next()) |item| {
+            while (try iterator.next()) |item| {
                 try append(globalThis, array, i, item, lookup_name);
             }
         } else {

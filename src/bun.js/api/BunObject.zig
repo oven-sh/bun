@@ -381,7 +381,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
-    var table_printer = ConsoleObject.TablePrinter.init(
+    var table_printer = try ConsoleObject.TablePrinter.init(
         globalThis,
         .Log,
         value,

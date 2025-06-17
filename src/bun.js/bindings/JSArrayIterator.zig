@@ -19,12 +19,12 @@ pub const JSArrayIterator = struct {
     }
 
     // TODO: this can throw
-    pub fn next(this: *JSArrayIterator) ?JSValue {
+    pub fn next(this: *JSArrayIterator) !?JSValue {
         if (!(this.i < this.len)) {
             return null;
         }
         const i = this.i;
         this.i += 1;
-        return JSObject.getIndex(this.array, this.global, i);
+        return try JSObject.getIndex(this.array, this.global, i);
     }
 };

@@ -58,7 +58,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__coerceToInt64(this, globalThis);
     }
 
-    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
         return JSC.JSObject.getIndex(this, globalThis, i);
     }
 
@@ -1255,7 +1255,11 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
     // Calls JSValue::toStringOrNull. Returns error on exception.
     pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
-        return JSC__JSValue__toStringOrNull(this, globalThis) orelse return error.JSError;
+        var scope: CatchScope = undefined;
+        scope.init(globalThis, @src(), .assertions_only);
+        const maybe_string = JSC__JSValue__toStringOrNull(this, globalThis);
+        scope.assertExceptionPresenceMatches(maybe_string == null);
+        return maybe_string orelse error.JSError;
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -1426,8 +1430,13 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getPropertyValue(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
-    pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
-        return JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
+    pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSError!JSValue {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
+        const result = JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
+        try scope.returnIfException();
+        return result;
     }
 
     extern fn JSC__JSValue__getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void;
@@ -1899,6 +1908,8 @@ pub const JSValue = enum(i64) {
     ///
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
+    ///
+    /// This can throw because it resolves rope strings
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         if (@intFromEnum(this) == @intFromEnum(other)) return true;
         var scope: CatchScope = undefined;
@@ -1948,15 +1959,15 @@ pub const JSValue = enum(i64) {
         try scope.returnIfException();
         return result;
     }
-    extern fn JSC__JSValue__deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool;
-    /// NOTE: can throw. Check for exceptions.
-    pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
-        return JSC__JSValue__deepMatch(this, subset, global, replace_props_with_asymmetric_matchers);
-    }
     extern fn JSC__JSValue__jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool;
     /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
-    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
-        return JSC__JSValue__jestDeepMatch(this, subset, global, replace_props_with_asymmetric_matchers);
+    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) JSError!bool {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
+        const result = JSC__JSValue__jestDeepMatch(this, subset, global, replace_props_with_asymmetric_matchers);
+        try scope.returnIfException();
+        return result;
     }
 
     pub const DiffMethod = enum(u8) {
@@ -2207,8 +2218,13 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__isIterable(this: JSValue, globalObject: *JSGlobalObject) bool;
-    pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
-        return JSC__JSValue__isIterable(this, globalObject);
+    pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) JSError!bool {
+        var scope: CatchScope = undefined;
+        scope.init(globalObject, @src(), .enabled);
+        defer scope.deinit();
+        const is_iterable = JSC__JSValue__isIterable(this, globalObject);
+        try scope.returnIfException();
+        return is_iterable;
     }
 
     extern fn JSC__JSValue__stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool;

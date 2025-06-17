@@ -514,18 +514,16 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src(), .assertions_only);
+        defer scope.deinit();
         var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(out.tag != .Dead);
-            }
-            return out;
-        }
+        const ok = BunString__fromJS(globalObject, value, &out);
 
-        if (comptime bun.Environment.isDebug) {
-            bun.assert(globalObject.hasException());
-        }
-        return error.JSError;
+        scope.debugAssertExceptionPresenceMatches(!ok);
+        scope.debugAssertExceptionPresenceMatches(out.tag == .Dead);
+
+        return if (ok) out else error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {

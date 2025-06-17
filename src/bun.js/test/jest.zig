@@ -2065,7 +2065,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
         var iter = try array.arrayIterator(globalThis);
 
         var test_idx: usize = 0;
-        while (iter.next()) |item| {
+        while (try iter.next()) |item| {
             const func_params_length = try function.getLength(globalThis);
             const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
@@ -2086,7 +2086,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             if (item_is_array) {
                 // Spread array as args
                 var item_iter = try item.arrayIterator(globalThis);
-                while (item_iter.next()) |array_item| {
+                while (try item_iter.next()) |array_item| {
                     if (array_item == .zero) {
                         allocator.free(function_args);
                         break;

@@ -677,6 +677,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         } else {
             headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());

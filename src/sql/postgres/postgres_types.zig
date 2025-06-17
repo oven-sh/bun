@@ -354,9 +354,8 @@ pub const Tag = enum(short) {
             }
 
             if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, value.getIndex(globalObject, 0));
+                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
             }
-            if (globalObject.hasException()) return error.JSError;
 
             // Ban these types:
             if (tag == .NumberObject) {

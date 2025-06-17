@@ -15,7 +15,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
         args.deinit();
     }
 
-    while (iter.next()) |arg_js| {
+    while (try iter.next()) |arg_js| {
         args.appendAssumeCapacity(try fromJS(globalObject, arg_js) orelse {
             return globalObject.throwInvalidArgumentType("sendCommand", "argument", "string or buffer");
         });
@@ -402,7 +402,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(JSC.ZigString.Slice.fromUTF8NeverFree(key.slice()));
 
     // Add field names as arguments
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
 
@@ -514,7 +514,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(key_slice);
 
     // Add field-value pairs
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         // Add field name
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
@@ -522,7 +522,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         args.appendAssumeCapacity(field_slice);
 
         // Add value
-        if (iter.next()) |value_js| {
+        if (try iter.next()) |value_js| {
             const value_str = try value_js.toBunString(globalObject);
             defer value_str.deref();
             const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);

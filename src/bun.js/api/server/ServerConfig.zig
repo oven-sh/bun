@@ -915,7 +915,7 @@ pub fn fromJS(
                 if (value_iter.len == 1) {
                     return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
                 }
-                while (value_iter.next()) |item| {
+                while (try value_iter.next()) |item| {
                     var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
                         if (global.hasException()) {
                             return error.JSError;

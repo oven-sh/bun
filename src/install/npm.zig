@@ -725,7 +725,7 @@ pub const OperatingSystem = enum(u16) {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
         var iter = try args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
@@ -842,7 +842,7 @@ pub const Architecture = enum(u16) {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
         var iter = try args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());

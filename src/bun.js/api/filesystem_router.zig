@@ -101,7 +101,7 @@ pub const FileSystemRouter = struct {
 
             var iter = try file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     origin_str.deinit();
                     arena.deinit();

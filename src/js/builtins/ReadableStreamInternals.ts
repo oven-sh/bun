@@ -759,7 +759,7 @@ export function assignToStream(stream, sink) {
 }
 
 $linkTimeConstant;
-export function drainStreamIntoDrainableSink(stream, sink) {
+export function drainStreamIntoResumableSink(stream, sink) {
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
   let error: Error | null = null;
   let closed = false;

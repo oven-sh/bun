@@ -3574,7 +3574,7 @@ extern "C" EncodedJSValue Bun__drainStreamIntoResumableSink(JSC::JSGlobalObject*
     auto& vm = globalObject->vm();
     // JSC::JSFunction* function = globalObject->m_assignToStream.get();
     // if (!function) {
-    JSC::JSFunction* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsDrainStreamIntoDrainableSinkCodeGenerator(vm)), globalObject);
+    JSC::JSFunction* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsDrainStreamIntoResumableSinkCodeGenerator(vm)), globalObject);
     // globalObject->m_assignToStream.set(vm, globalObject, function);
     // }
 

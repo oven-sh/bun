@@ -1,20 +1,14 @@
 const bun = @import("bun");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
-const logger = bun.logger;
 const PackageManager = @import("./install.zig").PackageManager;
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
 const Process = bun.spawn.Process;
 const Output = bun.Output;
-const Global = bun.Global;
 const JSC = bun.JSC;
 const ExtractData = @import("./install.zig").ExtractData;
-const Resolution = @import("./resolution.zig").Resolution;
-const DependencyID = @import("./install.zig").DependencyID;
-const PackageID = @import("./install.zig").PackageID;
 const Repository = @import("./repository.zig").Repository;
-const String = bun.Semver.String;
 const Path = bun.path;
 
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;

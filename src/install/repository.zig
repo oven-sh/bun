@@ -3,9 +3,7 @@ const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
-const FileSystem = @import("../fs.zig").FileSystem;
 const Install = @import("./install.zig");
-const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
 const Semver = bun.Semver;
 const String = Semver.String;
@@ -16,7 +14,6 @@ const GitSHA = String;
 const Path = bun.path;
 const File = bun.sys.File;
 const OOM = bun.OOM;
-const Process = bun.spawn.Process;
 const GitRunner = @import("./GitRunner.zig").GitRunner;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;

@@ -981,7 +981,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
   };
-  if (basename(execPath).includes("asan") && shouldValidateExceptions(testPath)) {
+  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
   }
 

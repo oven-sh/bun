@@ -983,6 +983,25 @@ describe("deno_task", () => {
         .stderr("")
         .runAsTest("broken pipe subproc");
     }
+
+    TestBuilder.command`${BUN} -e 'process.exit(1)' | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .runAsTest("last exit code");
+
+    TestBuilder.command`ls sldkfjlskdjflksdjflksjdf | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .stderr("ls: sldkfjlskdjflksdjflksjdf: No such file or directory\n")
+      .runAsTest("last exit code");
+
+    TestBuilder.command`ksldfjsdflsdfjskdfjlskdjflksdf | ${BUN} -e 'console.log("hi")'`
+      .exitCode(0)
+      .stdout("hi\n")
+      .stderr("bun: command not found: ksldfjsdflsdfjskdfjlskdjflksdf\n")
+      .runAsTest("last exit code 2");
+
+    TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
   });
 
   describe("redirects", async function igodf() {

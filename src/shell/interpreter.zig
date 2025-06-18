@@ -1314,6 +1314,8 @@ pub const Interpreter = struct {
 
     pub const Builtin = @import("./Builtin.zig");
 
+    /// TODO: Investigate whether or not this can be removed now that we have
+    /// removed recursion
     pub const AsyncDeinitReader = IOReader.AsyncDeinitReader;
 
     pub const IO = @import("./IO.zig");
@@ -1321,34 +1323,7 @@ pub const Interpreter = struct {
     pub const IOReaderChildPtr = IOReader.ChildPtr;
     pub const IOWriter = @import("./IOWriter.zig");
 
-    pub const AsyncDeinitWriter = struct {
-        ran: bool = false,
-
-        pub fn enqueue(this: *@This()) void {
-            if (this.ran) return;
-            this.ran = true;
-
-            var iowriter = this.writer();
-
-            if (iowriter.evtloop == .js) {
-                iowriter.evtloop.js.enqueueTaskConcurrent(iowriter.concurrent_task.js.from(this, .manual_deinit));
-            } else {
-                iowriter.evtloop.mini.enqueueTaskConcurrent(iowriter.concurrent_task.mini.from(this, "runFromMainThreadMini"));
-            }
-        }
-
-        pub fn writer(this: *@This()) *IOWriter {
-            return @alignCast(@fieldParentPtr("async_deinit", this));
-        }
-
-        pub fn runFromMainThread(this: *@This()) void {
-            this.writer().deinitOnMainThread();
-        }
-
-        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-            this.runFromMainThread();
-        }
-    };
+    pub const AsyncDeinitWriter = IOWriter.AsyncDeinitWriter;
 };
 
 /// Construct a tagged union of the state nodes provided in `TypesValue`.

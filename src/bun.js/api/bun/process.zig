@@ -1356,12 +1356,11 @@ pub fn spawnProcessPosix(
 
                 const fds: [2]bun.FileDescriptor = brk: {
                     // FIXME: our end should be non-blocking, other end should NOT
-                    const pair = if (!options.no_sigpipe and (i == 1 or i == 2)) try bun.sys.socketpairForShell(
+                    const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
                         0,
                         .blocking,
-                        .spawn,
                     ).unwrap() else try bun.sys.socketpair(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,

@@ -533,70 +533,6 @@ pub fn bump(this: *IOWriter, current_writer: *Writer) Yield {
     return .done;
 }
 
-fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) bun.io.WriteResult {
-    var offset: usize = 0;
-
-    while (offset < buf.len) {
-        switch (write_fn(fd, buf[offset..])) {
-            .err => |err| {
-                if (err.isRetry()) {
-                    return .{ .pending = offset };
-                }
-
-                if (err.getErrno() == .PIPE) {
-                    return .{ .done = offset };
-                }
-
-                return .{ .err = err };
-            },
-
-            .result => |wrote| {
-                offset += wrote;
-                if (wrote == 0) {
-                    return .{ .done = offset };
-                }
-            },
-        }
-    }
-
-    return .{ .wrote = offset };
-}
-
-pub fn drainBufferedData(parent: *IOWriter, buf: []const u8, max_write_size: usize, received_hup: bool) bun.io.WriteResult {
-    _ = received_hup;
-
-    const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
-
-    var drained: usize = 0;
-
-    while (drained < trimmed.len) {
-        const attempt = tryWriteWithWriteFn(parent.fd, buf, bun.sys.write);
-        switch (attempt) {
-            .pending => |pending| {
-                drained += pending;
-                return .{ .pending = drained };
-            },
-            .wrote => |amt| {
-                drained += amt;
-            },
-            .err => |err| {
-                if (drained > 0) {
-                    onError(parent, err);
-                    return .{ .wrote = drained };
-                } else {
-                    return .{ .err = err };
-                }
-            },
-            .done => |amt| {
-                drained += amt;
-                return .{ .done = drained };
-            },
-        }
-    }
-
-    return .{ .wrote = drained };
-}
-
 fn enqueueFile(this: *IOWriter) Yield {
     if (this.is_writing) {
         return .suspended;
@@ -691,7 +627,8 @@ pub fn enqueueFmt(
 
 fn asyncDeinit(this: *@This()) void {
     debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
-    this.async_deinit.enqueue();
+    // this.async_deinit.enqueue();
+    this.deinitOnMainThread();
 }
 
 pub fn deinitOnMainThread(this: *IOWriter) void {
@@ -784,6 +721,113 @@ pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
     shell.subproc.PipeReader.CapturedWriter,
 });
 
+/// TODO: This function and `drainBufferedData` are copy pastes from
+/// `PipeWriter.zig`, it would be nice to not have to do that
+fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) bun.io.WriteResult {
+    var offset: usize = 0;
+
+    while (offset < buf.len) {
+        switch (write_fn(fd, buf[offset..])) {
+            .err => |err| {
+                if (err.isRetry()) {
+                    return .{ .pending = offset };
+                }
+
+                if (err.getErrno() == .PIPE) {
+                    return .{ .done = offset };
+                }
+
+                return .{ .err = err };
+            },
+
+            .result => |wrote| {
+                offset += wrote;
+                if (wrote == 0) {
+                    return .{ .done = offset };
+                }
+            },
+        }
+    }
+
+    return .{ .wrote = offset };
+}
+
+pub fn drainBufferedData(parent: *IOWriter, buf: []const u8, max_write_size: usize, received_hup: bool) bun.io.WriteResult {
+    _ = received_hup;
+
+    const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
+
+    var drained: usize = 0;
+
+    while (drained < trimmed.len) {
+        const attempt = tryWriteWithWriteFn(parent.fd, buf, bun.sys.write);
+        switch (attempt) {
+            .pending => |pending| {
+                drained += pending;
+                return .{ .pending = drained };
+            },
+            .wrote => |amt| {
+                drained += amt;
+            },
+            .err => |err| {
+                if (drained > 0) {
+                    onError(parent, err);
+                    return .{ .wrote = drained };
+                } else {
+                    return .{ .err = err };
+                }
+            },
+            .done => |amt| {
+                drained += amt;
+                return .{ .done = drained };
+            },
+        }
+    }
+
+    return .{ .wrote = drained };
+}
+
+/// TODO: Investigate what we need to do to remove this since we did most of the leg
+///       work in removing recursion in the shell. That is what caused the need for
+///       making deinitialization asynchronous in the first place.
+///
+///       There are two areas which need to change:
+///
+///       1. `IOWriter.onWritePollable` calls `this.bump(child).run()` which could
+///          deinitialize the child which will deref and potentially deinitalize the
+///          `IOWriter`. Simple solution is to ref and defer ref the `IOWriter`
+///
+///       2. `PipeWriter` seems to try to use this struct after IOWriter
+///          deinitializes. We might not be able to get around this.
+pub const AsyncDeinitWriter = struct {
+    ran: bool = false,
+
+    pub fn enqueue(this: *@This()) void {
+        if (this.ran) return;
+        this.ran = true;
+
+        var iowriter = this.writer();
+
+        if (iowriter.evtloop == .js) {
+            iowriter.evtloop.js.enqueueTaskConcurrent(iowriter.concurrent_task.js.from(this, .manual_deinit));
+        } else {
+            iowriter.evtloop.mini.enqueueTaskConcurrent(iowriter.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+        }
+    }
+
+    pub fn writer(this: *@This()) *IOWriter {
+        return @alignCast(@fieldParentPtr("async_deinit", this));
+    }
+
+    pub fn runFromMainThread(this: *@This()) void {
+        this.writer().deinitOnMainThread();
+    }
+
+    pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+        this.runFromMainThread();
+    }
+};
+
 const bun = @import("bun");
 const Yield = bun.shell.Yield;
 const shell = bun.shell;
@@ -794,4 +838,3 @@ const assert = bun.assert;
 const log = bun.Output.scoped(.IOWriter, true);
 const SmolList = shell.SmolList;
 const Maybe = JSC.Maybe;
-const AsyncDeinitWriter = shell.Interpreter.AsyncDeinitWriter;

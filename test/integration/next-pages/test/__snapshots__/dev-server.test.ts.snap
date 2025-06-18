@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://jestjs.io/docs/snapshot-testing
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`hot reloading works on the client (+ tailwind hmr) 1`] = `
 {

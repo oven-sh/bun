@@ -8,7 +8,6 @@ const Process = bun.spawn.Process;
 const Output = bun.Output;
 const JSC = bun.JSC;
 const ExtractData = @import("./install.zig").ExtractData;
-const Repository = @import("./repository.zig").Repository;
 const Path = bun.path;
 
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;

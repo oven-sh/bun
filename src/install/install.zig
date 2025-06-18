@@ -253,8 +253,6 @@ pub const NetworkTask = struct {
             name: strings.StringOrTinyString,
         },
         extract: ExtractTarball,
-        git_clone: void,
-        git_checkout: void,
         local_tarball: void,
     },
     /// Key in patchedDependencies in package.json
@@ -774,81 +772,7 @@ pub const Task = struct {
                 this.data = .{ .extract = result };
                 this.status = Status.success;
             },
-            .git_clone => {
-                const name = this.request.git_clone.name.slice();
-                const url = this.request.git_clone.url.slice();
-                var attempt: u8 = 1;
-                const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        this.request.git_clone.env,
-                        &this.log,
-                        manager.getCacheDirectory(),
-                        this.id,
-                        name,
-                        https,
-                        attempt,
-                    ) catch |err| {
-                        // Exit early if git checked and could
-                        // not find the repository, skip ssh
-                        if (err == error.RepositoryNotFound) {
-                            this.err = err;
-                            this.status = Status.fail;
-                            this.data = .{ .git_clone = bun.invalid_fd };
-
-                            return;
-                        }
-
-                        attempt += 1;
-                        break :brk null;
-                    };
-                    break :brk null;
-                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
-                    manager.allocator,
-                    this.request.git_clone.env,
-                    &this.log,
-                    manager.getCacheDirectory(),
-                    this.id,
-                    name,
-                    ssh,
-                    attempt,
-                ) catch |err| {
-                    this.err = err;
-                    this.status = Status.fail;
-                    this.data = .{ .git_clone = bun.invalid_fd };
-
-                    return;
-                } else {
-                    return;
-                };
-
-                this.data = .{ .git_clone = .fromStdDir(dir) };
-                this.status = Status.success;
-            },
-            .git_checkout => {
-                const git_checkout = &this.request.git_checkout;
-                const data = Repository.checkout(
-                    manager.allocator,
-                    this.request.git_checkout.env,
-                    &this.log,
-                    manager.getCacheDirectory(),
-                    git_checkout.repo_dir.stdDir(),
-                    git_checkout.name.slice(),
-                    git_checkout.url.slice(),
-                    git_checkout.resolved.slice(),
-                ) catch |err| {
-                    this.err = err;
-                    this.status = Status.fail;
-                    this.data = .{ .git_checkout = .{} };
-
-                    return;
-                };
-
-                this.data = .{
-                    .git_checkout = data,
-                };
-                this.status = Status.success;
-            },
+            // git_clone and git_checkout are now handled asynchronously via GitRunner
             .local_tarball => {
                 const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
 
@@ -916,9 +840,7 @@ pub const Task = struct {
     pub const Tag = enum(u3) {
         package_manifest = 0,
         extract = 1,
-        git_clone = 2,
-        git_checkout = 3,
-        local_tarball = 4,
+        local_tarball = 2,
     };
 
     pub const Status = enum {
@@ -930,8 +852,6 @@ pub const Task = struct {
     pub const Data = union {
         package_manifest: Npm.PackageManifest,
         extract: ExtractData,
-        git_clone: bun.FileDescriptor,
-        git_checkout: ExtractData,
     };
 
     pub const Request = union {
@@ -944,22 +864,6 @@ pub const Task = struct {
         extract: struct {
             network: *NetworkTask,
             tarball: ExtractTarball,
-        },
-        git_clone: struct {
-            name: strings.StringOrTinyString,
-            url: strings.StringOrTinyString,
-            env: DotEnv.Map,
-            dep_id: DependencyID,
-            res: Resolution,
-        },
-        git_checkout: struct {
-            repo_dir: bun.FileDescriptor,
-            dependency_id: DependencyID,
-            name: strings.StringOrTinyString,
-            url: strings.StringOrTinyString,
-            resolved: strings.StringOrTinyString,
-            resolution: Resolution,
-            env: DotEnv.Map,
         },
         local_tarball: struct {
             tarball: ExtractTarball,
@@ -3417,111 +3321,7 @@ pub const PackageManager = struct {
         return &task.threadpool_task;
     }
 
-    fn enqueueGitClone(
-        this: *PackageManager,
-        task_id: u64,
-        name: string,
-        repository: *const Repository,
-        dep_id: DependencyID,
-        dependency: *const Dependency,
-        res: *const Resolution,
-        /// if patched then we need to do apply step after network task is done
-        patch_name_and_version_hash: ?u64,
-    ) *ThreadPool.Task {
-        var task = this.preallocated_resolve_tasks.get();
-        task.* = Task{
-            .package_manager = this,
-            .log = logger.Log.init(this.allocator),
-            .tag = Task.Tag.git_clone,
-            .request = .{
-                .git_clone = .{
-                    .name = strings.StringOrTinyString.initAppendIfNeeded(
-                        name,
-                        *FileSystem.FilenameStore,
-                        FileSystem.FilenameStore.instance,
-                    ) catch unreachable,
-                    .url = strings.StringOrTinyString.initAppendIfNeeded(
-                        this.lockfile.str(&repository.repo),
-                        *FileSystem.FilenameStore,
-                        FileSystem.FilenameStore.instance,
-                    ) catch unreachable,
-                    .env = Repository.shared_env.get(this.allocator, this.env),
-                    .dep_id = dep_id,
-                    .res = res.*,
-                },
-            },
-            .id = task_id,
-            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
-                const dep = dependency;
-                const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .id => |p| p,
-                    .ids => |ps| ps.items[0], // TODO is this correct
-                };
-                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-                const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
-                pt.callback.apply.task_id = task_id;
-                break :brk pt;
-            } else null,
-            .data = undefined,
-        };
-        return &task.threadpool_task;
-    }
-
-    fn enqueueGitCheckout(
-        this: *PackageManager,
-        task_id: u64,
-        dir: bun.FileDescriptor,
-        dependency_id: DependencyID,
-        name: string,
-        resolution: Resolution,
-        resolved: string,
-        /// if patched then we need to do apply step after network task is done
-        patch_name_and_version_hash: ?u64,
-    ) *ThreadPool.Task {
-        var task = this.preallocated_resolve_tasks.get();
-        task.* = Task{
-            .package_manager = this,
-            .log = logger.Log.init(this.allocator),
-            .tag = Task.Tag.git_checkout,
-            .request = .{
-                .git_checkout = .{
-                    .repo_dir = dir,
-                    .resolution = resolution,
-                    .dependency_id = dependency_id,
-                    .name = strings.StringOrTinyString.initAppendIfNeeded(
-                        name,
-                        *FileSystem.FilenameStore,
-                        FileSystem.FilenameStore.instance,
-                    ) catch unreachable,
-                    .url = strings.StringOrTinyString.initAppendIfNeeded(
-                        this.lockfile.str(&resolution.value.git.repo),
-                        *FileSystem.FilenameStore,
-                        FileSystem.FilenameStore.instance,
-                    ) catch unreachable,
-                    .resolved = strings.StringOrTinyString.initAppendIfNeeded(
-                        resolved,
-                        *FileSystem.FilenameStore,
-                        FileSystem.FilenameStore.instance,
-                    ) catch unreachable,
-                    .env = Repository.shared_env.get(this.allocator, this.env),
-                },
-            },
-            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
-                const dep = this.lockfile.buffers.dependencies.items[dependency_id];
-                const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .id => |p| p,
-                    .ids => |ps| ps.items[0], // TODO is this correct
-                };
-                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-                const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
-                pt.callback.apply.task_id = task_id;
-                break :brk pt;
-            } else null,
-            .id = task_id,
-            .data = undefined,
-        };
-        return &task.threadpool_task;
-    }
+    // git clone and checkout are now handled asynchronously via GitRunner
 
     fn enqueueLocalTarball(
         this: *PackageManager,
@@ -4011,22 +3811,10 @@ pub const PackageManager = struct {
                     );
 
                 if (this.git_repositories.get(clone_id)) |repo_fd| {
-                    const resolved = try Repository.findCommit(
-                        this.allocator,
-                        this.env,
-                        this.log,
-                        repo_fd.stdDir(),
-                        alias,
-                        this.lockfile.str(&dep.committish),
-                        clone_id,
-                    );
-                    const checkout_id = Task.Id.forGitCheckout(url, resolved);
-
-                    var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
+                    // Repository already cloned, just need to find commit
+                    var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
-                    if (this.lockfile.buffers.resolutions.items[id] == invalid_package_id) {
-                        try entry.value_ptr.append(this.allocator, ctx);
-                    }
+                    try entry.value_ptr.append(this.allocator, ctx);
 
                     if (dependency.behavior.isPeer()) {
                         if (!install_peer) {
@@ -4035,17 +3823,17 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
-
-                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
-                        checkout_id,
-                        repo_fd,
-                        id,
+                    // Start async findCommit operation
+                    try Repository.findCommit(
+                        this,
+                        this.allocator,
+                        this.env,
+                        this.log,
+                        repo_fd.stdDir(),
                         alias,
-                        res,
-                        resolved,
-                        null,
-                    )));
+                        this.lockfile.str(&dep.committish),
+                        clone_id,
+                    );
                 } else {
                     var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
@@ -4058,9 +3846,46 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
-
-                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, id, dependency, &res, null)));
+                    // Start async clone operation
+                    const attempt: u8 = 1;
+                    if (Repository.tryHTTPS(url)) |https| {
+                        try Repository.download(
+                            this,
+                            this.allocator,
+                            Repository.shared_env.get(this.allocator, this.env),
+                            this.log,
+                            this.getCacheDirectory(),
+                            clone_id,
+                            alias,
+                            https,
+                            attempt,
+                        );
+                    } else if (Repository.trySSH(url)) |ssh| {
+                        try Repository.download(
+                            this,
+                            this.allocator,
+                            Repository.shared_env.get(this.allocator, this.env),
+                            this.log,
+                            this.getCacheDirectory(),
+                            clone_id,
+                            alias,
+                            ssh,
+                            attempt,
+                        );
+                    } else {
+                        // Fallback to original URL
+                        try Repository.download(
+                            this,
+                            this.allocator,
+                            Repository.shared_env.get(this.allocator, this.env),
+                            this.log,
+                            this.getCacheDirectory(),
+                            clone_id,
+                            alias,
+                            url,
+                            attempt,
+                        );
+                    }
                 }
             },
             .github => {
@@ -5461,180 +5286,7 @@ pub const PackageManager = struct {
                         }
                     }
                 },
-                .git_clone => {
-                    const clone = &task.request.git_clone;
-                    const repo_fd = task.data.git_clone;
-                    const name = clone.name.slice();
-                    const url = clone.url.slice();
-
-                    manager.git_repositories.put(manager.allocator, task.id, repo_fd) catch unreachable;
-
-                    if (task.status == .fail) {
-                        const err = task.err orelse error.Failed;
-
-                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
-                            callbacks.onPackageManifestError(
-                                extract_ctx,
-                                name,
-                                err,
-                                url,
-                            );
-                        } else if (log_level != .silent) {
-                            manager.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                manager.allocator,
-                                "{s} cloning repository for <b>{s}<r>",
-                                .{
-                                    @errorName(err),
-                                    name,
-                                },
-                            ) catch bun.outOfMemory();
-                        }
-                        continue;
-                    }
-
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                        // Installing!
-                        // this dependency might be something other than a git dependency! only need the name and
-                        // behavior, use the resolution from the task.
-                        const dep_id = clone.dep_id;
-                        const dep = manager.lockfile.buffers.dependencies.items[dep_id];
-                        const dep_name = dep.name.slice(manager.lockfile.buffers.string_bytes.items);
-
-                        const git = clone.res.value.git;
-                        const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
-                        const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
-
-                        const resolved = try Repository.findCommit(
-                            manager.allocator,
-                            manager.env,
-                            manager.log,
-                            task.data.git_clone.stdDir(),
-                            dep_name,
-                            committish,
-                            task.id,
-                        );
-
-                        const checkout_id = Task.Id.forGitCheckout(repo, resolved);
-
-                        if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
-
-                        manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
-                            checkout_id,
-                            repo_fd,
-                            dep_id,
-                            dep_name,
-                            clone.res,
-                            resolved,
-                            null,
-                        )));
-                    } else {
-                        // Resolving!
-                        const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
-                        const dependency_list = dependency_list_entry.value_ptr.*;
-                        dependency_list_entry.value_ptr.* = .{};
-
-                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
-                    }
-
-                    if (log_level.showProgress()) {
-                        if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
-                            has_updated_this_run = true;
-                        }
-                    }
-                },
-                .git_checkout => {
-                    const git_checkout = &task.request.git_checkout;
-                    const alias = &git_checkout.name;
-                    const resolution = &git_checkout.resolution;
-                    var package_id: PackageID = invalid_package_id;
-
-                    if (task.status == .fail) {
-                        const err = task.err orelse error.Failed;
-
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "{s} checking out repository for <b>{s}<r>",
-                            .{
-                                @errorName(err),
-                                alias.slice(),
-                            },
-                        ) catch bun.outOfMemory();
-
-                        continue;
-                    }
-
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                        // We've populated the cache, package already exists in memory. Call the package installer callback
-                        // and don't enqueue dependencies
-
-                        // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
-                        // keeping just in case for now
-                        extract_ctx.fixCachedLockfilePackageSlices();
-
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            log_level,
-                        );
-                    } else if (manager.processExtractedTarballPackage(
-                        &package_id,
-                        git_checkout.dependency_id,
-                        resolution,
-                        &task.data.git_checkout,
-                        log_level,
-                    )) |pkg| handle_pkg: {
-                        var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
-                        var dependency_list = dependency_list_entry.value_ptr.*;
-                        dependency_list_entry.value_ptr.* = .{};
-
-                        defer {
-                            dependency_list.deinit(manager.allocator);
-                            if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {
-                                if (any_root) {
-                                    callbacks.onResolve(extract_ctx);
-                                }
-                            }
-                        }
-
-                        for (dependency_list.items) |dep| {
-                            switch (dep) {
-                                .dependency, .root_dependency => |id| {
-                                    var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
-                                    repo.resolved = pkg.resolution.value.git.resolved;
-                                    repo.package_name = pkg.name;
-                                    try manager.processDependencyListItem(dep, &any_root, install_peer);
-                                },
-                                else => {
-                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
-                                },
-                            }
-                        }
-
-                        if (comptime @TypeOf(callbacks.onExtract) != void) {
-                            callbacks.onExtract(
-                                extract_ctx,
-                                git_checkout.dependency_id,
-                                &task.data.git_checkout,
-                                log_level,
-                            );
-                        }
-                    }
-
-                    if (log_level.showProgress()) {
-                        if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, alias.slice(), ProgressStrings.download_emoji, true);
-                            has_updated_this_run = true;
-                        }
-                    }
-                },
+                // git_clone and git_checkout are now handled asynchronously via GitRunner
             }
         }
     }
@@ -10030,13 +9682,183 @@ pub const PackageManager = struct {
         )));
     }
 
+    pub fn onGitDownloadComplete(this: *PackageManager, task_id: u64, result: anyerror!std.fs.Dir) !void {
+        const clone_callbacks = this.task_queue.get(task_id) orelse return;
+        const callbacks = clone_callbacks;
+        // Note: don't clean up task_queue here, onGitFindCommitComplete will do it
+
+        if (result) |repo_dir| {
+            // Store the repository directory
+            this.git_repositories.put(this.allocator, task_id, .fromStdDir(repo_dir)) catch unreachable;
+
+            // Process each callback (these are git dependencies waiting for clone)
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        const repository = &dependency.version.value.git;
+                        // findCommit is now async, it will call onGitFindCommitComplete
+                        try Repository.findCommit(
+                            this,
+                            this.allocator,
+                            this.env,
+                            this.log,
+                            repo_dir,
+                            this.lockfile.str(&dependency.name),
+                            this.lockfile.str(&repository.committish),
+                            task_id,
+                        );
+                    },
+                    else => {},
+                }
+            }
+        } else |err| {
+            // Handle error for all waiting dependencies
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        if (dependency.behavior.isRequired()) {
+                            this.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "Failed to clone git repository for \"{s}\": {s}",
+                                .{ this.lockfile.str(&dependency.name), @errorName(err) },
+                            ) catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    pub fn onGitFindCommitComplete(this: *PackageManager, task_id: u64, result: anyerror![]const u8) !void {
+        const clone_callbacks = this.task_queue.get(task_id) orelse return;
+        const callbacks = clone_callbacks;
+        defer _ = this.task_queue.remove(task_id); // Clean up the clone task queue entry
+
+        if (result) |resolved| {
+            // Process checkout for this commit
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        const repository = &dependency.version.value.git;
+                        const url = this.lockfile.str(&repository.repo);
+                        const checkout_id = Task.Id.forGitCheckout(url, resolved);
+
+                        // Enqueue for checkout
+                        var checkout_queue = this.task_queue.getOrPut(this.allocator, checkout_id) catch unreachable;
+                        if (!checkout_queue.found_existing) {
+                            checkout_queue.value_ptr.* = .{};
+                        }
+                        try checkout_queue.value_ptr.append(this.allocator, callback);
+
+                        if (!checkout_queue.found_existing) {
+                            const repo_fd = this.git_repositories.get(task_id) orelse unreachable;
+                            try Repository.checkout(
+                                this,
+                                this.allocator,
+                                Repository.shared_env.get(this.allocator, this.env),
+                                this.log,
+                                this.getCacheDirectory(),
+                                repo_fd.stdDir(),
+                                this.lockfile.str(&dependency.name),
+                                url,
+                                resolved,
+                                checkout_id,
+                            );
+                        }
+                    },
+                    else => {},
+                }
+            }
+        } else |err| {
+            // Handle error
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        if (dependency.behavior.isRequired()) {
+                            this.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "Failed to find commit for \"{s}\": {s}",
+                                .{ this.lockfile.str(&dependency.name), @errorName(err) },
+                            ) catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    pub fn onGitCheckoutComplete(this: *PackageManager, task_id: u64, result: anyerror!ExtractData) !void {
+        const checkout_callbacks = this.task_queue.get(task_id) orelse return;
+        const callbacks = checkout_callbacks;
+        defer _ = this.task_queue.remove(task_id); // Clean up the checkout task queue entry
+
+        if (result) |extract_data| {
+            // Process the extracted git package
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        var package_id = this.lockfile.buffers.resolutions.items[dep_id];
+                        const resolution = Resolution{
+                            .tag = .git,
+                            .value = .{ .git = dependency.version.value.git },
+                        };
+
+                        // Process the package similar to how extract tasks are handled
+                        if (this.processExtractedTarballPackage(&package_id, dep_id, &resolution, &extract_data, this.options.log_level)) |pkg| {
+                            // Update the git version with the package name
+                            dependency.version.value.git.package_name = pkg.name;
+
+                            // Process dependencies
+                            if (pkg.dependencies.len > 0) {
+                                try this.lockfile.scratch.dependency_list_queue.writeItem(pkg.dependencies);
+                            }
+                        }
+
+                        this.setPreinstallState(package_id, this.lockfile, .done);
+                    },
+                    else => {},
+                }
+            }
+        } else |err| {
+            // Handle error
+            for (callbacks.items) |callback| {
+                switch (callback) {
+                    .dependency => |dep_id| {
+                        const dependency = &this.lockfile.buffers.dependencies.items[dep_id];
+                        if (dependency.behavior.isRequired()) {
+                            this.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "Failed to checkout git repository for \"{s}\": {s}",
+                                .{ this.lockfile.str(&dependency.name), @errorName(err) },
+                            ) catch unreachable;
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
     pub fn enqueueGitForCheckout(
         this: *PackageManager,
         dependency_id: DependencyID,
         alias: string,
         resolution: *const Resolution,
         task_context: TaskCallbackContext,
-        patch_name_and_version_hash: ?u64,
+        _: ?u64,
     ) void {
         const repository = &resolution.value.git;
         const url = this.lockfile.str(&repository.repo);
@@ -10056,7 +9878,21 @@ pub const PackageManager = struct {
         if (checkout_queue.found_existing) return;
 
         if (this.git_repositories.get(clone_id)) |repo_fd| {
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(checkout_id, repo_fd, dependency_id, alias, resolution.*, resolved, patch_name_and_version_hash)));
+            // Call checkout async directly
+            Repository.checkout(
+                this,
+                this.allocator,
+                Repository.shared_env.get(this.allocator, this.env),
+                this.log,
+                this.getCacheDirectory(),
+                std.fs.Dir{ .fd = repo_fd.cast() },
+                alias,
+                url,
+                resolved,
+                checkout_id,
+            ) catch |err| {
+                this.onGitCheckoutComplete(checkout_id, err) catch {};
+            };
         } else {
             var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id) catch unreachable;
             if (!clone_queue.found_existing) {
@@ -10070,15 +9906,20 @@ pub const PackageManager = struct {
 
             if (clone_queue.found_existing) return;
 
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(
+            // Call download async directly
+            Repository.download(
+                this,
+                this.allocator,
+                Repository.shared_env.get(this.allocator, this.env),
+                this.log,
+                this.getCacheDirectory(),
                 clone_id,
                 alias,
-                repository,
-                dependency_id,
-                &this.lockfile.buffers.dependencies.items[dependency_id],
-                resolution,
-                null,
-            )));
+                url,
+                0,
+            ) catch |err| {
+                this.onGitDownloadComplete(clone_id, err) catch {};
+            };
         }
     }
 
@@ -10196,3 +10037,4 @@ pub const PackageManifestError = error{
 };
 
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+pub const GitRunner = @import("./GitRunner.zig").GitRunner;

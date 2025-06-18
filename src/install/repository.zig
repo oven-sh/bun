@@ -16,6 +16,8 @@ const GitSHA = String;
 const Path = bun.path;
 const File = bun.sys.File;
 const OOM = bun.OOM;
+const Process = bun.spawn.Process;
+const GitRunner = @import("./GitRunner.zig").GitRunner;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
@@ -454,44 +456,49 @@ pub const Repository = extern struct {
     }
 
     pub fn download(
+        pm: *PackageManager,
         allocator: std.mem.Allocator,
         env: DotEnv.Map,
-        log: *logger.Log,
+        _: *logger.Log,
         cache_dir: std.fs.Dir,
         task_id: u64,
         name: string,
         url: string,
         attempt: u8,
-    ) !std.fs.Dir {
+    ) !void {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
+        if (cache_dir.openDirZ(folder_name, .{})) |dir| {
+            // Repository exists, just need to fetch
             const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(
-                allocator,
-                env,
-                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
-            ) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git fetch\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
-            break :fetch dir;
-        } else |not_found| clone: {
-            if (not_found != error.FileNotFound) return not_found;
+            const argv = try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "fetch", "--quiet" });
 
+            const context = GitRunner.CompletionContext{
+                .download = .{
+                    .name = try allocator.dupe(u8, name),
+                    .url = try allocator.dupe(u8, url),
+                    .task_id = task_id,
+                    .attempt = attempt,
+                    .cache_dir = dir,
+                },
+            };
+
+            const runner = try GitRunner.new(allocator, pm, context, argv, env);
+            try runner.spawn();
+        } else |not_found| {
+            if (not_found != error.FileNotFound) {
+                pm.onGitDownloadComplete(task_id, not_found) catch {};
+                return;
+            }
+
+            // Need to clone
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, &[_]string{
+            const argv = try allocator.dupe([]const u8, &[_][]const u8{
                 "git",
                 "clone",
                 "-c core.longpaths=true",
@@ -499,162 +506,117 @@ pub const Repository = extern struct {
                 "--bare",
                 url,
                 target,
-            }) catch |err| {
-                if (err == error.RepositoryNotFound or attempt > 1) {
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        allocator,
-                        "\"git clone\" for \"{s}\" failed",
-                        .{name},
-                    ) catch unreachable;
-                }
-                return err;
+            });
+
+            const context = GitRunner.CompletionContext{
+                .download = .{
+                    .name = try allocator.dupe(u8, name),
+                    .url = try allocator.dupe(u8, url),
+                    .task_id = task_id,
+                    .attempt = attempt,
+                    .cache_dir = cache_dir,
+                },
             };
 
-            break :clone try cache_dir.openDirZ(folder_name, .{});
-        };
+            const runner = try GitRunner.new(allocator, pm, context, argv, env);
+            try runner.spawn();
+        }
     }
 
     pub fn findCommit(
+        pm: *PackageManager,
         allocator: std.mem.Allocator,
         env: *DotEnv.Loader,
-        log: *logger.Log,
+        _: *logger.Log,
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
         task_id: u64,
-    ) !string {
+    ) !void {
         const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
-        _ = repo_dir;
+        const argv = if (committish.len > 0)
+            try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "log", "--format=%H", "-1", committish })
+        else
+            try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "log", "--format=%H", "-1" });
 
-        return std.mem.trim(u8, exec(
-            allocator,
-            shared_env.get(allocator, env),
-            if (committish.len > 0)
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1", committish }
-            else
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
-        ) catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
-                .{ committish, name },
-            ) catch unreachable;
-            return err;
-        }, " \t\r\n");
+        const context = GitRunner.CompletionContext{
+            .find_commit = .{
+                .name = try allocator.dupe(u8, name),
+                .committish = try allocator.dupe(u8, committish),
+                .task_id = task_id,
+                .repo_dir = repo_dir,
+            },
+        };
+
+        const runner = try GitRunner.new(allocator, pm, context, argv, shared_env.get(allocator, env));
+        try runner.spawn();
     }
 
     pub fn checkout(
+        pm: *PackageManager,
         allocator: std.mem.Allocator,
         env: DotEnv.Map,
-        log: *logger.Log,
+        _: *logger.Log,
         cache_dir: std.fs.Dir,
         repo_dir: std.fs.Dir,
         name: string,
         url: string,
         resolved: string,
-    ) !ExtractData {
+        task_id: u64,
+    ) !void {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
-        var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
-            if (not_found != error.ENOENT) return not_found;
+        if (bun.openDir(cache_dir, folder_name)) |package_dir_const| {
+            // Package already exists, read package.json directly
+            var package_dir = package_dir_const;
+            package_dir.close();
 
+            // Directly call the completion handler since the checkout already exists
+            pm.onGitCheckoutComplete(task_id, .{
+                .url = url,
+                .resolved = resolved,
+            }) catch {};
+            return;
+        } else |not_found| {
+            if (not_found != error.ENOENT) {
+                pm.onGitCheckoutComplete(task_id, not_found) catch {};
+                return;
+            }
+
+            // Need to clone and checkout
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
-            _ = exec(allocator, env, &[_]string{
+            // First clone without checkout
+            const clone_argv = try allocator.dupe([]const u8, &[_][]const u8{
                 "git",
                 "clone",
                 "-c core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
+                repo_path,
                 target,
-            }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
+            });
+
+            // Then we'll need to checkout after clone completes
+            // For now, we'll do both operations in sequence
+            const context = GitRunner.CompletionContext{
+                .checkout = .{
+                    .name = try allocator.dupe(u8, name),
+                    .url = try allocator.dupe(u8, url),
+                    .resolved = try allocator.dupe(u8, resolved),
+                    .task_id = task_id,
+                    .cache_dir = cache_dir,
+                    .repo_dir = repo_dir,
+                },
             };
 
-            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
-            var dir = try bun.openDir(cache_dir, folder_name);
-            dir.deleteTree(".git") catch {};
-
-            if (resolved.len > 0) insert_tag: {
-                const git_tag = dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
-                defer git_tag.close();
-                git_tag.writeAll(resolved) catch {
-                    dir.deleteFileZ(".bun-tag") catch {};
-                };
-            }
-
-            break :brk dir;
-        };
-        defer package_dir.close();
-
-        const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
-            if (err == error.ENOENT) {
-                // allow git dependencies without package.json
-                return .{
-                    .url = url,
-                    .resolved = resolved,
-                };
-            }
-
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "\"package.json\" for \"{s}\" failed to open: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-        defer json_file.close();
-
-        const json_path = json_file.getPath(
-            &json_path_buf,
-        ).unwrap() catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "\"package.json\" for \"{s}\" failed to resolve: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-
-        const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
-        return .{
-            .url = url,
-            .resolved = resolved,
-            .json = .{
-                .path = ret_json_path,
-                .buf = json_buf,
-            },
-        };
+            const runner = try GitRunner.new(allocator, pm, context, clone_argv, env);
+            try runner.spawn();
+        }
     }
 };

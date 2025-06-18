@@ -137,7 +137,7 @@ pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;
 pub const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
-const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
+const FolderResolution = @import("../resolvers/folder_resolver.zig").FolderResolution;
 
 pub fn ExternalSlice(comptime Type: type) type {
     return extern struct {
@@ -445,7 +445,7 @@ pub const NetworkTask = struct {
         this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.unsafe_http_client.client.verbose = .headers;
+            this.unsafe_http_client.verbose = .headers;
         }
 
         this.callback = .{
@@ -617,7 +617,6 @@ pub const PreinstallState = enum(u4) {
     apply_patch,
     applying_patch,
 };
-
 /// Schedule long-running callbacks for a task
 /// Slow stuff is broken into tasks, each can run independently without locks
 pub const Task = struct {
@@ -1101,7 +1100,6 @@ const PackageManifestMap = struct {
         return null;
     }
 };
-
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
@@ -1725,7 +1723,6 @@ pub const PackageManager = struct {
         not_found: void,
         failure: anyerror,
     };
-
     pub fn enqueueDependencyToRoot(
         this: *PackageManager,
         name: []const u8,
@@ -1804,7 +1801,7 @@ pub const PackageManager = struct {
                                     };
 
                                     if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
+                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pendingTaskCount()});
                                     }
                                 }
 
@@ -1900,7 +1897,6 @@ pub const PackageManager = struct {
             else => return null,
         }
     }
-
     pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) void {
         if (this.preinstall_state.items.len >= count) {
             return;
@@ -1995,7 +1991,7 @@ pub const PackageManager = struct {
                     const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
                     defer manager.lockfile.allocator.free(non_patched_path);
                     if (manager.isFolderInCache(non_patched_path)) {
-                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .apply_patch);
+                        manager.setPreinstallState(pkg.meta.id, lockfile, .apply_patch);
                         // yay step 1 is already done for us
                         return .apply_patch;
                     }
@@ -2306,7 +2302,7 @@ pub const PackageManager = struct {
     }
 
     pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-        return std.fmt.bufPrintZ(buf, "@G@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        return std.fmt.bufPrintZ(buf, "@G@{s}@{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
     }
 
     pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -2368,7 +2364,6 @@ pub const PackageManager = struct {
     pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
         return cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
     }
-
     fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
         return std.fmt.bufPrintZ(
             buf,
@@ -2674,7 +2669,6 @@ pub const PackageManager = struct {
             .cache_dir_subpath = cache_dir_subpath,
         };
     }
-
     pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
         var dir = this.getCacheDirectory().openDir(package_name, .{
@@ -3013,7 +3007,6 @@ pub const PackageManager = struct {
         this.patch_task_fifo.writeItemAssumeCapacity(task);
         _ = this.pending_pre_calc_hashes.fetchAdd(1, .monotonic);
     }
-
     const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
     const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
@@ -3466,7 +3459,6 @@ pub const PackageManager = struct {
         };
         return &task.threadpool_task;
     }
-
     fn enqueueGitCheckout(
         this: *PackageManager,
         task_id: u64,
@@ -3657,7 +3649,6 @@ pub const PackageManager = struct {
             else => .{ original_name, original_name_hash },
         };
     }
-
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -4241,92 +4232,6 @@ pub const PackageManager = struct {
                     }
                 }
             },
-            .tarball => {
-                const res: Resolution = switch (version.value.tarball.uri) {
-                    .local => |path| .{
-                        .tag = .local_tarball,
-                        .value = .{
-                            .local_tarball = path,
-                        },
-                    },
-                    .remote => |url| .{
-                        .tag = .remote_tarball,
-                        .value = .{
-                            .remote_tarball = url,
-                        },
-                    },
-                };
-
-                // First: see if we already loaded the tarball package in-memory
-                if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
-                    successFn(this, id, pkg_id);
-                    return;
-                }
-
-                const url = switch (version.value.tarball.uri) {
-                    .local => |path| this.lockfile.str(&path),
-                    .remote => |url| this.lockfile.str(&url),
-                };
-                const task_id = Task.Id.forTarball(url);
-                var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
-                if (!entry.found_existing) {
-                    entry.value_ptr.* = TaskCallbackList{};
-                }
-
-                if (comptime Environment.allow_assert)
-                    debug(
-                        "enqueueDependency({d}, {s}, {s}, {s}) = {s}",
-                        .{
-                            id,
-                            @tagName(version.tag),
-                            this.lockfile.str(&name),
-                            this.lockfile.str(&version.literal),
-                            url,
-                        },
-                    );
-
-                const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
-
-                if (dependency.behavior.isPeer()) {
-                    if (!install_peer) {
-                        try this.peer_dependencies.writeItem(id);
-                        return;
-                    }
-                }
-
-                switch (version.value.tarball.uri) {
-                    .local => {
-                        if (this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) return;
-
-                        this.task_batch.push(ThreadPool.Batch.from(this.enqueueLocalTarball(
-                            task_id,
-                            id,
-                            this.lockfile.str(&dependency.name),
-                            url,
-                            res,
-                        )));
-                    },
-                    .remote => {
-                        if (try this.generateNetworkTaskForTarball(
-                            task_id,
-                            url,
-                            dependency.behavior.isRequired(),
-                            id,
-                            .{
-                                .name = dependency.name,
-                                .name_hash = dependency.name_hash,
-                                .resolution = res,
-                            },
-                            null,
-                            .no_authorization,
-                        )) |network_task| {
-                            this.enqueueNetworkTask(network_task);
-                        }
-                    },
-                }
-            },
-            else => {},
         }
     }
 
@@ -4345,7 +4250,6 @@ pub const PackageManager = struct {
             patch_task.schedule(if (patch_task.callback == .apply) &this.patch_apply_batch else &this.patch_calc_hash_batch);
         }
     }
-
     fn doFlushDependencyQueue(this: *PackageManager) void {
         var lockfile = this.lockfile;
         var dependency_queue = &lockfile.scratch.dependency_list_queue;
@@ -4820,7 +4724,6 @@ pub const PackageManager = struct {
         var fallback_parts = [_]string{"node_modules/.bun-cache"};
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
-
     pub fn runTasks(
         manager: *PackageManager,
         comptime ExtractCompletionContext: type,
@@ -5166,7 +5069,7 @@ pub const PackageManager = struct {
                                 .{
                                     @errorName(err),
                                     extract.name.slice(),
-                                    extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                    extract.resolution.fmt(manager.lockfile.buffers.string_bytes, .auto),
                                 },
                             ) catch bun.outOfMemory();
                         }
@@ -5266,7 +5169,6 @@ pub const PackageManager = struct {
                 else => unreachable,
             }
         }
-
         var resolve_tasks_batch = manager.resolve_tasks.popBatch();
         var resolve_tasks_iter = resolve_tasks_batch.iterator();
         while (resolve_tasks_iter.next()) |task| {
@@ -5444,7 +5346,7 @@ pub const PackageManager = struct {
                         const dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
-                        try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
+                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
                     }
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -5457,180 +5359,6 @@ pub const PackageManager = struct {
                     if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
                             manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
-                            has_updated_this_run = true;
-                        }
-                    }
-                },
-                .git_clone => {
-                    const clone = &task.request.git_clone;
-                    const repo_fd = task.data.git_clone;
-                    const name = clone.name.slice();
-                    const url = clone.url.slice();
-
-                    manager.git_repositories.put(manager.allocator, task.id, repo_fd) catch unreachable;
-
-                    if (task.status == .fail) {
-                        const err = task.err orelse error.Failed;
-
-                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
-                            callbacks.onPackageManifestError(
-                                extract_ctx,
-                                name,
-                                err,
-                                url,
-                            );
-                        } else if (log_level != .silent) {
-                            manager.log.addErrorFmt(
-                                null,
-                                logger.Loc.Empty,
-                                manager.allocator,
-                                "{s} cloning repository for <b>{s}<r>",
-                                .{
-                                    @errorName(err),
-                                    name,
-                                },
-                            ) catch bun.outOfMemory();
-                        }
-                        continue;
-                    }
-
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                        // Installing!
-                        // this dependency might be something other than a git dependency! only need the name and
-                        // behavior, use the resolution from the task.
-                        const dep_id = clone.dep_id;
-                        const dep = manager.lockfile.buffers.dependencies.items[dep_id];
-                        const dep_name = dep.name.slice(manager.lockfile.buffers.string_bytes.items);
-
-                        const git = clone.res.value.git;
-                        const committish = git.committish.slice(manager.lockfile.buffers.string_bytes.items);
-                        const repo = git.repo.slice(manager.lockfile.buffers.string_bytes.items);
-
-                        const resolved = try Repository.findCommit(
-                            manager.allocator,
-                            manager.env,
-                            manager.log,
-                            task.data.git_clone.stdDir(),
-                            dep_name,
-                            committish,
-                            task.id,
-                        );
-
-                        const checkout_id = Task.Id.forGitCheckout(repo, resolved);
-
-                        if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
-
-                        manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
-                            checkout_id,
-                            repo_fd,
-                            dep_id,
-                            dep_name,
-                            clone.res,
-                            resolved,
-                            null,
-                        )));
-                    } else {
-                        // Resolving!
-                        const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
-                        const dependency_list = dependency_list_entry.value_ptr.*;
-                        dependency_list_entry.value_ptr.* = .{};
-
-                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
-                    }
-
-                    if (log_level.showProgress()) {
-                        if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
-                            has_updated_this_run = true;
-                        }
-                    }
-                },
-                .git_checkout => {
-                    const git_checkout = &task.request.git_checkout;
-                    const alias = &git_checkout.name;
-                    const resolution = &git_checkout.resolution;
-                    var package_id: PackageID = invalid_package_id;
-
-                    if (task.status == .fail) {
-                        const err = task.err orelse error.Failed;
-
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "{s} checking out repository for <b>{s}<r>",
-                            .{
-                                @errorName(err),
-                                alias.slice(),
-                            },
-                        ) catch bun.outOfMemory();
-
-                        continue;
-                    }
-
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                        // We've populated the cache, package already exists in memory. Call the package installer callback
-                        // and don't enqueue dependencies
-
-                        // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
-                        // keeping just in case for now
-                        extract_ctx.fixCachedLockfilePackageSlices();
-
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            log_level,
-                        );
-                    } else if (manager.processExtractedTarballPackage(
-                        &package_id,
-                        git_checkout.dependency_id,
-                        resolution,
-                        &task.data.git_checkout,
-                        log_level,
-                    )) |pkg| handle_pkg: {
-                        var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
-                        var dependency_list = dependency_list_entry.value_ptr.*;
-                        dependency_list_entry.value_ptr.* = .{};
-
-                        defer {
-                            dependency_list.deinit(manager.allocator);
-                            if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {
-                                if (any_root) {
-                                    callbacks.onResolve(extract_ctx);
-                                }
-                            }
-                        }
-
-                        for (dependency_list.items) |dep| {
-                            switch (dep) {
-                                .dependency, .root_dependency => |id| {
-                                    var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
-                                    repo.resolved = pkg.resolution.value.git.resolved;
-                                    repo.package_name = pkg.name;
-                                    try manager.processDependencyListItem(dep, &any_root, install_peer);
-                                },
-                                else => {
-                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
-                                },
-                            }
-                        }
-
-                        if (comptime @TypeOf(callbacks.onExtract) != void) {
-                            callbacks.onExtract(
-                                extract_ctx,
-                                git_checkout.dependency_id,
-                                &task.data.git_checkout,
-                                log_level,
-                            );
-                        }
-                    }
-
-                    if (log_level.showProgress()) {
-                        if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, alias.slice(), ProgressStrings.download_emoji, true);
                             has_updated_this_run = true;
                         }
                     }
@@ -5773,7 +5501,6 @@ pub const PackageManager = struct {
         }
         Global.crash();
     }
-
     pub fn init(
         ctx: Command.Context,
         cli: CommandLineArguments,
@@ -6374,7 +6101,6 @@ pub const PackageManager = struct {
             }
         };
     }
-
     pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
 
     pub fn link(ctx: Command.Context) !void {
@@ -6557,7 +6283,6 @@ pub const PackageManager = struct {
             try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
         }
     }
-
     pub fn unlink(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
         var manager, const original_cwd = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
@@ -6784,183 +6509,6 @@ pub const PackageManager = struct {
         ) []UpdateRequest {
             return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
         }
-
-        fn parseWithError(
-            allocator: std.mem.Allocator,
-            pm: ?*PackageManager,
-            log: *logger.Log,
-            positionals: []const string,
-            update_requests: *Array,
-            subcommand: Subcommand,
-            fatal: bool,
-        ) ![]UpdateRequest {
-            // first one is always either:
-            // add
-            // remove
-            outer: for (positionals) |positional| {
-                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
-                {
-                    var temp: [2048]u8 = undefined;
-                    const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
-                    bun.path.platformToPosixInPlace(u8, &temp);
-                    const input2 = temp[0 .. input.len - len];
-                    @memcpy(input[0..input2.len], input2);
-                    input.len = input2.len;
-                }
-                switch (subcommand) {
-                    .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
-                        input = std.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;
-                    },
-                    else => {},
-                }
-
-                var value = input;
-                var alias: ?string = null;
-                if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
-                    alias = input;
-                    value = input[input.len..];
-                } else if (input.len > 1) {
-                    if (strings.indexOfChar(input[1..], '@')) |at| {
-                        const name = input[0 .. at + 1];
-                        if (strings.isNPMPackageName(name)) {
-                            alias = name;
-                            value = input[at + 2 ..];
-                        }
-                    }
-                }
-
-                const placeholder = String.from("@@@");
-                var version = Dependency.parseWithOptionalTag(
-                    allocator,
-                    if (alias) |name| String.init(input, name) else placeholder,
-                    if (alias) |name| String.Builder.stringHash(name) else null,
-                    value,
-                    null,
-                    &SlicedString.init(input, value),
-                    log,
-                    pm,
-                ) orelse {
-                    if (fatal) {
-                        Output.errGeneric("unrecognised dependency format: {s}", .{
-                            positional,
-                        });
-                    } else {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
-                            positional,
-                        }) catch bun.outOfMemory();
-                    }
-
-                    return error.UnrecognizedDependencyFormat;
-                };
-                if (alias != null and version.tag == .git) {
-                    if (Dependency.parseWithOptionalTag(
-                        allocator,
-                        placeholder,
-                        null,
-                        input,
-                        null,
-                        &SlicedString.init(input, input),
-                        log,
-                        pm,
-                    )) |ver| {
-                        alias = null;
-                        version = ver;
-                    }
-                }
-                if (switch (version.tag) {
-                    .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
-                    .npm => version.value.npm.name.eql(placeholder, input, input),
-                    else => false,
-                }) {
-                    if (fatal) {
-                        Output.errGeneric("unrecognised dependency format: {s}", .{
-                            positional,
-                        });
-                    } else {
-                        log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
-                            positional,
-                        }) catch bun.outOfMemory();
-                    }
-
-                    return error.UnrecognizedDependencyFormat;
-                }
-
-                var request = UpdateRequest{
-                    .version = version,
-                    .version_buf = input,
-                };
-                if (alias) |name| {
-                    request.is_aliased = true;
-                    request.name = allocator.dupe(u8, name) catch unreachable;
-                    request.name_hash = String.Builder.stringHash(name);
-                } else if (version.tag == .github and version.value.github.committish.isEmpty()) {
-                    request.name_hash = String.Builder.stringHash(version.literal.slice(input));
-                } else {
-                    request.name_hash = String.Builder.stringHash(version.literal.slice(input));
-                }
-
-                for (update_requests.items) |*prev| {
-                    if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
-                }
-                update_requests.append(allocator, request) catch bun.outOfMemory();
-            }
-
-            return update_requests.items;
-        }
-    };
-
-    fn updatePackageJSONAndInstall(
-        ctx: Command.Context,
-        subcommand: Subcommand,
-    ) !void {
-        var cli = switch (subcommand) {
-            inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
-        };
-
-        // The way this works:
-        // 1. Run the bundler on source files
-        // 2. Rewrite positional arguments to act identically to the developer
-        //    typing in the dependency names
-        // 3. Run the install command
-        if (cli.analyze) {
-            const Analyzer = struct {
-                ctx: Command.Context,
-                cli: *PackageManager.CommandLineArguments,
-                subcommand: Subcommand,
-                pub fn onAnalyze(
-                    this: *@This(),
-                    result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
-                ) anyerror!void {
-                    // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                    var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
-                    positionals[0] = "add";
-                    bun.copy(string, positionals[1..], result.dependencies.keys());
-                    this.cli.positionals = positionals;
-
-                    try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
-
-                    Global.exit(0);
-                }
-            };
-            var analyzer = Analyzer{
-                .ctx = ctx,
-                .cli = &cli,
-                .subcommand = subcommand,
-            };
-            var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
-                .ctx = &analyzer,
-                .entry_points = cli.positionals[1..],
-                .onFetch = @ptrCast(&Analyzer.onAnalyze),
-            };
-
-            // This runs the bundler.
-            try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
-            return;
-        }
-
-        return updatePackageJSONAndInstallAndCLI(ctx, subcommand, cli);
-    }
-
     fn updatePackageJSONAndInstallAndCLI(
         ctx: Command.Context,
         subcommand: Subcommand,
@@ -7606,7 +7154,6 @@ pub const PackageManager = struct {
             }
         }
     }
-
     fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).Next {
         while (iterator.next(null)) |node_modules| {
             for (ids) |id| {
@@ -7794,7 +7341,6 @@ pub const PackageManager = struct {
         const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
         return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
     }
-
     /// 1. Arg is either:
     ///   - name and possibly version (e.g. "is-even" or "is-even@1.0.0")
     ///   - path to package in node_modules
@@ -7985,7 +7531,6 @@ pub const PackageManager = struct {
 
         return;
     }
-
     fn overwritePackageInNodeModulesFolder(
         manager: *PackageManager,
         cache_dir: std.fs.Dir,
@@ -8159,7 +7704,6 @@ pub const PackageManager = struct {
         patchfile_path: []const u8,
         not_in_workspace_root: bool = false,
     };
-
     /// - Arg is the dir containing the package with changes OR name and version
     /// - Get the patch file contents by running git diff on the temp dir and the original package dir
     /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
@@ -8786,7 +8330,6 @@ pub const PackageManager = struct {
         manager.total_tasks += count;
         return manager.pending_tasks.fetchAdd(count, .monotonic);
     }
-
     pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
         return manager.pending_tasks.fetchSub(1, .monotonic);
     }
@@ -8813,7 +8356,6 @@ pub const PackageManager = struct {
         manager.downloads_node.?.activate();
         manager.progress.refresh();
     }
-
     pub fn endProgressBar(manager: *PackageManager) void {
         var downloads_node = manager.downloads_node orelse return;
         downloads_node.setEstimatedTotalItems(downloads_node.unprotected_estimated_total_items);
@@ -9561,7 +9103,6 @@ pub const PackageManager = struct {
             }
         }
         defer workspace_filters.deinit(manager.allocator);
-
         var install_root_dependencies = workspace_filters.items.len == 0;
         if (!install_root_dependencies) {
             const pkg_names = manager.lockfile.packages.items(.name);
@@ -10081,9 +9622,7 @@ pub const PackageManager = struct {
             )));
         }
     }
-
     const EnqueuePackageForDownloadError = NetworkTask.ForTarballError;
-
     pub fn enqueuePackageForDownload(
         this: *PackageManager,
         name: []const u8,

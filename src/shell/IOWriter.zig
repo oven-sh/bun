@@ -627,8 +627,7 @@ pub fn enqueueFmt(
 
 fn asyncDeinit(this: *@This()) void {
     debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
-    // this.async_deinit.enqueue();
-    this.deinitOnMainThread();
+    this.async_deinit.enqueue();
 }
 
 pub fn deinitOnMainThread(this: *IOWriter) void {

@@ -72,6 +72,7 @@ async function buildRootModule(dryRun?: boolean) {
     },
   });
   write(join(cwd, "bin", "bun.exe"), "");
+  write(join(cwd, "bin", "bunx.exe"), "");
   write(
     join(cwd, "bin", "README.txt"),
     `The 'bun.exe' file is a placeholder for the binary file, which
@@ -105,7 +106,7 @@ without *requiring* a postinstall script.
     ),
     bin: {
       bun: "bin/bun.exe",
-      bunx: "bin/bun.exe",
+      bunx: "bin/bunx.exe",
     },
     os,
     cpu,
@@ -220,6 +221,7 @@ function bundle(src: string, dst: string, options: BuildOptions = {}): void {
     outfile: dst,
     ...options,
   });
+  console.log(errors)
   if (errors?.length) {
     const messages = formatMessagesSync(errors, { kind: "error" });
     throw new Error(messages.join("\n"));

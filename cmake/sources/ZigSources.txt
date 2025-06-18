@@ -514,6 +514,7 @@ src/ini.zig
 src/install/bin.zig
 src/install/dependency.zig
 src/install/extract_tarball.zig
+src/install/GitRunner.zig
 src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig

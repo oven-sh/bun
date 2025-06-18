@@ -10,7 +10,7 @@ pub const JSArrayIterator = struct {
     array: JSValue,
     global: *JSGlobalObject,
 
-    pub fn init(value: JSValue, global: *JSGlobalObject) !JSArrayIterator {
+    pub fn init(value: JSValue, global: *JSGlobalObject) bun.JSError!JSArrayIterator {
         return .{
             .array = value,
             .global = global,
@@ -18,7 +18,7 @@ pub const JSArrayIterator = struct {
         };
     }
 
-    pub fn next(this: *JSArrayIterator) !?JSValue {
+    pub fn next(this: *JSArrayIterator) bun.JSError!?JSValue {
         if (!(this.i < this.len)) {
             return null;
         }

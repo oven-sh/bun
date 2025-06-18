@@ -14,6 +14,12 @@ const errno = std.posix.errno;
 const mode_t = std.posix.mode_t;
 const unexpectedErrno = std.posix.unexpectedErrno;
 
+const NullTerminatedCStringSlice = [*:null]?[*:0]const u8;
+
+fn allocateSpawnArguments(allocator: std.mem.Allocator, argv: anytype) !struct { NullTerminatedCStringSlice, []u8 } {
+    return try bun.StringBuilder.createNullDelimited(allocator, argv);
+}
+
 pub const BunSpawn = struct {
     pub const Action = extern struct {
         pub const FileActionType = enum(u8) {
@@ -133,6 +139,9 @@ pub const BunSpawn = struct {
             _ = this;
         }
     };
+
+    pub const allocateArguments = allocateSpawnArguments;
+    pub const Argv = NullTerminatedCStringSlice;
 };
 
 // mostly taken from zig's posix_spawn.zig
@@ -292,15 +301,15 @@ pub const PosixSpawn = struct {
             pid: *c_int,
             path: [*:0]const u8,
             request: *const BunSpawnRequest,
-            argv: [*:null]?[*:0]const u8,
-            envp: [*:null]?[*:0]const u8,
+            argv: Argv,
+            envp: Argv,
         ) isize;
 
         pub fn spawn(
             path: [*:0]const u8,
             req_: BunSpawnRequest,
-            argv: [*:null]?[*:0]const u8,
-            envp: [*:null]?[*:0]const u8,
+            argv: Argv,
+            envp: Argv,
         ) Maybe(pid_t) {
             var req = req_;
             var pid: c_int = 0;
@@ -331,8 +340,8 @@ pub const PosixSpawn = struct {
         path: [*:0]const u8,
         actions: ?Actions,
         attr: ?Attr,
-        argv: [*:null]?[*:0]const u8,
-        envp: [*:null]?[*:0]const u8,
+        argv: Argv,
+        envp: Argv,
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return BunSpawnRequest.spawn(
@@ -440,4 +449,7 @@ pub const PosixSpawn = struct {
     pub const Rusage = process.Rusage;
 
     pub const Stdio = @import("spawn/stdio.zig").Stdio;
+
+    pub const allocateArguments = allocateSpawnArguments;
+    pub const Argv = NullTerminatedCStringSlice;
 };

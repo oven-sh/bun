@@ -3827,7 +3827,7 @@ pub const PackageManager = struct {
                     try Repository.findCommit(
                         this,
                         this.allocator,
-                        this.env,
+                        this.env.map,
                         this.log,
                         repo_fd.stdDir(),
                         alias,
@@ -9701,7 +9701,7 @@ pub const PackageManager = struct {
                         try Repository.findCommit(
                             this,
                             this.allocator,
-                            this.env,
+                            this.env.map,
                             this.log,
                             repo_dir,
                             this.lockfile.str(&dependency.name),

@@ -21,10 +21,12 @@ pub const GitRunner = struct {
     remaining_fds: i8 = 0,
     has_called_process_exit: bool = false,
     completion_context: CompletionContext,
-    envp: [:null]?[*:0]const u8,
+    envp: DotEnv.NullDelimitedEnvMap,
 
     /// The git command arguments (owned by this runner)
-    argv: [][]const u8,
+    argv: bun.spawn.Argv,
+    argv_bytes: []u8,
+    arena: bun.ArenaAllocator,
 
     /// Allocator for this runner
     allocator: std.mem.Allocator,
@@ -56,32 +58,26 @@ pub const GitRunner = struct {
         },
     };
 
-    pub fn new(
+    pub fn init(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
         context: CompletionContext,
         argv: []const []const u8,
-        env_map: DotEnv.Map,
+        env_map: *const DotEnv.Map,
     ) !*GitRunner {
+        const argv_, const argv_bytes = bun.StringBuilder.createNullDelimited(allocator, argv) catch bun.outOfMemory();
         const runner = try allocator.create(GitRunner);
-
-        // Convert env map to envp - need a mutable copy
-        var env = env_map;
-        const envp = try env.createNullDelimitedEnvMap(allocator);
-
-        // Duplicate argv strings so we own them
-        const owned_argv = try allocator.alloc([]const u8, argv.len);
-        for (argv, 0..) |arg, i| {
-            owned_argv[i] = try allocator.dupe(u8, arg);
-        }
-
         runner.* = .{
             .manager = manager,
             .completion_context = context,
-            .argv = owned_argv,
-            .envp = envp,
+            .argv = argv_,
+            .argv_bytes = argv_bytes,
+            .arena = bun.ArenaAllocator.init(allocator),
+            .envp = undefined,
             .allocator = allocator,
         };
+
+        runner.envp = try env_map.createNullDelimitedEnvMap(runner.arena.allocator());
 
         runner.stdout.setParent(runner);
         runner.stderr.setParent(runner);
@@ -92,33 +88,36 @@ pub const GitRunner = struct {
     pub fn spawn(this: *GitRunner) !void {
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
-            .stdout = .buffer,
-            .stderr = .buffer,
-            .cwd = bun.fs.FileSystem.instance.top_level_dir,
+
+            .stdout = if (this.manager.options.log_level == .silent)
+                .ignore
+            else if (this.manager.options.log_level.isVerbose())
+                .inherit
+            else if (Environment.isPosix)
+                .buffer
+            else
+                .{
+                    .buffer = this.stdout.source.?.pipe,
+                },
+            .stderr = if (this.manager.options.log_level == .silent)
+                .ignore
+            else if (this.manager.options.log_level.isVerbose())
+                .inherit
+            else if (Environment.isPosix)
+                .buffer
+            else
+                .{
+                    .buffer = this.stderr.source.?.pipe,
+                },
+
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(&this.manager.event_loop),
-            } else {},
+            },
+
             .stream = false,
         };
 
-        // Convert []const []const u8 to argv format
-        var argv_buf = try this.allocator.alloc(?[*:0]const u8, this.argv.len + 1);
-        defer {
-            // Free the duped null-terminated strings
-            for (argv_buf[0..this.argv.len]) |arg_ptr| {
-                if (arg_ptr) |ptr| {
-                    this.allocator.free(std.mem.span(ptr));
-                }
-            }
-            this.allocator.free(argv_buf);
-        }
-
-        for (this.argv, 0..) |arg, i| {
-            argv_buf[i] = try this.allocator.dupeZ(u8, arg);
-        }
-        argv_buf[this.argv.len] = null;
-
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv_buf.ptr), this.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, this.argv, this.envp)).unwrap();
 
         this.remaining_fds = 0;
 
@@ -201,7 +200,8 @@ pub const GitRunner = struct {
     }
 
     pub fn handleExit(this: *GitRunner, status: bun.spawn.Status) void {
-        defer this.deinit();
+        var must_deinit = true;
+        defer if (must_deinit) this.deinit();
 
         switch (status) {
             .exited => |exit| {
@@ -210,10 +210,12 @@ pub const GitRunner = struct {
                     const stdout_data = this.stdout.finalBuffer();
 
                     switch (this.completion_context) {
-                        .download => |ctx| {
+                        .download => |*ctx| {
                             // For download, open the created repo directory
-                            var local_folder_name_buf = std.mem.zeroes([bun.MAX_PATH_BYTES]u8);
-                            const folder_name = std.fmt.bufPrintZ(&local_folder_name_buf, "{any}.git", .{
+                            const local_folder_name_buf = bun.PathBufferPool.get();
+                            defer bun.PathBufferPool.put(local_folder_name_buf);
+
+                            const folder_name = std.fmt.bufPrintZ(local_folder_name_buf, "{any}.git", .{
                                 bun.fmt.hexIntLower(ctx.task_id),
                             }) catch bun.outOfMemory();
 
@@ -223,7 +225,7 @@ pub const GitRunner = struct {
                                 this.manager.onGitDownloadComplete(ctx.task_id, err) catch {};
                             }
                         },
-                        .find_commit => |ctx| {
+                        .find_commit => |*ctx| {
                             // For find_commit, we need to parse the commit hash from stdout
                             const commit_hash = std.mem.trim(u8, stdout_data.items, " \t\r\n");
                             if (commit_hash.len > 0) {
@@ -233,7 +235,7 @@ pub const GitRunner = struct {
                                 this.manager.onGitFindCommitComplete(ctx.task_id, error.InstallFailed) catch {};
                             }
                         },
-                        .checkout => |ctx| {
+                        .checkout => |*ctx| {
                             if (!this.is_second_step) {
                                 const buf = bun.PathBufferPool.get();
                                 defer bun.PathBufferPool.put(buf);
@@ -242,39 +244,25 @@ pub const GitRunner = struct {
                                 const folder = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
                                 const checkout_argv = [_][]const u8{ "git", "-C", folder, "checkout", "--quiet", ctx.resolved };
+                                this.allocator.free(this.argv_bytes);
+                                const argv, const argv_bytes = bun.spawn.allocateArguments(this.allocator, checkout_argv) catch bun.outOfMemory();
+                                this.argv = argv;
+                                this.argv_bytes = argv_bytes;
+                                this.is_second_step = true;
+                                this.stdout.deinit();
+                                this.stderr.deinit();
+                                this.remaining_fds = 0;
 
-                                // Create a new completion context for the checkout step
-                                var checkout_context = this.completion_context;
-                                switch (checkout_context) {
-                                    .checkout => |*checkout_ctx| {
-                                        checkout_ctx.* = checkout_ctx.*; // Copy the context
-                                    },
-                                    else => unreachable,
-                                }
+                                this.stdout = bun.io.BufferedReader.init(@This());
+                                this.stderr = bun.io.BufferedReader.init(@This());
+                                this.stdout.setParent(this);
+                                this.stderr.setParent(this);
 
-                                // Create environment map from this runner's envp
-                                const checkout_env = DotEnv.Map.init(this.allocator);
-                                // Note: Creating a new env map from scratch since envp is complex to duplicate
-                                // This should be fine since Repository.shared_env.get() creates the environment anyway
-
-                                // Create a new runner for the checkout step using GitRunner.new()
-                                const checkout_runner = GitRunner.new(
-                                    this.allocator,
-                                    this.manager,
-                                    checkout_context,
-                                    &checkout_argv,
-                                    checkout_env,
-                                ) catch |err| {
+                                this.spawn() catch |err| {
                                     this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
                                     return;
                                 };
-                                checkout_runner.is_second_step = true;
-
-                                checkout_runner.spawn() catch |err| {
-                                    this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
-                                    checkout_runner.deinit();
-                                    return;
-                                };
+                                must_deinit = false;
                             } else {
                                 // Second step completed (checkout), clean up and read package.json
                                 const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
@@ -394,20 +382,8 @@ pub const GitRunner = struct {
         this.stdout.deinit();
         this.stderr.deinit();
 
-        // Free envp
-        for (this.envp) |env_str| {
-            if (env_str) |str| {
-                this.allocator.free(std.mem.span(str));
-            }
-        }
-        this.allocator.free(this.envp);
-
-        // Free owned argv strings
-        for (this.argv) |arg| {
-            this.allocator.free(arg);
-        }
-        this.allocator.free(this.argv);
-
+        this.allocator.free(this.argv_bytes);
+        this.arena.deinit();
         this.allocator.destroy(this);
     }
 };

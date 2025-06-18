@@ -137,33 +137,35 @@ pub const Repository = extern struct {
 
     pub var shared_env: struct {
         env: ?DotEnv.Map = null,
-        pub fn get(this: *@This(), allocator: std.mem.Allocator, other: *DotEnv.Loader) DotEnv.Map {
-            return this.env orelse brk: {
-                // Note: currently if the user sets this to some value that causes
-                // a prompt for a password, the stdout of the prompt will be masked
-                // by further output of the rest of the install process.
-                // A value can still be entered, but we need to find a workaround
-                // so the user can see what is being prompted. By default the settings
-                // below will cause no prompt and throw instead.
-                var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
+        pub fn get(this: *@This(), allocator: std.mem.Allocator, other: *const DotEnv.Loader) *const DotEnv.Map {
+            if (this.env) |*env| {
+                return env;
+            }
 
-                if (cloned.get("GIT_ASKPASS") == null) {
-                    const config = SloppyGlobalGitConfig.get();
-                    if (!config.has_askpass) {
-                        cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
-                    }
+            // Note: currently if the user sets this to some value that causes
+            // a prompt for a password, the stdout of the prompt will be masked
+            // by further output of the rest of the install process.
+            // A value can still be entered, but we need to find a workaround
+            // so the user can see what is being prompted. By default the settings
+            // below will cause no prompt and throw instead.
+            var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
+
+            if (cloned.get("GIT_ASKPASS") == null) {
+                const config = SloppyGlobalGitConfig.get();
+                if (!config.has_askpass) {
+                    cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
                 }
+            }
 
-                if (cloned.get("GIT_SSH_COMMAND") == null) {
-                    const config = SloppyGlobalGitConfig.get();
-                    if (!config.has_ssh_command) {
-                        cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
-                    }
+            if (cloned.get("GIT_SSH_COMMAND") == null) {
+                const config = SloppyGlobalGitConfig.get();
+                if (!config.has_ssh_command) {
+                    cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
                 }
+            }
 
-                this.env = cloned;
-                break :brk this.env.?;
-            };
+            this.env = cloned;
+            return &this.env.?;
         }
     } = .{};
 
@@ -414,7 +416,7 @@ pub const Repository = extern struct {
     pub fn download(
         pm: *PackageManager,
         allocator: std.mem.Allocator,
-        env: DotEnv.Map,
+        env: *const DotEnv.Map,
         _: *logger.Log,
         cache_dir: std.fs.Dir,
         task_id: u64,
@@ -433,7 +435,16 @@ pub const Repository = extern struct {
             defer bun.PathBufferPool.put(buf);
             const path = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
-            const argv = try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "fetch", "--quiet" });
+            const gitpath = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(gitpath);
+            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
+            const argv = &[_][]const u8{
+                git,
+                "-C",
+                path,
+                "fetch",
+                "--quiet",
+            };
 
             const context = GitRunner.CompletionContext{
                 .download = .{
@@ -445,7 +456,7 @@ pub const Repository = extern struct {
                 },
             };
 
-            const runner = try GitRunner.new(allocator, pm, context, argv, env);
+            const runner = try GitRunner.init(allocator, pm, context, argv, env);
             try runner.spawn();
         } else |not_found| {
             if (not_found != error.FileNotFound) {
@@ -458,15 +469,19 @@ pub const Repository = extern struct {
             defer bun.PathBufferPool.put(buf);
             const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
-            const argv = try allocator.dupe([]const u8, &[_][]const u8{
-                "git",
+            const gitpath = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(gitpath);
+            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
+            const argv = &[_][]const u8{
+                git,
                 "clone",
-                "-c core.longpaths=true",
+                "-c",
+                "core.longpaths=true",
                 "--quiet",
                 "--bare",
                 url,
                 target,
-            });
+            };
 
             const context = GitRunner.CompletionContext{
                 .download = .{
@@ -478,7 +493,13 @@ pub const Repository = extern struct {
                 },
             };
 
-            const runner = try GitRunner.new(allocator, pm, context, argv, env);
+            const runner = try GitRunner.init(
+                allocator,
+                pm,
+                context,
+                argv,
+                env,
+            );
             try runner.spawn();
         }
     }
@@ -486,7 +507,7 @@ pub const Repository = extern struct {
     pub fn findCommit(
         pm: *PackageManager,
         allocator: std.mem.Allocator,
-        env: *DotEnv.Loader,
+        env: *const DotEnv.Map,
         _: *logger.Log,
         repo_dir: std.fs.Dir,
         name: string,
@@ -499,11 +520,16 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
-        const argv = if (committish.len > 0)
-            try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "log", "--format=%H", "-1", committish })
-        else
-            try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "log", "--format=%H", "-1" });
-
+        const gitpath = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(gitpath);
+        const git = bun.which(
+            gitpath,
+            env.get("PATH") orelse "",
+            bun.fs.FileSystem.instance.top_level_dir,
+            "git",
+        ) orelse "git";
+        const argv_buf = &[_][]const u8{ git, "-C", path, "log", "--format=%H", "-1", committish };
+        const argv: []const []const u8 = if (committish.len > 0) argv_buf else argv_buf[0 .. argv_buf.len - 1];
         const context = GitRunner.CompletionContext{
             .find_commit = .{
                 .name = try allocator.dupe(u8, name),
@@ -513,14 +539,14 @@ pub const Repository = extern struct {
             },
         };
 
-        const runner = try GitRunner.new(allocator, pm, context, argv, shared_env.get(allocator, env));
+        const runner = try GitRunner.init(allocator, pm, context, argv, env);
         try runner.spawn();
     }
 
     pub fn checkout(
         pm: *PackageManager,
         allocator: std.mem.Allocator,
-        env: DotEnv.Map,
+        env: *const DotEnv.Map,
         _: *logger.Log,
         cache_dir: std.fs.Dir,
         repo_dir: std.fs.Dir,
@@ -557,15 +583,19 @@ pub const Repository = extern struct {
             const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
             // First clone without checkout
-            const clone_argv = try allocator.dupe([]const u8, &[_][]const u8{
-                "git",
+            const gitpath = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(gitpath);
+            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
+            const argv = &[_][]const u8{
+                git,
                 "clone",
-                "-c core.longpaths=true",
+                "-c",
+                "core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
                 repo_path,
                 target,
-            });
+            };
 
             // Then we'll need to checkout after clone completes
             // For now, we'll do both operations in sequence
@@ -580,7 +610,7 @@ pub const Repository = extern struct {
                 },
             };
 
-            const runner = try GitRunner.new(allocator, pm, context, clone_argv, env);
+            const runner = try GitRunner.init(allocator, pm, context, argv, env);
             try runner.spawn();
         }
     }

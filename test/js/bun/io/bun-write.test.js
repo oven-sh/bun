@@ -581,4 +581,46 @@ describe("Bun.write - writing a file to itself", () => {
 
     fs.unlinkSync(tempFilePath);
   });
+
+  test("should handle same file descriptor", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-4.txt`);
+    const content = "Hello, world!";
+
+    const file = Bun.file(tempFilePath);
+    await Bun.write(file, content);
+
+    const fd = fs.openSync(tempFilePath, "r+");
+    const fdFile = Bun.file(fd);
+
+    const size = await Bun.write(fdFile, fdFile);
+    expect(size).toBe(content.length);
+
+    const fileContent = await fdFile.text();
+    expect(fileContent).toBe(content);
+
+    fs.closeSync(fd);
+    fs.unlinkSync(tempFilePath);
+  });
+
+  // right now it doesn't handle this case
+  test.todo("should handle same file descriptor (2)", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-4.txt`);
+    const content = "Hello, world!";
+
+    const file = Bun.file(tempFilePath);
+    await Bun.write(file, content);
+
+    const fd = fs.openSync(tempFilePath, "r+");
+    const fdFile = Bun.file(fd);
+
+    const size = await Bun.write(fdFile, file);
+    expect(size).toBe(content.length);
+
+    const fileContent = await fdFile.text();
+    expect(fileContent).toBe(content);
+
+    fs.closeSync(fd);
+    fs.unlinkSync(tempFilePath);
+  });
+
 });

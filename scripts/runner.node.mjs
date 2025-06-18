@@ -132,7 +132,8 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      // TODO
+      default: isCI ? (getEnv("BUILDKITE_STEP_KEY")?.includes("asan") ? "0" : "3") : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",
@@ -238,6 +239,7 @@ function getTestExpectations() {
 const shouldValidateExceptions = (() => {
   let skipArray;
   return test => {
+    return true; // TODO
     if (!skipArray) {
       const path = join(cwd, "test/no-validate-exceptions.txt");
       if (!existsSync(path)) {

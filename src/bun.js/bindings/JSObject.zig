@@ -144,7 +144,7 @@ pub const JSObject = opaque {
         return JSC__JSObject__create(global, length, creator, Type.call);
     }
 
-    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) !JSValue {
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
         // we don't use fromJSHostCall, because it will assert that if there is an exception
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:

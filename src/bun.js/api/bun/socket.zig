@@ -1278,6 +1278,7 @@ pub const Listener = struct {
                 var error_: i32 = 0;
                 socket.doConnect(connection, &error_) catch {
                     bun.assert(error_ > 0);
+                    if (Environment.isWindows and port == null and error_ == bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno()) error_ = bun.sys.SystemErrno.ENOENT.to_uv_errno(); //TODO: use better WSA api
                     socket.handleConnectError(error_);
                     return promise_value;
                 };

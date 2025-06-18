@@ -21,6 +21,7 @@
 
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN use better WSA api, 'connect' always returns ECONNREFUSED.
 const fixtures = require('../common/fixtures');
 const fs = require('fs');
 const net = require('net');

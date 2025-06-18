@@ -320,11 +320,11 @@ pub const TablePrinter = struct {
     };
 
     /// Compute how much horizontal space will take a JSValue when printed
-    fn getWidthForValue(this: *TablePrinter, value: JSValue) u32 {
+    fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
         var width: usize = 0;
         var value_formatter = this.value_formatter;
 
-        const tag = ConsoleObject.Formatter.Tag.get(value, this.globalObject) catch return 0; // TODO
+        const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
         value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
         value_formatter.format(
             tag,
@@ -343,7 +343,7 @@ pub const TablePrinter = struct {
     }
 
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
-    fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
+    fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
             .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
@@ -355,8 +355,8 @@ pub const TablePrinter = struct {
         if (this.jstype.isMap()) {
             const entry_key = try row_value.getIndex(this.globalObject, 0);
             const entry_value = try row_value.getIndex(this.globalObject, 1);
-            columns.items[1].width = @max(columns.items[1].width, this.getWidthForValue(entry_key));
-            this.values_col_width = @max(this.values_col_width orelse 0, this.getWidthForValue(entry_value));
+            columns.items[1].width = @max(columns.items[1].width, try this.getWidthForValue(entry_key));
+            this.values_col_width = @max(this.values_col_width orelse 0, try this.getWidthForValue(entry_value));
             return;
         }
 
@@ -367,7 +367,7 @@ pub const TablePrinter = struct {
             if (!this.properties.isUndefined()) {
                 for (columns.items[1..]) |*column| {
                     if (try row_value.getOwn(this.globalObject, column.name)) |value| {
-                        column.width = @max(column.width, this.getWidthForValue(value));
+                        column.width = @max(column.width, try this.getWidthForValue(value));
                     }
                 }
             } else {
@@ -399,12 +399,12 @@ pub const TablePrinter = struct {
                         break :brk &columns.items[columns.items.len - 1];
                     };
 
-                    column.width = @max(column.width, this.getWidthForValue(value));
+                    column.width = @max(column.width, try this.getWidthForValue(value));
                 }
             }
         } else if (this.properties.isUndefined()) {
             // not object -> the value will go to the special "Values" column
-            this.values_col_width = @max(this.values_col_width orelse 1, this.getWidthForValue(row_value));
+            this.values_col_width = @max(this.values_col_width orelse 1, try this.getWidthForValue(row_value));
         }
     }
 
@@ -466,7 +466,7 @@ pub const TablePrinter = struct {
             if (value == .zero) {
                 try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
             } else {
-                const len: u32 = this.getWidthForValue(value);
+                const len: u32 = try this.getWidthForValue(value);
                 const needed = col.width -| len;
                 try writer.writeByteNTimes(' ', PADDING);
                 const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);

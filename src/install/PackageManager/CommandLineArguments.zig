@@ -122,6 +122,11 @@ const audit_params: []const ParamType = &([_]ParamType{
     clap.parseParam("--json                                 Output in JSON format") catch unreachable,
 });
 
+const info_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    clap.parseParam("<POS> ...                              Package name or path to package.json") catch unreachable,
+    clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+});
+
 const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
     // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -571,6 +576,38 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .info => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
+                \\
+                \\  View package metadata from the registry.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Display metadata for the 'react' package<r>
+                \\  <b><green>bun info<r> <blue>react<r>
+                \\
+                \\  <d>Display a specific version of a package<r>
+                \\  <b><green>bun info<r> <blue>react@18.0.0<r>
+                \\
+                \\  <d>Display a specific property in JSON format<r>
+                \\  <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/info<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(info_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -594,6 +631,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // TODO: we will probably want to do this for other *_params. this way extra params
         // are not included in the help text
         .audit => shared_params ++ audit_params,
+        .info => info_params,
     };
 
     var diag = clap.Diagnostic{};

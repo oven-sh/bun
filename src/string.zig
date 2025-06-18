@@ -520,8 +520,8 @@ pub const String = extern struct {
         var out: String = String.dead;
         const ok = BunString__fromJS(globalObject, value, &out);
 
-        scope.debugAssertExceptionPresenceMatches(!ok);
-        scope.debugAssertExceptionPresenceMatches(out.tag == .Dead);
+        scope.assertExceptionPresenceMatches(!ok);
+        scope.assertExceptionPresenceMatches(out.tag == .Dead);
 
         return if (ok) out else error.JSError;
     }

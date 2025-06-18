@@ -126,13 +126,6 @@ pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: 
     }
 }
 
-/// Same as assertExceptionPresenceMatches, but only in debug mode
-pub fn debugAssertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
-    if (Environment.isDebug) {
-        self.assertExceptionPresenceMatches(should_have_exception);
-    }
-}
-
 /// If no exception, returns.
 /// If termination exception, returns JSExecutionTerminated (so you can `try`)
 /// If non-termination exception, assertion failure.

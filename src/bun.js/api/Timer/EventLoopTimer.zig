@@ -147,7 +147,7 @@ pub const State = enum {
 
 /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
 /// for all those kinds of timers
-fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
+pub fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
     *EventLoopTimer => ?*TimerObjectInternals,
     *const EventLoopTimer => ?*const TimerObjectInternals,
     else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternals"),
@@ -230,7 +230,7 @@ pub fn deinit(_: *EventLoopTimer) void {}
 const timespec = bun.timespec;
 
 /// A timer created by WTF code and invoked by Bun's event loop
-const WTFTimer = @import("../WTFTimer.zig");
+const WTFTimer = @import("../../WTFTimer.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
 const TimeoutObject = @import("../Timer.zig").TimeoutObject;

@@ -126,7 +126,7 @@ pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFr
 const bun = @import("bun");
 const JSC = bun.JSC;
 const TimerObjectInternals = @import("../Timer.zig").TimerObjectInternals;
-const Debugger = @import("../Debugger.zig");
+const Debugger = @import("../../Debugger.zig");
 const ID = @import("../Timer.zig").ID;
 const Kind = @import("../Timer.zig").Kind;
 const EventLoopTimer = @import("../Timer.zig").EventLoopTimer;

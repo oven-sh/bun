@@ -622,5 +622,4 @@ describe("Bun.write - writing a file to itself", () => {
     fs.closeSync(fd);
     fs.unlinkSync(tempFilePath);
   });
-
 });

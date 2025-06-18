@@ -3578,7 +3578,7 @@ EncodedJSValue GlobalObject::assignStreamToResumableSink(JSValue stream, JSValue
     auto& vm = this->vm();
     JSC::JSFunction* function = this->m_assignStreamToResumableSink.get();
     if (!function) {
-        JSC::JSFunction* function = JSFunction::create(vm, this, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignStreamIntoResumableSinkCodeGenerator(vm)), this);
+        function = JSFunction::create(vm, this, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignStreamIntoResumableSinkCodeGenerator(vm)), this);
         this->m_assignStreamToResumableSink.set(vm, this, function);
     }
 

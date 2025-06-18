@@ -221,7 +221,6 @@ function bundle(src: string, dst: string, options: BuildOptions = {}): void {
     outfile: dst,
     ...options,
   });
-  console.log(errors)
   if (errors?.length) {
     const messages = formatMessagesSync(errors, { kind: "error" });
     throw new Error(messages.join("\n"));

@@ -198,7 +198,7 @@ pub const JSPromise = opaque {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
-        scope.returnIfException() catch @panic("TODO: JSPromise wrap threw");
+        bun.debugAssert(!scope.hasException()); // TODO
         return promise;
     }
 
@@ -274,7 +274,7 @@ pub const JSPromise = opaque {
         }
 
         JSC__JSPromise__resolve(this, globalThis, value);
-        scope.returnIfException() catch @panic("TODO: JSPromise.resolve() threw");
+        bun.debugAssert(!scope.hasException()); // TODO
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {

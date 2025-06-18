@@ -1472,7 +1472,7 @@ pub const JSValue = enum(i64) {
         scope.init(global, @src(), .enabled);
         defer scope.deinit();
         JSC__JSValue___then(this, global, ctx, resolve, reject);
-        scope.returnIfException() catch @panic("TODO: then() threw");
+        bun.debugAssert(!scope.hasException()); // TODO
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSC.JSHostFnZig, reject: JSC.JSHostFnZig) void {
@@ -1480,7 +1480,7 @@ pub const JSValue = enum(i64) {
         scope.init(global, @src(), .enabled);
         defer scope.deinit();
         this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
-        scope.returnIfException() catch @panic("TODO: then() threw");
+        bun.debugAssert(!scope.hasException()); // TODO
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {

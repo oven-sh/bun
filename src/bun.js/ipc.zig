@@ -400,7 +400,7 @@ pub const SendHandle = struct {
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
         defer self.deinit();
-        self.callbacks.callNextTick(global) catch @panic("TODO do not merge this");
+        self.callbacks.callNextTick(global) catch {}; // TODO handle exceptions
     }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();

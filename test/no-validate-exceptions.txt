@@ -2803,3 +2803,13 @@ test/js/web/websocket/websocket.test.js
 test/napi/uv_stub.test.ts
 test/regression/issue/14982/14982.test.ts
 test/regression/issue/17766.test.ts
+test/bundler/transpiler/bun-pragma.test.ts
+test/js/bun/resolve/import-custom-condition.test.ts
+test/js/node/no-addons.test.ts
+test/js/bun/spawn/spawn.ipc.bun-node.test.ts
+test/js/bun/test/snapshot-tests/new-snapshot.test.ts
+test/js/node/readline/readline_never_unrefs.test.ts
+test/js/web/console/console-timeLog.test.ts
+test/regression/issue/18239/18239.test.ts
+test/cli/run/run-autoinstall.test.ts
+test/regression/issue/09041.test.ts

@@ -359,7 +359,7 @@ pub const Framework = struct {
         refs: *StringRefList,
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
-    ) !Framework {
+    ) bun.JSError!Framework {
         if (opts.isString()) {
             const str = try opts.toBunString(global);
             defer str.deref();

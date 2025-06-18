@@ -21,7 +21,6 @@ const Global = bun.Global;
 const invalid_package_id = install.invalid_package_id;
 const strings = bun.strings;
 const string = bun.string;
-const stringZ = bun.stringZ;
 const FileSystem = bun.fs.FileSystem;
 const LifecycleScriptSubprocess = install.LifecycleScriptSubprocess;
 const PackageID = install.PackageID;
@@ -30,11 +29,9 @@ const ExtractData = install.ExtractData;
 const Task = install.Task;
 const TaskCallbackContext = install.TaskCallbackContext;
 const PatchTask = install.PatchTask;
-const NetworkTask = install.NetworkTask;
 const Package = Lockfile.Package;
 const Path = bun.path;
 const Syscall = bun.sys;
-const ThreadPool = bun.ThreadPool;
 
 pub const PackageInstaller = struct {
     manager: *PackageManager,

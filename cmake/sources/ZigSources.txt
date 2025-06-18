@@ -298,6 +298,7 @@ src/ci_info.zig
 src/cli.zig
 src/cli/add_command.zig
 src/cli/add_completions.zig
+src/cli/Arguments.zig
 src/cli/audit_command.zig
 src/cli/build_command.zig
 src/cli/bunx_command.zig
@@ -513,6 +514,8 @@ src/ini.zig
 src/install/bin.zig
 src/install/dependency.zig
 src/install/extract_tarball.zig
+src/install/hoisted_install.zig
+src/install/install_binding.zig
 src/install/install.zig
 src/install/integrity.zig
 src/install/lifecycle_script_runner.zig
@@ -532,6 +535,8 @@ src/install/lockfile/printer/Yarn.zig
 src/install/lockfile/Tree.zig
 src/install/migration.zig
 src/install/npm.zig
+src/install/PackageInstall.zig
+src/install/PackageInstaller.zig
 src/install/PackageManager/CommandLineArguments.zig
 src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerOptions.zig
@@ -673,12 +678,16 @@ src/StaticHashMap.zig
 src/string_immutable.zig
 src/string_types.zig
 src/string.zig
+src/string/escapeHTML.zig
 src/string/HashedString.zig
 src/string/MutableString.zig
+src/string/paths.zig
 src/string/PathString.zig
 src/string/SmolStr.zig
 src/string/StringBuilder.zig
 src/string/StringJoiner.zig
+src/string/unicode.zig
+src/string/visible.zig
 src/string/WTFStringImpl.zig
 src/sync.zig
 src/sys_uv.zig

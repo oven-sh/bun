@@ -3708,24 +3708,16 @@ const StackOverflow = error{StackOverflow};
 // We keep up to 4 path buffers alive per thread at a time.
 pub fn PathBufferPoolT(comptime T: type) type {
     return struct {
-        const Pool = ObjectPool(PathBuf, null, true, 4);
-        pub const PathBuf = struct {
-            bytes: T,
-
-            pub fn deinit(this: *PathBuf) void {
-                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-                node.release();
-            }
-        };
+        const Pool = ObjectPool(T, null, true, 4);
 
         pub fn get() *T {
             // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+            return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
         pub fn put(buffer: *T) void {
-            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-            path_buf.deinit();
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+            node.release();
         }
 
         pub fn deleteAll() void {

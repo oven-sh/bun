@@ -1018,6 +1018,25 @@ pub fn writeFileWithSourceDestination(
     }
     // If this is file <> file, we can just copy the file
     else if (destination_type == .file and source_type == .file) {
+        // Check if source and destination are the same file
+        const dest_pathlike = &destination_store.data.file.pathlike;
+        const src_pathlike = &source_store.data.file.pathlike;
+        if (dest_pathlike.* == .path and src_pathlike.* == .path) {
+            if (std.mem.eql(u8, dest_pathlike.path.slice(), src_pathlike.path.slice())) {
+                if (source_blob.size == Blob.max_size) {
+                    source_blob.resolveSize();
+                }
+                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(source_blob.size));
+            }
+        } else if (dest_pathlike.* == .fd and src_pathlike.* == .fd) {
+            if (dest_pathlike.fd == src_pathlike.fd) {
+                if (source_blob.size == Blob.max_size) {
+                    source_blob.resolveSize();
+                }
+                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(source_blob.size));
+            }
+        }
+
         if (comptime Environment.isWindows) {
             return Blob.copy_file.CopyFileWindows.init(
                 destination_store,

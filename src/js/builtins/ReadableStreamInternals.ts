@@ -775,11 +775,14 @@ export function assignStreamIntoResumableSink(stream, sink) {
       try {
         while (true) {
           var { value, done } = await reader.read();
+          console.log("drainReaderIntoSink", value, done);
           if (closed) break;
 
           if (value) {
             // write returns false under backpressure
-            if (!sink.write(value)) break;
+            if (!sink.write(value)) {
+              break;
+            }
           }
           if (done) {
             closed = true;
@@ -790,8 +793,11 @@ export function assignStreamIntoResumableSink(stream, sink) {
       } catch (e: any) {
         error = e;
         closed = true;
-        // end with the error
-        sink.end(e);
+        function endNT() {
+          sink.end(e);
+        }
+        // end with the error NT so we can simplify the flow to only listen to end
+        process.nextTick(endNT);
       }
     }
 

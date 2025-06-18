@@ -1,8 +1,8 @@
 pub fn ResumableSink(
     comptime js: type,
     comptime Context: type,
-    comptime onWrite: ?fn (context: *Context, chunk: []const u8) bool,
-    comptime onEnd: ?fn (context: *Context, err: ?JSC.JSValue) void,
+    comptime onWrite: fn (context: *Context, chunk: []const u8) bool,
+    comptime onEnd: fn (context: *Context, err: ?JSC.JSValue) void,
 ) type {
     return struct {
         const log = bun.Output.scoped(.ResumableSink, false);
@@ -27,7 +27,7 @@ pub fn ResumableSink(
             return globalThis.throwInvalidArguments("ResumableSink is not constructable", .{});
         }
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context) bun.JSError!*@This() {
+        pub fn init(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context) *@This() {
             const this = @This().new(.{
                 .globalThis = globalThis,
                 .context = context,
@@ -38,9 +38,6 @@ pub fn ResumableSink(
             const js_stream = stream.toJS();
             js_stream.ensureStillAlive();
             _ = Bun__assignStreamIntoResumableSink(globalThis, js_stream, self);
-            if (globalThis.hasException()) {
-                return bun.JSError.JSError;
-            }
             this.self = JSC.Strong.Optional.create(self, globalThis);
             this.stream = JSC.Strong.Optional.create(js_stream, globalThis);
             return this;
@@ -89,23 +86,21 @@ pub fn ResumableSink(
 
             const buffer = args[0];
             buffer.ensureStillAlive();
-            if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
-                const bytes = array_buffer.byteSlice();
-                if (onWrite) |onWriteCallback| {
-                    return JSC.jsBoolean(onWriteCallback(this.context, bytes));
-                }
+            if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer)) |sb| {
+                defer sb.deinit();
+                const bytes = sb.slice();
+                return JSC.jsBoolean(onWrite(this.context, bytes));
             }
 
-            return .js_undefined;
+            return globalThis.throwInvalidArguments("ResumableSink.write requires a string or buffer", .{});
         }
 
         pub fn jsEnd(this: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments();
 
-            if (onEnd) |onEndCallback| {
-                onEndCallback(this.context, if (args.len > 0) args[0] else null);
-            }
+            onEnd(this.context, if (args.len > 0) args[0] else null);
+
             // let it be garbage collected
             this.stream.deinit();
             this.self.deinit();

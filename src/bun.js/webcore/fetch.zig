@@ -339,14 +339,8 @@ pub const FetchTasklet = struct {
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
             const globalThis = this.global_this;
-
-            const sink = ResumableSink.init(globalThis, stream, this) catch |err| {
-                _ = globalThis.takeException(err);
-                // if this is reached we also reach the onEnd
-                // so we can just return, sink will be deinit'd safely
-                return;
-            };
             this.ref(); // lets only unref when sink is done
+            const sink = ResumableSink.init(globalThis, stream, this);
             // make sure the sink is alive so we can abort/resume
             sink.ref();
             this.sink = sink;
@@ -1150,29 +1144,22 @@ pub const FetchTasklet = struct {
         reason.ensureStillAlive();
         this.abort_reason.set(this.global_this, reason);
         this.abortTask();
-        if (this.sink) |wrapper| {
-            wrapper.cancel(reason);
+        if (this.sink) |sink| {
+            sink.cancel(reason);
             return;
         }
     }
 
-    pub fn sendRequestData(this: *FetchTasklet, data: []const u8, ended: bool) void {
-        if (this.http) |http_| {
-            http.http_thread.scheduleRequestWrite(http_, data, ended);
-        } else if (data.len != 3) {
-            bun.default_allocator.free(data);
-        }
-    }
-
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
+        // TODO: change this is terrible
         if (this.http) |http_| {
             // encode the data as a chunked transfer-encoding body
             const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch bun.outOfMemory();
             // lets limit buffering more than 2 chunks at a time
             http.http_thread.scheduleRequestWrite(http_, chunk, false);
-            return false; // pause until the chunk is written
+            return true;
         }
-        return true;
+        return false;
     }
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?JSC.JSValue) void {

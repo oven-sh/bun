@@ -1319,7 +1319,6 @@ pub const NetworkSink = struct {
     auto_flusher: AutoFlusher = AutoFlusher{},
 
     const HTTPWritableStream = union(enum) {
-        fetch: *JSC.WebCore.Fetch.FetchTasklet,
         s3_upload: *bun.S3.MultiPartUpload,
     };
 
@@ -1327,7 +1326,6 @@ pub const NetworkSink = struct {
         if (this.task) |task| {
             return switch (task) {
                 .s3_upload => |s3| @truncate(s3.partSizeInBytes()),
-                else => this.highWaterMark,
             };
         }
         return this.highWaterMark;
@@ -1346,7 +1344,6 @@ pub const NetworkSink = struct {
         if (this.task) |task| {
             return switch (task) {
                 .s3_upload => |s3| s3.path,
-                else => null,
             };
         }
         return null;
@@ -1407,7 +1404,7 @@ pub const NetworkSink = struct {
         if (this.task) |task| {
             this.task = null;
             switch (task) {
-                inline .fetch, .s3_upload => |writable| {
+                inline .s3_upload => |writable| {
                     writable.deref();
                 },
             }
@@ -1416,7 +1413,7 @@ pub const NetworkSink = struct {
 
     fn sendRequestData(writable: HTTPWritableStream, data: []const u8, is_last: bool) void {
         switch (writable) {
-            inline .fetch, .s3_upload => |task| task.sendRequestData(data, is_last),
+            inline .s3_upload => |task| task.sendRequestData(data, is_last),
         }
     }
 

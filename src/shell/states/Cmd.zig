@@ -613,10 +613,8 @@ fn initSubproc(this: *Cmd) Yield {
         },
     };
     subproc.ref();
-    defer {
-        this.spawn_arena_freed = true;
-        arena.deinit();
-    }
+    this.spawn_arena_freed = true;
+    arena.deinit();
 
     if (did_exit_immediately) {
         if (subproc.process.hasExited()) {

@@ -1,3 +1,29 @@
+/// There are constraints on Bun's shell interpreter which are unique to shells in
+/// general:
+/// 1. We try to keep everything in the Bun process as much as possible for
+///    performance reasons and also to leverage Bun's existing IO/FS code
+/// 2. We try to use non-blocking operations as much as possible so the shell
+///    does not interfere with the JS event loop
+/// 3. Zig does not have coroutines (yet)
+///
+/// These cause two problems:
+/// 1. Unbounded recursion, if we keep calling .next() on state machine structs
+///    then the call stack could get really deep, we need some mechanism to allow
+///    execution to continue without blowing up the call stack
+///
+/// 2. Correctly handling suspension points. These occur when IO would block so
+///    we must, for example, wait for epoll/kqueue. The easiest solution is to have
+///    functions return some value indicating that they suspended execution of the
+///    interpreter.
+///
+/// This `Yield` struct solves these problems. It represents a "continuation" of
+/// the shell interpreter. Shell interpreter functions must return this value.
+/// At the top-level of execution, `Yield.run(...)` serves as a "trampoline" to
+/// drive execution without blowing up the callstack.
+///
+/// Note that the "top-level of execution" could be in `Interpreter.run` or when
+/// shell execution resumes after suspension in a task callback (for example in
+/// IOWriter.onWritePoll).
 pub const Yield = union(enum) {
     script: *Script,
     stmt: *Stmt,
@@ -16,7 +42,9 @@ pub const Yield = union(enum) {
     /// When that happens, we return this variant to ensure that the
     /// `.onIOWriterChunk` is called at the top of the callstack.
     ///
-    /// TODO: this struct is massive
+    /// TODO: this struct is massive, also I think we can remove this since
+    ///       it is only used in 2 places. we might need to implement signals
+    ///       first tho.
     on_io_writer_chunk: struct {
         err: ?JSC.SystemError,
         written: usize,
@@ -31,12 +59,12 @@ pub const Yield = union(enum) {
     failed,
     done,
 
-    /// Used in debug to ensure that we aren't blowing up the call stack by
-    /// using recursion to continue execution state in the shell
+    /// Used in debug builds to ensure the shell is not creating a callstack
+    /// that is too deep.
     threadlocal var _dbg_catch_exec_within_exec: if (Environment.isDebug) usize else u0 = 0;
 
     /// Ideally this should be 1, but since we actually call the `resolve` of the Promise in
-    ///  Interpreter.finish it could actually result in another shell script running.
+    /// Interpreter.finish it could actually result in another shell script running.
     const MAX_DEPTH = 2;
 
     pub fn isDone(this: *const Yield) bool {
@@ -44,21 +72,33 @@ pub const Yield = union(enum) {
     }
 
     pub fn run(this: Yield) void {
-        log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+        if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
         defer {
-            log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
             if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
-        // A pipeline essentially creates multiple threads of execution, so
-        // we need a stack!
+        // A pipeline creates multiple "threads" of execution:
+        //
+        // ```bash
+        // cmd1 | cmd2 | cmd3
+        // ```
+        //
+        // We need to start cmd1, go back to the pipeline, start cmd2, and so
+        // on.
+        //
+        // This means we need to store a reference to the pipeline. And
+        // there can be nested pipelines, so we need a stack.
         var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
         const alloc = sfb.get();
         var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
         defer pipeline_stack.deinit();
 
+        // Note that we're using labelled switch statements but _not_
+        // re-assigning `this`, so the `this` variable is stale after the first
+        // execution. Don't touch it.
         state: switch (this) {
             .pipeline => |x| {
                 pipeline_stack.append(x) catch bun.outOfMemory();

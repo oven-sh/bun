@@ -94,7 +94,7 @@ pub const GitRunner = struct {
             .stdin = .ignore,
             .stdout = .buffer,
             .stderr = .buffer,
-            .cwd = ".",
+            .cwd = bun.fs.FileSystem.instance.top_level_dir,
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(&this.manager.event_loop),
             } else {},
@@ -235,9 +235,11 @@ pub const GitRunner = struct {
                         },
                         .checkout => |ctx| {
                             if (!this.is_second_step) {
+                                const buf = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(buf);
                                 // First step completed (clone), now do checkout
                                 const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
-                                const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+                                const folder = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
                                 const checkout_argv = [_][]const u8{ "git", "-C", folder, "checkout", "--quiet", ctx.resolved };
 

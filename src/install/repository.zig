@@ -336,47 +336,6 @@ pub const Repository = extern struct {
         }
     };
 
-    fn exec(
-        allocator: std.mem.Allocator,
-        _env: DotEnv.Map,
-        argv: []const string,
-    ) !string {
-        var env = _env;
-        var std_map = try env.stdEnvMap(allocator);
-
-        defer std_map.deinit();
-
-        const result = if (comptime Environment.isWindows)
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            })
-        else
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            });
-
-        switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout else if (
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
-            (strings.containsComptime(result.stderr, "remote:") and
-                strings.containsComptime(result.stderr, "not") and
-                strings.containsComptime(result.stderr, "found")) or
-                strings.containsComptime(result.stderr, "does not exist"))
-            {
-                return error.RepositoryNotFound;
-            },
-            else => {},
-        }
-
-        return error.InstallFailed;
-    }
-
     pub fn trySSH(url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
@@ -470,7 +429,9 @@ pub const Repository = extern struct {
 
         if (cache_dir.openDirZ(folder_name, .{})) |dir| {
             // Repository exists, just need to fetch
-            const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
+            const path = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
             const argv = try allocator.dupe([]const u8, &[_][]const u8{ "git", "-C", path, "fetch", "--quiet" });
 
@@ -493,7 +454,9 @@ pub const Repository = extern struct {
             }
 
             // Need to clone
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
+            const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
             const argv = try allocator.dupe([]const u8, &[_][]const u8{
                 "git",
@@ -530,7 +493,9 @@ pub const Repository = extern struct {
         committish: string,
         task_id: u64,
     ) !void {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        const path = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
@@ -584,8 +549,11 @@ pub const Repository = extern struct {
                 return;
             }
 
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
+
             // Need to clone and checkout
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
             const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
             // First clone without checkout

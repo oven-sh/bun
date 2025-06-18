@@ -289,6 +289,7 @@ fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
             pipe[1] = .fromUV(fds[1]);
         } else {
             switch (bun.sys.socketpairForShell(
+                // switch (bun.sys.socketpair(
                 std.posix.AF.UNIX,
                 std.posix.SOCK.STREAM,
                 0,

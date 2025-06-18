@@ -1008,7 +1008,10 @@ pub const PipeReader = struct {
                 .bytelist => {
                     this.bytelist.deinitWithAllocator(bun.default_allocator);
                 },
-                .array_buffer => {},
+                .array_buffer => {
+                    // FIXME: SHOULD THIS BE HERE?
+                    this.array_buffer.buf.deinit();
+                },
             }
         }
     };

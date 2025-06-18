@@ -156,6 +156,8 @@ pub const BuiltinIO = struct {
                     this.fd.writer.deref();
                 },
                 .blob => this.blob.deref(),
+                // FIXME: should this be here??
+                .arraybuf => this.arraybuf.buf.deinit(),
                 else => {},
             }
         }
@@ -370,6 +372,15 @@ pub fn init(
         },
     }
 
+    return initRedirections(cmd, kind, node, interpreter);
+}
+
+fn initRedirections(
+    cmd: *Cmd,
+    kind: Kind,
+    node: *const ast.Cmd,
+    interpreter: *Interpreter,
+) ?Yield {
     if (node.redirect_file) |file| {
         switch (file) {
             .atom => {

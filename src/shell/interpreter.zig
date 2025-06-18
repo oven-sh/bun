@@ -1023,6 +1023,7 @@ pub const Interpreter = struct {
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
+        log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
@@ -1035,6 +1036,7 @@ pub const Interpreter = struct {
     }
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
@@ -1083,7 +1085,7 @@ pub const Interpreter = struct {
     }
 
     pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) Yield {
-        log("finish {d}", .{exit_code});
+        log("Interpreter(0x{x}) finish {d}", .{ @intFromPtr(this), exit_code });
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
@@ -1144,7 +1146,7 @@ pub const Interpreter = struct {
     }
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
-        log("deinit interpreter", .{});
+        log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }

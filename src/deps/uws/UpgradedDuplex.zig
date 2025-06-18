@@ -149,7 +149,7 @@ fn onReceivedData(
             const data_arg = args.ptr[0];
             if (this.origin.has()) {
                 if (data_arg.isEmptyOrUndefinedOrNull()) {
-                    return JSC.JSValue.jsUndefined();
+                    return .js_undefined;
                 }
                 if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                     // yay we can read the data
@@ -164,7 +164,7 @@ fn onReceivedData(
             }
         }
     }
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 fn onEnd(
@@ -203,7 +203,7 @@ fn onWritable(
         this.handlers.onWritable(this.handlers.ctx);
     }
 
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 fn onCloseJS(
@@ -223,7 +223,7 @@ fn onCloseJS(
         }
     }
 
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {

@@ -291,6 +291,50 @@ pub const LinkerContext = struct {
         _ = this.pending_task_count.fetchSub(1, .monotonic);
     }
 
+    fn processHtmlImportFiles(this: *LinkerContext) void {
+        const server_source_indices = &this.parse_graph.html_imports.server_source_indices;
+        const html_source_indices = &this.parse_graph.html_imports.html_source_indices;
+        if (server_source_indices.len > 0) {
+            const input_files: []const Logger.Source = this.parse_graph.input_files.items(.source);
+            const map = this.parse_graph.pathToSourceIndexMap(.browser);
+            const parts: []const BabyList(js_ast.Part) = this.graph.ast.items(.parts);
+            const actual_ref = this.graph.runtimeFunction("__jsonParse");
+
+            for (server_source_indices.slice()) |html_import| {
+                const source = &input_files[html_import];
+                const source_index = map.get(source.path.hashKey()) orelse {
+                    @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
+                };
+
+                html_source_indices.push(this.graph.allocator, source_index) catch bun.outOfMemory();
+
+                // S.LazyExport is a call to __jsonParse.
+                const original_ref = parts[html_import]
+                    .at(1)
+                    .stmts[0]
+                    .data
+                    .s_lazy_export
+                    .e_call
+                    .target
+                    .data
+                    .e_import_identifier
+                    .ref;
+
+                // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
+                this.graph.symbols.get(original_ref).?.link = actual_ref;
+
+                // When --splitting is enabled, we have to make sure we import the __jsonParse function.
+                this.graph.generateSymbolImportAndUse(
+                    html_import,
+                    Index.part(1).get(),
+                    actual_ref,
+                    1,
+                    Index.runtime,
+                ) catch bun.outOfMemory();
+            }
+        }
+    }
+
     pub noinline fn link(
         this: *LinkerContext,
         bundle: *BundleV2,
@@ -308,6 +352,8 @@ pub const LinkerContext = struct {
         if (this.options.source_maps != .none) {
             this.computeDataForSourceMap(@as([]Index.Int, @ptrCast(reachable)));
         }
+
+        this.processHtmlImportFiles();
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -888,11 +934,11 @@ pub const LinkerContext = struct {
                             const parent_source_index = other_source_index;
 
                             if (parent_result_tla_keyword.len > 0) {
-                                const source = input_files[other_source_index];
+                                const source = &input_files[other_source_index];
                                 tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
                                     .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
-                                    .location = .initOrNull(&source, parent_result_tla_keyword),
+                                    .location = .initOrNull(source, parent_result_tla_keyword),
                                 }) catch bun.outOfMemory();
                                 break;
                             }
@@ -2355,6 +2401,7 @@ pub const LinkerContext = struct {
                 'A' => .asset,
                 'C' => .chunk,
                 'S' => .scb,
+                'H' => .html_import,
                 else => {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
@@ -2381,6 +2428,11 @@ pub const LinkerContext = struct {
                     break;
                 },
                 .chunk => if (index >= count) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                .html_import => if (index >= c.parse_graph.html_imports.server_source_indices.len) {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;

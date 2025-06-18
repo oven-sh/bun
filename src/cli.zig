@@ -237,6 +237,7 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -357,7 +358,7 @@ pub const Arguments = struct {
             ctx.log.level = original_level;
         }
         ctx.log.level = logger.Log.Level.warn;
-        try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+        try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
     fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -710,6 +711,14 @@ pub const Arguments = struct {
                 // used for disabling process.dlopen and
                 // for disabling export condition "node-addons"
                 opts.allow_addons = false;
+            }
+
+            if (args.option("--unhandled-rejections")) |unhandled_rejections| {
+                const resolved = Api.UnhandledRejections.map.get(unhandled_rejections) orelse {
+                    Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\"\n", .{unhandled_rejections});
+                    Global.exit(1);
+                };
+                opts.unhandled_rejections = resolved;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1815,29 +1824,31 @@ pub const Command = struct {
         }
 
         // bun build --compile entry point
-        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            context_data = .{
-                .args = std.mem.zeroes(Api.TransformOptions),
-                .log = log,
-                .start_time = start_time,
-                .allocator = bun.default_allocator,
-            };
-            global_cli_ctx = &context_data;
-            var ctx = global_cli_ctx;
+        if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
+            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+                context_data = .{
+                    .args = std.mem.zeroes(Api.TransformOptions),
+                    .log = log,
+                    .start_time = start_time,
+                    .allocator = bun.default_allocator,
+                };
+                global_cli_ctx = &context_data;
+                var ctx = global_cli_ctx;
 
-            ctx.args.target = Api.Target.bun;
-            if (bun.argv.len > 1) {
-                ctx.passthrough = bun.argv[1..];
-            } else {
-                ctx.passthrough = &[_]string{};
+                ctx.args.target = Api.Target.bun;
+                if (bun.argv.len > 1) {
+                    ctx.passthrough = bun.argv[1..];
+                } else {
+                    ctx.passthrough = &[_]string{};
+                }
+
+                try @import("./bun_js.zig").Run.bootStandalone(
+                    ctx,
+                    graph.entryPoint().name,
+                    graph,
+                );
+                return;
             }
-
-            try @import("./bun_js.zig").Run.bootStandalone(
-                ctx,
-                graph.entryPoint().name,
-                graph,
-            );
-            return;
         }
 
         debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});

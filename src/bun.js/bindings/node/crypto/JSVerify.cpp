@@ -414,7 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         if (convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
             // Conversion succeeded, perform verification with the converted signature
             ncrypto::Buffer<const uint8_t> derSigBuf {
-                .data = derBuffer.data(),
+                .data = derBuffer.begin(),
                 .len = derBuffer.size(),
             };
 

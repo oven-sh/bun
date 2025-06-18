@@ -1112,6 +1112,75 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     return true;
 }
+extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
+{
+    //   return typeof obj === 'object' &&
+    //      obj !== null &&
+    //      ObjectPrototypeHasOwnProperty(obj, 'stack');
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!obj.isObject()) return false;
+
+    auto* object = JSC::jsCast<JSC::JSObject*>(obj);
+    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack);
+    RELEASE_AND_RETURN(scope, result);
+}
+
+extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto decodedReason = JSValue::decode(reason);
+    if (decodedReason.isSymbol()) {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString())));
+    }
+
+    if (decodedReason.isInt32())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+    if (decodedReason.isDouble())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+    if (decodedReason.isTrue())
+        return JSC::JSValue::encode(vm.smallStrings.trueString());
+    if (decodedReason.isFalse())
+        return JSC::JSValue::encode(vm.smallStrings.falseString());
+    if (decodedReason.isNull())
+        return JSC::JSValue::encode(vm.smallStrings.nullString());
+    if (decodedReason.isUndefined())
+        return JSC::JSValue::encode(vm.smallStrings.undefinedString());
+    if (decodedReason.isString())
+        return JSC::JSValue::encode(decodedReason);
+    if (decodedReason.isBigInt())
+        return JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject)));
+    return JSC::JSValue::encode(vm.smallStrings.objectObjectString());
+}
+
+extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
+                                                  "throwing inside of an async function without a catch block, "
+                                                  "or by rejecting a promise which was not handled with .catch(). "
+                                                  "To terminate the bun process on unhandled promise "
+                                                  "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
+    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
+
+    JSValue reasonStack {};
+    if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
+        reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
+        if (scope.exception()) scope.clearException();
+        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+    }
+    if (!reasonStack) {
+        reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
+        if (scope.exception()) scope.clearException();
+    }
+    if (!reasonStack) reasonStack = jsUndefined();
+
+    Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
+    if (scope.exception()) scope.clearException();
+    Process::emitWarningErrorInstance(globalObject, warning);
+    if (scope.exception()) scope.clearException();
+}
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
@@ -1119,17 +1188,44 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
-    MarkedArgumentBuffer args;
-    args.append(reason);
-    args.append(promise);
+
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
+        MarkedArgumentBuffer args;
+        args.append(reason);
+        args.append(promise);
         wrapped.emit(eventType, args);
         return true;
-    } else {
-        return false;
     }
+
+    return false;
+}
+
+extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
+
+extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
+{
+    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+
+    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+
+    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
+        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+    }
+    auto& wrapped = process->wrapped();
+    if (wrapped.listenerCount(eventType) > 0) {
+        MarkedArgumentBuffer args;
+        args.append(promise);
+        wrapped.emit(eventType, args);
+        return true;
+    }
+
+    return false;
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
@@ -1488,7 +1584,24 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
 
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
-    // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
+
+    /*
+    // TODO: ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
+    // This doesn't work, getStackTrace does not get any stack frames.
+    Vector<StackFrame> stackTrace;
+    const size_t framesToSkip = 1;
+    JSValue caller;
+    if (ctor.toBoolean(globalObject)) {
+        caller = ctor;
+    } else {
+        auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+        auto* process = globalObject->processObject();
+        caller = process->get(globalObject, Identifier::fromString(vm, String("emitWarning"_s)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    vm.interpreter.getStackTrace(errorInstance, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller.isCallable() ? caller.asCell() : nullptr);
+    errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    */
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }
@@ -2378,7 +2491,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
     RETURN_IF_EXCEPTION(throwScope, {});
     Vector<gid_t> groupVector(ngroups);
-    getgroups(ngroups, groupVector.data());
+    getgroups(ngroups, groupVector.begin());
     for (unsigned i = 0; i < ngroups; i++) {
         groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }

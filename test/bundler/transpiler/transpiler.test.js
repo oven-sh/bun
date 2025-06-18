@@ -727,6 +727,40 @@ describe("Bun.Transpiler", () => {
       // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
+    it("non-null assertion with new operator", () => {
+      const exp = ts.expectPrinted_;
+
+      // Basic non-null assertion with new operator on nested class
+      exp(
+        "const obj = { a: class Abc {} }; const instance = new obj!.a();",
+        "const obj = { a: class Abc {\n} };\nconst instance = new obj.a",
+      );
+
+      // with constructor
+      exp(
+        "const obj = { a: class Abc { constructor(x) { this.x = x; }} }; const instance = new obj!.a(1);",
+        "const obj = { a: class Abc {\n  constructor(x) {\n    this.x = x;\n  }\n} };\nconst instance = new obj.a(1)",
+      );
+
+      // Non-null assertion with new operator on nested property
+      exp(
+        "const obj = { nested: { Class: class NestedClass {} } }; const instance = new obj!.nested.Class();",
+        "const obj = { nested: { Class: class NestedClass {\n} } };\nconst instance = new obj.nested.Class",
+      );
+
+      // Multiple non-null assertions in new expression
+      exp(
+        "const obj = { a: { b: class DeepClass {} } }; const instance = new obj!.a!.b();",
+        "const obj = { a: { b: class DeepClass {\n} } };\nconst instance = new obj.a.b",
+      );
+
+      // Non-null assertion with new operator and method call
+      exp(
+        "const obj = { getClass() { return class MyClass {}; } }; const C = obj!.getClass(); const instance = new C();",
+        "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C",
+      );
+    });
+
     it("modifiers", () => {
       const exp = ts.expectPrinted_;
 

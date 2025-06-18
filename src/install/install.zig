@@ -45,11 +45,9 @@ const HeaderBuilder = HTTP.HeaderBuilder;
 
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
-const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
 pub const TextLockfile = @import("./lockfile/bun.lock.zig");

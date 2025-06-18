@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const strings = bun.strings;
-const string = bun.string;
 const FileSystem = bun.fs.FileSystem;
 const install = bun.install;
 const PackageManager = install.PackageManager;

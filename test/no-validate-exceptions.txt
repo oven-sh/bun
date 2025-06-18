@@ -1109,7 +1109,6 @@ test/js/bun/shell/env.positionals.test.ts
 test/js/bun/spawn/bun-ipc-inherit.test.ts
 test/js/bun/spawn/spawn-stream-serve.test.ts
 test/js/bun/stream/direct-readable-stream.test.tsx
-test/js/bun/test/expect.test.js
 test/js/bun/util/bun-file-exists.test.js
 test/js/bun/util/stringWidth.test.ts
 test/js/deno/encoding/encoding.test.ts

@@ -2952,7 +2952,7 @@ const NonblockingStatus = enum { blocking, nonblocking };
 ///
 /// On POSIX it otherwise makes it do O_CLOEXEC.
 pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
-    return socketpairImpl(domain, socktype, protocol, nonblocking_status, false);
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, null);
 }
 
 /// We can't actually use SO_NOSIGPIPE for the stdout of a
@@ -2973,11 +2973,20 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
 ///
 /// I think this only applies to stdout/stderr, not stdin. `read(...)`
 /// and `recv(...)` do not return EPIPE as error codes.
-pub fn socketpairForShell(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
-    return socketpairImpl(domain, socktype, protocol, nonblocking_status, true);
+pub fn socketpairForShell(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, config: ShellSigpipeConfig) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, config);
 }
 
-pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, for_shell: bool) Maybe([2]bun.FileDescriptor) {
+pub const ShellSigpipeConfig = enum {
+    /// Only SO_NOSIGPIPE for the socket in the pair
+    /// that *we're* going to use, don't touch the one
+    /// we hand off to the subprocess
+    spawn,
+    /// off completely
+    pipeline,
+};
+
+pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, for_shell: ?ShellSigpipeConfig) Maybe([2]bun.FileDescriptor) {
     if (comptime !Environment.isPosix) @compileError("linux only!");
 
     var fds_i: [2]syscall.fd_t = .{ 0, 0 };
@@ -3020,17 +3029,21 @@ pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: so
 
             if (comptime Environment.isMac) {
                 // See the comment on `socketpairForShell` for why we do this
-                if (for_shell) {
-                    // `fds_i[0]` is the file descriptor we are going to read
-                    // from in this Bun process. We WANT to set SO_NOSIGPIPE
-                    // because otherwise broken pipe will crass the Bun process.
-                    //
-                    // `fds_i[1]` is the file descriptor we are going to give to
-                    // the spawned process. We do NOT want to set S_NOGSIGPIPE
-                    // as that does not match with what normal shells do.
-                    switch (setNoSigpipe(.fromNative(fds_i[0]))) {
-                        .err => |err| break :err err,
-                        else => {},
+                if (for_shell) |config| {
+                    if (config == .spawn) {
+                        // `fds_i[0]` is the file descriptor we are going to read
+                        // from in this Bun process. We WANT to set SO_NOSIGPIPE
+                        // because otherwise broken pipe will crass the Bun process.
+                        //
+                        // `fds_i[1]` is the file descriptor we are going to give to
+                        // the spawned process. We do NOT want to set S_NOGSIGPIPE
+                        // as that does not match with what normal shells do.
+                        switch (setNoSigpipe(.fromNative(fds_i[0]))) {
+                            .err => |err| break :err err,
+                            else => {},
+                        }
+                    } else {
+                        // in a pipeline we don't want to set NO_SIGPIPE
                     }
                 } else {
                     inline for (0..2) |i| {

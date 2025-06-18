@@ -1361,6 +1361,7 @@ pub fn spawnProcessPosix(
                         std.posix.SOCK.STREAM,
                         0,
                         .blocking,
+                        .spawn,
                     ).unwrap() else try bun.sys.socketpair(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,

@@ -44,6 +44,7 @@ const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
 
 const installIsolatedPackages = @import("./workspaces.zig").installIsolatedPackages;
+const installHoistedPackages = @import("./hoisted_install.zig").installHoistedPackages;
 
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
@@ -9637,7 +9638,7 @@ pub const PackageManager = struct {
                 // TODO
                 manager.lockfile.node_linker == .auto)
             {
-                break :install_summary try @import("./hoisted_install.zig").installHoistedPackages(
+                break :install_summary try installHoistedPackages(
                     manager,
                     ctx,
                     workspace_filters.items,

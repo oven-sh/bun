@@ -73,6 +73,10 @@ src/bun.js/api/server/StaticRoute.zig
 src/bun.js/api/server/WebSocketServerContext.zig
 src/bun.js/api/streams.classes.zig
 src/bun.js/api/Timer.zig
+src/bun.js/api/Timer/EventLoopTimer.zig
+src/bun.js/api/Timer/ImmediateObject.zig
+src/bun.js/api/Timer/TimeoutObject.zig
+src/bun.js/api/Timer/TimerObjectInternals.zig
 src/bun.js/api/TOMLObject.zig
 src/bun.js/api/UnsafeObject.zig
 src/bun.js/bindgen_test.zig

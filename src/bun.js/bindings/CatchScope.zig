@@ -84,7 +84,7 @@ pub fn hasException(self: *CatchScope) bool {
     return self.exception() != null;
 }
 
-/// Get the thrown exception if it exists
+/// Get the thrown exception if it exists (like scope.exception() in C++)
 pub fn exception(self: *CatchScope) ?*jsc.Exception {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return null;
@@ -99,7 +99,7 @@ pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
 }
 
 /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
-/// an exception to be thrown.
+/// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
 pub fn returnIfException(self: *CatchScope) bun.JSError!void {
     if (self.exceptionIncludingTraps() != null) return error.JSError;
 }
@@ -159,7 +159,10 @@ extern fn CatchScope__construct(
     size: usize,
     alignment: usize,
 ) void;
+/// only returns exceptions that have already been thrown. does not check traps
 extern fn CatchScope__pureException(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+/// returns if an exception was already thrown, or if a trap (like another thread requesting
+/// termination) causes an exception to be thrown
 extern fn CatchScope__exceptionIncludingTraps(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
 extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;

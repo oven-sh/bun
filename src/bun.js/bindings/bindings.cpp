@@ -6609,8 +6609,9 @@ extern "C" JSC::Exception* CatchScope__exceptionIncludingTraps(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
     auto* scope = static_cast<CatchScope*>(ptr);
-    // this is different than `return scope->exception()` because
-    // RETURN_IF_EXCEPTION also handles traps
+    // this is different than `return scope->exception()` because `RETURN_IF_EXCEPTION` also checks
+    // if there are traps that should throw an exception (like a termination request from another
+    // thread)
     RETURN_IF_EXCEPTION(*scope, scope->exception());
     return nullptr;
 }

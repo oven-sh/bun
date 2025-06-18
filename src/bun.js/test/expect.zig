@@ -5456,7 +5456,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         return JSValue.jsBoolean(matched);
     }
 
-    fn maybeClear(comptime dontThrow: bool, globalThis: *JSGlobalObject, err: bun.JSError) !bool {
+    fn maybeClear(comptime dontThrow: bool, globalThis: *JSGlobalObject, err: bun.JSError) bun.JSError!bool {
         if (dontThrow) {
             globalThis.clearException();
             return false;
@@ -5465,7 +5465,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     }
 
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
-    pub fn customPrint(_: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, writer: anytype, comptime dontThrow: bool) !bool {
+    pub fn customPrint(_: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, writer: anytype, comptime dontThrow: bool) bun.JSError!bool {
         const matcher_fn: JSValue = js.matcherFnGetCached(thisValue) orelse return false;
         if (matcher_fn.get(globalThis, "toAsymmetricMatcher") catch |e| return maybeClear(dontThrow, globalThis, e)) |fn_value| {
             if (fn_value.jsType().isFunction()) {

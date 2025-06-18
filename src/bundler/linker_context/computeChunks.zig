@@ -316,11 +316,20 @@ pub noinline fn computeChunks(
         if (chunk.entry_point.is_entry_point and
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
         {
-            chunk.template = PathTemplate.file;
-            if (this.resolver.opts.entry_naming.len > 0)
-                chunk.template.data = this.resolver.opts.entry_naming;
+            // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
+            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
+                chunk.template = PathTemplate.fileWithTarget;
+            } else {
+                chunk.template = PathTemplate.file;
+                if (this.resolver.opts.entry_naming.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_naming;
+            }
         } else {
-            chunk.template = PathTemplate.chunk;
+            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.chunk_naming.len == 0) {
+                chunk.template = PathTemplate.chunkWithTarget;
+            } else {
+                chunk.template = PathTemplate.chunk;
+            }
             if (this.resolver.opts.chunk_naming.len > 0)
                 chunk.template.data = this.resolver.opts.chunk_naming;
         }
@@ -329,20 +338,34 @@ pub noinline fn computeChunks(
         chunk.template.placeholder.name = pathname.base;
         chunk.template.placeholder.ext = chunk.content.ext();
 
-        // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-        const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
-
-        var real_path_buf: bun.PathBuffer = undefined;
-        const dir = dir: {
-            var dir = std.fs.cwd().openDir(dir_path, .{}) catch {
-                break :dir bun.path.normalizeBuf(dir_path, &real_path_buf, .auto);
+        if (chunk.template.needs(.target)) {
+            // Determine the target from the AST of the entry point source
+            const ast_targets = this.graph.ast.items(.target);
+            const chunk_target = ast_targets[chunk.entry_point.source_index];
+            chunk.template.placeholder.target = switch (chunk_target) {
+                .browser => "browser",
+                .bun => "bun",
+                .node => "node",
+                .bun_macro => "macro",
+                .bake_server_components_ssr => "ssr",
             };
-            defer dir.close();
+        }
 
-            break :dir try bun.FD.fromStdDir(dir).getFdPath(&real_path_buf);
-        };
+        if (chunk.template.needs(.dir)) {
+            // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+            const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
+            var real_path_buf: bun.PathBuffer = undefined;
+            const dir = dir: {
+                var dir = bun.sys.openatA(.cwd(), dir_path, bun.O.PATH | bun.O.DIRECTORY, 0).unwrap() catch {
+                    break :dir bun.path.normalizeBuf(dir_path, &real_path_buf, .auto);
+                };
+                defer dir.close();
 
-        chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
+                break :dir try dir.getFdPath(&real_path_buf);
+            };
+
+            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
+        }
     }
 
     return chunks;

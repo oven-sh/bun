@@ -218,6 +218,8 @@ pub const ThreadPool = struct {
             estimated_input_lines_of_code: usize = 0,
             macro_context: js_ast.Macro.MacroContext,
             transpiler: Transpiler = undefined,
+            other_transpiler: Transpiler = undefined,
+            has_loaded_other_transpiler: bool = false,
         };
 
         pub fn init(worker: *Worker, v2: *BundleV2) void {
@@ -233,7 +235,7 @@ pub const ThreadPool = struct {
             this.heap = ThreadlocalArena.init() catch unreachable;
             this.allocator = this.heap.allocator();
 
-            var allocator = this.allocator;
+            const allocator = this.allocator;
 
             this.ast_memory_allocator = .{ .allocator = this.allocator };
             this.ast_memory_allocator.reset();
@@ -245,19 +247,36 @@ pub const ThreadPool = struct {
             };
             this.data.log.* = Logger.Log.init(allocator);
             this.ctx = ctx;
-            this.data.transpiler = ctx.transpiler.*;
-            this.data.transpiler.setLog(this.data.log);
-            this.data.transpiler.setAllocator(allocator);
-            this.data.transpiler.linker.resolver = &this.data.transpiler.resolver;
-            this.data.transpiler.macro_context = js_ast.Macro.MacroContext.init(&this.data.transpiler);
-            this.data.macro_context = this.data.transpiler.macro_context.?;
             this.temporary_arena = bun.ArenaAllocator.init(this.allocator);
             this.stmt_list = LinkerContext.StmtList.init(this.allocator);
+            this.initializeTranspiler(&this.data.transpiler, ctx.transpiler, allocator);
 
-            const CacheSet = @import("../cache.zig");
-
-            this.data.transpiler.resolver.caches = CacheSet.Set.init(this.allocator);
             debug("Worker.create()", .{});
+        }
+
+        fn initializeTranspiler(this: *Worker, transpiler: *Transpiler, from: *Transpiler, allocator: std.mem.Allocator) void {
+            transpiler.* = from.*;
+            transpiler.setLog(this.data.log);
+            transpiler.setAllocator(allocator);
+            transpiler.linker.resolver = &transpiler.resolver;
+            transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
+            this.data.macro_context = transpiler.macro_context.?;
+            const CacheSet = @import("../cache.zig");
+            transpiler.resolver.caches = CacheSet.Set.init(allocator);
+        }
+
+        pub fn transpilerForTarget(this: *Worker, target: bun.options.Target) *Transpiler {
+            if (target == .browser and this.data.transpiler.options.target != target) {
+                if (!this.data.has_loaded_other_transpiler) {
+                    this.data.has_loaded_other_transpiler = true;
+                    this.initializeTranspiler(&this.data.other_transpiler, this.ctx.client_transpiler.?, this.allocator);
+                }
+
+                bun.debugAssert(this.data.other_transpiler.options.target == target);
+                return &this.data.other_transpiler;
+            }
+
+            return &this.data.transpiler;
         }
 
         pub fn run(this: *Worker, ctx: *BundleV2) void {

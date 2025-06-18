@@ -118,6 +118,20 @@ pub const Chunk = struct {
             shifts: []sourcemap.SourceMapShifts,
         };
 
+        pub fn getSize(this: *const IntermediateOutput) usize {
+            return switch (this.*) {
+                .pieces => |pieces| brk: {
+                    var total: usize = 0;
+                    for (pieces.slice()) |piece| {
+                        total += piece.data_len;
+                    }
+                    break :brk total;
+                },
+                .joiner => |*joiner| joiner.len,
+                .empty => 0,
+            };
+        }
+
         pub fn code(
             this: *IntermediateOutput,
             allocator_to_use: ?std.mem.Allocator,
@@ -128,7 +142,7 @@ pub const Chunk = struct {
             chunks: []Chunk,
             display_size: ?*usize,
             enable_source_map_shifts: bool,
-        ) !CodeResult {
+        ) bun.OOM!CodeResult {
             return switch (enable_source_map_shifts) {
                 inline else => |source_map_shifts| this.codeWithSourceMapShifts(
                     allocator_to_use,
@@ -153,7 +167,7 @@ pub const Chunk = struct {
             chunks: []Chunk,
             display_size: ?*usize,
             comptime enable_source_map_shifts: bool,
-        ) !CodeResult {
+        ) bun.OOM!CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
             switch (this.*) {
@@ -180,7 +194,7 @@ pub const Chunk = struct {
                         count += piece.data_len;
 
                         switch (piece.query.kind) {
-                            .chunk, .asset, .scb => {
+                            .chunk, .asset, .scb, .html_import => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -195,6 +209,15 @@ pub const Chunk = struct {
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
+                                    .html_import => {
+                                        count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
+                                            .index = index,
+                                            .graph = graph,
+                                            .chunks = chunks,
+                                            .linker_graph = linker_graph,
+                                        })});
+                                        continue;
+                                    },
                                     .none => unreachable,
                                 };
 
@@ -239,7 +262,7 @@ pub const Chunk = struct {
                         remain = remain[data.len..];
 
                         switch (piece.query.kind) {
-                            .asset, .chunk, .scb => {
+                            .asset, .chunk, .scb, .html_import => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -271,6 +294,19 @@ pub const Chunk = struct {
                                         }
 
                                         break :brk piece_chunk.final_rel_path;
+                                    },
+                                    .html_import => {
+                                        var fixed_buffer_stream = std.io.fixedBufferStream(remain);
+                                        const writer = fixed_buffer_stream.writer();
+
+                                        HTMLImportManifest.writeEscapedJSON(index, graph, linker_graph, chunks, writer) catch unreachable;
+                                        remain = remain[fixed_buffer_stream.pos..];
+
+                                        if (enable_source_map_shifts) {
+                                            shift.before.advance(chunk.unique_key);
+                                            shifts.appendAssumeCapacity(shift);
+                                        }
+                                        continue;
                                     },
                                     else => unreachable,
                                 };
@@ -385,10 +421,10 @@ pub const Chunk = struct {
         }
 
         pub const Query = packed struct(u32) {
-            index: u30,
+            index: u29,
             kind: Kind,
 
-            pub const Kind = enum(u2) {
+            pub const Kind = enum(u3) {
                 /// The last piece in an array uses this to indicate it is just data
                 none,
                 /// Given a source index, print the asset's output
@@ -397,6 +433,8 @@ pub const Chunk = struct {
                 chunk,
                 /// Given a server component boundary index, print the chunk's output path
                 scb,
+                /// Given an HTML import index, print the manifest
+                html_import,
             };
 
             pub const none: Query = .{ .index = 0, .kind = .none };
@@ -618,3 +656,4 @@ const CrossChunkImport = bundler.CrossChunkImport;
 const CompileResult = bundler.CompileResult;
 const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
 const LinkerContext = bundler.LinkerContext;
+const HTMLImportManifest = @import("./HTMLImportManifest.zig");

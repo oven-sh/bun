@@ -28,7 +28,7 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
     Vector<uint8_t> key;
     key.grow(m_length);
 
-    if (!ncrypto::CSPRNG(key.data(), key.size())) {
+    if (!ncrypto::CSPRNG(key.begin(), key.size())) {
         return;
     }
 

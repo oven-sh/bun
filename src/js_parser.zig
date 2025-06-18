@@ -3080,7 +3080,7 @@ pub const Parser = struct {
         if (runtime_api_call.len > 0) {
             var args = try p.allocator.alloc(Expr, 1);
             args[0] = expr;
-            final_expr = try p.callRuntime(expr.loc, runtime_api_call, args);
+            final_expr = p.callRuntime(expr.loc, runtime_api_call, args);
         }
 
         const ns_export_part = js_ast.Part{
@@ -3092,7 +3092,7 @@ pub const Parser = struct {
             .data = .{
                 .s_lazy_export = brk: {
                     const data = try p.allocator.create(Expr.Data);
-                    data.* = expr.data;
+                    data.* = final_expr.data;
                     break :brk data;
                 },
             },
@@ -14180,10 +14180,6 @@ fn NewParser_(
                             return error.SyntaxError;
                         }
 
-                        if (level.gte(.postfix)) {
-                            return left;
-                        }
-
                         try p.lexer.next();
                         optional_chain = old_optional_chain;
                     },
@@ -15052,11 +15048,6 @@ fn NewParser_(
                     var args = ExprNodeList{};
 
                     if (comptime is_typescript_enabled) {
-                        // Skip over TypeScript non-null assertions
-                        if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
-                            try p.lexer.next();
-                        }
-
                         // Skip over TypeScript type arguments here if there are any
                         if (p.lexer.token == .t_less_than) {
                             _ = p.trySkipTypeScriptTypeArgumentsWithBacktracking();

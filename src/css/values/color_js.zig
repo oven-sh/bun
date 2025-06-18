@@ -3,12 +3,8 @@ const std = @import("std");
 const color = @import("./color.zig");
 const RGBA = color.RGBA;
 const LAB = color.LAB;
-const LCH = color.LCH;
 const SRGB = color.SRGB;
 const HSL = color.HSL;
-const HWB = color.HWB;
-const SRGBLinear = color.SRGBLinear;
-const P3 = color.P3;
 const JSC = bun.JSC;
 const css = bun.css;
 
@@ -59,7 +55,7 @@ const OutputColorFormat = enum {
 };
 
 fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime property: []const u8) bun.JSError!i32 {
-    if (input == .zero or input == .undefined or !input.isNumber()) {
+    if (input == .zero or input.isUndefined() or !input.isNumber()) {
         return globalThis.throwInvalidArgumentType("color", property, "integer");
     }
 
@@ -307,14 +303,14 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                     return object;
                                 },
                                 .@"[rgb]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 3);
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 3);
                                     object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
                                     object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
                                     object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgba]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 4);
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 4);
                                     object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
                                     object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
                                     object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));

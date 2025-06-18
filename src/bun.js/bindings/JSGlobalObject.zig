@@ -64,8 +64,8 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
-    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.JSValue.FromAnyLifetime) JSC.JSValue {
-        return .fromAny(this, @TypeOf(value), value, lifetime);
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype) bun.JSError!JSC.JSValue {
+        return .fromAny(this, @TypeOf(value), value);
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -373,7 +373,7 @@ pub const JSGlobalObject = opaque {
         const err = createErrorInstance(this, message, args);
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try JSC.toJS(this, i32, errno));
         return this.throwValue(err);
     }
 
@@ -481,9 +481,8 @@ pub const JSGlobalObject = opaque {
         message: bun.String,
         error_array: JSValue,
     ) JSValue {
-        if (bun.Environment.allow_assert)
-            bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .undefined);
+        if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -686,7 +685,7 @@ pub const JSGlobalObject = opaque {
     };
 
     pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
-        if (value == .undefined or value == .zero) {
+        if (value.isUndefined() or value == .zero) {
             return default;
         }
 
@@ -897,7 +896,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const C_API = bun.JSC.C;
 const JSC = bun.JSC;
 
 const MutableString = bun.MutableString;
@@ -910,4 +908,3 @@ const napi = @import("../../napi/napi.zig");
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const VM = JSC.VM;
-const JSPromise = JSC.JSPromise;

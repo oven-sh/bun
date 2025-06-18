@@ -581,7 +581,8 @@ pub const ShellRmTask = struct {
                         this.task_manager.err = err;
                         this.task_manager.error_signal.store(true, .seq_cst);
                     } else {
-                        bun.default_allocator.free(err.path);
+                        var err2 = err;
+                        err2.deinit();
                     }
                 },
                 .result => {},
@@ -596,7 +597,7 @@ pub const ShellRmTask = struct {
                 this.task_manager.err = err;
                 this.task_manager.error_signal.store(true, .seq_cst);
             } else {
-                bun.default_allocator.free(err.path);
+                this.task_manager.err.?.deinit();
             }
         }
 
@@ -1200,25 +1201,13 @@ const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
-const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
 const Rm = @This();
-const ReadChunkAction = interpreter.ReadChunkAction;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
 const std = @import("std");
-const FlagParser = interpreter.FlagParser;
 
 const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;
 const Syscall = bun.sys;
 const assert = bun.assert;
 const ResolvePath = bun.path;

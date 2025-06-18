@@ -224,7 +224,7 @@ public:
 
     /**
     * Flushes the socket buffer by writing as much data as possible to the underlying socket.
-    * 
+    *
     * @return The total number of bytes successfully written to the socket
     */
     size_t flush() {
@@ -237,30 +237,30 @@ public:
         /* Get the associated asynchronous socket data structure */
         AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
         size_t total_written = 0;
-        
+
         /* Continue flushing as long as we have data in the buffer */
         while (asyncSocketData->buffer.length()) {
             /* Get current buffer size */
             size_t buffer_len = asyncSocketData->buffer.length();
-            
+
             /* Limit write size to INT_MAX as the underlying socket API uses int for length */
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
             /* Attempt to write data to the socket */
             int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, 0);
             total_written += written;
-            
+
             /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
                 /* Remove the successfully written data from the buffer */
                 asyncSocketData->buffer.erase((unsigned int) written);
-                
+
                 /* If we wrote less than we attempted, the socket buffer is likely full
                 * likely is used as an optimization hint to the compiler
                 * since written < buffer_len is very likely to be true
                 */
                 if(written < max_flush_len) {
-                     [[likely]]
+                    [[likely]]
                     /* Cannot write more at this time, return what we've written so far */
                     return total_written;
                 }
@@ -317,7 +317,7 @@ public:
             asyncSocketData->buffer.clear();
         }
 
-        if (length) {          
+        if (length) {
             if (loopData->isCorkedWith(this)) {
                 /* We are corked */
                 if (LoopData::CORK_BUFFER_SIZE - loopData->getCorkOffset() >= (unsigned int) length) {

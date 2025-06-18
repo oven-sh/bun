@@ -13,7 +13,6 @@ const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
 const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
 const libuv = bun.windows.libuv;
 
 const log = bun.Output.scoped(.ReadFile, true);

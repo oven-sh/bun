@@ -388,7 +388,8 @@ pub const S3 = struct {
                 switch (result) {
                     .success => |list_result| {
                         defer list_result.deinit();
-                        self.promise.resolve(globalObject, list_result.toJS(globalObject));
+                        const list_result_js = list_result.toJS(globalObject) catch return self.promise.reject(globalObject, error.JSError);
+                        self.promise.resolve(globalObject, list_result_js);
                     },
 
                     inline .not_found, .failure => |err| {

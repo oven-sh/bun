@@ -1,3 +1,15 @@
+//! Some common commands (e.g. `ls`, `which`, `mv`, essentially coreutils) we make "built-in"
+//! to the shell and implement natively in Zig. We do this for a couple reasons:
+//!
+//! 1. We can re-use a lot of our existing code in Bun and often times it's
+//!    faster (for example `cp` and `mv` can be implemented using our Node FS
+//!    logic)
+//!
+//! 2. Builtins run in the Bun process, so we can save a lot of time not having to
+//!    spawn a new subprocess. A lot of the times, just spawning the shell can take
+//!    longer than actually running the command. This is especially noticeable and
+//!    important to consider for Windows.
+
 kind: Kind,
 stdin: BuiltinIO.Input,
 stdout: BuiltinIO.Output,
@@ -92,7 +104,7 @@ pub const Kind = enum {
     }
 
     fn forceEnableOnPosix() bool {
-        return bun.getRuntimeFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS");
+        return bun.getRuntimeFeatureFlag(.BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS);
     }
 
     pub fn fromStr(str: []const u8) ?Builtin.Kind {
@@ -691,5 +703,5 @@ const Cmd = Interpreter.Cmd;
 const ShellSyscall = shell.interpret.ShellSyscall;
 const Allocator = std.mem.Allocator;
 const ast = shell.AST;
-const IO = shell.interpret.IO;
+const IO = shell.Interpreter.IO;
 const CoroutineResult = shell.interpret.CoroutineResult;

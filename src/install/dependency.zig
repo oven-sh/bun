@@ -3,12 +3,10 @@ const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
 const PackageManager = Install.PackageManager;
-const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = @import("./repository.zig").Repository;
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const std = @import("std");
@@ -279,6 +277,14 @@ pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     return .{ str, null };
 }
 
+pub fn splitNameAndVersionOrLatest(str: string) struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse "latest",
+    };
+}
+
 pub fn splitNameAndVersion(str: string) error{MissingVersion}!struct { string, string } {
     const name, const version = splitNameAndMaybeVersion(str);
     return .{
@@ -495,6 +501,8 @@ pub const Version = struct {
         /// GitHub Repository (via REST API)
         github = 8,
 
+        catalog = 9,
+
         pub const map = bun.ComptimeStringMap(Tag, .{
             .{ "npm", .npm },
             .{ "dist_tag", .dist_tag },
@@ -504,6 +512,7 @@ pub const Version = struct {
             .{ "workspace", .workspace },
             .{ "git", .git },
             .{ "github", .github },
+            .{ "catalog", .catalog },
         });
         pub const fromJS = map.fromJS;
 
@@ -573,6 +582,11 @@ pub const Version = struct {
                     if (strings.hasPrefixComptime(dependency, "file:")) {
                         if (isTarball(dependency)) return .tarball;
                         return .folder;
+                    }
+                },
+                'c' => {
+                    if (strings.hasPrefixComptime(dependency, "catalog:")) {
+                        return .catalog;
                     }
                 },
                 // git_user/repo
@@ -769,10 +783,10 @@ pub const Version = struct {
         pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
-                return .undefined;
+                return .js_undefined;
             }
 
-            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .js_undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -820,6 +834,10 @@ pub const Version = struct {
         workspace: String,
         git: Repository,
         github: Repository,
+
+        // dep version without 'catalog:' protocol
+        // empty string == default catalog
+        catalog: String,
     };
 };
 
@@ -1240,6 +1258,19 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
+        .catalog => {
+            bun.assert(strings.hasPrefixComptime(dependency, "catalog:"));
+
+            const group = dependency["catalog:".len..];
+
+            const trimmed = strings.trim(group, &strings.whitespace_chars);
+
+            return .{
+                .value = .{ .catalog = sliced.sub(trimmed).value() },
+                .tag = .catalog,
+                .literal = sliced.value(),
+            };
+        },
     }
 }
 
@@ -1253,19 +1284,19 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value = if (arguments.len > 0) arguments[0] else .undefined;
+    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
-        return .undefined;
+        return .js_undefined;
     }
     const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
-        return .undefined;
+        return .js_undefined;
     }
 
-    const name_value = if (arguments.len > 1) arguments[1] else .undefined;
+    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1289,7 +1320,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
-        return .undefined;
+        return .js_undefined;
     };
 
     if (log.msgs.items.len > 0) {

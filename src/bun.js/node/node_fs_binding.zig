@@ -1,14 +1,7 @@
 const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
-const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const system = std.posix.system;
-const Maybe = JSC.Maybe;
-const Encoding = JSC.Node.Encoding;
-const FeatureFlags = bun.FeatureFlags;
-const Args = JSC.Node.fs.NodeFS.Arguments;
-const d = JSC.d;
 
 const NodeFSFunction = fn (this: *JSC.Node.fs.Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 
@@ -42,7 +35,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
             var result = function(&this.node_fs, args, .sync);
             return switch (result) {
                 .err => |err| globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject))),
-                .result => |*res| globalObject.toJS(res, .temporary),
+                .result => |*res| globalObject.toJS(res),
             };
         }
 
@@ -225,7 +218,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     const arguments = callFrame.arguments_old(1);
 
     if (arguments.len < 1) {
-        return .undefined;
+        return .js_undefined;
     }
 
     if (comptime !bun.Environment.isLinux) {

@@ -32,7 +32,7 @@ pub const Start = union(Tag) {
     pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
         switch (this) {
             .empty, .ready => {
-                return .undefined;
+                return .js_undefined;
             },
             .chunk_size => |chunk| {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
@@ -47,7 +47,7 @@ pub const Start = union(Tag) {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
-                return .undefined;
+                return .js_undefined;
             },
         }
     }
@@ -88,14 +88,14 @@ pub const Start = union(Tag) {
                     }
                 }
 
-                if (value.fastGet(globalThis, .stream)) |val| {
+                if (try value.fastGet(globalThis, .stream)) |val| {
                     if (val.isBoolean()) {
                         stream = val.toBoolean();
                         empty = false;
                     }
                 }
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
@@ -115,12 +115,12 @@ pub const Start = union(Tag) {
             .FileSink => {
                 var chunk_size: Blob.SizeType = 0;
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber())
                         chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
-                if (value.fastGet(globalThis, .path)) |path| {
+                if (try value.fastGet(globalThis, .path)) |path| {
                     if (!path.isString()) {
                         return .{
                             .err = Syscall.Error{
@@ -174,7 +174,7 @@ pub const Start = union(Tag) {
                 var empty = true;
                 var chunk_size: Blob.SizeType = 2048;
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));
@@ -378,7 +378,7 @@ pub const Result = union(Tag) {
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
         ) void {
-            defer promise.asValue(globalThis).unprotect();
+            defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
                     promise.reject(globalThis, err.toJSC(globalThis));
@@ -394,7 +394,7 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis),
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).toJS(),
 
                 .owned => |len| JSC.JSValue.jsNumber(len),
                 .owned_and_done => |len| JSC.JSValue.jsNumber(len),
@@ -407,7 +407,7 @@ pub const Result = union(Tag) {
                 // undefined == noop, but we probably won't send it
                 .done => JSC.JSValue.jsBoolean(true),
 
-                .pending => |pending| pending.promise(globalThis).asValue(globalThis),
+                .pending => |pending| pending.promise(globalThis).toJS(),
             };
         }
     };
@@ -501,7 +501,7 @@ pub const Result = union(Tag) {
     pub fn fulfillPromise(result: *Result, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
         const vm = globalThis.bunVM();
         const loop = vm.eventLoop();
-        const promise_value = promise.asValue(globalThis);
+        const promise_value = promise.toJS();
         defer promise_value.unprotect();
 
         loop.enter();
@@ -568,7 +568,7 @@ pub const Result = union(Tag) {
                 return JSC.JSValue.jsNumberFromInt64(array.len);
             },
             .pending => |pending| {
-                const promise = pending.promise(globalThis).asValue(globalThis);
+                const promise = pending.promise(globalThis).toJS();
                 promise.protect();
                 return promise;
             },
@@ -579,7 +579,7 @@ pub const Result = union(Tag) {
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             },
 
             // false == controller.close()
@@ -930,7 +930,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.pending_flush) |prom| {
-                return .{ .result = prom.asValue(globalThis) };
+                return .{ .result = prom.toJS() };
             }
 
             if (this.buffer.len == 0 or this.done) {
@@ -948,7 +948,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.wrote_at_start_of_flush = this.wrote;
             this.pending_flush = JSC.JSPromise.create(globalThis);
             this.globalThis = globalThis;
-            var promise_value = this.pending_flush.?.asValue(globalThis);
+            var promise_value = this.pending_flush.?.toJS();
             promise_value.protect();
 
             return .{ .result = promise_value };
@@ -1160,7 +1160,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 if (!this.send(readable)) {
                     this.pending_flush = JSC.JSPromise.create(globalThis);
                     this.globalThis = globalThis;
-                    const value = this.pending_flush.?.asValue(globalThis);
+                    const value = this.pending_flush.?.toJS();
                     value.protect();
                     return .{ .result = value };
                 }
@@ -1288,7 +1288,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
-                prom.asValue(globalThis).unprotect();
+                prom.toJS().unprotect();
                 prom.resolve(globalThis, JSC.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
                 this.wrote_at_start_of_flush = this.wrote;
             }
@@ -1740,46 +1740,25 @@ pub const AutoSizer = struct {
 };
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
-const MimeType = HTTPClient.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = WebCore.FetchHeaders;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = JSC.ArrayBuffer;
-const Async = bun.Async;
 
-const Environment = bun.Environment;
-const ZigString = JSC.ZigString;
-const IdentityContext = bun.IdentityContext;
-const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const E = bun.sys.E;
 const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
-const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Blob = bun.webcore.Blob;
 const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
-const uv = bun.windows.libuv;
 const WebCore = JSC.WebCore;
 const Sink = WebCore.Sink;
 const AutoFlusher = WebCore.AutoFlusher;

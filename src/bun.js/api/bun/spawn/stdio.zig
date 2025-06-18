@@ -1,16 +1,11 @@
-const Allocator = std.mem.Allocator;
-const uws = bun.uws;
 const std = @import("std");
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Async = bun.Async;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const posix = std.posix;
 const Output = bun.Output;
-const os = std.os;
 
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
@@ -289,15 +284,11 @@ pub const Stdio = union(enum) {
     }
 
     pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue) bun.JSError!void {
-        switch (value) {
-            // undefined: default
-            .undefined, .zero => return,
-            // null: ignore
-            .null => {
-                out_stdio.* = Stdio{ .ignore = {} };
-                return;
-            },
-            else => {},
+        if (value == .zero) return;
+        if (value.isUndefined()) return;
+        if (value.isNull()) {
+            out_stdio.* = Stdio{ .ignore = {} };
+            return;
         }
 
         if (value.isString()) {

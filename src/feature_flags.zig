@@ -1,6 +1,41 @@
 const env = @import("env.zig");
 const bun = @import("bun");
 
+/// All runtime feature flags that can be toggled with an environment variable.
+/// The field names correspond exactly to the expected environment variable names.
+pub const RuntimeFeatureFlag = enum {
+    BUN_ASSUME_PERFECT_INCREMENTAL,
+    BUN_BE_BUN,
+    BUN_DEBUG_NO_DUMP,
+    BUN_DESTRUCT_VM_ON_EXIT,
+    BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING,
+    BUN_DISABLE_SOURCE_CODE_PREVIEW,
+    BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW,
+    BUN_DUMP_STATE_ON_CRASH,
+    BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS,
+    BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG,
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER,
+    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE,
+    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO,
+    BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX,
+    BUN_FEATURE_FLAG_DISABLE_IO_POOL,
+    BUN_FEATURE_FLAG_DISABLE_IPV4,
+    BUN_FEATURE_FLAG_DISABLE_IPV6,
+    BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING,
+    BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK,
+    BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS,
+    BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH,
+    BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE,
+    BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE,
+    BUN_FEATURE_FLAG_FORCE_IO_POOL,
+    BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304,
+    BUN_FEATURE_FLAG_NO_LIBDEFLATE,
+    BUN_INSTRUMENTS,
+    BUN_INTERNAL_BUNX_INSTALL,
+    BUN_NO_CODESIGN_MACHO_BINARY,
+    BUN_TRACE,
+};
+
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
 pub const breaking_changes_1_3 = false;
@@ -65,7 +100,7 @@ pub const inline_properties_in_transpiler = true;
 
 pub const same_target_becomes_destructuring = true;
 
-pub const help_catch_memory_issues = bun.Environment.allow_assert;
+pub const help_catch_memory_issues = bun.Environment.enable_asan or bun.Environment.isDebug;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
 ///
@@ -147,14 +182,14 @@ pub fn isLibdeflateEnabled() bool {
         return false;
     }
 
-    return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
+    return !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE);
 }
 
 /// Enable the "app" option in Bun.serve. This option will likely be removed
 /// in favor of HTML loaders and configuring framework options in bunfig.toml
 pub fn bake() bool {
     // In canary or if an environment variable is specified.
-    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE");
+    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE);
 }
 
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.

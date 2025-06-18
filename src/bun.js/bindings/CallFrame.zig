@@ -17,15 +17,15 @@ pub const CallFrame = opaque {
     /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
     pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
         const slice = call_frame.arguments();
-        var value: [count]JSValue = .{.undefined} ** count;
+        var value: [count]JSValue = @splat(.js_undefined);
         const n = @min(call_frame.argumentsCount(), count);
         @memcpy(value[0..n], slice[0..n]);
         return value;
     }
 
-    /// This function protects out-of-bounds access by returning `JSValue.undefined`
+    /// This function protects out-of-bounds access by returning undefined
     pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
-        return if (self.argumentsCount() > i) self.arguments()[i] else .undefined;
+        return if (self.argumentsCount() > i) self.arguments()[i] else .js_undefined;
     }
 
     pub fn argumentsCount(self: *const CallFrame) u32 {
@@ -134,7 +134,7 @@ pub const CallFrame = opaque {
             }
 
             pub inline fn initUndef(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args = [1]JSC.JSValue{.undefined} ** max;
+                var args: [max]JSC.JSValue = @splat(.js_undefined);
                 args[0..i].* = ptr[0..i].*;
                 return @This(){ .ptr = args, .len = i };
             }
@@ -168,7 +168,7 @@ pub const CallFrame = opaque {
         const slice = self.arguments();
         comptime bun.assert(max <= 9);
         return switch (@as(u4, @min(slice.len, max))) {
-            0 => .{ .ptr = .{.undefined} ** max, .len = 0 },
+            0 => .{ .ptr = @splat(.js_undefined), .len = 0 },
             inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), slice.ptr),
             else => unreachable,
         };
@@ -226,9 +226,8 @@ pub const CallFrame = opaque {
 
         pub fn unprotect(slice: *ArgumentsSlice) void {
             var iter = slice.protected.iterator(.{});
-            const ctx = slice.vm.global;
             while (iter.next()) |i| {
-                JSC.C.JSValueUnprotect(ctx, slice.all[i].asObjectRef());
+                slice.all[i].unprotect();
             }
             slice.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
         }
@@ -242,7 +241,7 @@ pub const CallFrame = opaque {
             if (slice.remaining.len == 0) return;
             const index = slice.all.len - slice.remaining.len;
             slice.protected.set(index);
-            JSC.C.JSValueProtect(slice.vm.global, slice.all[index].asObjectRef());
+            slice.all[index].protect();
             slice.eat();
         }
 

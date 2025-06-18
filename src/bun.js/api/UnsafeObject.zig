@@ -64,13 +64,12 @@ fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
     if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const std = @import("std");
 const bun = @import("bun");
 const ZigString = JSC.ZigString;

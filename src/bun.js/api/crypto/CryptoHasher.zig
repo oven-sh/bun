@@ -154,11 +154,7 @@ pub const CryptoHasher = union(enum) {
         };
     }
 
-    pub fn getAlgorithms(
-        globalThis_: *JSC.JSGlobalObject,
-        _: JSValue,
-        _: JSValue,
-    ) JSC.JSValue {
+    pub fn getAlgorithms(globalThis_: *JSC.JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSC.JSValue {
         return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
     }
 
@@ -883,16 +879,12 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
-const Async = bun.Async;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
-const assert = bun.assert;
 const HMAC = Crypto.HMAC;
 const EVP = Crypto.EVP;
 const BoringSSL = bun.BoringSSL.c;

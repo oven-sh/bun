@@ -89,7 +89,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
     ClearErrorOnReturn clearError;
     auto context = EVPMDCtxPointer::New();
-    if (UNLIKELY(!context)) {
+    if (!context) [[unlikely]] {
         m_opensslError = ERR_get_error();
         return;
     }
@@ -121,7 +121,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     switch (m_mode) {
     case Mode::Sign: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
 
@@ -176,11 +176,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
     case Mode::Verify: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
         auto sigBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_signature.data(),
+            .data = m_signature.begin(),
             .len = m_signature.size(),
         };
         m_verifyResult = context.verify(dataBuf, sigBuf);

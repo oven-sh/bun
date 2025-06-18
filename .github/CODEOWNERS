@@ -1,18 +1,18 @@
 # Project
-.github/CODEOWNERS @Jarred-Sumner
+/.github/CODEOWNERS @Jarred-Sumner
 
 # Build system
-CMakeLists.txt @Electroid
-cmake/ @Electroid
-scripts/ @Electroid
+/CMakeLists.txt @Electroid
+/cmake/*.cmake @Electroid
+/scripts/ @Electroid
 
 # CI
-.buildkite/ @Electroid
-.github/workflows/ @Electroid
+/.buildkite/ @Electroid
+/.github/workflows/ @Electroid
 
 # Debugger protocol
-packages/bun-inspector-protocol/ @Electroid
-packages/bun-debug-adapter-protocol/ @Electroid
+/packages/bun-inspector-protocol/ @Electroid
+/packages/bun-debug-adapter-protocol/ @Electroid
 
 # Tests
-test/expectations.txt @Jarred-Sumner
+/test/expectations.txt @Jarred-Sumner

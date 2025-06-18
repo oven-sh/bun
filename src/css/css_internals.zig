@@ -1,12 +1,8 @@
 const bun = @import("bun");
 const std = @import("std");
-const builtin = @import("builtin");
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
-const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 
 const TestKind = enum {
@@ -324,7 +320,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
                 .initOutsideOfBundler(&import_records),
             ) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
-                return .undefined;
+                return .js_undefined;
             };
 
             return bun.String.fromBytes(result.code).toJS(globalThis);

@@ -1026,6 +1026,8 @@ pub fn transpileSourceCode(
                 },
             };
 
+            const source = &parse_result.source;
+
             if (parse_result.loader == .wasm) {
                 return transpileSourceCode(
                     jsc_vm,
@@ -1071,7 +1073,7 @@ pub fn transpileSourceCode(
             if (loader == .json) {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createUTF8(parse_result.source.contents),
+                    .source_code = bun.String.createUTF8(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1082,8 +1084,8 @@ pub fn transpileSourceCode(
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = switch (comptime flags) {
-                        .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-                        .print_source => bun.String.init(parse_result.source.contents),
+                        .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
+                        .print_source => bun.String.init(source.contents),
                         else => @compileError("unreachable"),
                     },
                     .specifier = input_specifier,
@@ -1115,7 +1117,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(parse_result.source.contents),
+                    .source_code = bun.String.createLatin1(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -1127,7 +1129,7 @@ pub fn transpileSourceCode(
 
             if (parse_result.empty) {
                 const was_cjs = (loader == .js or loader == .ts) and brk: {
-                    const ext = std.fs.path.extension(parse_result.source.path.text);
+                    const ext = std.fs.path.extension(source.path.text);
                     break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
                 };
                 if (was_cjs) {
@@ -1143,7 +1145,7 @@ pub fn transpileSourceCode(
             }
 
             if (cache.entry) |*entry| {
-                jsc_vm.source_mappings.putMappings(parse_result.source, .{
+                jsc_vm.source_mappings.putMappings(source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
@@ -1167,10 +1169,10 @@ pub fn transpileSourceCode(
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
                     .tag = brk: {
-                        if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
+                        if (entry.metadata.module_type == .cjs and source.path.isFile()) {
                             const actual_package_json: *PackageJSON = package_json orelse brk2: {
                                 // this should already be cached virtually always so it's fine to do this
-                                const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(source.path.name.dir) catch null) orelse
                                     break :brk .javascript;
 
                                 break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
@@ -1204,7 +1206,7 @@ pub fn transpileSourceCode(
                     return error.UnexpectedPendingResolution;
                 }
 
-                if (parse_result.source.contents_is_recycled) {
+                if (source.contents_is_recycled) {
                     // this shared buffer is about to become owned by the AsyncModule struct
                     jsc_vm.transpiler.resolver.caches.fs.resetSharedBuffer(
                         jsc_vm.transpiler.resolver.caches.fs.sharedBuffer(),
@@ -1334,7 +1336,7 @@ pub fn transpileSourceCode(
 
         //     return ResolvedSource{
         //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
-        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
+        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
         //         .specifier = ZigString.init(specifier),
         //         .source_url = input_specifier.createIfDifferent(path.text),
         //         .tag = ResolvedSource.Tag.wasm,
@@ -2030,7 +2032,7 @@ fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8)
 
 fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
-    if (bun.getRuntimeFeatureFlag("BUN_DEBUG_NO_DUMP")) return;
+    if (bun.getRuntimeFeatureFlag(.BUN_DEBUG_NO_DUMP)) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
@@ -2482,7 +2484,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                vm.source_mappings.putMappings(parse_result.source, .{
+                vm.source_mappings.putMappings(&parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
@@ -2631,8 +2633,6 @@ pub const FetchFlags = enum {
         return this != .transpile;
     }
 };
-
-const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
     bun,
@@ -3061,22 +3061,16 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
 }
 
 const std = @import("std");
-const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
-const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
@@ -3086,15 +3080,11 @@ const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
 const js_printer = bun.js_printer;
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const JSC = bun.JSC;
@@ -3102,22 +3092,8 @@ const JSValue = bun.JSC.JSValue;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ConsoleObject = bun.JSC.ConsoleObject;
-const ZigException = bun.JSC.ZigException;
-const ZigStackTrace = bun.JSC.ZigStackTrace;
 const ResolvedSource = bun.JSC.ResolvedSource;
-const JSPromise = bun.JSC.JSPromise;
-const JSModuleLoader = bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = bun.JSC.ErrorableZigString;
-const VM = bun.JSC.VM;
-const JSFunction = bun.JSC.JSFunction;
-const Config = @import("./config.zig");
-const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
-const EventLoop = JSC.EventLoop;
-const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = bun.JSC.VirtualMachine;

@@ -434,7 +434,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
 
     if (this.done) {
-        return .{ .result = .undefined };
+        return .initResult(.js_undefined);
     }
 
     const rc = this.writer.flush();
@@ -454,7 +454,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
     return switch (this.toResult(rc)) {
         .err => unreachable,
-        else => |result| .{ .result = result.toJS(globalThis) },
+        else => |result| .initResult(result.toJS(globalThis)),
     };
 }
 
@@ -581,7 +581,7 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue
             }
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
-            return .{ .result = this.pending.promise(globalThis).asValue(globalThis) };
+            return .{ .result = this.pending.promise(globalThis).toJS() };
         },
         .wrote => |written| {
             this.writer.end();

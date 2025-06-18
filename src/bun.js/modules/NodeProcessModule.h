@@ -12,7 +12,7 @@ DEFINE_NATIVE_MODULE(NodeProcess)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    Bun::Process* process = jsCast<Bun::Process*>(globalObject->processObject());
+    Bun::Process* process = globalObject->processObject();
     if (!process->staticPropertiesReified()) {
         process->reifyAllStaticProperties(globalObject);
         if (scope.exception())

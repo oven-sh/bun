@@ -352,12 +352,12 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
 
     var exec = &this.state.executing;
 
-    if (task.err) |err| {
+    if (task.err) |*err| {
         exec.error_signal.store(true, .seq_cst);
         if (exec.err == null) {
-            exec.err = err;
+            exec.err = err.*;
         } else {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
     }
 
@@ -501,12 +501,6 @@ const std = @import("std");
 const bun = @import("bun");
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
-const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
 
@@ -515,9 +509,5 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
-const ReadChunkAction = interpreter.ReadChunkAction;
-const FlagParser = interpreter.FlagParser;
 const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;
 const ResolvePath = bun.path;

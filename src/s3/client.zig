@@ -376,7 +376,7 @@ pub fn onUploadStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callf
     this.readable_stream_ref.deinit();
     this.task.continueStream();
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -403,7 +403,7 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
     }
     this.task.continueStream();
 
-    return .undefined;
+    return .js_undefined;
 }
 comptime {
     const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
@@ -447,7 +447,7 @@ pub fn uploadStream(
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
         },
         else => {},

@@ -11,6 +11,7 @@
 #include "JSCookieMap.h"
 #include "Cookie.h"
 #include "CookieMap.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
 namespace Bun {
@@ -18,9 +19,12 @@ namespace Bun {
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
 
+static JSC_DECLARE_HOST_FUNCTION(jsJSBunRequestClone);
+
 static const HashTableValue JSBunRequestPrototypeValues[] = {
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
     { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
+    { "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsJSBunRequestClone, 1 } }
 };
 
 JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSObject* params)
@@ -60,10 +64,47 @@ void JSBunRequest::setParams(JSObject* params)
 
 JSObject* JSBunRequest::cookies() const
 {
-    if (m_cookies) {
-        return m_cookies.get();
+    return m_cookies.get();
+}
+
+extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
+
+JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
+    auto* clone = this->create(vm, structure, Request__clone(this->wrapped(), globalObject), nullptr);
+
+    // Cookies and params are deep copied as they can be changed between the clone and original
+    if (auto* params = this->params()) {
+        // TODO: Use JSC's internal `cloneObject()` if/when it's exposed
+        // https://github.com/oven-sh/WebKit/blob/c5e9b9e327194f520af2c28679adb0ea1fa902ad/Source/JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp#L1018-L1099
+        auto* prototype = defaultGlobalObject(globalObject)->m_JSBunRequestParamsPrototype.get(globalObject);
+        auto* paramsClone = JSC::constructEmptyObject(globalObject, prototype);
+
+        auto propertyNames = PropertyNameArray(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(params, globalObject, propertyNames, JSC::DontEnumPropertiesMode::Exclude);
+
+        for (auto& property : propertyNames) {
+            auto value = params->get(globalObject, property);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            paramsClone->putDirect(vm, property, value);
+        }
+
+        clone->setParams(paramsClone);
     }
-    return nullptr;
+
+    if (auto* cookiesObject = cookies()) {
+        if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookiesObject)) {
+            auto cookieMap = wrapper->protectedWrapped();
+            auto cookieMapClone = cookieMap->clone();
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
+            clone->setCookies(cookies.getObject());
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, clone);
 }
 
 extern "C" void Request__setCookiesOnRequestContext(void* internalZigRequestPointer, CookieMap* cookieMap);
@@ -201,6 +242,22 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
     }
 
     return JSValue::encode(cookies);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* request = jsDynamicCast<JSBunRequest*>(callFrame->thisValue());
+    if (!request) {
+        throwScope.throwException(globalObject, Bun::createInvalidThisError(globalObject, request, "BunRequest"));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    auto clone = request->clone(vm, globalObject);
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(clone));
 }
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)

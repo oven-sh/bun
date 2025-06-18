@@ -36,6 +36,7 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
+pub const FSEvents = @import("node/fs_events.zig");
 const stat = @import("node/Stat.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
@@ -73,13 +74,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
-        /// experienced a bug with a Maybe(void, void)
-        /// creating the `err` variant of this type
-        /// resulted in Zig incorrectly setting the tag, leading to a switch
-        /// statement to just not work.
-        /// we (Zack, Dylan, Chloe, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
-        pub const Tag = enum(u8) { err, result };
+        pub const Tag = enum { err, result };
 
         pub const retry: @This() = if (has_retry) .{ .err = ErrorType.retry } else .{ .err = .{} };
         pub const success: @This() = .{
@@ -203,7 +198,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
 
-                    void => .undefined,
+                    void => .js_undefined,
                     bool => JSC.JSValue.jsBoolean(r),
 
                     JSC.ArrayBuffer => r.toJS(globalObject, null),
@@ -365,19 +360,5 @@ const sys = bun.sys;
 const Environment = bun.Environment;
 const meta = bun.meta;
 const windows = bun.windows;
-const heap_allocator = bun.default_allocator;
-const kernel32 = windows.kernel32;
-const logger = bun.logger;
 const posix = std.posix;
-const path_handler = bun.path;
-const strings = bun.strings;
-const string = bun.string;
-const L = strings.literal;
-const Fs = @import("../fs.zig");
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSC = bun.JSC;
-const Mode = bun.Mode;
-const Syscall = bun.sys;
-const URL = @import("../../url.zig").URL;
-const Value = std.json.Value;
-const JSError = bun.JSError;

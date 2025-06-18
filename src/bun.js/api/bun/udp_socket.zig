@@ -2,7 +2,6 @@ const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
 const bun = @import("bun");
 
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
 const Async = bun.Async;
@@ -802,13 +801,13 @@ pub const UDPSocket = struct {
             this.poll_ref.ref(globalThis.bunVM());
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalThis.bunVM());
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn close(
@@ -818,7 +817,7 @@ pub const UDPSocket = struct {
     ) bun.JSError!JSValue {
         if (!this.closed) this.socket.close();
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -836,7 +835,7 @@ pub const UDPSocket = struct {
         previous_config.unprotect();
         this.config = config;
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn getClosed(this: *This, _: *JSGlobalObject) JSValue {
@@ -849,17 +848,17 @@ pub const UDPSocket = struct {
     }
 
     pub fn getPort(this: *This, _: *JSGlobalObject) JSValue {
-        if (this.closed) return .undefined;
+        if (this.closed) return .js_undefined;
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
-        var sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
+        var sockaddr = SocketAddress.init(address_bytes, port) catch return .js_undefined;
         return sockaddr.intoDTO(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
-        if (this.closed) return .undefined;
+        if (this.closed) return .js_undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
         var length: i32 = 64;
         this.socket.boundIp(&buf, &length);
@@ -870,8 +869,8 @@ pub const UDPSocket = struct {
     }
 
     pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        if (this.closed) return .undefined;
-        const connect_info = this.connect_info orelse return .undefined;
+        if (this.closed) return .js_undefined;
+        const connect_info = this.connect_info orelse return .js_undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
         var length: i32 = 64;
         this.socket.remoteIp(&buf, &length);
@@ -949,7 +948,7 @@ pub const UDPSocket = struct {
         js.addressSetCached(callFrame.this(), globalThis, .zero);
         js.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn jsDisconnect(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -970,6 +969,6 @@ pub const UDPSocket = struct {
         }
         this.connect_info = null;
 
-        return .undefined;
+        return .js_undefined;
     }
 };

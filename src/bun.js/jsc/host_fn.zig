@@ -92,6 +92,11 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
     return normal;
 }
 
+pub fn fromJSHostValue(value: JSValue) bun.JSError!JSValue {
+    if (value == .zero) return error.JSError;
+    return value;
+}
+
 const ParsedHostFunctionErrorSet = struct {
     OutOfMemory: bool = false,
     JSError: bool = false,
@@ -109,8 +114,6 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
         break :brk errs;
     };
 }
-
-const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);
@@ -691,7 +694,7 @@ pub fn wrapStaticMethod(
                     ?jsc.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = try jsc.Node.StringOrBuffer.fromJS(globalThis, iter.arena.allocator(), arg) orelse brk: {
-                                if (arg == .undefined) {
+                                if (arg.isUndefined()) {
                                     break :brk null;
                                 }
 

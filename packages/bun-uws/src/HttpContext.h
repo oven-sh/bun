@@ -32,6 +32,11 @@
 #include <iostream>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
+#include <span>
+#include <array>
+#include <mutex>
+
+
 namespace uWS {
 template<bool> struct HttpResponse;
 
@@ -47,6 +52,78 @@ private:
 
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
+
+
+#define FOR_EACH_HTTP_METHOD(MACRO) \
+        MACRO("ACL") \
+        MACRO("BIND") \
+        MACRO("CHECKOUT") \
+        MACRO("CONNECT") \
+        MACRO("COPY") \
+        MACRO("DELETE") \
+        MACRO("GET") \
+        MACRO("HEAD") \
+        MACRO("LINK") \
+        MACRO("LOCK") \
+        MACRO("M-SEARCH") \
+        MACRO("MERGE") \
+        MACRO("MKACTIVITY") \
+        MACRO("MKCALENDAR") \
+        MACRO("MKCOL") \
+        MACRO("MOVE") \
+        MACRO("NOTIFY") \
+        MACRO("OPTIONS") \
+        MACRO("PATCH") \
+        MACRO("POST") \
+        MACRO("PROPFIND") \
+        MACRO("PROPPATCH") \
+        MACRO("PURGE") \
+        MACRO("PUT") \
+        MACRO("QUERY") \
+        MACRO("REBIND") \
+        MACRO("REPORT") \
+        MACRO("SEARCH") \
+        MACRO("SOURCE") \
+        MACRO("SUBSCRIBE") \
+        MACRO("TRACE") \
+        MACRO("UNBIND") \
+        MACRO("UNLINK") \
+        MACRO("UNLOCK") \
+        MACRO("UNSUBSCRIBE") \
+
+
+#ifndef _WIN32
+    static constexpr std::array<const std::string, 35> HTTP_METHODS = {
+        #define MACRO(name) std::string {name},
+        FOR_EACH_HTTP_METHOD(MACRO)
+        #undef MACRO
+    };
+    static std::span<const std::string> getAllHttpMethods() {
+        return {HTTP_METHODS.data(), HTTP_METHODS.size()};
+    }
+#else
+    // Windows, and older C++ can't do constexpr std::array<const std::string, 35>
+    static constexpr std::array<const char*, 35> HTTP_METHODS = {
+        #define MACRO(name) name,
+        FOR_EACH_HTTP_METHOD(MACRO)
+        #undef MACRO
+    };
+
+    static std::span<const std::string> getAllHttpMethods() {
+        static std::once_flag flag;
+        static std::array<std::string, 35> methods;
+        std::call_once(flag, []() {
+            methods = {
+                #define MACRO(name) std::string {name},
+                FOR_EACH_HTTP_METHOD(MACRO)
+                #undef MACRO
+            };
+        });
+        return {methods.data(), methods.size()};
+    }
+#endif
+#undef FOR_EACH_HTTP_METHOD
+
 
     us_socket_context_t *getSocketContext() {
         return (us_socket_context_t *) this;
@@ -124,7 +201,7 @@ private:
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
-            
+
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }
@@ -199,7 +276,7 @@ private:
 
                 /* Mark pending request and emit it */
                 httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-                
+
 
                 /* Mark this response as connectionClose if ancient or connection: close */
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -259,7 +336,7 @@ private:
             }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
-                    
+
                     /* Todo: can this handle timeout for non-post as well? */
                     if (fin) {
                         /* If we just got the last chunk (or empty chunk), disable timeout */
@@ -297,7 +374,7 @@ private:
             });
 
             auto httpErrorStatusCode = result.httpErrorStatusCode();
-            
+
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
@@ -311,7 +388,7 @@ private:
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
             }
-        
+
             auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedData != nullptr) {
@@ -379,10 +456,9 @@ private:
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
                 /* Try to flush pending data from the socket's buffer to the network */
-                bufferedAmount -= asyncSocket->flush();
-                
+                asyncSocket->flush();
                 /* Check if there's still data waiting to be sent after flush attempt */
-                if (bufferedAmount > 0) {
+                if (asyncSocket->getBufferedAmount() > 0) {
                     /* Socket buffer is not completely empty yet
                     * - Reset the timeout to prevent premature connection closure
                     * - This allows time for another writable event or new request
@@ -395,12 +471,12 @@ private:
                 * and will fall through to the next section of code
                 */
             }
-            
+
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-                
+
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
                 bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
@@ -421,6 +497,7 @@ private:
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (asyncSocket->getBufferedAmount() == 0) {
+
                         asyncSocket->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -504,13 +581,23 @@ public:
     void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
         HttpContextData<SSL> *httpContextData = getSocketContextData();
 
-        std::vector<std::string> methods{std::string(method)};
+        std::span<const std::string> methods;
+        std::array<std::string, 1> methods_buffer;
+        // When it's NOT node:http, allow the uWS default precedence ordering.
+        if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
+            methods = getAllHttpMethods();
+        } else {
+            methods_buffer[0] = std::string(method);
+            methods = {methods_buffer.data(), 1};
+        }
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
 
         /* If we are passed nullptr then remove this */
         if (!handler) {
-            httpContextData->currentRouter->remove(methods[0], pattern, priority);
+            for (const auto &method : methods) {
+                httpContextData->currentRouter->remove(method, pattern, priority);
+            }
             return;
         }
 
@@ -529,7 +616,7 @@ public:
             }
         }
 
-        
+
 
         httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
@@ -580,5 +667,3 @@ public:
 };
 
 }
-
-

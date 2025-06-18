@@ -9,8 +9,6 @@ const JSC = bun.JSC;
 const std = @import("std");
 const BoringSSL = bun.BoringSSL.c;
 const bun = @import("bun");
-const Environment = bun.Environment;
-const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
@@ -438,7 +436,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    const ctx = uws.us_create_bun_nossl_socket_context(vm.event_loop_handle.?, @sizeOf(usize)).?;
+    const ctx = uws.SocketContext.createNoSSLContext(vm.event_loop_handle.?, @sizeOf(usize)).?;
     IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;

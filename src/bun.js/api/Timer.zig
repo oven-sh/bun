@@ -5,13 +5,9 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSValue = JSC.JSValue;
 const JSError = bun.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const uv = bun.windows.libuv;
-const api = bun.api;
-const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
-const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -547,8 +543,6 @@ pub const All = struct {
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };
-
-const uws = bun.uws;
 
 pub const EventLoopTimer = @import("./Timer/EventLoopTimer.zig");
 

@@ -522,6 +522,42 @@ fn initSubproc(this: *Cmd) Yield {
     defer shellio.deref();
     this.io.to_subproc_stdio(&spawn_args.stdio, &shellio);
 
+    if (this.initRedirections(&spawn_args)) |yield| return yield;
+
+    const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
+    log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
+
+    this.exec = .{ .subproc = .{
+        .child = undefined,
+        .buffered_closed = buffered_closed,
+    } };
+    var did_exit_immediately = false;
+    const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
+        .result => this.exec.subproc.child,
+        .err => |*e| {
+            this.exec = .none;
+            return this.writeFailingError("{}\n", .{e});
+        },
+    };
+    subproc.ref();
+    this.spawn_arena_freed = true;
+    arena.deinit();
+
+    if (did_exit_immediately) {
+        if (subproc.process.hasExited()) {
+            // process has already exited, we called wait4(), but we did not call onProcessExit()
+            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage));
+        } else {
+            // process has already exited, but we haven't called wait4() yet
+            // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+            subproc.process.wait(false);
+        }
+    }
+
+    return .suspended;
+}
+
+fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) ?Yield {
     if (this.node.redirect_file) |redirect| {
         const in_cmd_subst = false;
 
@@ -597,37 +633,7 @@ fn initSubproc(this: *Cmd) Yield {
         }
     }
 
-    const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
-    log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
-
-    this.exec = .{ .subproc = .{
-        .child = undefined,
-        .buffered_closed = buffered_closed,
-    } };
-    var did_exit_immediately = false;
-    const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
-        .result => this.exec.subproc.child,
-        .err => |*e| {
-            this.exec = .none;
-            return this.writeFailingError("{}\n", .{e});
-        },
-    };
-    subproc.ref();
-    this.spawn_arena_freed = true;
-    arena.deinit();
-
-    if (did_exit_immediately) {
-        if (subproc.process.hasExited()) {
-            // process has already exited, we called wait4(), but we did not call onProcessExit()
-            subproc.process.onExit(subproc.process.status, &std.mem.zeroes(bun.spawn.Rusage));
-        } else {
-            // process has already exited, but we haven't called wait4() yet
-            // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            subproc.process.wait(false);
-        }
-    }
-
-    return .suspended;
+    return null;
 }
 
 fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {

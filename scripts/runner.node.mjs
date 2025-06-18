@@ -433,7 +433,6 @@ async function runTests() {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
-        console.log("\n\n\n\n\n", testPath, "\n\n\n\n");
         const testContent = readFileSync(absoluteTestPath, "utf-8");
         const runWithBunTest =
           title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");

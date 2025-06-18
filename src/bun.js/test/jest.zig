@@ -913,6 +913,7 @@ pub const DescribeScope = struct {
     pub const beforeAll = createCallback(.beforeAll);
     pub const beforeEach = createCallback(.beforeEach);
 
+    // TODO this should return JSError
     pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {

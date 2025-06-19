@@ -713,4 +713,3 @@ const ShellSyscall = shell.interpret.ShellSyscall;
 const Allocator = std.mem.Allocator;
 const ast = shell.AST;
 const IO = shell.Interpreter.IO;
-const CoroutineResult = shell.interpret.CoroutineResult;

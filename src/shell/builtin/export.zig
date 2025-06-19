@@ -120,7 +120,6 @@ const Builtin = Interpreter.Builtin;
 const ExitCode = shell.ExitCode;
 const Export = @This();
 const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
 const std = @import("std");
 const log = debug;
 const EnvStr = interpreter.EnvStr;

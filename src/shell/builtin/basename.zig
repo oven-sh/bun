@@ -66,5 +66,4 @@ const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");

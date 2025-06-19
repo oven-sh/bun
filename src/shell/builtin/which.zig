@@ -142,7 +142,6 @@ const bun = @import("bun");
 const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const assert = bun.assert;
 
 const interpreter = @import("../interpreter.zig");

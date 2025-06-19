@@ -741,7 +741,6 @@ const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
 const Cp = @This();
-const CoroutineResult = interpreter.CoroutineResult;
 const OutputTask = interpreter.OutputTask;
 const assert = bun.assert;
 

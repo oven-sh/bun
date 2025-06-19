@@ -81,7 +81,6 @@ const Builtin = Interpreter.Builtin;
 const ExitCode = shell.ExitCode;
 const Exit = @This();
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
 
 const assert = bun.assert;

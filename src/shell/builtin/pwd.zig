@@ -86,6 +86,5 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 const Pwd = @This();
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 
 const assert = bun.assert;

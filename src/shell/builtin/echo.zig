@@ -75,11 +75,6 @@ const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
 const Echo = @This();
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
-const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
-const FlagParser = interpreter.FlagParser;
 
 const assert = bun.assert;

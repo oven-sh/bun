@@ -382,14 +382,12 @@ const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
 const FlagParser = interpreter.FlagParser;
 
 const Mkdir = @This();
 const log = debug;
 const OutputTask = interpreter.OutputTask;
-const CoroutineResult = interpreter.CoroutineResult;
 const OutputSrc = interpreter.OutputSrc;
 const WorkPool = bun.JSC.WorkPool;
 const ResolvePath = bun.path;

@@ -129,10 +129,7 @@ pub fn deinit(this: *Stmt) void {
     this.base.interpreter.allocator.destroy(this);
 }
 
-const std = @import("std");
 const bun = @import("bun");
-
-const Allocator = std.mem.Allocator;
 
 const Yield = bun.shell.Yield;
 const Interpreter = bun.shell.Interpreter;

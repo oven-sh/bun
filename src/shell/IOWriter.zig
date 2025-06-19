@@ -169,7 +169,9 @@ fn write(this: *IOWriter) enum {
     failed,
     is_actually_file,
 } {
-    bun.assert(this.flags.pollable);
+    if (bun.Environment.isPosix)
+        bun.assert(this.flags.pollable);
+
     if (!this.started) {
         log("IOWriter(0x{x}, fd={}) starting", .{ @intFromPtr(this), this.fd });
         if (this.__start().asErr()) |e| {
@@ -317,7 +319,7 @@ pub fn doFileWrite(this: *IOWriter) Yield {
 }
 
 pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatus) void {
-    bun.assert(this.flags.pollable);
+    if (bun.Environment.isPosix) bun.assert(this.flags.pollable);
 
     this.setWriting(false);
     debug("IOWriter(0x{x}, fd={}) onWrite({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
@@ -547,7 +549,7 @@ fn enqueueFile(this: *IOWriter) Yield {
 /// You MUST have already added the data to `this.buf`!!
 pub fn enqueueInternal(this: *IOWriter) Yield {
     bun.assert(!this.flags.broken_pipe);
-    if (!this.flags.pollable) return this.enqueueFile();
+    if (!this.flags.pollable and bun.Environment.isPosix) return this.enqueueFile();
     switch (this.write()) {
         .suspended => return .suspended,
         .is_actually_file => {

@@ -649,4 +649,8 @@ nativeTests.test_get_value_string = () => {
   }
 };
 
+nativeTests.test_constructor_order = () => {
+  require("./build/Debug/constructor_order_addon.node");
+};
+
 module.exports = nativeTests;

@@ -31,14 +31,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         for (reachable) |source_index_| {
             const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
             defer trace.end();
-            const _id = source_index_.get();
 
             // does it have a JS AST?
-            if (!(_id < import_records_list.len)) continue;
+            if (!(source_index_.get() < import_records_list.len)) continue;
 
             // don't use reachable_files order (dfs)
             // https://github.com/evanw/esbuild/blob/f4159a7b823cd5fe2217da2c30e8873d2f319667/internal/bundler/bundler.go#L2692
-            const id = this.graph.stable_source_indices[_id];
+            const id = this.graph.stable_source_indices[source_index_.get()];
 
             const import_records: []ImportRecord = import_records_list[id].slice();
 

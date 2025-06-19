@@ -890,13 +890,12 @@ pub const LinkerContext = struct {
     pub fn validateTLA(
         c: *LinkerContext,
         source_index: Index.Int,
-        tla_keywords: []Logger.Range,
+        tla_keywords: []const Logger.Range,
         tla_checks: []js_ast.TlaCheck,
-        input_files: []Logger.Source,
-        import_records: []ImportRecord,
+        input_files: []const Logger.Source,
+        import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
-        ast_import_records: []bun.BabyList(ImportRecord),
-        parents_to_revisit_buf: *std.ArrayListUnmanaged(Index.Int),
+        ast_import_records: []const bun.BabyList(ImportRecord),
     ) bun.OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
@@ -916,7 +915,6 @@ pub const LinkerContext = struct {
                         import_records,
                         meta_flags,
                         ast_import_records,
-                        parents_to_revisit_buf,
                     );
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
@@ -987,51 +985,7 @@ pub const LinkerContext = struct {
             // async. This happens when you call "import()" on this module and code
             // splitting is off.
             if (Index.isValid(Index.init(result_tla_check.parent))) {
-                const was_async = meta_flags[source_index].is_async_or_has_async_dependency;
                 meta_flags[source_index].is_async_or_has_async_dependency = true;
-
-                // If we just marked this file as async, we need to propagate to parents
-                if (!was_async) {
-                    parents_to_revisit_buf.clearRetainingCapacity();
-
-                    // Find all files that import this file and mark them for revisiting
-                    for (ast_import_records, 0..) |records, _parent_index| {
-                        const parent_index: Index.Int = @intCast(_parent_index);
-                        for (records.slice()) |record| {
-                            if (Index.isValid(record.source_index) and
-                                record.source_index.get() == source_index and
-                                (record.kind == .stmt or record.kind == .dynamic))
-                            {
-                                // Mark the parent as async if it imports us
-                                if (!meta_flags[parent_index].is_async_or_has_async_dependency) {
-                                    meta_flags[parent_index].is_async_or_has_async_dependency = true;
-                                    // Recursively check this parent's parents
-                                    try parents_to_revisit_buf.append(c.allocator, parent_index);
-                                }
-                            }
-                        }
-                    }
-
-                    // Process all parents that need revisiting
-                    while (parents_to_revisit_buf.items.len > 0) {
-                        const parent_to_check = parents_to_revisit_buf.pop();
-                        // Find files that import this parent
-                        for (ast_import_records, 0..) |records, _grandparent_index| {
-                            const grandparent_index: Index.Int = @intCast(_grandparent_index);
-                            for (records.slice()) |record| {
-                                if (Index.isValid(record.source_index) and
-                                    record.source_index.get() == parent_to_check and
-                                    (record.kind == .stmt or record.kind == .dynamic))
-                                {
-                                    if (!meta_flags[grandparent_index].is_async_or_has_async_dependency) {
-                                        meta_flags[grandparent_index].is_async_or_has_async_dependency = true;
-                                        try parents_to_revisit_buf.append(c.allocator, grandparent_index);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
 

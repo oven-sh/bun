@@ -572,7 +572,16 @@ pub const Interpreter = struct {
                     return ctx.parent.childDone(ctx, 1);
                 },
                 // FIXME: This is not correct? This would just make the entire shell hang I think?
-                .ignore => @panic("FIXME: zack"),
+                .ignore => {
+                    const childptr = IOWriterChildPtr.init(ctx);
+                    // TODO: is this necessary
+                    const count = std.fmt.count(fmt, args);
+                    return .{ .on_io_writer_chunk = .{
+                        .child = childptr.asAnyOpaque(),
+                        .err = null,
+                        .written = count,
+                    } };
+                },
             }
         }
     };

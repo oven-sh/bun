@@ -174,37 +174,31 @@ pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) Yield {
     }
 }
 
-pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
-    {
-        @panic("FIXME zack");
-    }
+pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ?Yield {
     debug("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
     switch (this.state) {
         .exec_stdin => {
             if (this.bltn().stdout.needsIO()) |safeguard| {
                 this.state.exec_stdin.chunks_queued += 1;
-                this.bltn().stdout.enqueue(this, chunk, safeguard);
-                return .cont;
+                return this.bltn().stdout.enqueue(this, chunk, safeguard);
             }
             _ = this.bltn().writeNoIO(.stdout, chunk);
+            return null;
         },
         .exec_filepath_args => {
             if (this.bltn().stdout.needsIO()) |safeguard| {
                 this.state.exec_filepath_args.chunks_queued += 1;
-                this.bltn().stdout.enqueue(this, chunk, safeguard);
-                return .cont;
+                return this.bltn().stdout.enqueue(this, chunk, safeguard);
             }
             _ = this.bltn().writeNoIO(.stdout, chunk);
+            return null;
         },
         else => @panic("Invalid state"),
     }
-    return .cont;
+    return null;
 }
 
-pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) void {
-    {
-        @panic("FIXME zack");
-    }
+pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) Yield {
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
         break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -217,14 +211,13 @@ pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) void {
             this.state.exec_stdin.in_done = true;
             if (errno != 0) {
                 if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or this.bltn().stdout.needsIO() == null) {
-                    this.bltn().done(errno);
-                    return;
+                    return this.bltn().done(errno);
                 }
                 this.bltn().stdout.fd.writer.cancelChunks(this);
-                return;
+                return .suspended;
             }
             if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or this.bltn().stdout.needsIO() == null) {
-                this.bltn().done(0);
+                return this.bltn().done(0);
             }
         },
         .exec_filepath_args => {
@@ -232,18 +225,19 @@ pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) void {
             if (errno != 0) {
                 if (this.state.exec_filepath_args.out_done or this.bltn().stdout.needsIO() == null) {
                     this.state.exec_filepath_args.deinit();
-                    this.bltn().done(errno);
-                    return;
+                    return this.bltn().done(errno);
                 }
                 this.bltn().stdout.fd.writer.cancelChunks(this);
-                return;
+                return .suspended;
             }
             if (this.state.exec_filepath_args.out_done or (this.state.exec_filepath_args.chunks_done >= this.state.exec_filepath_args.chunks_queued) or this.bltn().stdout.needsIO() == null) {
-                this.next();
+                return this.next();
             }
         },
         .done, .waiting_write_err, .idle => {},
     }
+
+    return .suspended;
 }
 
 pub fn deinit(_: *Cat) void {}

@@ -104,8 +104,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
                 .err = expansion.state.err,
             };
             expansion.deinit();
-            @panic("FIXME: zack what to return?");
-            //  return .failed;
+            return .failed;
         }
         var expanding = &this.state.expanding;
 

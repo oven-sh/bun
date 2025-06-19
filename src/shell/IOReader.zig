@@ -130,13 +130,11 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
     var i: usize = 0;
     while (i < this.readers.len()) {
         var r = this.readers.get(i);
-        switch (r.onReadChunk(chunk)) {
-            .cont => {
-                i += 1;
-            },
-            .stop_listening => {
-                this.readers.swapRemove(i);
-            },
+        if (r.onReadChunk(chunk)) |yield| {
+            yield.run();
+            i += 1;
+        } else {
+            this.readers.swapRemove(i);
         }
     }
 
@@ -166,7 +164,7 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
         r.onReaderDone(if (this.err) |*e| brk: {
             e.ref();
             break :brk e.*;
-        } else null);
+        } else null).run();
     }
 }
 
@@ -177,7 +175,7 @@ pub fn onReaderDone(this: *IOReader) void {
         r.onReaderDone(if (this.err) |*err| brk: {
             err.ref();
             break :brk err.*;
-        } else null);
+        } else null).run();
     }
 }
 
@@ -225,12 +223,12 @@ pub const IOReaderChildPtr = struct {
     }
 
     /// Return true if the child should be deleted
-    pub fn onReadChunk(this: IOReaderChildPtr, chunk: []const u8) ReadChunkAction {
-        return this.ptr.call("onIOReaderChunk", .{chunk}, ReadChunkAction);
+    pub fn onReadChunk(this: IOReaderChildPtr, chunk: []const u8) ?Yield {
+        return this.ptr.call("onIOReaderChunk", .{chunk}, ?Yield);
     }
 
-    pub fn onReaderDone(this: IOReaderChildPtr, err: ?JSC.SystemError) void {
-        return this.ptr.call("onIOReaderDone", .{err}, void);
+    pub fn onReaderDone(this: IOReaderChildPtr, err: ?JSC.SystemError) Yield {
+        return this.ptr.call("onIOReaderDone", .{err}, Yield);
     }
 };
 

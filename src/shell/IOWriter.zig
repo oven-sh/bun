@@ -244,7 +244,7 @@ const Writer = struct {
     }
 
     pub fn setDead(this: *Writer) void {
-        this.ptr.ptr = ChildPtr.ChildPtrRaw.Null;
+        this.ptr.ptr = ChildPtrRaw.Null;
     }
 };
 
@@ -656,13 +656,11 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     }
 }
 
-pub fn runFromMainThread(_: *IOWriter) void {
-    @panic("FIXME zack");
-}
+// this is unused
+pub fn runFromMainThread(_: *IOWriter) void {}
 
-pub fn runFromMainThreadMini(_: *IOWriter, _: *void) void {
-    @panic("FIXME zack");
-}
+// this is unused
+pub fn runFromMainThreadMini(_: *IOWriter, _: *void) void {}
 
 /// Anything which uses `*IOWriter` to write to a file descriptor needs to
 /// register itself here so we know how to call its callback on completion.

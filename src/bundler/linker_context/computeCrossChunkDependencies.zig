@@ -324,7 +324,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     defer unique_stable_refs.deinit();
 
                     if (stable_ref_list.items.len > 1) {
-                        var seen_refs = bun.AutoHashMap(Ref, void).init(c.allocator);
+                        var seen_refs = std.AutoHashMap(Ref, void).init(c.allocator);
                         defer seen_refs.deinit();
 
                         for (stable_ref_list.items) |stable_ref| {

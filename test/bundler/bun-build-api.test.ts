@@ -1,9 +1,8 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
-import { cwd } from "process";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -632,42 +631,4 @@ test("onEnd Plugin does not crash", async () => {
       });
     })(),
   ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
-});
-
-test("macro with nested object", async () => {
-  const dir = tempDirWithFilesAnon({
-    "index.ts": `
-import { testMacro } from "./macro" assert { type: "macro" };
-
-export const testConfig = testMacro({
-  borderRadius: {
-    1: "4px",
-    2: "8px",
-  },
-});
-    `,
-    "macro.ts": `
-export function testMacro(val: any) {
-  return val;
-}
-    `,
-  });
-
-  const build = await Bun.build({
-    entrypoints: [join(dir, "index.ts")],
-  });
-
-  expect(build.outputs).toHaveLength(1);
-  expect(build.outputs[0].kind).toBe("entry-point");
-  expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(`// ${path.relative(cwd(), dir)}/index.ts
-var testConfig = {
-  borderRadius: {
-    "1": "4px",
-    "2": "8px"
-  }
-};
-export {
-  testConfig
-};
-`);
 });

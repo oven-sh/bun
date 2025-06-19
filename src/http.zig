@@ -150,6 +150,10 @@ pub const ThreadSafeStreamBuffer = struct {
         this.callback = Callback.init(T, callback, context);
     }
 
+    pub fn clearDrainCallback(this: *ThreadSafeStreamBuffer) void {
+        this.callback = null;
+    }
+
     /// Attention never call this from the main thread this is exclusively called from the http thread
     /// Buffer should be acquired before calling this
     pub fn reportDrain(this: *ThreadSafeStreamBuffer) void {

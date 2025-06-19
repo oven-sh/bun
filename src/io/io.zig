@@ -11,6 +11,8 @@ const Environment = bun.Environment;
 pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
 
+pub const openForWriting = @import("./openForWriting.zig").openForWriting;
+
 const log = bun.Output.scoped(.loop, false);
 
 const posix = std.posix;

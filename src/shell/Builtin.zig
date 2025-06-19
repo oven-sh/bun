@@ -394,25 +394,57 @@ fn initRedirections(
                 const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                 log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                 const perm = 0o666;
-                const is_nonblocking = false;
-                const flags = node.redirect.toFlags();
-                const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
-                    .err => |e| {
-                        return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
-                    },
-                    .result => |f| f,
+
+                var pollable = false;
+                var is_socket = false;
+                var is_nonblocking = false;
+
+                const redirfd = redirfd: {
+                    if (node.redirect.stdin) {
+                        break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
+                            .err => |e| {
+                                return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                            },
+                            .result => |f| f,
+                        };
+                    }
+
+                    const result = bun.io.openForWriting(
+                        cmd.base.shell.cwd_fd,
+                        path,
+                        node.redirect.toFlags(),
+                        perm,
+                        &pollable,
+                        &is_socket,
+                        false,
+                        &is_nonblocking,
+                        void,
+                        {},
+                        struct {
+                            fn onForceSyncOrIsaTTY(_: void) void {}
+                        }.onForceSyncOrIsaTTY,
+                        shell.interpret.isPollableFromMode,
+                    );
+
+                    break :redirfd switch (result) {
+                        .err => |e| {
+                            return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                        },
+                        .result => |f| f,
+                    };
                 };
+
                 if (node.redirect.stdin) {
                     cmd.exec.bltn.stdin.deref();
                     cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                 }
                 if (node.redirect.stdout) {
                     cmd.exec.bltn.stdout.deref();
-                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
                 }
                 if (node.redirect.stderr) {
                     cmd.exec.bltn.stderr.deref();
-                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
                 }
             },
             .jsbuf => |val| {

@@ -302,7 +302,7 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
 }
 
 comptime {
-    if (Environment.export_cpp_apis and Environment.isWindows) {
+    if (Environment.isWindows) {
         @export(&Bun__Process__editWindowsEnvVar, .{ .name = "Bun__Process__editWindowsEnvVar" });
     }
 }

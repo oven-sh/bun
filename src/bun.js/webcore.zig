@@ -1,9 +1,7 @@
 //! Web APIs implemented in Zig live here
 
 comptime {
-    if (bun.Environment.export_cpp_apis) {
-        _ = &@import("webcore/prompt.zig");
-    }
+    _ = &@import("webcore/prompt.zig");
     _ = &@import("webcore/TextEncoder.zig");
 }
 

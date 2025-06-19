@@ -775,7 +775,6 @@ export function assignStreamIntoResumableSink(stream, sink) {
       try {
         while (true) {
           var { value, done } = await reader.read();
-          console.log("drainReaderIntoSink", value, done);
           if (closed) break;
 
           if (value) {

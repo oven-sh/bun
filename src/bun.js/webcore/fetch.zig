@@ -71,6 +71,7 @@ pub const FetchTasklet = struct {
     javascript_vm: *VirtualMachine = undefined,
     global_this: *JSGlobalObject = undefined,
     request_body: HTTPRequestBody = undefined,
+    request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
     /// buffer being used by AsyncHTTP
     response_buffer: MutableString = undefined,
@@ -245,6 +246,10 @@ pub const FetchTasklet = struct {
         if (this.sink) |sink| {
             this.sink = null;
             sink.deref();
+        }
+        if (this.request_body_streaming_buffer) |buffer| {
+            this.request_body_streaming_buffer = null;
+            buffer.deref();
         }
     }
 
@@ -1110,9 +1115,12 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
+            const buffer = http.ThreadSafeStreamBuffer.new();
+            buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain);
+            fetch_tasklet.request_body_streaming_buffer = buffer;
             fetch_tasklet.http.?.request_body = .{
                 .stream = .{
-                    .buffer = .{},
+                    .buffer = buffer,
                     .ended = false,
                 },
             };
@@ -1150,14 +1158,46 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
+    pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
+        // ref until the main thread callback is called
+        this.ref();
+        this.javascript_vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
+    }
+
+    /// This is ALWAYS called from the main thread
+    pub fn resumeRequestDataStream(this: *FetchTasklet) void {
+        // deref when done because we ref inside onWriteRequestDataDrain
+        defer this.deref();
+        if (this.sink) |sink| {
+            sink.drain();
+        }
+    }
+
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
-        // TODO: change this is terrible
-        if (this.http) |http_| {
-            // encode the data as a chunked transfer-encoding body
-            const chunk = std.fmt.allocPrint(bun.default_allocator, "{x}\r\n{s}\r\n", .{ data.len, data }) catch bun.outOfMemory();
-            // lets limit buffering more than 2 chunks at a time
-            http.http_thread.scheduleRequestWrite(http_, chunk, false);
-            return true;
+        if (this.request_body_streaming_buffer) |buffer| {
+            const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
+            const stream_buffer = buffer.acquire();
+            defer buffer.release();
+
+            const slice = stream_buffer.slice();
+            // dont have backpressure so we will schedule the data to be written
+            // if we have backpressure the onWritable will drain the buffer
+            const need_schedule = slice.len < 0;
+            //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
+            var formated_size_buffer: [18]u8 = undefined;
+            const formated_size = std.fmt.bufPrint(formated_size_buffer[0..], "{x}\r\n", .{data.len}) catch bun.outOfMemory();
+            stream_buffer.ensureUnusedCapacity(formated_size.len + data.len + 2) catch bun.outOfMemory();
+            stream_buffer.writeAssumeCapacity(formated_size);
+            stream_buffer.writeAssumeCapacity(data);
+            stream_buffer.writeAssumeCapacity("\r\n");
+
+            if (need_schedule) {
+                // wakeup the http thread to write the data
+                http.http_thread.scheduleRequestWrite(this.http.?, false);
+            }
+            // pause the stream if we hit the high water mark
+            return stream_buffer.size() >= highWaterMark;
         }
         return false;
     }
@@ -1174,8 +1214,8 @@ pub const FetchTasklet = struct {
             this.abortTask();
         } else {
             if (this.http) |http_| {
-                // we for now assume that will always be chunked encoded but we can change this in the future
-                http.http_thread.scheduleRequestWrite(http_, http.end_of_chunked_http1_1_encoding_response_body, true);
+                // just tell to write the end of the chunked encoding aka 0\r\n\r\n
+                http.http_thread.scheduleRequestWrite(http_, true);
             }
         }
     }

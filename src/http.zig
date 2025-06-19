@@ -114,9 +114,22 @@ pub const ThreadSafeStreamBuffer = struct {
     buffer: bun.io.StreamBuffer = .{},
     mutex: std.Thread.Mutex = .{},
     ref_count: StreamBufferRefCount = .initExactRefs(2), // 1 for main thread and 1 for http thread
-    // drain_callback will be called passing the contxt for the http callback
-    // this is used to report when the buffer is drained and only if end chunk was not sent
-    drain_callback: ?*const fn (*anyopaque) void = null,
+    // callback will be called passing the context for the http callback
+    // this is used to report when the buffer is drained and only if end chunk was not sent/reported
+    callback: ?Callback = null,
+
+    const Callback = struct {
+        callback: *const fn (*anyopaque) void,
+        context: *anyopaque,
+
+        pub fn init(comptime T: type, callback: *const fn (*T) void, context: *T) @This() {
+            return .{ .callback = @ptrCast(callback), .context = @ptrCast(context) };
+        }
+
+        pub fn call(this: @This()) void {
+            this.callback(this.context);
+        }
+    };
 
     const StreamBufferRefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", ThreadSafeStreamBuffer.deinit, .{});
     pub const ref = StreamBufferRefCount.ref;
@@ -133,16 +146,16 @@ pub const ThreadSafeStreamBuffer = struct {
     }
 
     /// Attention should only be called in the main thread and before schedule the it to the http thread
-    pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: *const fn (*T) void) void {
-        this.drain_callback = @ptrCast(callback);
+    pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: *const fn (*T) void, context: *T) void {
+        this.callback = Callback.init(T, callback, context);
     }
 
     /// Attention never call this from the main thread this is exclusively called from the http thread
     /// Buffer should be acquired before calling this
-    pub fn reportDrain(this: *ThreadSafeStreamBuffer, context: *anyopaque) void {
+    pub fn reportDrain(this: *ThreadSafeStreamBuffer) void {
         if (this.buffer.isEmpty()) {
-            if (this.drain_callback) |callback| {
-                callback(context);
+            if (this.callback) |callback| {
+                callback.call();
             }
         }
     }
@@ -3404,7 +3417,7 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
                 stream.deinit();
             } else {
                 if (!wasEmpty) {
-                    stream_buffer.reportDrain(this.result_callback.ctx);
+                    stream_buffer.reportDrain();
                 }
                 stream_buffer.release();
             }

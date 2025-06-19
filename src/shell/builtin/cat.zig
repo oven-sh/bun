@@ -341,7 +341,6 @@ const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
 const IOReader = shell.IOReader;
 const Cat = @This();
-const ReadChunkAction = interpreter.ReadChunkAction;
 const JSC = bun.JSC;
 const std = @import("std");
 const FlagParser = interpreter.FlagParser;

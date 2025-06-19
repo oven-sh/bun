@@ -262,7 +262,6 @@ pub const AsyncDeinitReader = struct {
 };
 
 const SmolList = bun.shell.SmolList;
-const ReadChunkAction = bun.shell.interpret.ReadChunkAction;
 
 const std = @import("std");
 const bun = @import("bun");

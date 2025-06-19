@@ -130,11 +130,12 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
     var i: usize = 0;
     while (i < this.readers.len()) {
         var r = this.readers.get(i);
-        if (r.onReadChunk(chunk)) |yield| {
-            yield.run();
-            i += 1;
-        } else {
+        var remove = false;
+        r.onReadChunk(chunk, &remove).run();
+        if (remove) {
             this.readers.swapRemove(i);
+        } else {
+            i += 1;
         }
     }
 
@@ -223,8 +224,8 @@ pub const IOReaderChildPtr = struct {
     }
 
     /// Return true if the child should be deleted
-    pub fn onReadChunk(this: IOReaderChildPtr, chunk: []const u8) ?Yield {
-        return this.ptr.call("onIOReaderChunk", .{chunk}, ?Yield);
+    pub fn onReadChunk(this: IOReaderChildPtr, chunk: []const u8, remove: *bool) Yield {
+        return this.ptr.call("onIOReaderChunk", .{ chunk, remove }, Yield);
     }
 
     pub fn onReaderDone(this: IOReaderChildPtr, err: ?JSC.SystemError) Yield {

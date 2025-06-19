@@ -174,8 +174,9 @@ pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) Yield {
     }
 }
 
-pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ?Yield {
+pub fn onIOReaderChunk(this: *Cat, chunk: []const u8, remove: *bool) Yield {
     debug("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
+    remove.* = false;
     switch (this.state) {
         .exec_stdin => {
             if (this.bltn().stdout.needsIO()) |safeguard| {
@@ -183,7 +184,7 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ?Yield {
                 return this.bltn().stdout.enqueue(this, chunk, safeguard);
             }
             _ = this.bltn().writeNoIO(.stdout, chunk);
-            return null;
+            return .done;
         },
         .exec_filepath_args => {
             if (this.bltn().stdout.needsIO()) |safeguard| {
@@ -191,11 +192,11 @@ pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ?Yield {
                 return this.bltn().stdout.enqueue(this, chunk, safeguard);
             }
             _ = this.bltn().writeNoIO(.stdout, chunk);
-            return null;
+            return .done;
         },
         else => @panic("Invalid state"),
     }
-    return null;
+    return .done;
 }
 
 pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) Yield {

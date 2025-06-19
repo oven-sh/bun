@@ -520,8 +520,14 @@ pub const String = extern struct {
         var out: String = String.dead;
         const ok = BunString__fromJS(globalObject, value, &out);
 
-        scope.assertExceptionPresenceMatches(!ok);
-        scope.assertExceptionPresenceMatches(out.tag == .Dead);
+        // If there is a pending exception, but stringifying succeeds, we don't return JSError.
+        // We do need to always call hasException() to satisfy the need for an exception check.
+        const has_exception = scope.hasException();
+        if (ok) {
+            bun.debugAssert(out.tag != .Dead);
+        } else {
+            bun.debugAssert(has_exception);
+        }
 
         return if (ok) out else error.JSError;
     }

@@ -35,7 +35,7 @@ describe("IOWriter file output redirection", () => {
   describe("file system error conditions", () => {
     TestBuilder.command`echo "should fail" > /dev/null/invalid/path`
       .exitCode(1)
-      .stderr_contains("Not a directory")
+      .stderr_contains("directory: /dev/null/invalid/path")
       .runAsTest("write to invalid path should fail");
 
     TestBuilder.command`echo "should fail" > /nonexistent/file.txt`

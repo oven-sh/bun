@@ -1792,7 +1792,7 @@ pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callfram
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    // TODO(@190n) will it be too big a refactor to forward errors from here?
+    // TODO: properly propagate exception upwards
     this.eventLoop().drainMicrotasks() catch {};
 }
 

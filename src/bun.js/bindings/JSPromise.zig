@@ -198,7 +198,7 @@ pub const JSPromise = opaque {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
-        bun.debugAssert(!scope.hasException()); // TODO
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
         return promise;
     }
 
@@ -274,7 +274,7 @@ pub const JSPromise = opaque {
         }
 
         JSC__JSPromise__resolve(this, globalThis, value);
-        bun.debugAssert(!scope.hasException()); // TODO
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {

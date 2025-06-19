@@ -44,6 +44,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include <wtf/threads/BinarySemaphore.h>
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -238,7 +239,10 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
+    ScriptExecutionContext::ensureOnMainThread(
+        [this](ScriptExecutionContext&) {
+            MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
+        });
 
     removeAllEventListeners();
 }
@@ -318,8 +322,11 @@ void MessagePort::dispatchMessages()
     if (!context || context->activeDOMObjectsAreSuspended() || !isEntangled())
         return;
 
-    auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
-        RefPtr<ScriptExecutionContext> context = scriptExecutionContext();
+    auto executionContextIdentifier = scriptExecutionContext()->identifier();
+
+    auto messagesTakenHandler = [this, protectedThis = Ref { *this }, executionContextIdentifier](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
+        RefPtr<ScriptExecutionContext> context = ScriptExecutionContext::getScriptExecutionContext(executionContextIdentifier);
+
         if (!context || !context->globalObject()) {
             completionCallback();
             return;
@@ -329,22 +336,35 @@ void MessagePort::dispatchMessages()
         processMessages(*context, WTFMove(messages), WTFMove(completionCallback));
     };
 
-    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));
+    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(executionContextIdentifier, m_identifier, WTFMove(messagesTakenHandler));
 }
 
+// synchronous for node:worker_threads.receiveMessageOnPort
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
 {
     auto* context = scriptExecutionContext();
     if (!context || context->activeDOMObjectsAreSuspended() || !isEntangled())
         return jsUndefined();
 
-    std::optional<MessageWithMessagePorts> messageWithPorts = MessagePortChannelProvider::fromContext(*context).tryTakeMessageForPort(m_identifier);
+    std::optional<MessageWithMessagePorts> result;
+    BinarySemaphore semaphore;
 
-    if (!messageWithPorts)
+    auto callback = [&](std::optional<MessageWithMessagePorts>&& messageWithPorts) {
+        result = WTFMove(messageWithPorts);
+        semaphore.signal();
+    };
+
+    ScriptExecutionContext::ensureOnMainThread([identifier = m_identifier, callback](ScriptExecutionContext& context) mutable {
+        MessagePortChannelProvider::fromContext(context).tryTakeMessageForPort(identifier, WTFMove(callback));
+    });
+
+    semaphore.wait();
+
+    if (!result)
         return jsUndefined();
 
-    auto ports = MessagePort::entanglePorts(*context, WTFMove(messageWithPorts->transferredPorts));
-    auto message = messageWithPorts->message.releaseNonNull();
+    auto ports = MessagePort::entanglePorts(*context, WTFMove(result->transferredPorts));
+    auto message = result->message.releaseNonNull();
     return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTFMove(ports), SerializationErrorMode::NonThrowing);
 }
 

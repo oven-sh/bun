@@ -26,8 +26,7 @@
 #pragma once
 
 #include "ProcessIdentifier.h"
-#include "BunWorkerGlobalScope.h"
-#include "MessageWithMessagePorts.h"
+#include "ScriptExecutionContext.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Vector.h>
 
@@ -37,7 +36,7 @@ class MessagePortChannelProvider;
 
 namespace WTF {
 template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MessagePortChannelProvider> : std::true_type {};
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MessagePortChannelProvider> : std::true_type { };
 }
 
 namespace WebCore {
@@ -50,17 +49,18 @@ class MessagePortChannelProvider : public CanMakeWeakPtr<MessagePortChannelProvi
 public:
     static MessagePortChannelProvider& fromContext(ScriptExecutionContext&);
     static MessagePortChannelProvider& singleton();
+    static void setSharedProvider(MessagePortChannelProvider&);
 
-    virtual ~MessagePortChannelProvider() {}
+    virtual ~MessagePortChannelProvider() { }
 
     // Operations that WebProcesses perform
     virtual void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) = 0;
     virtual void messagePortDisentangled(const MessagePortIdentifier& local) = 0;
     virtual void messagePortClosed(const MessagePortIdentifier& local) = 0;
-
-    virtual void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) = 0;
-    virtual std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&) = 0;
+    
+    virtual void takeAllMessagesForPort(const ScriptExecutionContextIdentifier, const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) = 0;
+    virtual void tryTakeMessageForPort(const MessagePortIdentifier&, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&&) = 0;
     virtual void postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget) = 0;
 };
 

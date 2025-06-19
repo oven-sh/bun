@@ -22,13 +22,17 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include "root.h"
+
 #include "config.h"
 #include "MessagePortChannelProviderImpl.h"
 
 #include "MessagePort.h"
+#include "ScriptExecutionContext.h"
+#include "BunClientData.h"
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
+
+extern "C" void* Bun__getVM();
 
 namespace WebCore {
 
@@ -41,44 +45,85 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 
 void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didCreateMessagePortChannel(local, remote);
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didCreateMessagePortChannel(local, remote);
+    });
 }
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    m_registry.didEntangleLocalToRemote(local, remote, Process::identifier());
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local, remote](ScriptExecutionContext& context) {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didEntangleLocalToRemote(local, remote, Process::identifier());
+    });
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
 {
-    m_registry.didDisentangleMessagePort(local);
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didDisentangleMessagePort(local);
+    });
 }
 
 void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifier& local)
 {
-    m_registry.didCloseMessagePort(local);
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, local](ScriptExecutionContext& context) {
+        if (CheckedPtr registry = weakRegistry.get())
+            registry->didCloseMessagePort(local);
+    });
 }
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    if (m_registry.didPostMessageToRemote(WTFMove(message), remoteTarget))
-        MessagePort::notifyMessageAvailable(remoteTarget);
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, message = WTFMove(message), remoteTarget](ScriptExecutionContext& context) mutable {
+        CheckedPtr registry = weakRegistry.get();
+        if (!registry)
+            return;
+        if (registry->didPostMessageToRemote(WTFMove(message), remoteTarget))
+            MessagePort::notifyMessageAvailable(remoteTarget);
+    });
 }
 
-void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
+void MessagePortChannelProviderImpl::takeAllMessagesForPort(const ScriptExecutionContextIdentifier identifier, const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
 {
-    // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
-    auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
-        // ASSERT(isMainThread());
-        outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
-    };
+    if (WTF::isMainThread()) {
+        m_registry.takeAllMessagesForPort(port, WTFMove(outerCallback));
+        return;
+    }
 
-    m_registry.takeAllMessagesForPort(port, WTFMove(callback));
+    auto currentVM = Bun__getVM();
+    if (!currentVM) {
+        outerCallback({}, []() {}); // already destroyed
+        return;
+    }
+
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, outerCallback = WTFMove(outerCallback), identifier](ScriptExecutionContext& mainContext) mutable {
+        CheckedPtr registry = weakRegistry.get();
+        if (!registry) {
+            ScriptExecutionContext::ensureOnContextThread(identifier, [outerCallback = WTFMove(outerCallback)](ScriptExecutionContext&) mutable {
+                outerCallback({}, []() {});
+            });
+            return;
+        }
+
+        registry->takeAllMessagesForPort(port, [outerCallback = WTFMove(outerCallback), identifier](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionHandler) mutable {
+            ScriptExecutionContext::ensureOnContextThread(identifier, [outerCallback = WTFMove(outerCallback), messages = WTFMove(messages), completionHandler = WTFMove(completionHandler)](ScriptExecutionContext&) mutable {
+                auto wrappedCompletionHandler = [completionHandler = WTFMove(completionHandler)]() mutable {
+                    ScriptExecutionContext::ensureOnMainThread([completionHandler = WTFMove(completionHandler)](ScriptExecutionContext&) mutable {
+                        completionHandler();
+                    });
+                };
+                outerCallback(WTFMove(messages), WTFMove(wrappedCompletionHandler));
+            });
+        });
+    });
 }
 
-std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)
+void MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&& callback)
 {
-    return m_registry.tryTakeMessageForPort(port);
+    m_registry.tryTakeMessageForPort(port, WTFMove(callback));
 }
 
 } // namespace WebCore

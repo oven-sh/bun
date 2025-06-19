@@ -27,7 +27,7 @@
 
 #include "MessagePortChannelProvider.h"
 #include "MessagePortChannelRegistry.h"
-#include "MessageWithMessagePorts.h"
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
@@ -42,8 +42,8 @@ private:
     void messagePortDisentangled(const MessagePortIdentifier& local) final;
     void messagePortClosed(const MessagePortIdentifier& local) final;
     void postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget) final;
-    void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) final;
-    std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&) final;
+    void takeAllMessagesForPort(const ScriptExecutionContextIdentifier identifier, const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) final;
+    void tryTakeMessageForPort(const MessagePortIdentifier&, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&&) final;
 
     MessagePortChannelRegistry m_registry;
 };

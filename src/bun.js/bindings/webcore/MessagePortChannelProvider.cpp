@@ -24,13 +24,10 @@
  */
 
 #include "config.h"
-// #include "MessagePortChannelProvider.h"
-
-// #include "Document.h"
+#include "MessagePortChannelProvider.h"
 #include "MessagePortChannelProviderImpl.h"
-// #include "WorkerGlobalScope.h"
-// #include "WorkletGlobalScope.h"
-#include <wtf/MainThread.h>
+#include "ScriptExecutionContext.h"
+#include "BunWorkerGlobalScope.h"
 
 namespace WebCore {
 

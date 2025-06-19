@@ -30,9 +30,10 @@
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
 #include <wtf/HashSet.h>
-#include <wtf/RefCounted.h>
-#include <wtf/text/WTFString.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/WeakPtr.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -55,32 +56,31 @@ public:
     bool postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget);
 
     void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&);
-    std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier);
+    void tryTakeMessageForPort(const MessagePortIdentifier, CompletionHandler<void(std::optional<MessageWithMessagePorts>&&)>&&);
 
     WEBCORE_EXPORT bool hasAnyMessagesPendingOrInFlight() const;
 
     uint64_t beingTransferredCount();
 
 #if !LOG_DISABLED
-    String logString() const
-    {
-        return makeString(m_ports[0].logString(), ":"_s, m_ports[1].logString());
-    }
+    String logString() const { return makeString(m_ports[0].logString(), ':', m_ports[1].logString()); }
 #endif
 
 private:
     MessagePortChannel(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
-    MessagePortIdentifier m_ports[2];
-    bool m_isClosed[2] { false, false };
-    std::optional<ProcessIdentifier> m_processes[2];
-    RefPtr<MessagePortChannel> m_entangledToProcessProtectors[2];
-    Vector<MessageWithMessagePorts> m_pendingMessages[2];
-    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
-    RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
+    CheckedRef<MessagePortChannelRegistry> checkedRegistry() const;
+
+    std::array<MessagePortIdentifier, 2> m_ports;
+    std::array<bool, 2> m_isClosed { false, false };
+    std::array<std::optional<ProcessIdentifier>, 2> m_processes;
+    std::array<RefPtr<MessagePortChannel>, 2> m_entangledToProcessProtectors;
+    std::array<Vector<MessageWithMessagePorts>, 2> m_pendingMessages;
+    std::array<UncheckedKeyHashSet<RefPtr<MessagePortChannel>>, 2> m_pendingMessagePortTransfers;
+    std::array<RefPtr<MessagePortChannel>, 2> m_pendingMessageProtectors;
     uint64_t m_messageBatchesInFlight { 0 };
 
-    MessagePortChannelRegistry& m_registry;
+    CheckedRef<MessagePortChannelRegistry> m_registry;
 };
 
 } // namespace WebCore

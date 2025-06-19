@@ -861,6 +861,7 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wmisleading-indentation
       -Werror
     )
   else()

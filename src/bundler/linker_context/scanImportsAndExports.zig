@@ -2,7 +2,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
     const outer_trace = bun.perf.trace("Bundler.scanImportsAndExports");
     defer outer_trace.end();
     const reachable = this.graph.reachable_files;
-    const stable_source_indices = this.graph.stable_source_indices;
     const output_format = this.options.output_format;
     {
         var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
@@ -27,27 +26,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
         var symbols = &this.graph.symbols;
         defer this.graph.symbols = symbols.*;
-
-        for (reachable) |_source_index| {
-            const source_index = stable_source_indices[_source_index.get()];
-            if (source_index >= import_records_list.len) continue;
-
-            const import_records = import_records_list[source_index].slice();
-
-            if (css_asts[source_index] != null) {
-                continue;
-            }
-
-            _ = try this.validateTLA(
-                source_index,
-                tla_keywords,
-                tla_checks,
-                input_files,
-                import_records,
-                flags,
-                import_records_list,
-            );
-        }
 
         // Step 1: Figure out what modules must be CommonJS
         for (reachable) |source_index_| {
@@ -101,6 +79,8 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                 continue;
             }
+
+            _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {

@@ -912,7 +912,7 @@ pub const LinkerContext = struct {
                         tla_keywords,
                         tla_checks,
                         input_files,
-                        import_records,
+                        ast_import_records[record.source_index.get()].slice(),
                         meta_flags,
                         ast_import_records,
                     );

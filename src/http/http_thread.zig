@@ -303,34 +303,25 @@ pub const HTTPThread = struct {
                 const ended = write.flags.ended;
 
                 if (bun.http.socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
-                    if (write.flags.is_tls) {
-                        const socket = uws.SocketTLS.fromAny(socket_ptr);
-                        if (socket.isClosed() or socket.isShutdown()) {
-                            continue;
-                        }
-                        const tagged = NewHTTPContext(true).getTaggedFromSocket(socket);
-                        if (tagged.get(HTTPClient)) |client| {
-                            if (client.state.original_request_body == .stream) {
-                                var stream = &client.state.original_request_body.stream;
-                                stream.ended = ended;
-                                client.flushStream(true, socket, if (ended) bun.http.end_of_chunked_http1_1_encoding_response_body else "");
+                    switch (write.flags.is_tls) {
+                        inline true, false => |is_tls| {
+                            const socket = uws.NewSocketHandler(is_tls).fromAny(socket_ptr);
+                            if (socket.isClosed() or socket.isShutdown()) {
+                                continue;
                             }
-                        }
-                    } else {
-                        const socket = uws.SocketTCP.fromAny(socket_ptr);
-                        if (socket.isClosed() or socket.isShutdown()) {
-                            continue;
-                        }
-                        const tagged = NewHTTPContext(false).getTaggedFromSocket(socket);
-                        if (tagged.get(HTTPClient)) |client| {
-                            if (client.state.original_request_body == .stream) {
+                            const tagged = NewHTTPContext(is_tls).getTaggedFromSocket(socket);
+                            if (tagged.get(HTTPClient)) |client| {
                                 if (client.state.original_request_body == .stream) {
                                     var stream = &client.state.original_request_body.stream;
                                     stream.ended = ended;
-                                    client.flushStream(false, socket, if (ended) bun.http.end_of_chunked_http1_1_encoding_response_body else "");
+                                    if (ended) {
+                                        client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
+                                    } else {
+                                        client.flushStream(is_tls, socket);
+                                    }
                                 }
                             }
-                        }
+                        },
                     }
                 }
             }

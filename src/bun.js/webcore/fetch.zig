@@ -1187,10 +1187,9 @@ pub const FetchTasklet = struct {
             };
             defer buffer.release();
 
-            const slice = stream_buffer.slice();
             // dont have backpressure so we will schedule the data to be written
             // if we have backpressure the onWritable will drain the buffer
-            needs_schedule = slice.len == 0;
+            needs_schedule = stream_buffer.isEmpty();
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             var formated_size_buffer: [18]u8 = undefined;
             const formated_size = std.fmt.bufPrint(formated_size_buffer[0..], "{x}\r\n", .{data.len}) catch bun.outOfMemory();

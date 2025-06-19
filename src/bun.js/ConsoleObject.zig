@@ -1181,7 +1181,7 @@ pub const Formatter = struct {
             cell: JSValue.JSType = JSValue.JSType.Cell,
         };
 
-        pub fn get(value: JSValue, globalThis: *JSGlobalObject) !Result {
+        pub fn get(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!Result {
             return getAdvanced(value, globalThis, .{ .hide_global = false });
         }
 

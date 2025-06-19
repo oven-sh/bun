@@ -3125,7 +3125,7 @@ const QueryBindingIterator = union(enum) {
         }
     };
 
-    pub fn next(this: *QueryBindingIterator) !?JSC.JSValue {
+    pub fn next(this: *QueryBindingIterator) bun.JSError!?JSC.JSValue {
         return switch (this.*) {
             .array => |*iter| iter.next(),
             .objects => |*iter| iter.next(),

@@ -397,6 +397,12 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
     }
 
+    extern fn JSC__JSValue__putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: JSC.JSValue, value: JSC.JSValue) void;
+    pub fn putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: JSC.JSValue, value: JSC.JSValue) error{JSError}!void {
+        JSC__JSValue__putToPropertyKey(target, globalObject, key, value);
+        if (globalObject.hasException()) return error.JSError;
+    }
+
     extern fn JSC__JSValue__putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void;
     pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
         JSC__JSValue__putIndex(value, globalObject, i, out);

@@ -1967,11 +1967,12 @@ pub const E = struct {
             defer obj.unprotect();
             const props: []const G.Property = this.properties.slice();
             for (props) |prop| {
-                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
+                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.value == null) {
                     return error.@"Cannot convert argument type to JS";
                 }
-                var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
+                const key = try prop.key.?.data.toJS(allocator, globalObject);
+                const value = try prop.value.?.toJS(allocator, globalObject);
+                try obj.putToPropertyKey(globalObject, key, value);
             }
 
             return obj;

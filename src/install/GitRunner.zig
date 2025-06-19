@@ -30,7 +30,7 @@ pub const GitRunner = struct {
     is_second_step: bool = false,
 
     pub const CompletionContext = union(enum) {
-        download: struct {
+        git_clone: struct {
             name: []const u8,
             url: []const u8,
             task_id: u64,
@@ -44,13 +44,13 @@ pub const GitRunner = struct {
                 repo: std.fs.Dir,
             },
         },
-        find_commit: struct {
+        git_find_commit: struct {
             name: []const u8,
             committish: []const u8,
             task_id: u64,
             repo_dir: std.fs.Dir,
         },
-        checkout: struct {
+        git_checkout: struct {
             name: []const u8,
             url: []const u8,
             resolved: []const u8,
@@ -61,11 +61,46 @@ pub const GitRunner = struct {
 
         pub fn needsStdout(this: *const CompletionContext) bool {
             return switch (this.*) {
-                .find_commit => true,
+                .git_find_commit => true,
                 else => false,
             };
         }
     };
+
+    pub const Result = struct {
+        task_id: u64,
+        err: ?anyerror = null,
+
+        // The original context is passed back with the result.
+        context: CompletionContext,
+
+        // The success payload. Only valid if err is null.
+        result: union(enum) {
+            git_clone: std.fs.Dir,
+            git_find_commit: []const u8,
+            git_checkout: ExtractData,
+        },
+    };
+
+    // Note: The `.Queue` definition needs to be updated to use this new struct.
+    pub const Queue = std.fifo.LinearFifo(Result, .Dynamic);
+
+    pub fn gitExecutable() [:0]const u8 {
+        const GitExecutableOnce = struct {
+            pub var once = std.once(get);
+            pub var executable: [:0]const u8 = "";
+            fn get() void {
+                // First clone without checkout
+                const gitpath = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(gitpath);
+                const git = bun.which(gitpath, bun.getenvZ("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
+                executable = bun.default_allocator.dupeZ(u8, git) catch bun.outOfMemory();
+            }
+        };
+
+        GitExecutableOnce.once.call();
+        return GitExecutableOnce.executable;
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -217,7 +252,7 @@ pub const GitRunner = struct {
                     const stdout_data = this.stdout.finalBuffer();
 
                     switch (this.completion_context) {
-                        .download => |*ctx| {
+                        .git_clone => |*ctx| {
                             switch (ctx.dir) {
                                 .cache => |cache_dir| {
                                     const buf = bun.PathBufferPool.get();
@@ -225,38 +260,57 @@ pub const GitRunner = struct {
                                     const path = Path.joinAbsStringBufZ(PackageManager.get().cache_directory_path, buf, &.{PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.name, null)}, .auto);
 
                                     if (bun.openDir(cache_dir, path)) |repo_dir| {
-                                        this.manager.onGitDownloadComplete(ctx.task_id, repo_dir) catch {};
+                                        this.manager.git_tasks.writeItem(.{
+                                            .task_id = ctx.task_id,
+                                            .context = .{ .git_clone = ctx.* },
+                                            .result = .{ .git_clone = repo_dir },
+                                        }) catch {};
                                     } else |err| {
-                                        this.manager.onGitDownloadComplete(ctx.task_id, err) catch {};
+                                        this.manager.git_tasks.writeItem(.{
+                                            .task_id = ctx.task_id,
+                                            .context = .{ .git_clone = ctx.* },
+                                            .err = err,
+                                            .result = undefined,
+                                        }) catch {};
                                     }
                                 },
                                 .repo => |repo_dir| {
-                                    this.manager.onGitDownloadComplete(ctx.task_id, repo_dir) catch {};
+                                    this.manager.git_tasks.writeItem(.{
+                                        .task_id = ctx.task_id,
+                                        .context = .{ .git_clone = ctx.* },
+                                        .result = .{ .git_clone = repo_dir },
+                                    }) catch {};
                                 },
                             }
                         },
-                        .find_commit => |*ctx| {
+                        .git_find_commit => |*ctx| {
                             // For find_commit, we need to parse the commit hash from stdout
                             const commit_hash = std.mem.trim(u8, stdout_data.items, " \t\r\n");
                             if (commit_hash.len > 0) {
                                 const duped = this.allocator.dupe(u8, commit_hash) catch bun.outOfMemory();
-                                this.manager.onGitFindCommitComplete(ctx.task_id, duped) catch {};
+                                this.manager.git_tasks.writeItem(.{
+                                    .task_id = ctx.task_id,
+                                    .context = .{ .git_find_commit = ctx.* },
+                                    .result = .{ .git_find_commit = duped },
+                                }) catch {};
                             } else {
-                                this.manager.onGitFindCommitComplete(ctx.task_id, error.InstallFailed) catch {};
+                                this.manager.git_tasks.writeItem(.{
+                                    .task_id = ctx.task_id,
+                                    .context = .{ .git_find_commit = ctx.* },
+                                    .err = error.InstallFailed,
+                                    .result = undefined,
+                                }) catch {};
                             }
                         },
-                        .checkout => |*ctx| {
+                        .git_checkout => |*ctx| {
                             if (!this.is_second_step) {
                                 const buf = bun.PathBufferPool.get();
                                 defer bun.PathBufferPool.put(buf);
                                 // First step completed (clone), now do checkout
                                 const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
                                 const folder = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
-                                const git_path = bun.PathBufferPool.get();
-                                defer bun.PathBufferPool.put(git_path);
-                                const git = bun.which(git_path, bun.getenvZ("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
                                 const checkout_argv = &[_][]const u8{
-                                    git,
+                                    GitRunner.gitExecutable(),
                                     "-C",
                                     folder,
                                     "checkout",
@@ -275,7 +329,12 @@ pub const GitRunner = struct {
                                 this.stderr.setParent(this);
 
                                 this.spawn(checkout_argv, null) catch |err| {
-                                    this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
+                                    this.manager.git_tasks.writeItem(.{
+                                        .task_id = ctx.task_id,
+                                        .context = .{ .git_checkout = ctx.* },
+                                        .err = err,
+                                        .result = undefined,
+                                    }) catch {};
                                     return;
                                 };
                                 must_deinit = false;
@@ -297,12 +356,26 @@ pub const GitRunner = struct {
                                     }
 
                                     const extract_data = this.readPackageJson(dir, ctx.url, ctx.resolved) catch |err| {
-                                        this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
+                                        this.manager.git_tasks.writeItem(.{
+                                            .task_id = ctx.task_id,
+                                            .context = .{ .git_checkout = ctx.* },
+                                            .err = err,
+                                            .result = undefined,
+                                        }) catch {};
                                         return;
                                     };
-                                    this.manager.onGitCheckoutComplete(ctx.task_id, extract_data) catch {};
+                                    this.manager.git_tasks.writeItem(.{
+                                        .task_id = ctx.task_id,
+                                        .context = .{ .git_checkout = ctx.* },
+                                        .result = .{ .git_checkout = extract_data },
+                                    }) catch {};
                                 } else |err| {
-                                    this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
+                                    this.manager.git_tasks.writeItem(.{
+                                        .task_id = ctx.task_id,
+                                        .context = .{ .git_checkout = ctx.* },
+                                        .err = err,
+                                        .result = undefined,
+                                    }) catch {};
                                 }
                             }
                         },
@@ -319,41 +392,86 @@ pub const GitRunner = struct {
                         error.InstallFailed;
 
                     switch (this.completion_context) {
-                        .download => |ctx| {
-                            this.manager.onGitDownloadComplete(ctx.task_id, err) catch {};
+                        .git_clone => |ctx| {
+                            this.manager.git_tasks.writeItem(.{
+                                .task_id = ctx.task_id,
+                                .context = .{ .git_clone = ctx },
+                                .err = err,
+                                .result = undefined,
+                            }) catch {};
                         },
-                        .find_commit => |ctx| {
-                            this.manager.onGitFindCommitComplete(ctx.task_id, err) catch {};
+                        .git_find_commit => |ctx| {
+                            this.manager.git_tasks.writeItem(.{
+                                .task_id = ctx.task_id,
+                                .context = .{ .git_find_commit = ctx },
+                                .err = err,
+                                .result = undefined,
+                            }) catch {};
                         },
-                        .checkout => |ctx| {
-                            this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
+                        .git_checkout => |ctx| {
+                            this.manager.git_tasks.writeItem(.{
+                                .task_id = ctx.task_id,
+                                .context = .{ .git_checkout = ctx },
+                                .err = err,
+                                .result = undefined,
+                            }) catch {};
                         },
                     }
                 }
             },
             .err => |_| {
                 switch (this.completion_context) {
-                    .download => |ctx| {
-                        this.manager.onGitDownloadComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_clone => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_clone = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
-                    .find_commit => |ctx| {
-                        this.manager.onGitFindCommitComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_checkout => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_checkout = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
-                    .checkout => |ctx| {
-                        this.manager.onGitCheckoutComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_find_commit => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_find_commit = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
                 }
             },
             else => {
                 switch (this.completion_context) {
-                    .download => |ctx| {
-                        this.manager.onGitDownloadComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_clone => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_clone = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
-                    .find_commit => |ctx| {
-                        this.manager.onGitFindCommitComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_find_commit => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_find_commit = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
-                    .checkout => |ctx| {
-                        this.manager.onGitCheckoutComplete(ctx.task_id, error.InstallFailed) catch {};
+                    .git_checkout => |ctx| {
+                        this.manager.git_tasks.writeItem(.{
+                            .task_id = ctx.task_id,
+                            .context = .{ .git_checkout = ctx },
+                            .err = error.InstallFailed,
+                            .result = undefined,
+                        }) catch {};
                     },
                 }
             },

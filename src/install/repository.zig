@@ -435,11 +435,8 @@ pub const Repository = extern struct {
             defer bun.PathBufferPool.put(buf);
             const path = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
-            const gitpath = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(gitpath);
-            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
             const argv = &[_][]const u8{
-                git,
+                GitRunner.gitExecutable(),
                 "-C",
                 path,
                 "fetch",
@@ -447,7 +444,7 @@ pub const Repository = extern struct {
             };
 
             const context = GitRunner.CompletionContext{
-                .download = .{
+                .git_clone = .{
                     .name = try allocator.dupe(u8, name),
                     .url = try allocator.dupe(u8, url),
                     .task_id = task_id,
@@ -460,7 +457,18 @@ pub const Repository = extern struct {
             try runner.spawn(argv, env);
         } else |not_found| {
             if (not_found != error.FileNotFound) {
-                pm.onGitDownloadComplete(task_id, not_found) catch {};
+                pm.git_tasks.writeItem(.{
+                    .task_id = task_id,
+                    .err = not_found,
+                    .context = .{ .git_clone = .{
+                        .name = name,
+                        .url = url,
+                        .task_id = task_id,
+                        .attempt = attempt,
+                        .dir = .{ .cache = cache_dir },
+                    } },
+                    .result = undefined,
+                }) catch {};
                 return;
             }
 
@@ -469,11 +477,8 @@ pub const Repository = extern struct {
             defer bun.PathBufferPool.put(buf);
             const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
 
-            const gitpath = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(gitpath);
-            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
             const argv = &[_][]const u8{
-                git,
+                GitRunner.gitExecutable(),
                 "clone",
                 "-c",
                 "core.longpaths=true",
@@ -484,7 +489,7 @@ pub const Repository = extern struct {
             };
 
             const context = GitRunner.CompletionContext{
-                .download = .{
+                .git_clone = .{
                     .name = try allocator.dupe(u8, name),
                     .url = try allocator.dupe(u8, url),
                     .task_id = task_id,
@@ -518,21 +523,13 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
-        const gitpath = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(gitpath);
-        const git = bun.which(
-            gitpath,
-            env.get("PATH") orelse "",
-            bun.fs.FileSystem.instance.top_level_dir,
-            "git",
-        ) orelse "git";
-        const argv_buf = &[_][]const u8{ git, "-C", path, "log", "--format=%H", "-1", committish };
+        const argv_buf = &[_][]const u8{ GitRunner.gitExecutable(), "-C", path, "log", "--format=%H", "-1", committish };
         const argv: []const []const u8 = if (committish.len > 0)
             argv_buf
         else
             argv_buf[0 .. argv_buf.len - 1];
         const context = GitRunner.CompletionContext{
-            .find_commit = .{
+            .git_find_commit = .{
                 .name = try allocator.dupe(u8, name),
                 .committish = try allocator.dupe(u8, committish),
                 .task_id = task_id,
@@ -559,51 +556,95 @@ pub const Repository = extern struct {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
-        if (bun.sys.directoryExistsAt(.fromStdDir(cache_dir), folder_name).asValue() orelse false) {
-            // Directly call the completion handler since the checkout already exists
-            pm.onGitCheckoutComplete(task_id, .{
-                .url = url,
-                .resolved = resolved,
-            }) catch {};
-            return;
-        } else {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+        switch (file: {
+            const path_buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(path_buf);
+            const @"folder/package.json" = std.fmt.bufPrintZ(path_buf, "{s}" ++ std.fs.path.sep_str ++ "package.json", .{folder_name}) catch unreachable;
+            break :file bun.sys.File.readFileFrom(cache_dir, @"folder/package.json", allocator);
+        }) {
+            .result => |file_read| {
+                const json_file, const json_buf = file_read;
+                defer json_file.close();
 
-            // Need to clone and checkout
-            const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
-            const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
+                const json_path = json_file.getPath(&json_path_buf).unwrap() catch {
+                    try pm.git_tasks.writeItem(.{
+                        .task_id = task_id,
+                        .err = error.InstallFailed,
+                        .context = .{ .git_checkout = .{
+                            .name = name,
+                            .url = url,
+                            .resolved = resolved,
+                            .task_id = task_id,
+                            .cache_dir = cache_dir,
+                            .repo_dir = repo_dir,
+                        } },
+                        .result = .{ .git_checkout = .{
+                            .url = url,
+                            .resolved = resolved,
+                            .json = null,
+                        } },
+                    });
+                    return;
+                };
 
-            // First clone without checkout
-            const gitpath = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(gitpath);
-            const git = bun.which(gitpath, env.get("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
-            const argv = &[_][]const u8{
-                git,
-                "clone",
-                "-c",
-                "core.longpaths=true",
-                "--quiet",
-                "--no-checkout",
-                repo_path,
-                target,
-            };
+                const ret_json_path = try @import("../fs.zig").FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
 
-            // Then we'll need to checkout after clone completes
-            // For now, we'll do both operations in sequence
-            const context = GitRunner.CompletionContext{
-                .checkout = .{
-                    .name = try allocator.dupe(u8, name),
-                    .url = try allocator.dupe(u8, url),
-                    .resolved = try allocator.dupe(u8, resolved),
+                // Enqueue complete GitRunner.Result with ExtractData payload
+                try pm.git_tasks.writeItem(.{
                     .task_id = task_id,
-                    .cache_dir = cache_dir,
-                    .repo_dir = repo_dir,
-                },
-            };
+                    .context = .{ .git_checkout = .{
+                        .name = name,
+                        .url = url,
+                        .resolved = resolved,
+                        .task_id = task_id,
+                        .cache_dir = cache_dir,
+                        .repo_dir = repo_dir,
+                    } },
+                    .result = .{ .git_checkout = .{
+                        .url = url,
+                        .resolved = resolved,
+                        .json = .{
+                            .path = ret_json_path,
+                            .buf = json_buf,
+                        },
+                    } },
+                });
+            },
+            .err => {
+                const buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf);
 
-            const runner = try GitRunner.init(allocator, pm, context);
-            try runner.spawn(argv, env);
+                // Need to clone and checkout
+                const target = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
+                const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
+
+                const argv = &[_][]const u8{
+                    GitRunner.gitExecutable(),
+                    "clone",
+                    "-c",
+                    "core.longpaths=true",
+                    "--quiet",
+                    "--no-checkout",
+                    repo_path,
+                    target,
+                };
+
+                // Then we'll need to checkout after clone completes
+                // For now, we'll do both operations in sequence
+                const context = GitRunner.CompletionContext{
+                    .git_checkout = .{
+                        .name = try allocator.dupe(u8, name),
+                        .url = try allocator.dupe(u8, url),
+                        .resolved = try allocator.dupe(u8, resolved),
+                        .task_id = task_id,
+                        .cache_dir = cache_dir,
+                        .repo_dir = repo_dir,
+                    },
+                };
+
+                const runner = try GitRunner.init(allocator, pm, context);
+                try runner.spawn(argv, env);
+            },
         }
     }
 };

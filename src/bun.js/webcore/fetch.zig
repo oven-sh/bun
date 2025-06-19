@@ -1175,11 +1175,12 @@ pub const FetchTasklet = struct {
     }
 
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
+        log("writeRequestData {}", .{data.len});
         if (this.request_body_streaming_buffer) |buffer| {
             const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
             const stream_buffer = buffer.acquire();
-            var need_schedule = false;
-            defer if (need_schedule) {
+            var needs_schedule = false;
+            defer if (needs_schedule) {
                 // wakeup the http thread to write the data
                 http.http_thread.scheduleRequestWrite(this.http.?, false);
             };
@@ -1188,7 +1189,7 @@ pub const FetchTasklet = struct {
             const slice = stream_buffer.slice();
             // dont have backpressure so we will schedule the data to be written
             // if we have backpressure the onWritable will drain the buffer
-            need_schedule = slice.len < 0;
+            needs_schedule = slice.len == 0;
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             var formated_size_buffer: [18]u8 = undefined;
             const formated_size = std.fmt.bufPrint(formated_size_buffer[0..], "{x}\r\n", .{data.len}) catch bun.outOfMemory();
@@ -1204,6 +1205,7 @@ pub const FetchTasklet = struct {
     }
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?JSC.JSValue) void {
+        log("writeEndRequest hasError? {}", .{err != null});
         this.clearSink();
         defer this.deref();
         if (err) |jsError| {

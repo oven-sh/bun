@@ -777,16 +777,22 @@ export function assignStreamIntoResumableSink(stream, sink) {
           var { value, done } = await reader.read();
           if (closed) break;
 
+          if (done) {
+            closed = true;
+            // lets cover just in case we have a value when done is true
+            // this shouldn't happen but just in case
+            if (value) {
+              sink.write(value);
+            }
+            // clean end
+            return sink.end();
+          }
+
           if (value) {
             // write returns false under backpressure
             if (!sink.write(value)) {
               break;
             }
-          }
-          if (done) {
-            closed = true;
-            // clean end
-            return sink.end();
           }
         }
       } catch (e: any) {

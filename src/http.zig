@@ -3380,6 +3380,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
 }
 
 pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
+    log("flushStream", .{});
     var stream = &this.state.original_request_body.stream;
     var has_backpressure = false;
     const stream_buffer = stream.buffer orelse return;

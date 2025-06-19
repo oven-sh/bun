@@ -296,7 +296,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -395,7 +395,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -669,7 +669,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJSC(globalObject),
+                .err => |err| err.toJS(globalObject),
                 .result => |*res| brk: {
                     break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
@@ -1220,7 +1220,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },

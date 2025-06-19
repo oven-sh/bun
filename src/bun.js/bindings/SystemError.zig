@@ -52,8 +52,7 @@ pub const SystemError = extern struct {
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
-        return SystemError__toErrorInstance(this, global);
+        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstance, .{ this, global }) catch @panic("unreachable");
     }
 
     /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`

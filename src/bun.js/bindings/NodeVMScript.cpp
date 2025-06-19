@@ -555,7 +555,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         zigGlobal->NodeVMGlobalObjectStructure(),
         {});
 
-    return runInContext(targetContext, script, context, callFrame->argument(1));
+    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));
 }
 
 class NodeVMScriptPrototype final : public JSC::JSNonFinalObject {
@@ -637,11 +637,12 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            RETURN_IF_EXCEPTION(scope, false);
             any = true;
         }
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (JSValue breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s))) {
             RETURN_IF_EXCEPTION(scope, false);
@@ -654,6 +655,7 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return any;

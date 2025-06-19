@@ -315,10 +315,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         // not "requires" because "require" could be confusing
         JSC::throwTypeError(
             globalObject, scope,
@@ -353,6 +353,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                     fromValue = idValue;
                 }
             }
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

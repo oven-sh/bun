@@ -615,9 +615,9 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue;
-    pub fn createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue {
+    pub fn createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        return JSC__JSValue__createUninitializedUint8Array(globalObject, len);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSValue__createUninitializedUint8Array, .{ globalObject, len });
     }
 
     pub fn createBufferWithCtx(globalObject: *JSGlobalObject, slice: []u8, ptr: ?*anyopaque, func: JSC.C.JSTypedArrayBytesDeallocator) JSValue {

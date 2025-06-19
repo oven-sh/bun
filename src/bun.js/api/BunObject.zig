@@ -1184,7 +1184,6 @@ pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     if (!size.isUInt32AsAnyInt()) {
         return globalThis.throwInvalidArguments("Expected a positive number", .{});
     }
-
     return JSC.JSValue.createUninitializedUint8Array(globalThis, size.toUInt64NoTruncate());
 }
 
@@ -1249,7 +1248,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         .result => |map| map,
 
         .err => |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     };
 

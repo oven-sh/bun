@@ -55,7 +55,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    return globalObject.throwValue(err.toJSC(globalObject)) catch .zero;
+                    return globalObject.throwValue(err.toJS(globalObject)) catch .zero;
                 },
             }
         }
@@ -72,7 +72,7 @@ pub const ArrayBuffer = extern struct {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 fd.close();
-                return globalObject.throwValue(err.toJSC(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -109,7 +109,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                return globalObject.throwValue(err.toJSC(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject));
             },
         }
     }
@@ -177,13 +177,10 @@ pub const ArrayBuffer = extern struct {
     pub fn alloc(global: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType, len: u32) JSError!struct { JSC.JSValue, []u8 } {
         var ptr: [*]u8 = undefined;
         const buf = switch (comptime kind) {
-            .Uint8Array => Bun__allocUint8ArrayForCopy(global, len, @ptrCast(&ptr)),
-            .ArrayBuffer => Bun__allocArrayBufferForCopy(global, len, @ptrCast(&ptr)),
+            .Uint8Array => try bun.jsc.fromJSHostCall(global, @src(), Bun__allocUint8ArrayForCopy, .{ global, len, @ptrCast(&ptr) }),
+            .ArrayBuffer => try bun.jsc.fromJSHostCall(global, @src(), Bun__allocArrayBufferForCopy, .{ global, len, @ptrCast(&ptr) }),
             else => @compileError("Not implemented yet"),
         };
-        if (buf == .zero) {
-            return error.JSError;
-        }
         return .{ buf, ptr[0..len] };
     }
 

@@ -248,7 +248,7 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJSC(globalThis)) catch {};
+                                    globalThis.throwValue(err.toJS(globalThis)) catch {};
                                     this.failed = true;
                                 },
                                 .result => |result| {
@@ -1546,7 +1546,7 @@ fn writeStringToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1587,11 +1587,11 @@ fn writeStringToFileFast(
                         return .zero;
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     }
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        err.withPath(pathlike.path.slice()).toJS(globalThis),
                     );
                 },
             }
@@ -1633,7 +1633,7 @@ fn writeBytesToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1666,12 +1666,12 @@ fn writeBytesToFileFast(
                 if (comptime !needs_open) {
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.toJSC(globalThis),
+                        err.toJS(globalThis),
                     );
                 }
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -2406,7 +2406,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                         break :brk result;
                     },
                     .err => |err| {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJS(globalThis));
                     },
                 }
                 unreachable;
@@ -2439,7 +2439,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2447,7 +2447,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2482,7 +2482,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
             },
             else => {},
         }
@@ -2649,7 +2649,7 @@ pub fn getWriter(
                     break :brk result;
                 },
                 .err => |err| {
-                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
+                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJS(globalThis));
                 },
             }
             @compileError(unreachable);
@@ -2682,7 +2682,7 @@ pub fn getWriter(
             switch (sink.writer.startSync(fd, false)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2690,7 +2690,7 @@ pub fn getWriter(
             switch (sink.writer.start(fd, true)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2730,7 +2730,7 @@ pub fn getWriter(
     switch (sink.start(stream_start)) {
         .err => |err| {
             sink.deref();
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         else => {},
     }

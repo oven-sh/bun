@@ -194,7 +194,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn throwError(this: @This(), err: bun.sys.Error) void {
-        this.globalThis.throwValue(err.toJSC(this.globalThis));
+        this.globalThis.throwValue(err.toJS(this.globalThis));
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {

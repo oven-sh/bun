@@ -1735,8 +1735,8 @@ void WebCore__FetchHeaders__append(WebCore::FetchHeaders* headers, const ZigStri
     JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    WebCore::propagateException(*lexicalGlobalObject, throwScope,
-        headers->append(Zig::toString(*arg1), Zig::toString(*arg2)));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->append(Zig::toString(*arg1), Zig::toString(*arg2)));
+    RELEASE_AND_RETURN(throwScope, );
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
@@ -1785,8 +1785,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
     //  translate it to JSValue and throw it.
-    WebCore::propagateException(*lexicalGlobalObject, throwScope,
-        headers->fill(WTFMove(init.value())));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->fill(WTFMove(init.value())));
 
     // If there's an exception, it will be thrown by the above call to fill().
     // in that case, let's also free the headers to make memory leaks harder.
@@ -1820,8 +1819,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers,
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*arg1, throwScope,
-        clone->fill(*headers));
+    WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
 
@@ -1830,8 +1828,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* h
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     clone->relaxAdoptionRequirement();
-    WebCore::propagateException(*lexicalGlobalObject, throwScope,
-        clone->fill(*headers));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
     return clone;
 }
 
@@ -2003,8 +2000,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    WebCore::propagateException(*arg0, throwScope,
-        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
 
     JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
 
@@ -2168,6 +2164,13 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     JSC::JSValue options = JSC::jsUndefined();
 
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, globalObject->errorStructureWithErrorType<JSC::ErrorType::Error>(), message, options);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        scope.clearException();
+        // TODO investigate what can throw here and whether it will throw non-objects
+        // (this is better than before where we would have returned nullptr from createError if any
+        // exception were thrown by ErrorInstance::create)
+        return JSValue::encode(jsCast<JSObject*>(thrown_exception->value()));
+    }
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2204,7 +2207,6 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
-    scope.release();
 
     return JSC::JSValue::encode(JSC::JSValue(result));
 }
@@ -2226,6 +2228,13 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     JSC::JSValue options = JSC::jsUndefined();
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        scope.clearException();
+        // TODO investigate what can throw here and whether it will throw non-objects
+        // (this is better than before where we would have returned nullptr from createError if any
+        // exception were thrown by ErrorInstance::create)
+        return JSValue::encode(jsCast<JSObject*>(thrown_exception->value()));
+    }
     JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
     auto clientData = WebCore::clientData(vm);
@@ -2352,9 +2361,9 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             scope.release(); // zig binding handles exceptions
-            if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
-                return lengthValue.toNumber(globalObject);
-            }
+            JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, 0);
+            return lengthValue.toNumber(globalObject);
         }
     }
     }
@@ -2544,10 +2553,12 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 JSC::EncodedJSValue JSC__JSGlobalObject__getCachedObject(JSC::JSGlobalObject* globalObject, const ZigString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String string = Zig::toString(*arg1);
     auto symbol = vm.privateSymbolRegistry().symbolForKey(string);
     JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
     JSC::JSValue result = globalObject->getIfPropertyExists(globalObject, ident);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 
@@ -4757,6 +4768,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
         except->message = Bun::toStringRef(global, message);
     } else {
+        RETURN_IF_EXCEPTION(scope, );
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
         if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
             return;
@@ -5003,6 +5015,10 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
                         except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                     }
                 }
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                    return;
+                }
                 except->stack.frames_len = 1;
             }
         }
@@ -5094,6 +5110,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
     JSC::VM& vm = arg1->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (obj == nullptr) {
         arg2->len = 0;
@@ -5101,6 +5118,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     }
 
     JSC::JSValue name = obj->getIfPropertyExists(arg1, vm.propertyNames->toStringTagSymbol);
+    RETURN_IF_EXCEPTION(scope, );
 
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);

@@ -1695,7 +1695,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJSC(globalThis);
+                                error_instance = sys_err.toJS(globalThis);
                             },
                         }
                     },

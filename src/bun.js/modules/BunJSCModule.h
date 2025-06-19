@@ -779,6 +779,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
             asNodeBuffer = binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
             RETURN_IF_EXCEPTION(throwScope, {});
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
@@ -786,9 +787,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope,
-            serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
 
     auto serializedValue = serialized.releaseReturnValue();

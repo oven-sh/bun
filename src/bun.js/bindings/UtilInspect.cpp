@@ -41,8 +41,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::EncodedJSValue encodedThisValue,
     unsigned depth,
     unsigned max_depth,
-    bool colors,
-    bool* is_exception)
+    bool colors)
 {
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
@@ -52,6 +51,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
 
     JSFunction* inspectFn = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
@@ -59,10 +59,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     arguments.append(inspectFn);
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
-    if (scope.exception()) {
-        *is_exception = true;
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 

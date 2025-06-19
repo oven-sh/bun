@@ -38,6 +38,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     JSC::JSValue options = JSC::jsUndefined();
     auto prototype = defaultGlobalObject(globalObject)->m_S3ErrorStructure.getInitializedOnMainThread(globalObject);
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, prototype, message, options);
+    RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject)),

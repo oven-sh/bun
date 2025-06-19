@@ -1108,6 +1108,9 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::JSGlobalObject* globalObject
 
     // we don't call JSC::createError() as it asserts the message is not an empty string ""
     auto* error = JSC::ErrorInstance::create(JSC::getVM(globalObject), globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
+    if (!error) {
+        return nullptr;
+    }
     if (!code.isNull()) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
     }
@@ -2477,6 +2480,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive

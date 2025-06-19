@@ -81,6 +81,7 @@ static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject,
     if (JSC::JSObject* thisObject = stringDecoderValue.getObject()) {
         auto clientData = WebCore::clientData(vm);
         JSValue existingDecoderValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().decodePrivateName());
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (existingDecoderValue) [[likely]] {
             if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); cast) [[likely]] {
                 return cast;

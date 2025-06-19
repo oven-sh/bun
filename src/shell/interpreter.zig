@@ -581,9 +581,9 @@ pub const Interpreter = struct {
         syscall: Syscall.Error,
         other: ShellErrorKind,
 
-        fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
+                .syscall => |err| err.toJS(globalThis),
                 .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
@@ -1185,7 +1185,7 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                return globalThis.throwValue(e.toJSC(globalThis));
+                return globalThis.throwValue(e.toJS(globalThis));
             },
             .result => {},
         }

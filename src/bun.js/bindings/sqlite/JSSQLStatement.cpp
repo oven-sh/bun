@@ -490,6 +490,8 @@ protected:
 template<bool useBigInt64>
 static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, int i)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     switch (sqlite3_column_type(stmt, i)) {
     case SQLITE_INTEGER: {
         if constexpr (!useBigInt64) {
@@ -521,6 +523,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
         if (len > 0 && blob != nullptr) [[likely]] {
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
+            RETURN_IF_EXCEPTION(scope, {});
             memcpy(array->vector(), blob, len);
             return array;
         }

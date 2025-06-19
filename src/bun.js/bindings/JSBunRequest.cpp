@@ -229,7 +229,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         if (cookieMapResult.hasException()) {
             WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());
-            return JSValue::encode(jsUndefined());
+            RELEASE_AND_RETURN(throwScope, {});
         }
 
         auto cookieMap = cookieMapResult.releaseReturnValue();

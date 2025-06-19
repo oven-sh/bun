@@ -1270,6 +1270,7 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         } else {
+            RETURN_IF_EXCEPTION(scope, false);
             this->filename = "evalmachine.<anonymous>"_s;
         }
 
@@ -1289,6 +1290,7 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         }
+        RETURN_IF_EXCEPTION(scope, false);
 
         if (JSValue columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
             if (columnOffsetOpt.isAnyInt()) {
@@ -1308,6 +1310,7 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         }
+        RETURN_IF_EXCEPTION(scope, false);
     }
 
     return any;
@@ -1316,6 +1319,7 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
 bool BaseVMOptions::validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData)
 {
     JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s));
+    RETURN_IF_EXCEPTION(scope, false);
     if (produceCachedDataOpt && !produceCachedDataOpt.isUndefined()) {
         RETURN_IF_EXCEPTION(scope, {});
         if (!produceCachedDataOpt.isBoolean()) {
@@ -1348,6 +1352,7 @@ bool BaseVMOptions::validateCachedData(JSC::JSGlobalObject* globalObject, JSC::V
 bool BaseVMOptions::validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>& outTimeout)
 {
     JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
+    RETURN_IF_EXCEPTION(scope, false);
     if (timeoutOpt && !timeoutOpt.isUndefined()) {
         if (!timeoutOpt.isNumber()) {
             ERR::INVALID_ARG_TYPE(scope, globalObject, "options.timeout"_s, "number"_s, timeoutOpt);

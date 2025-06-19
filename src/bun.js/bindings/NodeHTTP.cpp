@@ -1117,6 +1117,7 @@ static void NodeHTTPServer__writeHead(
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {
                 JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                RETURN_IF_EXCEPTION(scope, );
                 if (!headerValue.isString()) {
                     continue;
                 }
@@ -1369,7 +1370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             WebCore::ExceptionOr<String> res = impl->get(name);
             if (res.hasException()) {
                 WebCore::propagateException(globalObject, scope, res.releaseException());
-                return JSValue::encode(jsUndefined());
+                RELEASE_AND_RETURN(scope, {});
             }
 
             String value = res.returnValue();

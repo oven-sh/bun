@@ -219,16 +219,20 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (JSValue protocolsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocols"_s)))) {
             if (!protocolsValue.isUndefinedOrNull()) {
                 protocols = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, protocolsValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
-        } else if (JSValue protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)))) {
-            if (!protocolValue.isUndefinedOrNull()) {
-                protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
-                RETURN_IF_EXCEPTION(throwScope, {});
+        } else {
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (JSValue protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)))) {
+                if (!protocolValue.isUndefinedOrNull()) {
+                    protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                }
             }
         }
 
@@ -241,9 +245,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                             rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
                         }
                     }
+                    RETURN_IF_EXCEPTION(throwScope, {});
                 }
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

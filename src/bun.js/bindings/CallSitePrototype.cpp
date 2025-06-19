@@ -45,21 +45,19 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* callSite = JSC::jsDynamicCast<CallSite*>(thisValue)) {
-        return callSite;
+        RELEASE_AND_RETURN(scope, callSite);
     }
 
     throwTypeError(globalObject, scope, "CallSite operation called on non-CallSite object"_s);
-    return nullptr;
+    RELEASE_AND_RETURN(scope, nullptr);
 }
 
 #define ENTER_PROTO_FUNC()                                                  \
     auto& vm = JSC::getVM(globalObject);                                    \
     auto scope = DECLARE_THROW_SCOPE(vm);                                   \
-                                                                            \
     CallSite* callSite = getCallSite(globalObject, callFrame->thisValue()); \
-    if (!callSite) {                                                        \
-        return JSC::JSValue::encode(JSC::jsUndefined());                    \
-    }
+    RETURN_IF_EXCEPTION(scope, {});                                         \
+    (void)callSite;
 
 static const HashTableValue CallSitePrototypeTableValues[]
     = {

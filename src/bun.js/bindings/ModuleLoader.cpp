@@ -134,6 +134,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
     if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
         if (exportsValue.isObject()) {
@@ -141,8 +142,13 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
             return result;
         }
     }
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        scope.clearException();
+        scope.release();
+        return result;
+    }
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, createTypeError(globalObject, "\"object\" loader must return an \"exports\" object"_s));
     result.type = OnLoadResultTypeError;
     result.value.error = scope.exception();
@@ -254,6 +260,10 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             }
         }
     }
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        return result;
+    }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
@@ -275,6 +285,10 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
             result.value.sourceText.value = contentsValue;
         }
+    }
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        return result;
     }
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
@@ -715,6 +729,7 @@ JSValue fetchCommonJSModule(
     }
 
     JSMap* registry = globalObject->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, {});
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);
@@ -921,6 +936,7 @@ static JSValue fetchESMSourceCode(
                 scope.clearException();
                 return rejectedInternalPromise(globalObject, exception);
             } else {
+                scope.release();
                 return {};
             }
         }
@@ -984,6 +1000,7 @@ static JSValue fetchESMSourceCode(
             scope.clearException();
             return rejectedInternalPromise(globalObject, exception);
         } else {
+            scope.release();
             return {};
         }
     }

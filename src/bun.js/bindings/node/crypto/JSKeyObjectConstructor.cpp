@@ -95,7 +95,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     auto keyObjectResult = KeyObject::create(wrappedKey);
     if (keyObjectResult.hasException()) [[unlikely]] {
         WebCore::propagateException(*lexicalGlobalObject, scope, keyObjectResult.releaseException());
-        return JSValue::encode({});
+        RELEASE_AND_RETURN(scope, {});
     }
 
     // 2. Determine Key Type and Extract Material

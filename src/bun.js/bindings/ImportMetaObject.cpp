@@ -116,6 +116,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
                         }
                     }
                 }
+                RETURN_IF_EXCEPTION(scope, {});
             }
 
             if (fromValue.isString()) {
@@ -222,6 +223,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
                     }
                 }
             }
+            RETURN_IF_EXCEPTION(scope, {});
 
         } else if (fromValue.isBoolean()) {
             isESM = fromValue.toBoolean(globalObject);
@@ -246,6 +248,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString())
             from = JSC::JSValue::encode(pathProperty);
@@ -427,6 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
                     }
                 }
             }
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         if (fromValue.isString()) {
@@ -444,6 +448,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString()) [[likely]] {
             from = pathProperty;

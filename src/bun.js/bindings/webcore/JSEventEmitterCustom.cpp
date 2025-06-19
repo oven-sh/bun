@@ -64,6 +64,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
             return jsCast<JSEventEmitter*>(asObject(_events));
         }
     }
+    // TODO: properly propagate exception upwards (^ getIfPropertyExists)
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);

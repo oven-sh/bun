@@ -304,6 +304,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::parse(cookieString);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
@@ -326,6 +327,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::create(*cookieInit);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
@@ -361,6 +363,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie_exception = Cookie::create(cookieInit);
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
@@ -527,6 +530,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
         auto cookie_exception = Cookie::create(CookieInit {});
         if (cookie_exception.hasException()) {
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+            RELEASE_AND_RETURN(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
@@ -541,6 +545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
     auto cookie_exception = Cookie::parse(cookieString);
     if (cookie_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
@@ -581,6 +586,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     auto cookie_exception = Cookie::create(cookieInit);
     if (cookie_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();

@@ -608,7 +608,7 @@ pub fn asyncDispose(
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
-            return global.throwValue(err.toJSC(global));
+            return global.throwValue(err.toJS(global));
         },
     }
 
@@ -695,7 +695,7 @@ pub fn kill(
         .result => {},
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     }
 
@@ -1582,7 +1582,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
                     else => {
                         // crash in debug mode
@@ -1595,7 +1595,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
-                        status.err.toJSC(globalThis)
+                        status.err.toJS(globalThis)
                     else
                         .js_undefined;
 
@@ -1737,7 +1737,7 @@ pub fn getExited(
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
         },
         else => {
             const promise = JSC.JSPromise.create(globalThis).toJS();
@@ -2302,7 +2302,7 @@ pub fn spawnMaybeSync(
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -2414,7 +2414,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }

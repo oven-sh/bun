@@ -199,13 +199,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 }
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "workerData"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!workerData) {
             workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "data"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (!workerData) workerData = jsUndefined();
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (JSValue transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s))) {
             if (transferListValue.isObject()) {
@@ -220,6 +222,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 }
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -307,7 +310,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
-        return encodedJSValue();
+        RELEASE_AND_RETURN(throwScope, {});
     }
 
     Vector<TransferredMessagePort> transferredPorts;
@@ -316,7 +319,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
         if (disentangleResult.hasException()) {
             WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
-            return encodedJSValue();
+            RELEASE_AND_RETURN(throwScope, {});
         }
         transferredPorts = disentangleResult.releaseReturnValue();
     }

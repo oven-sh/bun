@@ -190,9 +190,9 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
                 return {};
             }
         }
-
         RETURN_IF_EXCEPTION(scope, {});
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto func = callframe->uncheckedArgument(1);
     RETURN_IF_EXCEPTION(scope, {});
@@ -650,6 +650,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     }
                 }
             }
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

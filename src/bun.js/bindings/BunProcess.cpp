@@ -3190,6 +3190,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(stdinValue));
     }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }

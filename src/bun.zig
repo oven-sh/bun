@@ -176,6 +176,8 @@ pub const comptime_string_map = @import("./comptime_string_map.zig");
 pub const ComptimeStringMap = comptime_string_map.ComptimeStringMap;
 pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
 pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
+// Old version of SinglyLinkedList
+pub const SinglyLinkedList = @import("./linked_list.zig").SinglyLinkedList;
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
@@ -2849,7 +2851,7 @@ pub fn runtimeEmbedFile(
                 abs_path,
                 std.math.maxInt(usize),
                 null,
-                @alignOf(u8),
+                .fromByteUnits(@alignOf(u8)),
                 '\x00',
             ) catch |e| {
                 Output.panic(

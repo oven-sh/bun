@@ -322,8 +322,11 @@ void MessagePort::dispatchMessages()
     if (!context || context->activeDOMObjectsAreSuspended() || !isEntangled())
         return;
 
-    auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
-        RefPtr<ScriptExecutionContext> context = scriptExecutionContext();
+    auto executionContextIdentifier = scriptExecutionContext()->identifier();
+
+    auto messagesTakenHandler = [this, protectedThis = Ref { *this }, executionContextIdentifier](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
+        RefPtr<ScriptExecutionContext> context = ScriptExecutionContext::getScriptExecutionContext(executionContextIdentifier);
+
         if (!context || !context->globalObject()) {
             completionCallback();
             return;
@@ -333,7 +336,7 @@ void MessagePort::dispatchMessages()
         processMessages(*context, WTFMove(messages), WTFMove(completionCallback));
     };
 
-    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));
+    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(executionContextIdentifier, m_identifier, WTFMove(messagesTakenHandler));
 }
 
 // synchronous for node:worker_threads.receiveMessageOnPort

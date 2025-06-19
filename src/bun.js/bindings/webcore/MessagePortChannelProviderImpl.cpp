@@ -27,8 +27,12 @@
 #include "MessagePortChannelProviderImpl.h"
 
 #include "MessagePort.h"
+#include "ScriptExecutionContext.h"
+#include "BunClientData.h"
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
+
+extern "C" void* Bun__getVM();
 
 namespace WebCore {
 
@@ -82,17 +86,38 @@ void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts
     });
 }
 
-void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
+void MessagePortChannelProviderImpl::takeAllMessagesForPort(const ScriptExecutionContextIdentifier identifier, const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
 {
-    // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
-    auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
-        ASSERT(isMainThread());
-        outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
-    };
+    if (WTF::isMainThread()) {
+        m_registry.takeAllMessagesForPort(port, WTFMove(outerCallback));
+        return;
+    }
 
-    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, callback = WTFMove(callback)](ScriptExecutionContext& context) mutable {
-        if (CheckedPtr registry = weakRegistry.get())
-            registry->takeAllMessagesForPort(port, WTFMove(callback));
+    auto currentVM = Bun__getVM();
+    if (!currentVM) {
+        outerCallback({}, [](){}); // already destroyed
+        return;
+    }
+    
+    ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, outerCallback = WTFMove(outerCallback), identifier](ScriptExecutionContext& mainContext) mutable {
+        CheckedPtr registry = weakRegistry.get();
+        if (!registry) {
+            ScriptExecutionContext::ensureOnContextThread(identifier, [outerCallback = WTFMove(outerCallback)](ScriptExecutionContext&) mutable {
+                outerCallback({}, [](){});
+            });
+            return;
+        }
+
+        registry->takeAllMessagesForPort(port, [outerCallback = WTFMove(outerCallback), identifier](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionHandler) mutable {
+            ScriptExecutionContext::ensureOnContextThread(identifier, [outerCallback = WTFMove(outerCallback), messages = WTFMove(messages), completionHandler = WTFMove(completionHandler)](ScriptExecutionContext&) mutable {
+                auto wrappedCompletionHandler = [completionHandler = WTFMove(completionHandler)]() mutable {
+                    ScriptExecutionContext::ensureOnMainThread([completionHandler = WTFMove(completionHandler)](ScriptExecutionContext&) mutable {
+                        completionHandler();
+                    });
+                };
+                outerCallback(WTFMove(messages), WTFMove(wrappedCompletionHandler));
+            });
+        });
     });
 }
 

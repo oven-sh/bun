@@ -567,7 +567,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
                 length = impl->byteLength();
             }
         } else if (auto* object = data.getObject()) {
-            JSValue lengthValue = object->getIfPropertyExists(globalObject, vm.propertyNames->length);
+            JSValue lengthValue = object->get(globalObject, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, {});
             length = lengthValue.toLength(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

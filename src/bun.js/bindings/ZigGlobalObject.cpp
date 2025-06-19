@@ -785,8 +785,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    RETURN_IF_EXCEPTION(scope, {});
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
+                    scope.release();
                     return result;
                 }
             }
@@ -798,8 +798,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                 if (prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    RETURN_IF_EXCEPTION(scope, {});
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
+                    scope.release();
                     return result;
                 }
             }
@@ -2665,6 +2665,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         OrdinalNumber column;
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
+        RETURN_IF_EXCEPTION(scope, {});
         errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
     }
 
@@ -2967,6 +2968,7 @@ void GlobalObject::finishCreation(VM& vm)
             RELEASE_ASSERT(nodeUtilValue.isObject());
             auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
             RETURN_IF_EXCEPTION(scope, );
+            ASSERT(prop);
             init.set(jsCast<JSFunction*>(prop));
         });
 

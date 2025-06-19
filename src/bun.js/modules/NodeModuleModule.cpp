@@ -1032,18 +1032,14 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(constructor);
 
-    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
-        ++i) {
+    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues); ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
         const auto& property = Identifier::fromString(vm, entry.m_key);
-        JSValue value = constructor->getIfPropertyExists(globalObject, property);
+        JSValue value = constructor->get(globalObject, property);
 
         if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
-        }
-        if (value.isEmpty()) [[unlikely]] {
-            value = JSC::jsUndefined();
         }
 
         exportNames.append(property);

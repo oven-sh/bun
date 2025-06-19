@@ -2361,9 +2361,10 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             scope.release(); // zig binding handles exceptions
-            JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
+            if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
+                return lengthValue.toNumber(globalObject);
+            }
             RETURN_IF_EXCEPTION(scope, 0);
-            return lengthValue.toNumber(globalObject);
         }
     }
     }
@@ -5014,10 +5015,6 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
                     if (originalLine.isNumber()) {
                         except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                     }
-                }
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearExceptionExceptTermination();
-                    return;
                 }
                 except->stack.frames_len = 1;
             }

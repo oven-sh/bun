@@ -9737,7 +9737,7 @@ pub const PackageManager = struct {
     pub fn onGitFindCommitComplete(this: *PackageManager, task_id: u64, result: anyerror![]const u8) !void {
         const clone_callbacks = this.task_queue.get(task_id) orelse return;
         const callbacks = clone_callbacks;
-        defer _ = this.task_queue.remove(task_id); // Clean up the clone task queue entry
+        bun.debugAssert(this.task_queue.remove(task_id)); // Clean up the clone task queue entry
 
         if (result) |resolved| {
             // Process checkout for this commit
@@ -9786,8 +9786,8 @@ pub const PackageManager = struct {
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "Failed to find commit for \"{s}\": {s}",
-                                .{ this.lockfile.str(&dependency.name), @errorName(err) },
+                                "Failed to find commit {} for \"{s}\": {s}",
+                                .{ bun.fmt.quote(this.lockfile.str(&dependency.version.value.git.committish)), this.lockfile.str(&dependency.name), @errorName(err) },
                             ) catch unreachable;
                         }
                     },

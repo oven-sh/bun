@@ -20,11 +20,7 @@ pub const GitRunner = struct {
     remaining_fds: i8 = 0,
     has_called_process_exit: bool = false,
     completion_context: CompletionContext,
-    envp: DotEnv.NullDelimitedEnvMap,
-
-    /// The git command arguments (owned by this runner)
-    argv: bun.spawn.Argv,
-    argv_bytes: []u8,
+    envp: ?DotEnv.NullDelimitedEnvMap = null,
     arena: bun.ArenaAllocator,
 
     /// Allocator for this runner
@@ -39,7 +35,14 @@ pub const GitRunner = struct {
             url: []const u8,
             task_id: u64,
             attempt: u8,
-            cache_dir: std.fs.Dir,
+
+            dir: union(enum) {
+                /// Not yet created. Check it worked by opening the directory.
+                cache: std.fs.Dir,
+
+                /// Already downloaded. Exit code of 0 says it worked.
+                repo: std.fs.Dir,
+            },
         },
         find_commit: struct {
             name: []const u8,
@@ -55,28 +58,27 @@ pub const GitRunner = struct {
             cache_dir: std.fs.Dir,
             repo_dir: std.fs.Dir,
         },
+
+        pub fn needsStdout(this: *const CompletionContext) bool {
+            return switch (this.*) {
+                .find_commit => true,
+                else => false,
+            };
+        }
     };
 
     pub fn init(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
         context: CompletionContext,
-        argv: []const []const u8,
-        env_map: *const DotEnv.Map,
     ) !*GitRunner {
-        const argv_, const argv_bytes = bun.StringBuilder.createNullDelimited(allocator, argv) catch bun.outOfMemory();
         const runner = try allocator.create(GitRunner);
         runner.* = .{
             .manager = manager,
             .completion_context = context,
-            .argv = argv_,
-            .argv_bytes = argv_bytes,
             .arena = bun.ArenaAllocator.init(allocator),
-            .envp = undefined,
             .allocator = allocator,
         };
-
-        runner.envp = try env_map.createNullDelimitedEnvMap(runner.arena.allocator());
 
         runner.stdout.setParent(runner);
         runner.stderr.setParent(runner);
@@ -84,13 +86,13 @@ pub const GitRunner = struct {
         return runner;
     }
 
-    pub fn spawn(this: *GitRunner) !void {
+    pub fn spawn(this: *GitRunner, argv_slice: []const []const u8, env: ?*const DotEnv.Map) !void {
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
 
-            .stdout = if (this.manager.options.log_level == .silent)
+            .stdout = if (this.manager.options.log_level == .silent and !this.completion_context.needsStdout())
                 .ignore
-            else if (this.manager.options.log_level.isVerbose())
+            else if (this.manager.options.log_level.isVerbose() and !this.completion_context.needsStdout())
                 .inherit
             else if (Environment.isPosix)
                 .buffer
@@ -114,10 +116,13 @@ pub const GitRunner = struct {
             },
 
             .stream = false,
+            .cwd = this.manager.cache_directory_path,
         };
 
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, this.argv, this.envp)).unwrap();
-
+        const argv, _ = bun.spawn.allocateArguments(this.arena.allocator(), argv_slice) catch bun.outOfMemory();
+        const envp = if (env) |env_map| try env_map.createNullDelimitedEnvMap(this.arena.allocator()) else this.envp.?;
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv, envp)).unwrap();
+        this.envp = envp;
         this.remaining_fds = 0;
 
         if (spawned.stdout) |stdout| {
@@ -142,7 +147,7 @@ pub const GitRunner = struct {
 
         const event_loop = &this.manager.event_loop;
         var process = spawned.toProcess(event_loop, false);
-
+        _ = this.manager.incrementPendingTasks(1);
         this.process = process;
         process.setExitHandler(this);
 
@@ -200,7 +205,10 @@ pub const GitRunner = struct {
 
     pub fn handleExit(this: *GitRunner, status: bun.spawn.Status) void {
         var must_deinit = true;
-        defer if (must_deinit) this.deinit();
+        defer {
+            _ = this.manager.decrementPendingTasks();
+            if (must_deinit) this.deinit();
+        }
 
         switch (status) {
             .exited => |exit| {
@@ -210,18 +218,21 @@ pub const GitRunner = struct {
 
                     switch (this.completion_context) {
                         .download => |*ctx| {
-                            // For download, open the created repo directory
-                            const local_folder_name_buf = bun.PathBufferPool.get();
-                            defer bun.PathBufferPool.put(local_folder_name_buf);
+                            switch (ctx.dir) {
+                                .cache => |cache_dir| {
+                                    const buf = bun.PathBufferPool.get();
+                                    defer bun.PathBufferPool.put(buf);
+                                    const path = Path.joinAbsStringBufZ(PackageManager.get().cache_directory_path, buf, &.{PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.name, null)}, .auto);
 
-                            const folder_name = std.fmt.bufPrintZ(local_folder_name_buf, "{any}.git", .{
-                                bun.fmt.hexIntLower(ctx.task_id),
-                            }) catch bun.outOfMemory();
-
-                            if (bun.openDir(ctx.cache_dir, folder_name)) |repo_dir| {
-                                this.manager.onGitDownloadComplete(ctx.task_id, repo_dir) catch {};
-                            } else |err| {
-                                this.manager.onGitDownloadComplete(ctx.task_id, err) catch {};
+                                    if (bun.openDir(cache_dir, path)) |repo_dir| {
+                                        this.manager.onGitDownloadComplete(ctx.task_id, repo_dir) catch {};
+                                    } else |err| {
+                                        this.manager.onGitDownloadComplete(ctx.task_id, err) catch {};
+                                    }
+                                },
+                                .repo => |repo_dir| {
+                                    this.manager.onGitDownloadComplete(ctx.task_id, repo_dir) catch {};
+                                },
                             }
                         },
                         .find_commit => |*ctx| {
@@ -241,12 +252,18 @@ pub const GitRunner = struct {
                                 // First step completed (clone), now do checkout
                                 const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
                                 const folder = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
+                                const git_path = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(git_path);
+                                const git = bun.which(git_path, bun.getenvZ("PATH") orelse "", bun.fs.FileSystem.instance.top_level_dir, "git") orelse "git";
+                                const checkout_argv = &[_][]const u8{
+                                    git,
+                                    "-C",
+                                    folder,
+                                    "checkout",
+                                    "--quiet",
+                                    ctx.resolved,
+                                };
 
-                                const checkout_argv = [_][]const u8{ "git", "-C", folder, "checkout", "--quiet", ctx.resolved };
-                                this.allocator.free(this.argv_bytes);
-                                const argv, const argv_bytes = bun.spawn.allocateArguments(this.allocator, checkout_argv) catch bun.outOfMemory();
-                                this.argv = argv;
-                                this.argv_bytes = argv_bytes;
                                 this.is_second_step = true;
                                 this.stdout.deinit();
                                 this.stderr.deinit();
@@ -257,7 +274,7 @@ pub const GitRunner = struct {
                                 this.stdout.setParent(this);
                                 this.stderr.setParent(this);
 
-                                this.spawn() catch |err| {
+                                this.spawn(checkout_argv, null) catch |err| {
                                     this.manager.onGitCheckoutComplete(ctx.task_id, err) catch {};
                                     return;
                                 };
@@ -270,12 +287,13 @@ pub const GitRunner = struct {
                                     defer dir.close();
                                     dir.deleteTree(".git") catch {};
 
-                                    if (ctx.resolved.len > 0) insert_tag: {
-                                        const git_tag = dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
-                                        defer git_tag.close();
-                                        git_tag.writeAll(ctx.resolved) catch {
-                                            dir.deleteFileZ(".bun-tag") catch {};
-                                        };
+                                    if (ctx.resolved.len > 0) {
+                                        switch (bun.sys.File.writeFile(bun.FD.fromStdDir(dir), ".bun-tag", ctx.resolved)) {
+                                            .err => {
+                                                _ = bun.sys.unlinkat(.fromStdDir(dir), ".bun-tag");
+                                            },
+                                            .result => {},
+                                        }
                                     }
 
                                     const extract_data = this.readPackageJson(dir, ctx.url, ctx.resolved) catch |err| {
@@ -380,8 +398,6 @@ pub const GitRunner = struct {
 
         this.stdout.deinit();
         this.stderr.deinit();
-
-        this.allocator.free(this.argv_bytes);
         this.arena.deinit();
         this.allocator.destroy(this);
     }

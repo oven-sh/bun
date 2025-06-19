@@ -452,12 +452,12 @@ pub const Repository = extern struct {
                     .url = try allocator.dupe(u8, url),
                     .task_id = task_id,
                     .attempt = attempt,
-                    .cache_dir = dir,
+                    .dir = .{ .repo = dir },
                 },
             };
 
-            const runner = try GitRunner.init(allocator, pm, context, argv, env);
-            try runner.spawn();
+            const runner = try GitRunner.init(allocator, pm, context);
+            try runner.spawn(argv, env);
         } else |not_found| {
             if (not_found != error.FileNotFound) {
                 pm.onGitDownloadComplete(task_id, not_found) catch {};
@@ -489,7 +489,7 @@ pub const Repository = extern struct {
                     .url = try allocator.dupe(u8, url),
                     .task_id = task_id,
                     .attempt = attempt,
-                    .cache_dir = cache_dir,
+                    .dir = .{ .cache = cache_dir },
                 },
             };
 
@@ -497,10 +497,8 @@ pub const Repository = extern struct {
                 allocator,
                 pm,
                 context,
-                argv,
-                env,
             );
-            try runner.spawn();
+            try runner.spawn(argv, env);
         }
     }
 
@@ -529,7 +527,10 @@ pub const Repository = extern struct {
             "git",
         ) orelse "git";
         const argv_buf = &[_][]const u8{ git, "-C", path, "log", "--format=%H", "-1", committish };
-        const argv: []const []const u8 = if (committish.len > 0) argv_buf else argv_buf[0 .. argv_buf.len - 1];
+        const argv: []const []const u8 = if (committish.len > 0)
+            argv_buf
+        else
+            argv_buf[0 .. argv_buf.len - 1];
         const context = GitRunner.CompletionContext{
             .find_commit = .{
                 .name = try allocator.dupe(u8, name),
@@ -539,8 +540,8 @@ pub const Repository = extern struct {
             },
         };
 
-        const runner = try GitRunner.init(allocator, pm, context, argv, env);
-        try runner.spawn();
+        const runner = try GitRunner.init(allocator, pm, context);
+        try runner.spawn(argv, env);
     }
 
     pub fn checkout(
@@ -558,23 +559,14 @@ pub const Repository = extern struct {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
-        if (bun.openDir(cache_dir, folder_name)) |package_dir_const| {
-            // Package already exists, read package.json directly
-            var package_dir = package_dir_const;
-            package_dir.close();
-
+        if (bun.sys.directoryExistsAt(.fromStdDir(cache_dir), folder_name).asValue() orelse false) {
             // Directly call the completion handler since the checkout already exists
             pm.onGitCheckoutComplete(task_id, .{
                 .url = url,
                 .resolved = resolved,
             }) catch {};
             return;
-        } else |not_found| {
-            if (not_found != error.ENOENT) {
-                pm.onGitCheckoutComplete(task_id, not_found) catch {};
-                return;
-            }
-
+        } else {
             const buf = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(buf);
 
@@ -610,8 +602,8 @@ pub const Repository = extern struct {
                 },
             };
 
-            const runner = try GitRunner.init(allocator, pm, context, argv, env);
-            try runner.spawn();
+            const runner = try GitRunner.init(allocator, pm, context);
+            try runner.spawn(argv, env);
         }
     }
 };

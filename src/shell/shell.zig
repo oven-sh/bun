@@ -3718,10 +3718,10 @@ pub fn shellCmdFromJS(
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
-    var string_iter = string_args.arrayIterator(globalThis);
+    var string_iter = try string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
-    while (string_iter.next()) |js_value| {
+    while (try string_iter.next()) |js_value| {
         defer i += 1;
         if (!try builder.appendJSValueStr(js_value, false)) {
             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3729,7 +3729,7 @@ pub fn shellCmdFromJS(
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
-            const template_value = template_args.next() orelse {
+            const template_value = try template_args.next() orelse {
                 return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
             try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
@@ -3809,10 +3809,10 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.jsType().isArray()) {
-            var array = template_value.arrayIterator(globalThis);
+            var array = try template_value.arrayIterator(globalThis);
             const last = array.len -| 1;
             var i: u32 = 0;
-            while (array.next()) |arr| : (i += 1) {
+            while (try array.next()) |arr| : (i += 1) {
                 try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
                 if (i < last) {
                     const str = bun.String.static(" ");
@@ -3825,7 +3825,7 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.isObject()) {
-            if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
+            if (try template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
@@ -4324,7 +4324,7 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
@@ -4392,7 +4392,7 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {

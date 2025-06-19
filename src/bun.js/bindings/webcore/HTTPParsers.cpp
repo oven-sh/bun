@@ -742,10 +742,10 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
                 failureReason = makeString("CR doesn't follow LF in header name at "_s, trimInputSample(p, end - p));
                 return 0;
             }
-            failureReason = makeString("Unexpected CR in header name at "_s, trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected CR in header name at "_s, trimInputSample(name.begin(), name.size()));
             return 0;
         case '\n':
-            failureReason = makeString("Unexpected LF in header name at "_s, trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected LF in header name at "_s, trimInputSample(name.begin(), name.size()));
             return 0;
         case ':':
             break;
@@ -754,7 +754,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
                 if (name.size() < 1)
                     failureReason = "Unexpected start character in header name"_s;
                 else
-                    failureReason = makeString("Unexpected character in header name at "_s, trimInputSample(name.data(), name.size()));
+                    failureReason = makeString("Unexpected character in header name at "_s, trimInputSample(name.begin(), name.size()));
                 return 0;
             }
             name.append(*p);
@@ -782,7 +782,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
             break;
         case '\n':
             if (strict) {
-                failureReason = makeString("Unexpected LF in header value at "_s, trimInputSample(value.data(), value.size()));
+                failureReason = makeString("Unexpected LF in header value at "_s, trimInputSample(value.begin(), value.size()));
                 return 0;
             }
             break;
@@ -798,7 +798,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
         failureReason = makeString("CR doesn't follow LF after header value at "_s, trimInputSample(p, end - p));
         return 0;
     }
-    valueStr = String::fromUTF8({ value.data(), value.size() });
+    valueStr = String::fromUTF8({ value.begin(), value.size() });
     if (valueStr.isNull()) {
         failureReason = "Invalid UTF-8 sequence in header value"_s;
         return 0;

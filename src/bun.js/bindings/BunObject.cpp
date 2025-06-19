@@ -359,6 +359,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* bunShell = shell.getObject();
 
     auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
+    RETURN_IF_EXCEPTION(scope, {});
     if (!ShellError.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
         return {};

@@ -499,6 +499,7 @@ pub fn DebugData(thread_safe: bool) type {
             assertValid(debug);
             debug.magic = undefined;
             debug.lock.lock();
+            defer debug.lock.unlock();
             debug.map.clearAndFree(bun.default_allocator);
             debug.frees.clearAndFree(bun.default_allocator);
             if (debug.allocation_scope) |scope| {

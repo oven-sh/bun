@@ -17,9 +17,9 @@ interface ExtendedGlobOptions extends GlobScanOptions {
   exclude(ent: string): boolean;
 }
 
-async function* glob(pattern: string | string[], options: GlobOptions): AsyncGenerator<string> {
+async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
   pattern = validatePattern(pattern);
-  const globOptions = mapOptions(options);
+  const globOptions = mapOptions(options || {});
   let it = new Bun.Glob(pattern).scan(globOptions);
   const exclude = globOptions.exclude;
 
@@ -29,9 +29,9 @@ async function* glob(pattern: string | string[], options: GlobOptions): AsyncGen
   }
 }
 
-function* globSync(pattern: string | string[], options: GlobOptions): Generator<string> {
+function* globSync(pattern: string | string[], options?: GlobOptions): Generator<string> {
   pattern = validatePattern(pattern);
-  const globOptions = mapOptions(options);
+  const globOptions = mapOptions(options || {});
   const g = new Bun.Glob(pattern);
   const exclude = globOptions.exclude;
   for (const ent of g.scanSync(globOptions)) {

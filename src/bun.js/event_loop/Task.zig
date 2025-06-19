@@ -96,7 +96,7 @@ pub const Task = TaggedPointerUnion(.{
 pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
     var global = this.global;
     const global_vm = global.vm();
-    var counter: usize = 0;
+    var counter: u32 = 0;
 
     if (comptime Environment.isDebug) {
         if (this.debug.js_call_count_outside_tick_queue > this.debug.drain_microtasks_count_outside_tick_queue) {
@@ -465,7 +465,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(RuntimeTranspilerStore)) => {
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
-                any.drain();
+                any.drain() catch {};
             },
             @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                 var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
@@ -490,16 +490,20 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 any.runFromJSThread();
             },
 
-            else => {
+            .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
+            },
+            _ => {
+                // handle unnamed variants
+                bun.Output.panic("Unknown tag: {d}", .{@intFromEnum(task.tag())});
             },
         }
 
-        this.drainMicrotasksWithGlobal(global, global_vm);
+        this.drainMicrotasksWithGlobal(global, global_vm) catch return counter;
     }
 
     this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
-    return @as(u32, @truncate(counter));
+    return counter;
 }
 
 const TaggedPointerUnion = bun.TaggedPointerUnion;

@@ -800,11 +800,11 @@ pub const VectorArrayBuffer = struct {
 
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
-        const len = val.getLength(globalObject);
+        const len = try val.getLength(globalObject);
         bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
-            const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
+            const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
                 return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});

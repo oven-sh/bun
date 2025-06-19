@@ -249,6 +249,7 @@ pub const FetchTasklet = struct {
         }
         if (this.request_body_streaming_buffer) |buffer| {
             this.request_body_streaming_buffer = null;
+            buffer.clearDrainCallback();
             buffer.deref();
         }
     }

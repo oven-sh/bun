@@ -95,15 +95,15 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const ScriptExecutio
 
     auto currentVM = Bun__getVM();
     if (!currentVM) {
-        outerCallback({}, [](){}); // already destroyed
+        outerCallback({}, []() {}); // already destroyed
         return;
     }
-    
+
     ScriptExecutionContext::ensureOnMainThread([weakRegistry = WeakPtr { m_registry }, port, outerCallback = WTFMove(outerCallback), identifier](ScriptExecutionContext& mainContext) mutable {
         CheckedPtr registry = weakRegistry.get();
         if (!registry) {
             ScriptExecutionContext::ensureOnContextThread(identifier, [outerCallback = WTFMove(outerCallback)](ScriptExecutionContext&) mutable {
-                outerCallback({}, [](){});
+                outerCallback({}, []() {});
             });
             return;
         }

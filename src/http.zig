@@ -73,7 +73,6 @@ pub const Signals = struct {
     body_streaming: ?*std.atomic.Value(bool) = null,
     aborted: ?*std.atomic.Value(bool) = null,
     cert_errors: ?*std.atomic.Value(bool) = null,
-
     pub fn isEmpty(this: *const Signals) bool {
         return this.aborted == null and this.body_streaming == null and this.header_progress == null and this.cert_errors == null;
     }
@@ -83,12 +82,12 @@ pub const Signals = struct {
         body_streaming: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         aborted: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         cert_errors: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
         pub fn to(this: *Store) Signals {
             return .{
                 .header_progress = &this.header_progress,
                 .body_streaming = &this.body_streaming,
                 .aborted = &this.aborted,
+                .backpressure = &this.backpressure,
                 .cert_errors = &this.cert_errors,
             };
         }
@@ -112,16 +111,60 @@ pub const FetchRedirect = enum(u8) {
     });
 };
 
+pub const ThreadSafeStreamBuffer = struct {
+    buffer: bun.io.StreamBuffer = .{},
+    mutex: std.Thread.Mutex = .{},
+    ref_count: StreamBufferRefCount = .init(2), // 1 for main thread and 1 for http thread
+    // drain_callback will be called passing the contxt for the http callback
+    // this is used to report when the buffer is drained and only if end chunk was not sent
+    drain_callback: ?*const fn (*anyopaque) void = null,
+
+    const StreamBufferRefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", ThreadSafeStreamBuffer.deinit, .{});
+    pub const ref = StreamBufferRefCount.ref;
+    pub const deref = StreamBufferRefCount.deref;
+    pub const new = bun.TrivialNew(@This());
+
+    pub fn acquire(this: *ThreadSafeStreamBuffer) *bun.io.StreamBuffer {
+        this.mutex.lock();
+        return &this.buffer;
+    }
+
+    pub fn release(this: *ThreadSafeStreamBuffer) void {
+        this.mutex.unlock();
+    }
+
+    /// Attention should only be called in the main thread and before schedule the it to the http thread
+    pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: ?*const fn (*T) void) void {
+        this.drain_callback = callback;
+    }
+
+    /// Attention never call this from the main thread this is exclusively called from the http thread
+    /// Buffer should be acquired before calling this
+    pub fn reportDrain(this: *ThreadSafeStreamBuffer, context: *anyopaque) void {
+        if (this.buffer.isEmpty()) {
+            if (this.drain_callback) |callback| {
+                callback(context);
+            }
+        }
+    }
+
+    pub fn deinit(this: *ThreadSafeStreamBuffer) void {
+        this.buffer.deinit();
+        bun.destroy(this);
+    }
+};
 pub const HTTPRequestBody = union(enum) {
     bytes: []const u8,
     sendfile: Sendfile,
     stream: struct {
-        buffer: bun.io.StreamBuffer,
+        buffer: ?*ThreadSafeStreamBuffer,
         ended: bool,
-        has_backpressure: bool = false,
 
-        pub fn hasEnded(this: *@This()) bool {
-            return this.ended and this.buffer.isEmpty();
+        pub fn deinit(this: *@This()) void {
+            if (this.buffer) |buffer| {
+                this.buffer = null;
+                buffer.deref();
+            }
         }
     },
 
@@ -132,7 +175,7 @@ pub const HTTPRequestBody = union(enum) {
     pub fn deinit(this: *HTTPRequestBody) void {
         switch (this.*) {
             .sendfile, .bytes => {},
-            .stream => |*stream| stream.buffer.deinit(),
+            .stream => |*stream| stream.deinit(),
         }
     }
     pub fn len(this: *const HTTPRequestBody) usize {
@@ -1363,10 +1406,7 @@ pub const HTTPThread = struct {
             defer this.queued_writes_lock.unlock();
             for (this.queued_writes.items) |write| {
                 const ended = write.flags.ended;
-                defer if (!strings.eqlComptime(write.data, end_of_chunked_http1_1_encoding_response_body) and write.data.len > 0) {
-                    // "0\r\n\r\n" is always a static so no need to free
-                    bun.default_allocator.free(write.data);
-                };
+
                 if (socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
                     if (write.flags.is_tls) {
                         const socket = uws.SocketTLS.fromAny(socket_ptr);
@@ -1377,17 +1417,8 @@ pub const HTTPThread = struct {
                         if (tagged.get(HTTPClient)) |client| {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
-                                if (write.data.len > 0) {
-                                    stream.buffer.write(write.data) catch {};
-                                }
                                 stream.ended = ended;
-                                if (!stream.has_backpressure) {
-                                    client.onWritable(
-                                        false,
-                                        true,
-                                        socket,
-                                    );
-                                }
+                                client.flushStream(true, socket, if (ended) end_of_chunked_http1_1_encoding_response_body else "");
                             }
                         }
                     } else {
@@ -1398,17 +1429,10 @@ pub const HTTPThread = struct {
                         const tagged = NewHTTPContext(false).getTaggedFromSocket(socket);
                         if (tagged.get(HTTPClient)) |client| {
                             if (client.state.original_request_body == .stream) {
-                                var stream = &client.state.original_request_body.stream;
-                                if (write.data.len > 0) {
-                                    stream.buffer.write(write.data) catch {};
-                                }
-                                stream.ended = ended;
-                                if (!stream.has_backpressure) {
-                                    client.onWritable(
-                                        false,
-                                        false,
-                                        socket,
-                                    );
+                                if (client.state.original_request_body == .stream) {
+                                    var stream = &client.state.original_request_body.stream;
+                                    stream.ended = ended;
+                                    client.flushStream(true, socket, if (ended) end_of_chunked_http1_1_encoding_response_body else "");
                                 }
                             }
                         }
@@ -1492,13 +1516,12 @@ pub const HTTPThread = struct {
             this.loop.loop.wakeup();
     }
 
-    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, data: []const u8, ended: bool) void {
+    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, ended: bool) void {
         {
             this.queued_writes_lock.lock();
             defer this.queued_writes_lock.unlock();
             this.queued_writes.append(bun.default_allocator, .{
                 .async_http_id = http.async_http_id,
-                .data = data,
                 .flags = .{
                     .is_tls = http.client.isHTTPS(),
                     .ended = ended,
@@ -3358,6 +3381,79 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
     };
 }
 
+pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
+    var stream = &this.state.original_request_body.stream;
+    var has_backpressure = false;
+    const stream_buffer = stream.buffer orelse return;
+    const buffer = stream_buffer.acquire();
+
+    if (buffer.isEmpty() and stream.ended) {
+        stream_buffer.release();
+        stream.deinit();
+        return;
+    }
+
+    defer if (!has_backpressure) {
+        if (stream.ended) {
+            this.state.request_stage = .done;
+            stream_buffer.release();
+            stream.deinit();
+        } else {
+            stream_buffer.reportDrain(this);
+            stream_buffer.release();
+        }
+    };
+
+    // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+    if (buffer.isNotEmpty()) {
+        const to_send = buffer.slice();
+        const amount = socket.write(to_send, true);
+        if (amount < 0) {
+            this.closeAndFail(error.WriteFailed, is_ssl, socket);
+            return;
+        }
+
+        this.state.request_sent_len += @as(usize, @intCast(amount));
+        buffer.cursor += @intCast(amount);
+        if (amount < to_send.len) {
+            // we could not send all pending data so we need to buffer the extra data
+            if (data.len > 0) {
+                buffer.write(data) catch bun.outOfMemory();
+            }
+            has_backpressure = true;
+        } else {
+            // ok we flushed all pending data so we can reset the backpressure
+
+            if (data.len > 0) {
+                // no backpressure everything was sended so we can just try to send
+                const data_sent = socket.write(data, true);
+                if (data_sent < 0) {
+                    this.closeAndFail(error.WriteFailed, is_ssl, socket);
+                    return;
+                }
+                this.state.request_sent_len += @as(usize, @intCast(data_sent));
+                if (data_sent < data.len) {
+                    stream.buffer.write(data[data_sent..]) catch bun.outOfMemory();
+                    has_backpressure = true;
+                }
+            }
+        }
+        if (buffer.isEmpty()) {
+            buffer.reset();
+        }
+    } else if (data.len > 0) {
+        const amount = socket.write(data, true);
+        if (amount < 0) {
+            this.closeAndFail(error.WriteFailed, is_ssl, socket);
+            return;
+        }
+        this.state.request_sent_len += @as(usize, @intCast(amount));
+        if (amount < data.len) {
+            buffer.write(data[amount..]) catch bun.outOfMemory();
+            has_backpressure = true;
+        }
+    }
+}
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
@@ -3446,30 +3542,8 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     }
                 },
                 .stream => {
-                    var stream = &this.state.original_request_body.stream;
-                    stream.has_backpressure = false;
-                    // to simplify things here the buffer contains the raw data we just need to flush to the socket it
-                    if (stream.buffer.isNotEmpty()) {
-                        const to_send = stream.buffer.slice();
-                        const amount = socket.write(to_send, true);
-                        if (amount < 0) {
-                            this.closeAndFail(error.WriteFailed, is_ssl, socket);
-                            return;
-                        }
-                        this.state.request_sent_len += @as(usize, @intCast(amount));
-                        stream.buffer.cursor += @intCast(amount);
-                        if (amount < to_send.len) {
-                            stream.has_backpressure = true;
-                        }
-                        if (stream.buffer.isEmpty()) {
-                            stream.buffer.reset();
-                        }
-                    }
-                    if (stream.hasEnded()) {
-                        this.state.request_stage = .done;
-                        stream.buffer.deinit();
-                        return;
-                    }
+                    // flush without adding any new data
+                    this.flushStream(is_ssl, socket, "");
                 },
                 .sendfile => |*sendfile| {
                     if (comptime is_ssl) {

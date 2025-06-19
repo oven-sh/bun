@@ -570,7 +570,7 @@ pub export fn napi_get_array_length(env_: napi_env, value_: napi_value, result_:
         return env.setLastError(.array_expected);
     }
 
-    result.* = @as(u32, @truncate(value.getLength(env.toJS())));
+    result.* = @truncate(value.getLength(env.toJS()) catch return env.setLastError(.pending_exception));
     return env.ok();
 }
 pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_value, result_: ?*bool) napi_status {
@@ -582,8 +582,8 @@ pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_va
         return env.invalidArg();
     };
     const lhs, const rhs = .{ lhs_.get(), rhs_.get() };
-    // there is some nuance with NaN here i'm not sure about
-    result.* = lhs.isSameValue(rhs, env.toJS());
+    // TODO: this needs to be strictEquals not isSameValue (NaN !== NaN and -0 === 0)
+    result.* = lhs.isSameValue(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
@@ -1592,7 +1592,7 @@ pub const ThreadSafeFunction = struct {
             break :brk .{ !this.isClosing(), t };
         };
 
-        this.call(task, !is_first);
+        this.call(task, !is_first) catch return false;
 
         if (queue_finalizer_after_call) {
             this.maybeQueueFinalizer();
@@ -1604,10 +1604,10 @@ pub const ThreadSafeFunction = struct {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSExecutionTerminated!void {
         const env = this.env;
         if (!is_first) {
-            this.event_loop.drainMicrotasks();
+            try this.event_loop.drainMicrotasks();
         }
         const globalObject = env.toJS();
 

@@ -579,7 +579,7 @@ pub fn fromJS(
                     };
                     var found = false;
                     inline for (methods) |method| {
-                        if (value.getOwn(global, @tagName(method))) |function| {
+                        if (try value.getOwn(global, @tagName(method))) |function| {
                             if (!found) {
                                 try validateRouteName(global, path);
                             }
@@ -911,11 +911,11 @@ pub fn fromJS(
             if (tls.isFalsey()) {
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
-                var value_iter = tls.arrayIterator(global);
+                var value_iter = try tls.arrayIterator(global);
                 if (value_iter.len == 1) {
                     return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
                 }
-                while (value_iter.next()) |item| {
+                while (try value_iter.next()) |item| {
                     var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
                         if (global.hasException()) {
                             return error.JSError;

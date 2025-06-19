@@ -353,7 +353,7 @@ pub const FetchTasklet = struct {
             }
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn onRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -372,7 +372,7 @@ pub const FetchTasklet = struct {
         }
 
         this.abortListener(err);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     comptime {
         const jsonResolveRequestStream = JSC.toJSHostFn(onResolveRequestStream);
@@ -794,7 +794,7 @@ pub const FetchTasklet = struct {
                     const js_hostname = hostname.toJS(globalObject);
                     js_hostname.ensureStillAlive();
                     js_cert.ensureStillAlive();
-                    const check_result = check_server_identity.call(globalObject, .jsUndefined(), &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
+                    const check_result = check_server_identity.call(globalObject, .js_undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);
 
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
@@ -1499,7 +1499,7 @@ pub fn Bun__fetchPreconnect_(
     }
 
     bun.http.AsyncHTTP.preconnect(url, true);
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 const StringOrURL = struct {
@@ -1853,7 +1853,7 @@ pub fn Bun__fetch_(
         inline for (0..2) |i| {
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "unix")) |socket_path| {
-                    if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
+                    if (socket_path.isString() and try socket_path.getLength(ctx) > 0) {
                         if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                             break :extract_unix_socket_path slice;
                         }
@@ -2001,7 +2001,7 @@ pub fn Bun__fetch_(
         inline for (0..2) |i| {
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
-                    if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
+                    if (proxy_arg.isString() and try proxy_arg.getLength(ctx) > 0) {
                         var href = try JSC.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
                             const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});

@@ -64,7 +64,7 @@ fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
     if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 const JSC = bun.JSC;

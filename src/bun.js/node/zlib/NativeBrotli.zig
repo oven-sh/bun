@@ -112,7 +112,7 @@ pub fn params(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     _ = globalThis;
     _ = callframe;
     // intentionally left empty
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 fn deinit(this: *@This()) void {

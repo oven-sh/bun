@@ -32,7 +32,7 @@ pub const Start = union(Tag) {
     pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
         switch (this) {
             .empty, .ready => {
-                return .jsUndefined();
+                return .js_undefined;
             },
             .chunk_size => |chunk| {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
@@ -47,7 +47,7 @@ pub const Start = union(Tag) {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
-                return .jsUndefined();
+                return .js_undefined;
             },
         }
     }
@@ -81,7 +81,7 @@ pub const Start = union(Tag) {
                 var chunk_size: Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.getOwn(globalThis, "asUint8Array")) |val| {
+                if (try value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;

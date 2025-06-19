@@ -409,7 +409,7 @@ fn initRedirections(
                         };
                     }
 
-                    const result = bun.io.openForWriting(
+                    const result = bun.io.openForWritingImpl(
                         cmd.base.shell.cwd_fd,
                         path,
                         node.redirect.toFlags(),
@@ -424,6 +424,7 @@ fn initRedirections(
                             fn onForceSyncOrIsaTTY(_: void) void {}
                         }.onForceSyncOrIsaTTY,
                         shell.interpret.isPollableFromMode,
+                        ShellSyscall.openat,
                     );
 
                     break :redirfd switch (result) {

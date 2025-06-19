@@ -1647,6 +1647,8 @@ pub const ShellSyscall = struct {
         return Syscall.fstatat(dir, path_);
     }
 
+    /// Same thing as bun.sys.openat on posix
+    /// On windows it will convert paths for us
     pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {

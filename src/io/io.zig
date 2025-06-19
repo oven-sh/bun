@@ -12,6 +12,7 @@ pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
 
 pub const openForWriting = @import("./openForWriting.zig").openForWriting;
+pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
 const log = bun.Output.scoped(.loop, false);
 

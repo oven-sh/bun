@@ -12,6 +12,38 @@ pub fn openForWriting(
     comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
     comptime isPollable: *const fn (mode: bun.Mode) bool,
 ) JSC.Maybe(bun.FileDescriptor) {
+    return openForWritingImpl(
+        dir,
+        input_path,
+        input_flags,
+        mode,
+        pollable,
+        is_socket,
+        force_sync,
+        out_nonblocking,
+        Ctx,
+        ctx,
+        onForceSyncOrIsaTTY,
+        isPollable,
+        bun.sys.openat,
+    );
+}
+
+pub fn openForWritingImpl(
+    dir: bun.FileDescriptor,
+    input_path: anytype,
+    input_flags: i32,
+    mode: bun.Mode,
+    pollable: *bool,
+    is_socket: *bool,
+    force_sync: bool,
+    out_nonblocking: *bool,
+    comptime Ctx: type,
+    ctx: Ctx,
+    comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
+    comptime isPollable: *const fn (mode: bun.Mode) bool,
+    comptime openat: *const fn (dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) JSC.Maybe(bun.FileDescriptor),
+) JSC.Maybe(bun.FileDescriptor) {
     const PathT = @TypeOf(input_path);
     if (PathT != bun.webcore.PathOrFileDescriptor and PathT != [:0]const u8 and PathT != [:0]u8) {
         @compileError("Only string or PathOrFileDescriptor is supported but got: " ++ @typeName(PathT));
@@ -33,7 +65,7 @@ pub fn openForWriting(
                     break :brk duped;
                 },
             },
-            [:0]const u8, [:0]u8 => bun.sys.openat(dir, input_path, input_flags, mode),
+            [:0]const u8, [:0]u8 => openat(dir, input_path, input_flags, mode),
             else => unreachable,
         };
     const fd = switch (result) {

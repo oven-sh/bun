@@ -81,7 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
         auto str = hostValue.toWTFString(globalObject);
         if (!str.isEmpty())
-            host = toCString(str).data();
+            host = toCString(str).span().data();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -415,14 +415,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.data())) {
+            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.data();
+            Options::samplingProfilerPath() = pathCString.span().data();
             samplingProfiler.registerForReportAtExit();
         }
     }
@@ -584,8 +584,11 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -617,7 +620,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
     vm.dateCache.resetIfNecessarySlow();
     WTF::Vector<UChar, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
-    WTF::String timeZoneString({ buffer.data(), buffer.size() });
+    WTF::String timeZoneString(buffer.span());
     return JSValue::encode(jsString(vm, timeZoneString));
 }
 
@@ -884,7 +887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     }
 
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.data(),
+        globalObject, Bun::toString(fileName), basicBlocks.begin(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 

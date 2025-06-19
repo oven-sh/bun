@@ -697,7 +697,7 @@ pub const Log = struct {
         });
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) JSError!?Level {
-            if (value == .zero or value == .undefined) {
+            if (value == .zero or value.isUndefined()) {
                 return null;
             }
 
@@ -748,7 +748,7 @@ pub const Log = struct {
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return .undefined,
+            0 => return .js_undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {

@@ -114,7 +114,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     };
     defer url_str.deref();
 
-    const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();
+    const url = JSC.URL.fromString(url_str) orelse return .js_undefined;
     defer url.deinit();
     const host = url.host();
     const port_: u16 = blk: {
@@ -129,10 +129,10 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     // - "0x.0x.0" -> "0.0.0.0"
     const paddr = host.latin1(); // presentation address
     const addr = if (paddr[0] == '[' and paddr[paddr.len - 1] == ']') v6: {
-        const v6 = net.Ip6Address.parse(paddr[1 .. paddr.len - 1], port_) catch return JSValue.jsUndefined();
+        const v6 = net.Ip6Address.parse(paddr[1 .. paddr.len - 1], port_) catch return .js_undefined;
         break :v6 SocketAddress{ ._addr = .{ .sin6 = v6.sa } };
     } else v4: {
-        const v4 = net.Ip4Address.parse(paddr, port_) catch return JSValue.jsUndefined();
+        const v4 = net.Ip4Address.parse(paddr, port_) catch return .js_undefined;
         break :v4 SocketAddress{ ._addr = .{ .sin = v4.sa } };
     };
 

@@ -1787,7 +1787,7 @@ pub const InternalDNS = struct {
         };
 
         prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z, port);
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8, port: u16) void {
@@ -2762,7 +2762,7 @@ pub const DNSResolver = struct {
 
             options = GetAddrInfo.Options.fromJS(optionsObject, globalThis) catch |err| {
                 return switch (err) {
-                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .undefined),
+                    error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
 
@@ -3245,13 +3245,13 @@ pub const DNSResolver = struct {
         const first_af = try setChannelLocalAddress(channel, globalThis, arguments[0]);
 
         if (arguments.len < 2 or arguments[1].isUndefined()) {
-            return .undefined;
+            return .js_undefined;
         }
 
         const second_af = try setChannelLocalAddress(channel, globalThis, arguments[1]);
 
         if (first_af != second_af) {
-            return .undefined;
+            return .js_undefined;
         }
 
         switch (first_af) {
@@ -3303,7 +3303,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("setServers", "servers", "array");
         }
 
-        var triplesIterator = argument.arrayIterator(globalThis);
+        var triplesIterator = try argument.arrayIterator(globalThis);
 
         if (triplesIterator.len == 0) {
             const r = c_ares.ares_set_servers_ports(channel, null);
@@ -3311,7 +3311,7 @@ pub const DNSResolver = struct {
                 const err = c_ares.Error.get(r).?;
                 return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
             }
-            return .undefined;
+            return .js_undefined;
         }
 
         const allocator = bun.default_allocator;
@@ -3321,19 +3321,19 @@ pub const DNSResolver = struct {
 
         var i: u32 = 0;
 
-        while (triplesIterator.next()) |triple| : (i += 1) {
+        while (try triplesIterator.next()) |triple| : (i += 1) {
             if (!triple.isArray()) {
                 return globalThis.throwInvalidArgumentType("setServers", "triple", "array");
             }
 
-            const family = JSValue.getIndex(triple, globalThis, 0).toInt32();
-            const port = JSValue.getIndex(triple, globalThis, 2).toInt32();
+            const family = (try triple.getIndex(globalThis, 0)).toInt32();
+            const port = (try triple.getIndex(globalThis, 2)).toInt32();
 
             if (family != 4 and family != 6) {
                 return globalThis.throwInvalidArguments("Invalid address family", .{});
             }
 
-            const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString(globalThis);
+            const addressString = try (try triple.getIndex(globalThis, 1)).toBunString(globalThis);
             defer addressString.deref();
 
             const addressSlice = try addressString.toOwnedSlice(allocator);
@@ -3370,7 +3370,7 @@ pub const DNSResolver = struct {
             return globalThis.throwValue(globalThis.createErrorInstance("ares_set_servers_ports error: {s}", .{err.label()}));
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn setGlobalServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -3402,7 +3402,7 @@ pub const DNSResolver = struct {
         _ = callframe;
         const channel = try this.getChannelOrError(globalThis);
         c_ares.ares_cancel(channel);
-        return .undefined;
+        return .js_undefined;
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.

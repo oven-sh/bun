@@ -147,7 +147,7 @@ const PosixBufferedReader = struct {
         this.handle = .{ .fd = fd };
     }
 
-    fn getFileType(this: *const PosixBufferedReader) FileType {
+    pub fn getFileType(this: *const PosixBufferedReader) FileType {
         const flags = this.flags;
         if (flags.socket) {
             return .socket;
@@ -183,7 +183,6 @@ const PosixBufferedReader = struct {
     // No-op on posix.
     pub fn pause(this: *PosixBufferedReader) void {
         _ = this; // autofix
-
     }
 
     pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
@@ -443,7 +442,8 @@ const PosixBufferedReader = struct {
                         if (bytes_read == 0) {
                             // EOF - finished and closed pipe
                             parent.closeWithoutReporting();
-                            parent.done();
+                            if (!parent.flags.is_done)
+                                parent.done();
                             return;
                         }
 
@@ -474,7 +474,8 @@ const PosixBufferedReader = struct {
 
                         if (bytes_read == 0) {
                             parent.closeWithoutReporting();
-                            parent.done();
+                            if (!parent.flags.is_done)
+                                parent.done();
                             return;
                         }
 
@@ -531,7 +532,8 @@ const PosixBufferedReader = struct {
                                 parent.closeWithoutReporting();
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
                                     _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
-                                parent.done();
+                                if (!parent.flags.is_done)
+                                    parent.done();
                                 return;
                             }
 
@@ -590,7 +592,8 @@ const PosixBufferedReader = struct {
                     if (bytes_read == 0) {
                         parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
-                        parent.done();
+                        if (!parent.flags.is_done)
+                            parent.done();
                         return;
                     }
                 },
@@ -625,7 +628,8 @@ const PosixBufferedReader = struct {
                     if (bytes_read == 0) {
                         parent.closeWithoutReporting();
                         _ = drainChunk(parent, resizable_buffer.items, .eof);
-                        parent.done();
+                        if (!parent.flags.is_done)
+                            parent.done();
                         return;
                     }
 
@@ -891,11 +895,11 @@ pub const WindowsBufferedReader = struct {
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
+        this.source = null;
         if (!source.isClosed()) {
             // closeImpl will take care of freeing the source
             this.closeImpl(false);
         }
-        this.source = null;
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.JSC.Maybe(void) {
@@ -1056,9 +1060,9 @@ pub const WindowsBufferedReader = struct {
             switch (source) {
                 .sync_file, .file => |file| {
                     if (!this.flags.is_paused) {
+                        this.flags.is_paused = true;
                         // always cancel the current one
                         file.fs.cancel();
-                        this.flags.is_paused = true;
                     }
                     // always use close_fs here because we can have a operation in progress
                     file.close_fs.data = file;
@@ -1066,6 +1070,7 @@ pub const WindowsBufferedReader = struct {
                 },
                 .pipe => |pipe| {
                     pipe.data = pipe;
+                    this.flags.is_paused = true;
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
@@ -1075,6 +1080,7 @@ pub const WindowsBufferedReader = struct {
                     }
 
                     tty.data = tty;
+                    this.flags.is_paused = true;
                     tty.close(onTTYClose);
                 },
             }

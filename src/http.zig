@@ -2,7 +2,6 @@
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
-const HiveArray = @import("./hive_array.zig").HiveArray;
 
 //TODO: this needs to be freed when Worker Threads are implemented
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
@@ -2572,7 +2571,6 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
-const stringZ = bun.stringZ;
 
 const std = @import("std");
 const URL = @import("./url.zig").URL;
@@ -2581,15 +2579,12 @@ pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
 const HTTPClient = @This();
 const StringBuilder = bun.StringBuilder;
-const ThreadPool = bun.ThreadPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
-const Blob = bun.webcore.Blob;
-const FetchHeaders = bun.webcore.FetchHeaders;
 const uws = bun.uws;
 const HTTPCertError = @import("./http/cert_error.zig").HTTPCertError;
 const ProxyTunnel = @import("./http/proxy_tunnel.zig").ProxyTunnel;

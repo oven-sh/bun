@@ -4,7 +4,7 @@ const std = @import("std");
 /// Single allocation only.
 ///
 pub const MaxHeapAllocator = struct {
-    array_list: std.ArrayListAligned(u8, @alignOf(std.c.max_align_t)),
+    array_list: std.ArrayListAligned(u8, .fromByteUnits(@alignOf(std.c.max_align_t))),
 
     fn alloc(ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
         bun.assert(alignment.toByteUnits() <= @alignOf(std.c.max_align_t));

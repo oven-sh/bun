@@ -1316,14 +1316,17 @@ describe("deno_task", () => {
     const expected = [
       '\\x1b[B',
       '\\x0D'
-    ]
+    ].join("")
     let i = 0
+    let buf = ""
     const writer = Bun.stdout.writer();
     process.stdin.on("data", async chunk => {
       const input = chunk.toString();
-      expect(input).toEqual(expected[i++])
-      writer.write(input)
-      await writer.flush()
+      buf += input;
+      if (buf === expected) {
+        writer.write(buf);
+        await writer.flush();
+      }
     });
     `;
 

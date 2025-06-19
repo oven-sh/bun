@@ -3541,8 +3541,15 @@ pub const Parser = struct {
                 var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
                 var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
                 if (uses_dirname) {
+                    const unique_dir_name = try std.fmt.allocPrint(
+                        p.allocator,
+                        "__dirname_{x}",
+                        .{std.hash.Wyhash.hash(0, p.source.path.name.dir)},
+                    );
+                    const dir_ref = p.declareSymbol(.other, logger.Loc.Empty, unique_dir_name) catch unreachable;
+
                     decls[0] = .{
-                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .binding = p.b(B.Identifier{ .ref = dir_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
                             E.String{
                                 .data = p.source.path.name.dir,
@@ -3550,11 +3557,19 @@ pub const Parser = struct {
                             logger.Loc.Empty,
                         ),
                     };
+                    p.symbols.items[p.dirname_ref.innerIndex()].link = dir_ref;
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
                 }
                 if (uses_filename) {
+                    const unique_filename_name = try std.fmt.allocPrint(
+                        p.allocator,
+                        "__filename_{x}",
+                        .{std.hash.Wyhash.hash(0, p.source.path.text)},
+                    );
+                    const file_ref = p.declareSymbol(.other, logger.Loc.Empty, unique_filename_name) catch unreachable;
+
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .binding = p.b(B.Identifier{ .ref = file_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
                             E.String{
                                 .data = p.source.path.text,
@@ -3562,6 +3577,7 @@ pub const Parser = struct {
                             logger.Loc.Empty,
                         ),
                     };
+                    p.symbols.items[p.filename_ref.innerIndex()].link = file_ref;
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
                 }
 

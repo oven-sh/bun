@@ -1,3 +1,8 @@
+/// ResumableSink allows a simplified way of reading a stream into a native Writable Interface, allowing to pause and resume the stream without the use of promises.
+/// returning false on `onWrite` will pause the stream and calling .drain() will resume the stream consumption.
+/// onEnd is always called when the stream is done or errored.
+/// Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
+/// Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 pub fn ResumableSink(
     comptime js: type,
     comptime Context: type,
@@ -14,12 +19,14 @@ pub fn ResumableSink(
         const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
         pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
+        const setCancel = js.oncancelSetCached;
+        const getCancel = js.oncancelGetCached;
+        const setDrain = js.ondrainSetCached;
+        const getDrain = js.ondrainGetCached;
+        const setStream = js.streamSetCached;
+        const getStream = js.streamGetCached;
         ref_count: RefCount,
-
-        ondrain: JSC.Strong.Optional = JSC.Strong.Optional.empty,
-        oncancel: JSC.Strong.Optional = JSC.Strong.Optional.empty,
         self: JSC.Strong.Optional = JSC.Strong.Optional.empty,
-        stream: JSC.Strong.Optional = JSC.Strong.Optional.empty,
         globalThis: *JSC.JSGlobalObject,
         context: *Context,
         highWaterMark: i64 = 16384,
@@ -39,11 +46,11 @@ pub fn ResumableSink(
             js_stream.ensureStillAlive();
             _ = Bun__assignStreamIntoResumableSink(globalThis, js_stream, self);
             this.self = JSC.Strong.Optional.create(self, globalThis);
-            this.stream = JSC.Strong.Optional.create(js_stream, globalThis);
+            setStream(self, globalThis, js_stream);
             return this;
         }
 
-        pub fn jsSetHandlers(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn jsSetHandlers(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, this_value: JSC.JSValue) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments();
 
@@ -55,10 +62,10 @@ pub fn ResumableSink(
             const oncancel = args.ptr[1];
 
             if (ondrain.isCallable()) {
-                this.ondrain = JSC.Strong.Optional.create(ondrain, globalThis);
+                setDrain(this_value, globalThis, ondrain);
             }
             if (oncancel.isCallable()) {
-                this.oncancel = JSC.Strong.Optional.create(oncancel, globalThis);
+                setCancel(this_value, globalThis, oncancel);
             }
             return .js_undefined;
         }
@@ -79,6 +86,8 @@ pub fn ResumableSink(
         pub fn jsWrite(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments();
+            // ignore any call if detached
+            if (!this.self.has()) return .js_undefined;
 
             if (args.len < 1) {
                 return globalThis.throwInvalidArguments("ResumableSink.write requires at least 1 argument", .{});
@@ -98,52 +107,73 @@ pub fn ResumableSink(
         pub fn jsEnd(this: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments();
+            // ignore any call if detached
+            if (!this.self.has()) return .js_undefined;
+            this.detachJS();
 
             onEnd(this.context, if (args.len > 0) args[0] else null);
-
-            // let it be garbage collected
-            this.stream.deinit();
-            this.self.deinit();
             return .js_undefined;
         }
 
         pub fn drain(this: *@This()) void {
-            if (this.ondrain.get()) |ondrain| {
+            if (this.self.get()) |js_this| {
                 const globalObject = this.globalThis;
                 const vm = globalObject.bunVM();
                 vm.eventLoop().enter();
                 defer vm.eventLoop().exit();
-
-                _ = ondrain.call(globalObject, .js_undefined, &.{.js_undefined}) catch |err| {
-                    // should never happen
-                    bun.debugAssert(false);
-                    _ = globalObject.takeError(err);
-                };
+                if (getDrain(js_this)) |ondrain| {
+                    if (ondrain.isCallable()) {
+                        _ = ondrain.call(globalObject, .js_undefined, &.{.js_undefined}) catch |err| {
+                            // should never happen
+                            bun.debugAssert(false);
+                            _ = globalObject.takeError(err);
+                        };
+                    }
+                }
             }
         }
 
         pub fn cancel(this: *@This(), reason: JSC.JSValue) void {
-            if (this.oncancel.get()) |oncancel| {
+            if (this.self.get()) |js_this| {
+                js_this.ensureStillAlive();
+
                 const globalObject = this.globalThis;
                 const vm = globalObject.bunVM();
                 vm.eventLoop().enter();
                 defer vm.eventLoop().exit();
 
-                _ = oncancel.call(globalObject, .js_undefined, &.{ .js_undefined, reason }) catch |err| {
-                    // should never happen
-                    bun.debugAssert(false);
-                    _ = globalObject.takeError(err);
-                };
+                if (getCancel(js_this)) |oncancel| {
+                    oncancel.ensureStillAlive();
+                    // detach first so if cancel calls end will be a no-op
+                    this.detachJS();
+                    // call onEnd to indicate the native side that the stream errored
+                    onEnd(this.context, reason);
+                    if (oncancel.isCallable()) {
+                        _ = oncancel.call(globalObject, .js_undefined, &.{ .js_undefined, reason }) catch |err| {
+                            // should never happen
+                            bun.debugAssert(false);
+                            _ = globalObject.takeError(err);
+                        };
+                    }
+                } else {
+                    // should never happen but lets call onEnd to indicate the native side that the stream errored
+                    this.detachJS();
+                    onEnd(this.context, reason);
+                }
             }
-            // let it be garbage collected
-            this.self.deinit();
-            this.self = JSC.Strong.Optional.empty;
         }
 
+        fn detachJS(this: *@This()) void {
+            if (this.self.get()) |js_this| {
+                setDrain(js_this, this.globalThis, .zero);
+                setCancel(js_this, this.globalThis, .zero);
+                setStream(js_this, this.globalThis, .zero);
+                this.self.deinit();
+                this.self = JSC.Strong.Optional.empty;
+            }
+        }
         pub fn deinit(this: *@This()) void {
-            this.ondrain.deinit();
-            this.oncancel.deinit();
-            this.stream.deinit();
+            this.detachJS();
             bun.destroy(this);
         }
 

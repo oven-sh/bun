@@ -41,7 +41,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 62 },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 49 },
-  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 284 },
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 282 },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 175 },
 
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 29 },

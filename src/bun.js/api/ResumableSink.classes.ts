@@ -24,8 +24,10 @@ function generate(name) {
       setHandlers: {
         fn: "jsSetHandlers",
         length: 2,
+        passThis: true,
       },
     },
+    values: ["ondrain", "oncancel", "stream"],
   });
 }
 export default [generate("ResumableFetchSink")];

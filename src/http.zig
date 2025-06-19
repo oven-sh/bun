@@ -44,7 +44,7 @@ pub const HTTPRequestBody = union(enum) {
         buffer: ?*ThreadSafeStreamBuffer,
         ended: bool,
 
-        pub fn deinit(this: *@This()) void {
+        pub fn detach(this: *@This()) void {
             if (this.buffer) |buffer| {
                 this.buffer = null;
                 buffer.deref();
@@ -59,7 +59,7 @@ pub const HTTPRequestBody = union(enum) {
     pub fn deinit(this: *HTTPRequestBody) void {
         switch (this.*) {
             .sendfile, .bytes => {},
-            .stream => |*stream| stream.deinit(),
+            .stream => |*stream| stream.detach(),
         }
     }
     pub fn len(this: *const HTTPRequestBody) usize {
@@ -1059,10 +1059,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
         assert(!socket.isShutdown());
         assert(!socket.isClosed());
     }
-    const amount = socket.write(
-        to_send,
-        false,
-    );
+    const amount = try writeToSocket(is_ssl, socket, to_send);
     if (comptime is_first_call) {
         if (amount == 0) {
             // don't worry about it
@@ -1074,11 +1071,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
         }
     }
 
-    if (amount < 0) {
-        return error.WriteFailed;
-    }
-
-    this.state.request_sent_len += @as(usize, @intCast(amount));
+    this.state.request_sent_len += amount;
     const has_sent_headers = this.state.request_sent_len >= headers_len;
 
     if (has_sent_headers and this.verbose != .none) {
@@ -1101,94 +1094,102 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
     };
 }
 
-pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
-    log("flushStream", .{});
-    var stream = &this.state.original_request_body.stream;
-    var has_backpressure = false;
-    const stream_buffer = stream.buffer orelse return;
-    const buffer = stream_buffer.acquire();
-    const wasEmpty = buffer.isEmpty() and data.len == 0;
-    if (wasEmpty and stream.ended) {
-        stream_buffer.release();
-        stream.deinit();
-        return;
+pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    // only flush the stream if needed no additional data is being added
+    this.writeToStream(is_ssl, socket, "");
+}
+
+/// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
+fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) !usize {
+    const amount = socket.write(data, true);
+    if (amount < 0) {
+        return error.WriteFailed;
     }
+    return @intCast(amount);
+}
 
-    var closed = false;
+/// Write data to the socket and buffer the unwritten data if there is backpressure
+fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !usize {
+    const amount = try writeToSocket(is_ssl, socket, data);
+    if (amount < data.len) {
+        buffer.write(data[@intCast(amount)..]) catch bun.outOfMemory();
+    }
+    return amount;
+}
 
-    defer if (!closed) {
-        if (has_backpressure) {
-            stream_buffer.release();
-        } else {
-            if (stream.ended) {
-                this.state.request_stage = .done;
-                stream_buffer.release();
-                stream.deinit();
-            } else {
-                if (!wasEmpty) {
-                    stream_buffer.reportDrain();
-                }
-                stream_buffer.release();
-            }
-        }
-    };
-
-    // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+/// Write buffered data to the socket returning true if there is backpressure
+fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !bool {
     if (buffer.isNotEmpty()) {
         const to_send = buffer.slice();
-        const amount = socket.write(to_send, true);
-        if (amount < 0) {
-            closed = true;
-            stream_buffer.release();
-            this.closeAndFail(error.WriteFailed, is_ssl, socket);
-            return;
-        }
-
-        this.state.request_sent_len += @as(usize, @intCast(amount));
-        buffer.cursor += @intCast(amount);
+        const amount = try writeToSocket(is_ssl, socket, to_send);
+        this.state.request_sent_len += amount;
+        buffer.cursor += amount;
         if (amount < to_send.len) {
             // we could not send all pending data so we need to buffer the extra data
             if (data.len > 0) {
                 buffer.write(data) catch bun.outOfMemory();
             }
-            has_backpressure = true;
-        } else {
-            // ok we flushed all pending data so we can reset the backpressure
-
-            if (data.len > 0) {
-                // no backpressure everything was sended so we can just try to send
-                const data_sent = socket.write(data, true);
-                if (data_sent < 0) {
-                    closed = true;
-                    stream_buffer.release();
-                    this.closeAndFail(error.WriteFailed, is_ssl, socket);
-                    return;
-                }
-                this.state.request_sent_len += @as(usize, @intCast(data_sent));
-                if (data_sent < data.len) {
-                    buffer.write(data[@intCast(data_sent)..]) catch bun.outOfMemory();
-                    has_backpressure = true;
-                }
-            }
+            // failed to send everything so we have backpressure
+            return true;
         }
         if (buffer.isEmpty()) {
             buffer.reset();
         }
-    } else if (data.len > 0) {
-        const amount = socket.write(data, true);
-        if (amount < 0) {
-            closed = true;
+    }
+    // ok we flushed all pending data so we can reset the backpressure
+    if (data.len > 0) {
+        // no backpressure everything was sended so we can just try to send
+        const sent = try writeToSocketWithBufferFallback(is_ssl, socket, buffer, data);
+        this.state.request_sent_len += sent;
+        // if we didn't send all the data we have backpressure
+        return sent < data.len;
+    }
+    // no data to send so we are done
+    return false;
+}
+
+pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
+    log("flushStream", .{});
+    var stream = &this.state.original_request_body.stream;
+    const stream_buffer = stream.buffer orelse return;
+    const buffer = stream_buffer.acquire();
+    const wasEmpty = buffer.isEmpty() and data.len == 0;
+    if (wasEmpty and stream.ended) {
+        // nothing is buffered and the stream is done so we just release and detach
+        stream_buffer.release();
+        stream.detach();
+        return;
+    }
+
+    // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+    const has_backpressure = writeToStreamUsingBuffer(this, is_ssl, socket, buffer, data) catch |err| {
+        // we got some critical error so we need to fail and close the connection
+        stream_buffer.release();
+        stream.detach();
+        this.closeAndFail(err, is_ssl, socket);
+        return;
+    };
+
+    if (has_backpressure) {
+        // we have backpressure so just release the buffer and wait for onWritable
+        stream_buffer.release();
+    } else {
+        if (stream.ended) {
+            // done sending everything so we can release the buffer and detach the stream
+            this.state.request_stage = .done;
             stream_buffer.release();
-            this.closeAndFail(error.WriteFailed, is_ssl, socket);
-            return;
-        }
-        this.state.request_sent_len += @as(usize, @intCast(amount));
-        if (amount < data.len) {
-            buffer.write(data[@intCast(amount)..]) catch bun.outOfMemory();
-            has_backpressure = true;
+            stream.detach();
+        } else {
+            // only report drain if we send everything and previous we had something to send
+            if (!wasEmpty) {
+                stream_buffer.reportDrain();
+            }
+            // release the buffer so main thread can use it to send more data
+            stream_buffer.release();
         }
     }
 }
+
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
@@ -1262,14 +1263,13 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             switch (this.state.original_request_body) {
                 .bytes => {
                     const to_send = this.state.request_body;
-                    const amount = socket.write(to_send, true);
-                    if (amount < 0) {
-                        this.closeAndFail(error.WriteFailed, is_ssl, socket);
+                    const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
+                        this.closeAndFail(err, is_ssl, socket);
                         return;
-                    }
+                    };
 
-                    this.state.request_sent_len += @as(usize, @intCast(amount));
-                    this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                    this.state.request_sent_len += sent;
+                    this.state.request_body = this.state.request_body[sent..];
 
                     if (this.state.request_body.len == 0) {
                         this.state.request_stage = .done;
@@ -1278,7 +1278,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 },
                 .stream => {
                     // flush without adding any new data
-                    this.flushStream(is_ssl, socket, "");
+                    this.flushStream(is_ssl, socket);
                 },
                 .sendfile => |*sendfile| {
                     if (comptime is_ssl) {
@@ -1309,10 +1309,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.setTimeout(socket, 5);
 
                         const to_send = this.state.request_body;
-                        const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                        const sent = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                        this.state.request_sent_len += @as(usize, @intCast(amount));
-                        this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                        this.state.request_sent_len += sent;
+                        this.state.request_body = this.state.request_body[sent..];
 
                         if (this.state.request_body.len == 0) {
                             this.state.request_stage = .done;
@@ -1320,7 +1320,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         }
                     },
                     .stream => {
-                        this.flushStream(is_ssl, socket, "");
+                        this.flushStream(is_ssl, socket);
                     },
                     .sendfile => {
                         @panic("sendfile is only supported without SSL. This code should never have been reached!");

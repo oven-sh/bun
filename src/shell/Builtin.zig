@@ -430,7 +430,17 @@ fn initRedirections(
                         .err => |e| {
                             return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
                         },
-                        .result => |f| f,
+                        .result => |f| {
+                            if (bun.Environment.isWindows) {
+                                switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
+                                    .err => |e| {
+                                        return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                    },
+                                    .result => |f2| break :redirfd f2,
+                                }
+                            }
+                            break :redirfd f;
+                        },
                     };
                 };
 

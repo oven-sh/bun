@@ -927,7 +927,7 @@ const WaiterThreadPosix = struct {
         }
 
         if (comptime Environment.isLinux) {
-            var current_mask = std.posix.empty_sigset;
+            var current_mask = std.posix.sigemptyset();
             std.os.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = &wakeup },
@@ -963,7 +963,7 @@ const WaiterThreadPosix = struct {
 
                 _ = std.posix.poll(&polls, std.math.maxInt(i32)) catch 0;
             } else {
-                var mask = std.posix.empty_sigset;
+                var mask = std.posix.sigemptyset();
                 var signal: c_int = std.posix.SIG.CHLD;
                 const rc = std.c.sigwait(&mask, &signal);
                 _ = rc;

@@ -843,7 +843,7 @@ pub fn resetOnPosix() void {
     if (bun.Environment.enable_asan) return;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
     };
     updatePosixSegfaultHandler(&act) catch {};
@@ -877,7 +877,7 @@ pub fn resetSegfaultHandler() void {
 
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     // To avoid a double-panic, do nothing if an error happens here.
@@ -1497,7 +1497,7 @@ fn crash() noreturn {
         },
         else => {
             // Install default handler so that the tkill below will terminate.
-            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.empty_sigset, .flags = 0 };
+            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.sigemptyset(), .flags = 0 };
             inline for (.{
                 std.posix.SIG.SEGV,
                 std.posix.SIG.ILL,

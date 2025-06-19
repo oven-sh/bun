@@ -10,5 +10,6 @@ tar --no-xattrs \
   -zcf "$out" \
   build/debug/codegen \
   src/bun.js/bindings/GeneratedBindings.zig \
-  src/bun.js/bindings/GeneratedJS2Native.zig 
+  src/bun.js/bindings/GeneratedJS2Native.zig  \
+  vendor/zstd
 echo "-> $out"

@@ -102,6 +102,18 @@ describe("fs.globSync", () => {
     expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
   });
 
+  it("works without providing options", () => {
+    const oldProcessCwd = process.cwd;
+    try {
+      process.cwd = () => tmp;
+
+      const paths = fs.globSync("*.txt");
+      expect(paths).toContain("foo.txt");
+    } finally {
+      process.cwd = oldProcessCwd;
+    }
+  });
+
   describe("invalid arguments", () => {
     // TODO: GlobSet
     it("does not support arrays of patterns yet", () => {
@@ -127,6 +139,25 @@ describe("fs.promises.glob", () => {
     expect(iter[Symbol.asyncIterator]).toBeDefined();
     for await (const path of iter) {
       expect(path).toMatch(/\.txt$/);
+    }
+  });
+
+  it("works without providing options", async () => {
+    const oldProcessCwd = process.cwd;
+    try {
+      process.cwd = () => tmp;
+
+      const iter = fs.promises.glob("*.txt");
+      expect(iter[Symbol.asyncIterator]).toBeDefined();
+
+      const paths = [];
+      for await (const path of iter) {
+        paths.push(path);
+      }
+
+      expect(paths).toContain("foo.txt");
+    } finally {
+      process.cwd = oldProcessCwd;
     }
   });
 }); // </fs.promises.glob>

@@ -1439,7 +1439,7 @@ fn report(url: []const u8) void {
                 null,
                 null,
                 1, // true
-                0,
+                .{},
                 null,
                 null,
                 &startup_info,

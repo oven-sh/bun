@@ -785,7 +785,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             null,
             null,
             1, // true
-            if (is_standalone) 0 else w.CREATE_UNICODE_ENVIRONMENT,
+            .{ .create_unicode_environment = !is_standalone },
             if (is_standalone) null else @constCast(bun_ctx.environment),
             null,
             &startup_info,

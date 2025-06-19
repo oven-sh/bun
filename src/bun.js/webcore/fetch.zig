@@ -1115,7 +1115,7 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
-            const buffer = http.ThreadSafeStreamBuffer.new();
+            const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain);
             fetch_tasklet.request_body_streaming_buffer = buffer;
             fetch_tasklet.http.?.request_body = .{
@@ -1178,12 +1178,17 @@ pub const FetchTasklet = struct {
         if (this.request_body_streaming_buffer) |buffer| {
             const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
             const stream_buffer = buffer.acquire();
+            var need_schedule = false;
+            defer if (need_schedule) {
+                // wakeup the http thread to write the data
+                http.http_thread.scheduleRequestWrite(this.http.?, false);
+            };
             defer buffer.release();
 
             const slice = stream_buffer.slice();
             // dont have backpressure so we will schedule the data to be written
             // if we have backpressure the onWritable will drain the buffer
-            const need_schedule = slice.len < 0;
+            need_schedule = slice.len < 0;
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             var formated_size_buffer: [18]u8 = undefined;
             const formated_size = std.fmt.bufPrint(formated_size_buffer[0..], "{x}\r\n", .{data.len}) catch bun.outOfMemory();
@@ -1192,10 +1197,6 @@ pub const FetchTasklet = struct {
             stream_buffer.writeAssumeCapacity(data);
             stream_buffer.writeAssumeCapacity("\r\n");
 
-            if (need_schedule) {
-                // wakeup the http thread to write the data
-                http.http_thread.scheduleRequestWrite(this.http.?, false);
-            }
             // pause the stream if we hit the high water mark
             return stream_buffer.size() >= highWaterMark;
         }

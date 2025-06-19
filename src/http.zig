@@ -87,7 +87,6 @@ pub const Signals = struct {
                 .header_progress = &this.header_progress,
                 .body_streaming = &this.body_streaming,
                 .aborted = &this.aborted,
-                .backpressure = &this.backpressure,
                 .cert_errors = &this.cert_errors,
             };
         }
@@ -114,7 +113,7 @@ pub const FetchRedirect = enum(u8) {
 pub const ThreadSafeStreamBuffer = struct {
     buffer: bun.io.StreamBuffer = .{},
     mutex: std.Thread.Mutex = .{},
-    ref_count: StreamBufferRefCount = .init(2), // 1 for main thread and 1 for http thread
+    ref_count: StreamBufferRefCount = .initExactRefs(2), // 1 for main thread and 1 for http thread
     // drain_callback will be called passing the contxt for the http callback
     // this is used to report when the buffer is drained and only if end chunk was not sent
     drain_callback: ?*const fn (*anyopaque) void = null,
@@ -134,8 +133,8 @@ pub const ThreadSafeStreamBuffer = struct {
     }
 
     /// Attention should only be called in the main thread and before schedule the it to the http thread
-    pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: ?*const fn (*T) void) void {
-        this.drain_callback = callback;
+    pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: *const fn (*T) void) void {
+        this.drain_callback = @ptrCast(callback);
     }
 
     /// Attention never call this from the main thread this is exclusively called from the http thread
@@ -1184,7 +1183,6 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
     const WriteMessage = struct {
-        data: []const u8,
         async_http_id: u32,
         flags: packed struct(u8) {
             is_tls: bool,
@@ -1432,7 +1430,7 @@ pub const HTTPThread = struct {
                                 if (client.state.original_request_body == .stream) {
                                     var stream = &client.state.original_request_body.stream;
                                     stream.ended = ended;
-                                    client.flushStream(true, socket, if (ended) end_of_chunked_http1_1_encoding_response_body else "");
+                                    client.flushStream(false, socket, if (ended) end_of_chunked_http1_1_encoding_response_body else "");
                                 }
                             }
                         }
@@ -3386,21 +3384,29 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
     var has_backpressure = false;
     const stream_buffer = stream.buffer orelse return;
     const buffer = stream_buffer.acquire();
-
-    if (buffer.isEmpty() and stream.ended) {
+    const wasEmpty = buffer.isEmpty() and data.len == 0;
+    if (wasEmpty and stream.ended) {
         stream_buffer.release();
         stream.deinit();
         return;
     }
 
-    defer if (!has_backpressure) {
-        if (stream.ended) {
-            this.state.request_stage = .done;
+    var closed = false;
+
+    defer if (!closed) {
+        if (has_backpressure) {
             stream_buffer.release();
-            stream.deinit();
         } else {
-            stream_buffer.reportDrain(this);
-            stream_buffer.release();
+            if (stream.ended) {
+                this.state.request_stage = .done;
+                stream_buffer.release();
+                stream.deinit();
+            } else {
+                if (!wasEmpty) {
+                    stream_buffer.reportDrain(this.result_callback.ctx);
+                }
+                stream_buffer.release();
+            }
         }
     };
 
@@ -3409,6 +3415,8 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
         const to_send = buffer.slice();
         const amount = socket.write(to_send, true);
         if (amount < 0) {
+            closed = true;
+            stream_buffer.release();
             this.closeAndFail(error.WriteFailed, is_ssl, socket);
             return;
         }
@@ -3428,12 +3436,14 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
                 // no backpressure everything was sended so we can just try to send
                 const data_sent = socket.write(data, true);
                 if (data_sent < 0) {
+                    closed = true;
+                    stream_buffer.release();
                     this.closeAndFail(error.WriteFailed, is_ssl, socket);
                     return;
                 }
                 this.state.request_sent_len += @as(usize, @intCast(data_sent));
                 if (data_sent < data.len) {
-                    stream.buffer.write(data[data_sent..]) catch bun.outOfMemory();
+                    buffer.write(data[@intCast(data_sent)..]) catch bun.outOfMemory();
                     has_backpressure = true;
                 }
             }
@@ -3444,12 +3454,14 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
     } else if (data.len > 0) {
         const amount = socket.write(data, true);
         if (amount < 0) {
+            closed = true;
+            stream_buffer.release();
             this.closeAndFail(error.WriteFailed, is_ssl, socket);
             return;
         }
         this.state.request_sent_len += @as(usize, @intCast(amount));
         if (amount < data.len) {
-            buffer.write(data[amount..]) catch bun.outOfMemory();
+            buffer.write(data[@intCast(amount)..]) catch bun.outOfMemory();
             has_backpressure = true;
         }
     }
@@ -3585,25 +3597,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         }
                     },
                     .stream => {
-                        var stream = &this.state.original_request_body.stream;
-                        stream.has_backpressure = false;
-                        this.setTimeout(socket, 5);
-
-                        // to simplify things here the buffer contains the raw data we just need to flush to the socket it
-                        if (stream.buffer.isNotEmpty()) {
-                            const to_send = stream.buffer.slice();
-                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            this.state.request_sent_len += amount;
-                            stream.buffer.cursor += @truncate(amount);
-                            if (amount < to_send.len) {
-                                stream.has_backpressure = true;
-                            }
-                        }
-                        if (stream.hasEnded()) {
-                            this.state.request_stage = .done;
-                            stream.buffer.deinit();
-                            return;
-                        }
+                        this.flushStream(is_ssl, socket, "");
                     },
                     .sendfile => {
                         @panic("sendfile is only supported without SSL. This code should never have been reached!");

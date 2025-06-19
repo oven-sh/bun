@@ -1,5 +1,5 @@
 pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    const object = JSC.JSValue.createEmptyObject(globalThis, 8);
 
     object.put(
         globalThis,
@@ -25,6 +25,78 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         ),
     );
 
+    object.put(
+        globalThis,
+        JSC.ZigString.static("gt"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("gt"),
+            2,
+            SemverObject.gt,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("lt"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("lt"),
+            2,
+            SemverObject.lt,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("eq"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("eq"),
+            2,
+            SemverObject.eq,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("gte"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("gte"),
+            2,
+            SemverObject.gte,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("lte"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("lte"),
+            2,
+            SemverObject.lte,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("neq"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("neq"),
+            2,
+            SemverObject.neq,
+            false,
+        ),
+    );
+
     return object;
 }
 
@@ -37,72 +109,48 @@ pub fn order(
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
-    if (arguments.len < 2) {
-        return globalThis.throw("Expected two arguments", .{});
-    }
+    var argumentStrings = try parseArgumentStrings(globalThis, callFrame, allocator);
+    defer argumentStrings.deinit();
 
-    const left_arg = arguments[0];
-    const right_arg = arguments[1];
+    const left = argumentStrings.left.slice();
+    const right = argumentStrings.right.slice();
 
-    const left_string = try left_arg.toJSString(globalThis);
-    const right_string = try right_arg.toJSString(globalThis);
-
-    const left = left_string.toSlice(globalThis, allocator);
-    defer left.deinit();
-    const right = right_string.toSlice(globalThis, allocator);
-    defer right.deinit();
-
-    if (!strings.isAllASCII(left.slice())) return JSC.jsNumber(0);
-    if (!strings.isAllASCII(right.slice())) return JSC.jsNumber(0);
-
-    const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
-    const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
+    const left_result = Version.parse(SlicedString.init(left, left));
+    const right_result = Version.parse(SlicedString.init(right, right));
 
     if (!left_result.valid) {
-        return globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
+        return globalThis.throw("Invalid SemVer: {s}\n", .{left});
     }
-
     if (!right_result.valid) {
-        return globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
+        return globalThis.throw("Invalid SemVer: {s}\n", .{right});
     }
 
     const left_version = left_result.version.max();
     const right_version = right_result.version.max();
 
-    return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
+    return switch (left_version.orderWithoutBuild(right_version, left, right)) {
         .eq => JSC.jsNumber(0),
         .gt => JSC.jsNumber(1),
         .lt => JSC.jsNumber(-1),
     };
 }
 
-pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn satisfies(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
-    if (arguments.len < 2) {
-        return globalThis.throw("Expected two arguments", .{});
-    }
+    var argumentStrings = try parseArgumentStrings(globalThis, callFrame, allocator);
+    defer argumentStrings.deinit();
 
-    const left_arg = arguments[0];
-    const right_arg = arguments[1];
+    const left = argumentStrings.left.slice();
+    const right = argumentStrings.right.slice();
 
-    const left_string = try left_arg.toJSString(globalThis);
-    const right_string = try right_arg.toJSString(globalThis);
-
-    const left = left_string.toSlice(globalThis, allocator);
-    defer left.deinit();
-    const right = right_string.toSlice(globalThis, allocator);
-    defer right.deinit();
-
-    if (!strings.isAllASCII(left.slice())) return .false;
-    if (!strings.isAllASCII(right.slice())) return .false;
-
-    const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
+    const left_result = Version.parse(SlicedString.init(left, left));
     if (left_result.wildcard != .none) {
         return .false;
     }
@@ -111,8 +159,8 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
 
     const right_group = try Query.parse(
         allocator,
-        right.slice(),
-        SlicedString.init(right.slice(), right.slice()),
+        right,
+        SlicedString.init(right, right),
     );
     defer right_group.deinit();
 
@@ -122,7 +170,96 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
         return JSC.jsBoolean(left_version.eql(right_version.?));
     }
 
-    return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
+    return JSC.jsBoolean(right_group.satisfies(left_version, right, left));
+}
+
+pub fn gt(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue > 0);
+}
+
+pub fn lt(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue < 0);
+}
+
+pub fn eq(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue == 0);
+}
+
+pub fn gte(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue >= 0);
+}
+
+pub fn lte(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue <= 0);
+}
+
+pub fn neq(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    const orderResult = try order(globalThis, callFrame);
+    const orderValue = orderResult.asNumber();
+    return JSC.jsBoolean(orderValue != 0);
+}
+
+const ArgumentStrings = struct {
+    left: JSC.ZigString.Slice,
+    right: JSC.ZigString.Slice,
+
+    fn deinit(self: *ArgumentStrings) void {
+        self.left.deinit();
+        self.right.deinit();
+    }
+};
+
+fn parseArgumentStrings(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+    allocator: std.mem.Allocator,
+) bun.JSError!ArgumentStrings {
+    const arguments = callFrame.arguments();
+    if (arguments.len != 2) {
+        return globalThis.throw("Expected two arguments", .{});
+    }
+
+    const left_arg = arguments[0];
+    const right_arg = arguments[1];
+
+    const left_string = try left_arg.toJSString(globalThis);
+    const right_string = try right_arg.toJSString(globalThis);
+
+    const left = left_string.toSlice(globalThis, allocator);
+    const right = right_string.toSlice(globalThis, allocator);
+
+    return ArgumentStrings{
+        .left = left,
+        .right = right,
+    };
 }
 
 const std = @import("std");

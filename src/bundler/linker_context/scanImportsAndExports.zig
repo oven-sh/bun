@@ -2,6 +2,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
     const outer_trace = bun.perf.trace("Bundler.scanImportsAndExports");
     defer outer_trace.end();
     const reachable = this.graph.reachable_files;
+    const stable_source_indices = this.graph.stable_source_indices;
     const output_format = this.options.output_format;
     {
         var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
@@ -27,17 +28,35 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         var symbols = &this.graph.symbols;
         defer this.graph.symbols = symbols.*;
 
+        for (reachable) |_source_index| {
+            const source_index = stable_source_indices[_source_index.get()];
+            if (source_index >= import_records_list.len) continue;
+
+            const import_records = import_records_list[source_index].slice();
+
+            if (css_asts[source_index] != null) {
+                continue;
+            }
+
+            _ = try this.validateTLA(
+                source_index,
+                tla_keywords,
+                tla_checks,
+                input_files,
+                import_records,
+                flags,
+                import_records_list,
+            );
+        }
+
         // Step 1: Figure out what modules must be CommonJS
         for (reachable) |source_index_| {
             const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
             defer trace.end();
+            const id = source_index_.get();
 
             // does it have a JS AST?
-            if (!(source_index_.get() < import_records_list.len)) continue;
-
-            // don't use reachable_files order (dfs)
-            // https://github.com/evanw/esbuild/blob/f4159a7b823cd5fe2217da2c30e8873d2f319667/internal/bundler/bundler.go#L2692
-            const id = this.graph.stable_source_indices[source_index_.get()];
+            if (!(id < import_records_list.len)) continue;
 
             const import_records: []ImportRecord = import_records_list[id].slice();
 
@@ -82,16 +101,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                 continue;
             }
-
-            _ = try this.validateTLA(
-                id,
-                tla_keywords,
-                tla_checks,
-                input_files,
-                import_records,
-                flags,
-                import_records_list,
-            );
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {

@@ -826,13 +826,14 @@ pub const ShellSubprocess = struct {
                 },
             },
 
-            .no_sigpipe = no_sigpipe,
-
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
             },
         };
+        if (bun.Environment.isPosix) {
+            spawn_options.no_sigpipe = no_sigpipe;
+        }
 
         spawn_args.argv.append(allocator, null) catch {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };

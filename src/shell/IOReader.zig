@@ -77,11 +77,13 @@ pub fn start(this: *IOReader) Yield {
         return .suspended;
     }
 
-    if (this.is_reading) return;
+    if (this.is_reading) return .suspended;
     this.is_reading = true;
     if (this.reader.startWithCurrentPipe().asErr()) |e| {
         this.onReaderError(e);
+        return .failed;
     }
+    return .suspended;
 }
 
 /// Only does things on windows

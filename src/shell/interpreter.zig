@@ -1622,9 +1622,9 @@ pub const ShellSyscall = struct {
 
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            var buf: bun.PathBuffer = bun.PathBufferPool.get();
+            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(buf);
-            const path = switch (getPath(dir, path_, &buf)) {
+            const path = switch (getPath(dir, path_, buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
             };
@@ -1642,9 +1642,9 @@ pub const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    var buf: bun.PathBuffer = bun.PathBufferPool.get();
+                    const buf: *bun.PathBuffer = bun.PathBufferPool.get();
                     defer bun.PathBufferPool.put(buf);
-                    const p = switch (getPath(dir, path, &buf)) {
+                    const p = switch (getPath(dir, path, buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
                     };
@@ -1659,9 +1659,9 @@ pub const ShellSyscall = struct {
                 };
             }
 
-            var buf: bun.PathBuffer = bun.PathBufferPool.get();
+            const buf: *bun.PathBuffer = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(buf);
-            const p = switch (getPath(dir, path, &buf)) {
+            const p = switch (getPath(dir, path, buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },
             };

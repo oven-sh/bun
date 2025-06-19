@@ -192,7 +192,7 @@ fn write(this: *IOWriter) enum {
 
     if (bun.Environment.isWindows) {
         log("IOWriter(0x{x}, fd={}) write() is_writing={any}", .{ @intFromPtr(this), this.fd, this.is_writing });
-        if (this.is_writing) return;
+        if (this.is_writing) return .suspended;
         this.is_writing = true;
         if (this.writer.startWithCurrentPipe().asErr()) |e| {
             this.onError(e);

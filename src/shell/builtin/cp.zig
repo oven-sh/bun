@@ -161,9 +161,9 @@ pub fn next(this: *Cp) Yield {
             },
             .ebusy => {
                 if (comptime bun.Environment.isWindows) {
-                    this.ignoreEbusyErrorIfPossible();
-                    return;
-                } else @panic("Should only be called on Windows");
+                    return this.ignoreEbusyErrorIfPossible();
+                }
+                @panic("Should only be called on Windows");
             },
             .waiting_write_err => return .failed,
             .done => unreachable,
@@ -218,7 +218,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-                this.next();
+                this.next().run();
                 return;
             }
         } else {

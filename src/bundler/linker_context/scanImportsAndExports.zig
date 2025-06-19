@@ -28,14 +28,17 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         defer this.graph.symbols = symbols.*;
 
         // Step 1: Figure out what modules must be CommonJS
-        for (reachable, 0..) |source_index_, _in_order_source_index| {
+        for (reachable) |source_index_| {
             const trace = bun.perf.trace("Bundler.FigureOutCommonJS");
             defer trace.end();
-            const id = source_index_.get();
+            const _id = source_index_.get();
 
             // does it have a JS AST?
-            if (!(id < import_records_list.len)) continue;
-            const in_order_source_index: u32 = @intCast(_in_order_source_index);
+            if (!(_id < import_records_list.len)) continue;
+
+            // don't use reachable_files order (dfs)
+            // https://github.com/evanw/esbuild/blob/f4159a7b823cd5fe2217da2c30e8873d2f319667/internal/bundler/bundler.go#L2692
+            const id = this.graph.stable_source_indices[_id];
 
             const import_records: []ImportRecord = import_records_list[id].slice();
 
@@ -82,10 +85,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             }
 
             _ = try this.validateTLA(
-                // don't use reachable_files order (dfs)
-                // https://github.com/evanw/esbuild/blob/f4159a7b823cd5fe2217da2c30e8873d2f319667/internal/bundler/bundler.go#L2692
-                in_order_source_index,
-
+                id,
                 tla_keywords,
                 tla_checks,
                 input_files,

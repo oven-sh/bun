@@ -1,3 +1,16 @@
+//! Abstraction to allow multiple writers that can write to a file descriptor.
+//!
+//! This exists because kqueue/epoll does not work when registering multiple
+//! poll events on the same file descriptor.
+//!
+//! One way to get around this limitation is to just call `.dup()` on the file
+//! descriptor, which we do for the top-level stdin/stdout/stderr. But calling
+//! `.dup()` for every concurrent writer is expensive.
+//!
+//! So `IOWriter` is essentially a writer queue to a file descriptor.
+//!
+//! We also make `*IOWriter` reference counted, this simplifies management of
+//! the file descriptor.
 const IOWriter = @This();
 
 pub const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
@@ -24,7 +37,7 @@ flags: InitFlags = .{},
 
 const debug = bun.Output.scoped(.IOWriter, true);
 
-const ChildPtr = IOWriterChildPtr;
+pub const ChildPtr = IOWriterChildPtr;
 
 /// ~128kb
 /// We shrunk the `buf` when we reach the last writer,
@@ -477,6 +490,54 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     }
 }
 
+/// Anything which uses `*IOWriter` to write to a file descriptor needs to
+/// register itself here so we know how to call its callback on completion.
+pub const IOWriterChildPtr = struct {
+    ptr: ChildPtrRaw,
+
+    pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
+        Interpreter.Cmd,
+        Interpreter.Pipeline,
+        Interpreter.CondExpr,
+        Interpreter.Subshell,
+        Interpreter.Builtin.Cd,
+        Interpreter.Builtin.Echo,
+        Interpreter.Builtin.Export,
+        Interpreter.Builtin.Ls,
+        Interpreter.Builtin.Ls.ShellLsOutputTask,
+        Interpreter.Builtin.Mv,
+        Interpreter.Builtin.Pwd,
+        Interpreter.Builtin.Rm,
+        Interpreter.Builtin.Which,
+        Interpreter.Builtin.Mkdir,
+        Interpreter.Builtin.Mkdir.ShellMkdirOutputTask,
+        Interpreter.Builtin.Touch,
+        Interpreter.Builtin.Touch.ShellTouchOutputTask,
+        Interpreter.Builtin.Cat,
+        Interpreter.Builtin.Exit,
+        Interpreter.Builtin.True,
+        Interpreter.Builtin.False,
+        Interpreter.Builtin.Yes,
+        Interpreter.Builtin.Seq,
+        Interpreter.Builtin.Dirname,
+        Interpreter.Builtin.Basename,
+        Interpreter.Builtin.Cp,
+        Interpreter.Builtin.Cp.ShellCpOutputTask,
+        shell.subproc.PipeReader.CapturedWriter,
+    });
+
+    pub fn init(p: anytype) IOWriterChildPtr {
+        return .{
+            .ptr = ChildPtrRaw.init(p),
+        };
+    }
+
+    /// Called when the IOWriter writes a complete chunk of data the child enqueued
+    pub fn onWriteChunk(this: IOWriterChildPtr, amount: usize, err: ?JSC.SystemError) void {
+        return this.ptr.call("onIOWriterChunk", .{ amount, err }, void);
+    }
+};
+
 const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
@@ -486,5 +547,4 @@ const assert = bun.assert;
 const log = bun.Output.scoped(.IOWriter, true);
 const SmolList = shell.SmolList;
 const Maybe = JSC.Maybe;
-const IOWriterChildPtr = shell.interpret.IOWriterChildPtr;
 const AsyncDeinitWriter = shell.Interpreter.AsyncDeinitWriter;

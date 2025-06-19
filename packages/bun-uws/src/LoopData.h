@@ -97,11 +97,11 @@ public:
         this->corkedSocket = nullptr;
         this->corkOffset = 0;
     }
-        
+
     unsigned int getCorkOffset() {
         return this->corkOffset;
     }
-    
+
     void setCorkOffset(unsigned int offset) {
         this->corkOffset = offset;
     }
@@ -109,7 +109,7 @@ public:
     void incrementCorkedOffset(unsigned int offset) {
         this->corkOffset += offset;
     }
-    
+
     char* getCorkBuffer() {
         return this->corkBuffer;
     }

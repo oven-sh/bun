@@ -273,7 +273,7 @@ static WTF::StringView toStringView(ZigString str)
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue((JSC::JSCell*)err.ptr)));
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)

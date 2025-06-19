@@ -14180,10 +14180,6 @@ fn NewParser_(
                             return error.SyntaxError;
                         }
 
-                        if (level.gte(.postfix)) {
-                            return left;
-                        }
-
                         try p.lexer.next();
                         optional_chain = old_optional_chain;
                     },
@@ -15052,11 +15048,6 @@ fn NewParser_(
                     var args = ExprNodeList{};
 
                     if (comptime is_typescript_enabled) {
-                        // Skip over TypeScript non-null assertions
-                        if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
-                            try p.lexer.next();
-                        }
-
                         // Skip over TypeScript type arguments here if there are any
                         if (p.lexer.token == .t_less_than) {
                             _ = p.trySkipTypeScriptTypeArgumentsWithBacktracking();

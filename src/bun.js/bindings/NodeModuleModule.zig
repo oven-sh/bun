@@ -5,12 +5,14 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const ErrorableString = JSC.ErrorableString;
 
+export const NodeModuleModule__findPath = JSC.host_fn.wrap3(findPath);
+
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
-pub export fn NodeModuleModule__findPath(
+fn findPath(
     global: *JSGlobalObject,
     request_bun_str: bun.String,
     paths_maybe: ?*JSC.JSArray,
-) JSValue {
+) bun.JSError!JSValue {
     var stack_buf = std.heap.stackFallback(8192, bun.default_allocator);
     const alloc = stack_buf.get();
 
@@ -25,12 +27,9 @@ pub export fn NodeModuleModule__findPath(
 
     // for each path
     const found = if (paths_maybe) |paths| found: {
-        var iter = paths.iterator(global);
-        while (iter.next()) |path| {
-            const cur_path = bun.String.fromJS(path, global) catch |err| switch (err) {
-                error.JSError => return .zero,
-                error.OutOfMemory => return global.throwOutOfMemoryValue(),
-            };
+        var iter = try paths.iterator(global);
+        while (try iter.next()) |path| {
+            const cur_path = try bun.String.fromJS(path, global);
             defer cur_path.deref();
 
             if (findPathInner(request_bun_str, cur_path, global)) |found| {
@@ -65,7 +64,7 @@ fn findPathInner(
         true,
     ) catch |err| switch (err) {
         error.JSError => {
-            global.clearException();
+            global.clearException(); // TODO sus
             return null;
         },
         else => return null,

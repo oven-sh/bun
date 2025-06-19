@@ -179,7 +179,7 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: *JSC.JSObject, 
         2);
     while (try object_iter.next()) |key| {
         var value = object_iter.value;
-        if (value == .undefined) continue;
+        if (value.isUndefined()) continue;
 
         const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
 
@@ -237,7 +237,7 @@ pub fn createResourceUsageObject(this: *Subprocess, globalObject: *JSGlobalObjec
             }
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     };
 
     const resource_usage = ResourceUsage{
@@ -520,7 +520,7 @@ const Readable = union(enum) {
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
-                return JSValue.jsUndefined();
+                return .js_undefined;
             },
         }
     }
@@ -551,7 +551,7 @@ const Readable = union(enum) {
                 return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSValue.jsUndefined();
+                return .js_undefined;
             },
         }
     }
@@ -591,7 +591,7 @@ pub fn asyncDispose(
 ) bun.JSError!JSValue {
     if (this.process.hasExited()) {
         // rely on GC to clean everything up in this case
-        return .undefined;
+        return .js_undefined;
     }
 
     const this_jsvalue = callframe.this();
@@ -699,7 +699,7 @@ pub fn kill(
         },
     }
 
-    return JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn hasKilled(this: *const Subprocess) bool {
@@ -726,12 +726,12 @@ fn closeProcess(this: *Subprocess) void {
 
 pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsRef();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     this.jsUnref();
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn onStdinDestroyed(this: *Subprocess) void {
@@ -761,7 +761,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
     _ = globalThis;
     _ = callframe;
     this.disconnectIPC(true);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
@@ -1133,7 +1133,7 @@ pub const PipeReader = struct {
                 return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
             else => {
-                return JSC.JSValue.undefined;
+                return .js_undefined;
             },
         }
     }
@@ -1391,8 +1391,8 @@ const Writable = union(enum) {
     pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
         return switch (this.*) {
             .fd => |fd| fd.toJS(globalThis),
-            .memfd, .ignore => JSValue.jsUndefined(),
-            .buffer, .inherit => JSValue.jsUndefined(),
+            .memfd, .ignore => .js_undefined,
+            .buffer, .inherit => .js_undefined,
             .pipe => |pipe| {
                 this.* = .{ .ignore = {} };
                 if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
@@ -1597,9 +1597,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     if (status == .err)
                         status.err.toJSC(globalThis)
                     else
-                        .undefined;
+                        .js_undefined;
 
-                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
+                const this_value: JSValue = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .js_undefined else this_jsvalue;
                 this_value.ensureStillAlive();
 
                 const args = [_]JSValue{
@@ -1827,7 +1827,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 }
 
 fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = args.arrayIterator(globalThis);
+    var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
     argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
@@ -1840,12 +1840,12 @@ fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
-    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
     argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
-    while (cmds_array.next()) |value| {
+    while (try cmds_array.next()) |value| {
         const arg = try value.toBunString(globalThis);
         defer arg.deref();
 
@@ -2031,16 +2031,16 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "stdio")) |stdio_val| {
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
+                        var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             try stdio[i].extract(globalThis, i, value);
                             if (i == 2)
                                 break;
                         }
                         i += 1;
 
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
                             try new_item.extract(globalThis, i, value);
 

@@ -95,7 +95,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return bun.jsc.toJSHostValue(this, getter(this, object));
+                return bun.jsc.toJSHostCall(this, @src(), getter, .{ this, object });
             }
         }.callback;
     }
@@ -356,7 +356,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
 
     if (!arguments[1].isArray()) {
         arguments[2] = arguments[1];
-        arguments[1] = .undefined;
+        arguments[1] = .js_undefined;
     }
 
     var formatOptions = ConsoleObject.FormatOptions{
@@ -380,8 +380,8 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
-    const properties = if (arguments[1].jsType().isArray()) arguments[1] else JSValue.undefined;
-    var table_printer = ConsoleObject.TablePrinter.init(
+    const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
+    var table_printer = try ConsoleObject.TablePrinter.init(
         globalThis,
         .Log,
         value,
@@ -527,7 +527,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     arguments[1].protect();
     get_or_put_result.value_ptr.* = arguments[1].asObjectRef();
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getCWD(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -694,7 +694,7 @@ pub fn openInEditor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
         return globalThis.throw("Opening editor failed {s}", .{@errorName(err)});
     };
 
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
@@ -768,7 +768,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn gc(vm: *JSC.VirtualMachine, sync: bool) usize {
@@ -780,7 +780,7 @@ export fn Bun__gc(vm: *JSC.VirtualMachine, sync: bool) callconv(.C) usize {
 
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     globalObject.vm().shrinkFootprint();
-    return .undefined;
+    return .js_undefined;
 }
 
 fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!JSC.JSValue {
@@ -847,7 +847,7 @@ fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(errorable.result.err.value);
     }
 
     if (query_string.len > 0) {
@@ -905,7 +905,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithPaths(
@@ -934,12 +934,12 @@ export fn Bun__resolveSyncWithPaths(
     bun_vm.transpiler.resolver.custom_dir_paths = paths;
     defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true, false));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool, is_user_require_resolve: bool) JSC.JSValue {
@@ -948,7 +948,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     if (specifier_str.length() == 0) {
         return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source.*, is_esm, true, is_user_require_resolve });
 }
 
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1043,22 +1043,22 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
                         var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .undefined;
+                        return server.js_value.get() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
                         var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .undefined;
+                        return server.js_value.get() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
                         var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .undefined;
+                        return server.js_value.get() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
                         var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .undefined;
+                        return server.js_value.get() orelse .js_undefined;
                     },
                     else => {},
                 }
@@ -1288,7 +1288,7 @@ pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC
 }
 
 pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
+    const valkey = JSC.API.Valkey.create(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1459,7 +1459,7 @@ pub const JSZlib = struct {
     // This has to be `inline` due to the callframe.
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue } {
         const arguments = callframe.arguments_old(2).slice();
-        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const buffer_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
                 arguments[1]
@@ -1731,7 +1731,7 @@ pub const JSZstd = struct {
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue } {
         const arguments = callframe.arguments();
-        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const buffer_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
                 arguments[1]
@@ -1765,7 +1765,7 @@ pub const JSZstd = struct {
 
     inline fn getOptionsAsync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue, i32 } {
         const arguments = callframe.arguments();
-        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const buffer_value: JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
                 arguments[1]

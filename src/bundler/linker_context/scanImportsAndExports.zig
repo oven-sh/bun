@@ -80,7 +80,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 continue;
             }
 
-            _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
+            _ = try this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {

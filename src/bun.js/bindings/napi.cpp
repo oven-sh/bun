@@ -58,7 +58,6 @@
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
-#include "Strong.h"
 
 #include "../modules/ObjectModule.h"
 

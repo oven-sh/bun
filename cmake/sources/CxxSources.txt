@@ -28,6 +28,7 @@ src/bun.js/bindings/BunWorkerGlobalScope.cpp
 src/bun.js/bindings/c-bindings.cpp
 src/bun.js/bindings/CallSite.cpp
 src/bun.js/bindings/CallSitePrototype.cpp
+src/bun.js/bindings/CatchScopeBinding.cpp
 src/bun.js/bindings/CodeCoverage.cpp
 src/bun.js/bindings/ConsoleObject.cpp
 src/bun.js/bindings/Cookie.cpp

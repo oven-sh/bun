@@ -890,13 +890,13 @@ pub const LinkerContext = struct {
     pub fn validateTLA(
         c: *LinkerContext,
         source_index: Index.Int,
-        tla_keywords: []Logger.Range,
+        tla_keywords: []const Logger.Range,
         tla_checks: []js_ast.TlaCheck,
-        input_files: []Logger.Source,
-        import_records: []ImportRecord,
+        input_files: []const Logger.Source,
+        import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
-        ast_import_records: []bun.BabyList(ImportRecord),
-    ) js_ast.TlaCheck {
+        ast_import_records: []const bun.BabyList(ImportRecord),
+    ) bun.OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -907,7 +907,15 @@ pub const LinkerContext = struct {
 
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags, ast_import_records);
+                    const parent = try c.validateTLA(
+                        record.source_index.get(),
+                        tla_keywords,
+                        tla_checks,
+                        input_files,
+                        ast_import_records[record.source_index.get()].slice(),
+                        meta_flags,
+                        ast_import_records,
+                    );
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
                     }
@@ -944,31 +952,31 @@ pub const LinkerContext = struct {
                             }
 
                             if (!Index.isValid(Index.init(parent_tla_check.parent))) {
-                                notes.append(Logger.Data{
+                                try notes.append(Logger.Data{
                                     .text = "unexpected invalid index",
-                                }) catch bun.outOfMemory();
+                                });
                                 break;
                             }
 
                             other_source_index = parent_tla_check.parent;
 
-                            notes.append(Logger.Data{
-                                .text = std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
+                            try notes.append(Logger.Data{
+                                .text = try std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
-                                }) catch bun.outOfMemory(),
+                                }),
                                 .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
-                            }) catch bun.outOfMemory();
+                            });
                         }
 
                         const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
                         else
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
 
-                        c.log.addRangeErrorWithNotes(source, record.range, text, notes.items) catch bun.outOfMemory();
+                        try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
                     }
                 }
             }

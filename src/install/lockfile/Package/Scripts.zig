@@ -275,7 +275,7 @@ pub const Scripts = extern struct {
         this: *Package.Scripts,
         log: *logger.Log,
         lockfile: *Lockfile,
-        node_modules: *PackageManager.LazyPackageDestinationDir,
+        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
         abs_node_modules_path: string,
         folder_name: string,
         resolution: *const Resolution,
@@ -335,7 +335,7 @@ pub const Scripts = extern struct {
         allocator: std.mem.Allocator,
         string_builder: *Lockfile.StringBuilder,
         log: *logger.Log,
-        node_modules: *PackageManager.LazyPackageDestinationDir,
+        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
         folder_name: string,
     ) !void {
         const json = brk: {
@@ -363,7 +363,7 @@ pub const Scripts = extern struct {
         this: *Package.Scripts,
         log: *logger.Log,
         lockfile: *Lockfile,
-        node_modules: *PackageManager.LazyPackageDestinationDir,
+        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
         abs_folder_path: string,
         folder_name: string,
         resolution_tag: Resolution.Tag,

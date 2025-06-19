@@ -68,7 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
 
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
     Vector<EC_builtin_curve> curves(numCurves);
-    EC_get_builtin_curves(curves.data(), numCurves);
+    EC_get_builtin_curves(curves.begin(), numCurves);
 
     JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
     RETURN_IF_EXCEPTION(scope, {});

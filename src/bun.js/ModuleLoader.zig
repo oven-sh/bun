@@ -468,7 +468,7 @@ pub const AsyncModule = struct {
         specifier_: bun.String,
         referrer_: bun.String,
         log: *logger.Log,
-    ) bun.JSError!void {
+    ) bun.JSExecutionTerminated!void {
         JSC.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
@@ -2267,7 +2267,7 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
-        pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
+        pub fn runFromJSThread(this: *TranspilerJob) bun.JSExecutionTerminated!void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;

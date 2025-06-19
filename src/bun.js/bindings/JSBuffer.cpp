@@ -2260,7 +2260,7 @@ class JSBuffer : public JSC::JSNonFinalObject {
 
 const ClassInfo JSBuffer::s_info = {
     "Buffer"_s,
-    JSC::JSUint8Array::info(),
+    &JSC::JSUint8Array::s_info,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(JSBuffer)

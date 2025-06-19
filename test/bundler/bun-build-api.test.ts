@@ -655,19 +655,12 @@ export function testMacro(val: any) {
 
   const build = await Bun.build({
     entrypoints: [join(dir, "index.ts")],
+    minify: true,
   });
 
   expect(build.outputs).toHaveLength(1);
   expect(build.outputs[0].kind).toBe("entry-point");
-  expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(`// ${path.relative(cwd(), dir)}/index.ts
-var testConfig = {
-  borderRadius: {
-    "1": "4px",
-    "2": "8px"
-  }
-};
-export {
-  testConfig
-};
-`);
+  expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(
+    `var t={borderRadius:{"1":"4px","2":"8px"}};export{t as testConfig};\n`,
+  );
 });

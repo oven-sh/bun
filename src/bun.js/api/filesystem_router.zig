@@ -269,7 +269,6 @@ pub const FileSystemRouter = struct {
             return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        this.router.deinit();
         this.arena.deinit();
         globalThis.allocator().destroy(this.arena);
 
@@ -398,7 +397,6 @@ pub const FileSystemRouter = struct {
             dir.deref();
         }
 
-        this.router.deinit();
         this.arena.deinit();
     }
 };

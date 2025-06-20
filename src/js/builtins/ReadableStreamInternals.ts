@@ -762,6 +762,7 @@ $linkTimeConstant;
 export function assignStreamIntoResumableSink(stream, sink) {
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
   let error: Error | null = null;
+  let reading = false;
   let closed = false;
   let reader: ReadableStreamDefaultReader | undefined;
 
@@ -810,7 +811,8 @@ export function assignStreamIntoResumableSink(stream, sink) {
     reader = stream.getReader();
 
     async function drainReaderIntoSink() {
-      if (error || closed) return;
+      if (error || closed || reading) return;
+      reading = true;
 
       try {
         while (true) {
@@ -840,6 +842,8 @@ export function assignStreamIntoResumableSink(stream, sink) {
         closed = true;
         // end with the error NT so we can simplify the flow to only listen to end
         queueMicrotask(endSink.bind(null, e));
+      } finally {
+        reading = false;
       }
     }
 
@@ -860,7 +864,7 @@ export function assignStreamIntoResumableSink(stream, sink) {
     error = e;
     closed = true;
     // end with the error
-    endSink(e);
+    queueMicrotask(endSink.bind(null, e));
   }
 }
 

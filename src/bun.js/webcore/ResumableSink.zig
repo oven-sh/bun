@@ -35,10 +35,14 @@ pub fn ResumableSink(
         }
 
         pub fn init(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context) *@This() {
+            return initExactRefs(globalThis, stream, context, 1);
+        }
+
+        pub fn initExactRefs(globalThis: *JSC.JSGlobalObject, stream: JSC.WebCore.ReadableStream, context: *Context, ref_count: u32) *@This() {
             const this = @This().new(.{
                 .globalThis = globalThis,
                 .context = context,
-                .ref_count = RefCount.init(),
+                .ref_count = RefCount.initExactRefs(ref_count),
             });
             const self = this.toJS(globalThis);
             self.ensureStillAlive();
@@ -110,7 +114,7 @@ pub fn ResumableSink(
             // ignore any call if detached
             if (!this.self.has()) return .js_undefined;
             this.detachJS();
-
+            log("jsEnd {}", .{args.len});
             onEnd(this.context, if (args.len > 0) args[0] else null);
             return .js_undefined;
         }

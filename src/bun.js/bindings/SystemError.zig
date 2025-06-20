@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const String = bun.String;
-const ZigString = @import("ZigString.zig");
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 

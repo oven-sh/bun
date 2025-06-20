@@ -18,7 +18,6 @@ const IteratorError = error{ AccessDenied, SystemResources } || posix.Unexpected
 const mem = std.mem;
 const strings = bun.strings;
 const Maybe = JSC.Maybe;
-const File = std.fs.File;
 
 pub const IteratorResult = struct {
     name: PathString,
@@ -53,7 +52,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
             dir: Dir,
             seek: i64,
-            buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
+            buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
             index: usize,
             end_index: usize,
             received_eof: bool = false,

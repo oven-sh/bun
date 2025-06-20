@@ -18,17 +18,15 @@ state: union(enum) {
     err: JSC.SystemError,
 } = .idle,
 
-pub fn start(this: *Which) Maybe(void) {
+pub fn start(this: *Which) Yield {
     const args = this.bltn().argsSlice();
     if (args.len == 0) {
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state = .one_arg;
-            this.bltn().stdout.enqueue(this, "\n", safeguard);
-            return Maybe(void).success;
+            return this.bltn().stdout.enqueue(this, "\n", safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, "\n");
-        this.bltn().done(1);
-        return Maybe(void).success;
+        return this.bltn().done(1);
     }
 
     if (this.bltn().stdout.needsIO() == null) {
@@ -47,8 +45,7 @@ pub fn start(this: *Which) Maybe(void) {
 
             _ = this.bltn().writeNoIO(.stdout, resolved);
         }
-        this.bltn().done(@intFromBool(had_not_found));
-        return Maybe(void).success;
+        return this.bltn().done(@intFromBool(had_not_found));
     }
 
     this.state = .{
@@ -58,16 +55,14 @@ pub fn start(this: *Which) Maybe(void) {
             .state = .none,
         },
     };
-    this.next();
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn next(this: *Which) void {
+pub fn next(this: *Which) Yield {
     var multiargs = &this.state.multi_args;
     if (multiargs.arg_idx >= multiargs.args_slice.len) {
         // Done
-        this.bltn().done(@intFromBool(multiargs.had_not_found));
-        return;
+        return this.bltn().done(@intFromBool(multiargs.had_not_found));
     }
 
     const arg_raw = multiargs.args_slice[multiargs.arg_idx];
@@ -81,40 +76,35 @@ pub fn next(this: *Which) void {
         multiargs.had_not_found = true;
         if (this.bltn().stdout.needsIO()) |safeguard| {
             multiargs.state = .waiting_write;
-            this.bltn().stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
-            // yield execution
-            return;
+            return this.bltn().stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
         }
 
         const buf = this.bltn().fmtErrorArena(null, "{s} not found\n", .{arg});
         _ = this.bltn().writeNoIO(.stdout, buf);
-        this.argComplete();
-        return;
+        return this.argComplete();
     };
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         multiargs.state = .waiting_write;
-        this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
-        return;
+        return this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
     }
 
     const buf = this.bltn().fmtErrorArena(null, "{s}\n", .{resolved});
     _ = this.bltn().writeNoIO(.stdout, buf);
-    this.argComplete();
-    return;
+    return this.argComplete();
 }
 
-fn argComplete(this: *Which) void {
+fn argComplete(this: *Which) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
     }
 
     this.state.multi_args.arg_idx += 1;
     this.state.multi_args.state = .none;
-    this.next();
+    return this.next();
 }
 
-pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .one_arg or
             (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -122,17 +112,15 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
 
     if (e != null) {
         this.state = .{ .err = e.? };
-        this.bltn().done(e.?.getErrno());
-        return;
+        return this.bltn().done(e.?.getErrno());
     }
 
     if (this.state == .one_arg) {
         // Calling which with on arguments returns exit code 1
-        this.bltn().done(1);
-        return;
+        return this.bltn().done(1);
     }
 
-    this.argComplete();
+    return this.argComplete();
 }
 
 pub fn deinit(this: *Which) void {
@@ -151,27 +139,13 @@ const Which = @This();
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
-const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
-const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const assert = bun.assert;
 
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
-const ReadChunkAction = interpreter.ReadChunkAction;
-const FlagParser = interpreter.FlagParser;
-const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;
 const EnvStr = interpreter.EnvStr;
 const which = bun.which;

@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
 const bits = bun.bits;
 
 pub const css = @import("../css_parser.zig");
@@ -11,9 +9,6 @@ const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
-
-const Result = css.Result;
-const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 

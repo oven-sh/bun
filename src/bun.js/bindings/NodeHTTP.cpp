@@ -273,7 +273,7 @@ public:
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = jsDynamicCast<JSNodeHTTPServerSocket*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
     if (thisObject->isClosed()) {
@@ -616,7 +616,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     }
 
     // Get the method.
-    if (UNLIKELY(methodString.isUndefinedOrNull())) {
+    if (methodString.isUndefinedOrNull()) [[unlikely]] {
         std::string_view methodView = request->getMethod();
         WTF::String methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(methodView.data()), methodView.length() });
         args.append(jsString(vm, WTFMove(methodString)));
@@ -665,6 +665,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         if (name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
+                RETURN_IF_EXCEPTION(scope, );
                 setCookiesHeaderString = nameString;
                 headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
@@ -675,7 +676,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
@@ -686,13 +688,15 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     {
 
         ObjectInitializationScope initializationScope(vm);
-        if (LIKELY(array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) {
+        if ((array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) [[likely]] {
             EncodedJSValue* data = arrayValues.data();
             for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
                 array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
             }
         } else {
+            RETURN_IF_EXCEPTION(scope, );
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 
@@ -809,6 +813,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
 
@@ -819,7 +824,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
         std::span<LChar> data;
         auto value = String::tryCreateUninitialized(pair.second.length(), data);
-        if (UNLIKELY(value.isNull())) {
+        if (value.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return JSValue::encode({});
         }
@@ -843,6 +848,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         if (name == WebCore::HTTPHeaderName::SetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
+                RETURN_IF_EXCEPTION(scope, {});
                 setCookiesHeaderString = jsString(vm, nameString);
                 headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1079,7 +1085,7 @@ static void NodeHTTPServer__writeHead(
             return;
         }
 
-        if (UNLIKELY(headersObject->hasNonReifiedStaticProperties())) {
+        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
             headersObject->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -1403,7 +1409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);
-                    if (UNLIKELY(scope.exception()))
+                    if (scope.exception()) [[unlikely]]
                         return JSValue::encode(jsUndefined());
 
                     auto value = item.toWTFString(globalObject);
@@ -1413,7 +1419,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 }
                 for (unsigned i = 1; i < length; ++i) {
                     JSValue value = array->getIndex(globalObject, i);
-                    if (UNLIKELY(scope.exception()))
+                    if (scope.exception()) [[unlikely]]
                         return JSValue::encode(jsUndefined());
                     auto string = value.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});

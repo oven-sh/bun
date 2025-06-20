@@ -285,7 +285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
             size_t expected_length = simdutf::latin1_length_from_utf16(span.size());
             std::span<LChar> ptr;
             WTF::String convertedString = WTF::String::tryCreateUninitialized(expected_length, ptr);
-            if (UNLIKELY(convertedString.isNull())) {
+            if (convertedString.isNull()) [[unlikely]] {
                 throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
                 return {};
             }

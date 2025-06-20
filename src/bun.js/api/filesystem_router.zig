@@ -1,5 +1,4 @@
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
@@ -7,7 +6,6 @@ const string = bun.string;
 const JSC = bun.JSC;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
 const JSObject = JSC.JSObject;
@@ -101,16 +99,16 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
             }
 
-            var iter = file_extensions.arrayIterator(globalThis);
+            var iter = try file_extensions.arrayIterator(globalThis);
             extensions.ensureTotalCapacityPrecise(iter.len) catch unreachable;
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     origin_str.deinit();
                     arena.deinit();
                     globalThis.allocator().destroy(arena);
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
-                if (val.getLength(globalThis) == 0) continue;
+                if (try val.getLength(globalThis) == 0) continue;
                 extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }

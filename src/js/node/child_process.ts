@@ -1500,10 +1500,12 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   }
   if (isNodeStreamReadable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];

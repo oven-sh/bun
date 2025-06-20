@@ -1,7 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const QueryStringMap = @import("../../url.zig").QueryStringMap;
-const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
@@ -9,33 +7,17 @@ const WebCore = bun.webcore;
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
-const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
 const JSError = bun.JSError;
-const OOM = bun.OOM;
 
-const Request = WebCore.Request;
 const String = bun.String;
-const FetchEvent = WebCore.FetchEvent;
-const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
-const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Loader = options.Loader;
 const Target = options.Target;
-const JSAst = bun.JSAst;
-const JSParser = bun.js_parser;
-const JSPrinter = bun.js_printer;
-const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../allocators/mimalloc_arena.zig");
-const Runtime = @import("../../runtime.zig").Runtime;
-const JSLexer = bun.js_lexer;
-const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
 const debug = bun.Output.scoped(.Transpiler, false);
@@ -104,11 +86,11 @@ pub const JSBundler = struct {
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
-                const length = array.getLength(globalThis);
-                var iter = array.arrayIterator(globalThis);
-                var onstart_promise_array: JSValue = JSValue.undefined;
+                const length = try array.getLength(globalThis);
+                var iter = try array.arrayIterator(globalThis);
+                var onstart_promise_array: JSValue = .js_undefined;
                 var i: usize = 0;
-                while (iter.next()) |plugin| : (i += 1) {
+                while (try iter.next()) |plugin| : (i += 1) {
                     if (!plugin.isObject()) {
                         return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                     }
@@ -219,7 +201,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.get(globalThis, "env")) |env| {
-                if (env != .undefined) {
+                if (!env.isUndefined()) {
                     if (env == .null or env == .false or (env.isNumber() and env.asNumber() == 0)) {
                         this.env_behavior = .disable;
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
@@ -285,8 +267,8 @@ pub const JSBundler = struct {
             }
 
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
-                var iter = entry_points.arrayIterator(globalThis);
-                while (iter.next()) |entry_point| {
+                var iter = try entry_points.arrayIterator(globalThis);
+                while (try iter.next()) |entry_point| {
                     var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.entry_points.insert(slice.slice());
@@ -309,8 +291,8 @@ pub const JSBundler = struct {
                     defer slice.deinit();
                     try this.conditions.insert(slice.slice());
                 } else if (conditions_value.jsType().isArray()) {
-                    var iter = conditions_value.arrayIterator(globalThis);
-                    while (iter.next()) |entry_point| {
+                    var iter = try conditions_value.arrayIterator(globalThis);
+                    while (try iter.next()) |entry_point| {
                         var slice = try entry_point.toSliceOrNull(globalThis);
                         defer slice.deinit();
                         try this.conditions.insert(slice.slice());
@@ -350,8 +332,8 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnArray(globalThis, "external")) |externals| {
-                var iter = externals.arrayIterator(globalThis);
-                while (iter.next()) |entry_point| {
+                var iter = try externals.arrayIterator(globalThis);
+                while (try iter.next()) |entry_point| {
                     var slice = try entry_point.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
@@ -359,8 +341,8 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
-                var iter = drops.arrayIterator(globalThis);
-                while (iter.next()) |entry| {
+                var iter = try drops.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
@@ -800,7 +782,7 @@ pub const JSBundler = struct {
         }
 
         export fn JSBundlerPlugin__onDefer(load: *Load, global: *JSC.JSGlobalObject) JSValue {
-            return JSC.toJSHostValue(global, load.onDefer(global));
+            return JSC.toJSHostCall(global, @src(), Load.onDefer, .{ load, global });
         }
         fn onDefer(this: *Load, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
             if (this.called_defer) {

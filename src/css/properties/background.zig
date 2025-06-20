@@ -11,13 +11,7 @@ const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
 const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;

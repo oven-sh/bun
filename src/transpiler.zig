@@ -5,13 +5,11 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
 const std = @import("std");
-const lex = bun.js_lexer;
 const logger = bun.logger;
 pub const options = @import("options.zig");
 const js_parser = bun.js_parser;
@@ -20,31 +18,18 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const Ref = @import("ast/base.zig").Ref;
-const Define = @import("defines.zig").Define;
-const DebugOptions = @import("./cli.zig").Command.DebugOptions;
-const ThreadPoolLib = @import("./thread_pool.zig");
 
 const Fs = @import("fs.zig");
 const schema = @import("api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
-const sync = @import("sync.zig");
-const ImportRecord = @import("./import_record.zig").ImportRecord;
-const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
 const Router = @import("./router.zig");
-const isPackagePath = _resolver.isPackagePath;
-const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
-const Lock = bun.Mutex;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
-const CacheEntry = @import("./cache.zig").FsCacheEntry;
-const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
@@ -256,7 +241,7 @@ pub const PluginRunner = struct {
         if (!path_value.isString()) {
             return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                bun.String.static("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object),
             );
         }
 
@@ -265,7 +250,7 @@ pub const PluginRunner = struct {
         if (file_path.length() == 0) {
             return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                bun.String.static("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object),
             );
         } else if
         // TODO: validate this better
@@ -276,7 +261,7 @@ pub const PluginRunner = struct {
         {
             return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                bun.String.static("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object),
             );
         }
         var static_namespace = true;
@@ -285,7 +270,7 @@ pub const PluginRunner = struct {
                 if (!namespace_value.isString()) {
                     return JSC.ErrorableString.err(
                         error.JSErrorObject,
-                        bun.String.static("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
+                        bun.String.static("Expected \"namespace\" to be a string").toErrorInstance(this.global_object),
                     );
                 }
 
@@ -950,7 +935,7 @@ pub const Transpiler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS)) {
             return transpiler.printWithSourceMapMaybe(
                 result.ast,
                 &result.source,
@@ -1049,7 +1034,7 @@ pub const Transpiler = struct {
 
         var input_fd: ?StoredFileDescriptorType = null;
 
-        const source: logger.Source = brk: {
+        const source: *const logger.Source = &brk: {
             if (this_parse.virtual_source) |virtual_source| {
                 break :brk virtual_source.*;
             }
@@ -1099,12 +1084,12 @@ pub const Transpiler = struct {
         };
 
         if (comptime return_file_only) {
-            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+            return ParseResult{ .source = source.*, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
         if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
             if (!loader.handlesEmptyFile()) {
-                return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+                return ParseResult{ .source = source.*, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
             }
         }
 
@@ -1117,7 +1102,7 @@ pub const Transpiler = struct {
                 // wasm magic number
                 if (source.isWebAssembly()) {
                     return ParseResult{
-                        .source = source,
+                        .source = source.*,
                         .input_fd = input_fd,
                         .loader = .wasm,
                         .empty = true,
@@ -1182,11 +1167,11 @@ pub const Transpiler = struct {
                     opts,
                     transpiler.options.define,
                     transpiler.log,
-                    &source,
+                    source,
                 ) catch null) orelse return null) {
                     .ast => |value| .{
                         .ast = value,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
@@ -1194,7 +1179,7 @@ pub const Transpiler = struct {
                     .cached => .{
                         .ast = undefined,
                         .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
@@ -1218,7 +1203,7 @@ pub const Transpiler = struct {
                                 break :brk default_value;
                             },
                         },
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     },
@@ -1229,11 +1214,11 @@ pub const Transpiler = struct {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .json)
-                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, transpiler.log, allocator, false) catch return null
+                    TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1354,7 +1339,7 @@ pub const Transpiler = struct {
 
                 return ParseResult{
                     .ast = ast,
-                    .source = source,
+                    .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,
                 };
@@ -1378,7 +1363,7 @@ pub const Transpiler = struct {
 
                 return ParseResult{
                     .ast = js_ast.Ast.initTest(parts),
-                    .source = source,
+                    .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,
                 };
@@ -1398,7 +1383,7 @@ pub const Transpiler = struct {
 
                     return ParseResult{
                         .ast = js_ast.Ast.empty,
-                        .source = source,
+                        .source = source.*,
                         .loader = loader,
                         .input_fd = input_fd,
                     };

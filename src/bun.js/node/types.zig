@@ -1,25 +1,14 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const bun = @import("bun");
-const meta = bun.meta;
 const windows = bun.windows;
-const heap_allocator = bun.default_allocator;
-const kernel32 = windows.kernel32;
-const logger = bun.logger;
-const posix = std.posix;
 const path_handler = bun.path;
 const strings = bun.strings;
 const string = bun.string;
 
-const L = strings.literal;
 const Environment = bun.Environment;
-const Fs = @import("../../fs.zig");
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSC = bun.JSC;
 const Mode = bun.Mode;
-const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
-const Value = std.json.Value;
 const JSError = bun.JSError;
 const node = bun.api.node;
 const Buffer = node.Buffer;
@@ -488,7 +477,7 @@ pub const Encoding = enum(u8) {
 pub fn jsAssertEncodingValid(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const value = call_frame.argument(0);
     _ = try Encoding.assert(value, global, .utf8);
-    return .undefined;
+    return .js_undefined;
 }
 
 const PathOrBuffer = union(Tag) {
@@ -811,11 +800,11 @@ pub const VectorArrayBuffer = struct {
 
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
-        const len = val.getLength(globalObject);
+        const len = try val.getLength(globalObject);
         bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
 
         while (i < len) {
-            const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
+            const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
                 return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
@@ -1185,7 +1174,7 @@ pub const PathOrBlob = union(enum) {
         }
 
         const arg = args.nextEat() orelse {
-            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+            return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .js_undefined);
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{

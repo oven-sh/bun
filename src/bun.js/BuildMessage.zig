@@ -1,12 +1,10 @@
 const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
-const Fs = bun.fs;
 const string = bun.string;
 const Resolver = @import("../resolver//resolver.zig").Resolver;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
@@ -28,7 +26,7 @@ pub const BuildMessage = struct {
 
     pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const notes = this.msg.notes;
-        const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
+        const array = try JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
             const cloned = try note.clone(bun.default_allocator);
             array.putIndex(

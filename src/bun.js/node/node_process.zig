@@ -51,7 +51,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     if (vm.worker) |worker| {
         // was explicitly overridden for the worker?
         if (worker.execArgv) |execArgv| {
-            const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+            const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len) catch return .zero;
             for (0..execArgv.len) |i| {
                 array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
             }
@@ -115,7 +115,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         break;
     }
 
-    return bun.String.toJSArray(globalObject, args.items);
+    return bun.String.toJSArray(globalObject, args.items) catch .zero;
 }
 
 fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -181,7 +181,7 @@ fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     }
 
-    return bun.String.toJSArray(globalObject, args_list.items);
+    return bun.String.toJSArray(globalObject, args_list.items) catch .zero;
 }
 
 extern fn Bun__Process__getArgv(global: *JSGlobalObject) JSValue;
@@ -202,9 +202,7 @@ pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return JSC.JSValue.jsUndefined();
 }
 
-pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
-}
+pub const getCwd = JSC.host_fn.wrap1(getCwd_);
 fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     var buf: bun.PathBuffer = undefined;
     switch (bun.api.node.path.getCwd(&buf)) {
@@ -215,9 +213,7 @@ fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     }
 }
 
-pub fn setCwd(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) callconv(.C) JSC.JSValue {
-    return JSC.toJSHostValue(globalObject, setCwd_(globalObject, to));
-}
+pub const setCwd = JSC.host_fn.wrap2(setCwd_);
 fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JSC.JSValue {
     if (to.len == 0) {
         return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});

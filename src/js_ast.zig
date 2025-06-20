@@ -1,11 +1,9 @@
 const std = @import("std");
 const logger = bun.logger;
-const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -15,17 +13,13 @@ const default_allocator = bun.default_allocator;
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
-const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
-const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
 const Loader = bun.options.Loader;
@@ -1526,7 +1520,7 @@ pub const E = struct {
 
         pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
-            var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
+            var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
@@ -1973,11 +1967,12 @@ pub const E = struct {
             defer obj.unprotect();
             const props: []const G.Property = this.properties.slice();
             for (props) |prop| {
-                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
+                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.value == null) {
                     return error.@"Cannot convert argument type to JS";
                 }
-                var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
+                const key = try prop.key.?.data.toJS(allocator, globalObject);
+                const value = try prop.value.?.toJS(allocator, globalObject);
+                try obj.putToPropertyKey(globalObject, key, value);
             }
 
             return obj;
@@ -3358,8 +3353,8 @@ pub const Expr = struct {
         const mime_type = mime_type_ orelse MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
-            var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
+            const source = &logger.Source.initPathString("fetch.json", bytes);
+            var out_expr = JSONParser.parseForMacro(source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;
@@ -3444,6 +3439,100 @@ pub const Expr = struct {
 
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    /// Only use this for pretty-printing JSON. Do not use in transpiler.
+    ///
+    /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
+    pub fn getByIndex(expr: *const Expr, index: u32, index_str: string, allocator: std.mem.Allocator) ?Expr {
+        switch (expr.data) {
+            .e_array => |array| {
+                if (index >= array.items.len) return null;
+                return array.items.slice()[index];
+            },
+            .e_object => |object| {
+                for (object.properties.sliceConst()) |*prop| {
+                    const key = &(prop.key orelse continue);
+                    switch (key.data) {
+                        .e_string => |str| {
+                            if (str.eql(string, index_str)) {
+                                return prop.value;
+                            }
+                        },
+                        .e_number => |num| {
+                            if (num.toU32() == index) {
+                                return prop.value;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                return null;
+            },
+            .e_string => |str| {
+                if (str.len() > index) {
+                    var slice = str.slice(allocator);
+                    // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
+                    // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
+                    if (slice.len > index) {
+                        return Expr.init(E.String, .{ .data = slice[index..][0..1] }, expr.loc);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    /// This supports lookups like:
+    /// - `foo`
+    /// - `foo.bar`
+    /// - `foo[123]`
+    /// - `foo[123].bar`
+    /// - `foo[123].bar[456]`
+    /// - `foo[123].bar[456].baz`
+    /// - `foo[123].bar[456].baz.qux` // etc.
+    ///
+    /// This is not intended for use by the transpiler, instead by pretty printing JSON.
+    pub fn getPathMayBeIndex(expr: *const Expr, name: string) ?Expr {
+        if (name.len == 0) {
+            return null;
+        }
+
+        if (strings.indexOfAny(name, "[.")) |idx| {
+            switch (name[idx]) {
+                '[' => {
+                    const end_idx = strings.indexOfChar(name, ']') orelse return null;
+                    var base_expr = expr;
+                    if (idx > 0) {
+                        const key = name[0..idx];
+                        base_expr = &(base_expr.get(key) orelse return null);
+                    }
+
+                    const index_str = name[idx + 1 .. end_idx];
+                    const index = std.fmt.parseInt(u32, index_str, 10) catch return null;
+                    const rest = if (name.len > end_idx) name[end_idx + 1 ..] else "";
+                    const result = &(base_expr.getByIndex(index, index_str, bun.default_allocator) orelse return null);
+                    if (rest.len > 0) return result.getPathMayBeIndex(rest);
+                    return result.*;
+                },
+                '.' => {
+                    const key = name[0..idx];
+                    const sub_expr = &(expr.get(key) orelse return null);
+                    const subpath = if (name.len > idx) name[idx + 1 ..] else "";
+                    if (subpath.len > 0) {
+                        return sub_expr.getPathMayBeIndex(subpath);
+                    }
+
+                    return sub_expr.*;
+                },
+                else => unreachable,
+            }
+        }
+
+        return expr.get(name);
     }
 
     /// Don't use this if you care about performance.
@@ -6254,7 +6343,7 @@ pub const Expr = struct {
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
                 .e_null => JSC.JSValue.null,
-                .e_undefined => JSC.JSValue.undefined,
+                .e_undefined => .js_undefined,
                 .e_boolean => |boolean| if (boolean.value)
                     JSC.JSValue.true
                 else
@@ -8140,7 +8229,7 @@ pub const Macro = struct {
 
         switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
             .rejected => |result| {
-                _ = vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+                vm.unhandledRejection(vm.global, result, loaded_result.asValue());
                 vm.disableMacroMode();
                 return error.MacroLoadError;
             },
@@ -8215,7 +8304,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch ((try JSC.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -8321,7 +8410,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var iter = JSC.JSArrayIterator.init(value, this.global);
+                        var iter = try JSC.JSArrayIterator.init(value, this.global);
                         if (iter.len == 0) {
                             const result = Expr.init(
                                 E.Array,
@@ -8347,7 +8436,7 @@ pub const Macro = struct {
 
                         errdefer this.allocator.free(array);
                         var i: usize = 0;
-                        while (iter.next()) |item| {
+                        while (try iter.next()) |item| {
                             array[i] = try this.run(item);
                             if (array[i].isMissing())
                                 continue;
@@ -8451,7 +8540,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
+                            this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;
@@ -9038,6 +9127,7 @@ const ToJSError = error{
     @"Cannot convert identifier to JS. Try a statically-known value",
     MacroError,
     OutOfMemory,
+    JSError,
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;

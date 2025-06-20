@@ -41,7 +41,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     const Vector<uint8_t>& bytes = serializedValue->wireBytes();
 
     return {
-        bytes.data(),
+        bytes.begin(),
         bytes.size(),
         &serializedValue.leakRef(),
     };

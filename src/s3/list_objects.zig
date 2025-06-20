@@ -74,7 +74,7 @@ pub const S3ListObjectsV2Result = struct {
         }
     }
 
-    pub fn toJS(this: @This(), globalObject: *JSGlobalObject) JSValue {
+    pub fn toJS(this: @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const jsResult = JSValue.createEmptyObject(globalObject, 12);
 
         if (this.name) |name| {
@@ -117,7 +117,7 @@ pub const S3ListObjectsV2Result = struct {
         }
 
         if (this.contents) |contents| {
-            const jsContents = JSValue.createEmptyArray(globalObject, contents.items.len);
+            const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
 
             for (contents.items, 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 1);
@@ -167,7 +167,7 @@ pub const S3ListObjectsV2Result = struct {
         }
 
         if (this.common_prefixes) |common_prefixes| {
-            const jsCommonPrefixes = JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
+            const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
 
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);

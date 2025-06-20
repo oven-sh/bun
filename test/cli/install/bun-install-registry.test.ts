@@ -8444,6 +8444,46 @@ describe("outdated", () => {
     expect(out).not.toContain("@foo/bar");
     expect(out).toContain("@scope/pkg1");
   });
+
+  test("catalog dependencies", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "catalog-outdated-test",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "no-deps": "1.0.0",
+            },
+            catalogs: {
+              dev: {
+                "a-dep": "1.0.1",
+              },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "catalog:",
+          },
+          devDependencies: {
+            "a-dep": "catalog:dev",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    const out = await runBunOutdated(env, packageDir, "--filter", "*");
+    expect(out).toContain("no-deps");
+    expect(out).toContain("a-dep");
+  });
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

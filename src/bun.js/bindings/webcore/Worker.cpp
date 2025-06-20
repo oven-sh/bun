@@ -186,7 +186,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
     std::span<WTF::StringImpl*> execArgv = worker->m_options.execArgv
                                                .transform([](Vector<String>& vec) -> std::span<WTF::StringImpl*> {
-                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.data()), vec.size() };
+                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.begin()), vec.size() };
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
     void* impl = WebWorker__create(
@@ -200,12 +200,12 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         worker->m_options.mini,
         worker->m_options.unref,
         worker->m_options.evalMode,
-        reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.data()),
+        reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.begin()),
         worker->m_options.argv.size(),
         !worker->m_options.execArgv.has_value(),
         execArgv.data(),
         execArgv.size(),
-        preloadModules.data(),
+        preloadModules.begin(),
         preloadModules.size());
     // now referenced by Zig
     worker->ref();
@@ -310,6 +310,11 @@ bool Worker::hasPendingActivity() const
 bool Worker::isClosingOrTerminated() const
 {
     return m_onlineClosingFlags & ClosingFlag;
+}
+
+bool Worker::isOnline() const
+{
+    return m_onlineClosingFlags & OnlineFlag;
 }
 
 void Worker::dispatchEvent(Event& event)
@@ -594,7 +599,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(leixcalGlobalObject);
-    if (UNLIKELY(!globalObject))
+    if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());

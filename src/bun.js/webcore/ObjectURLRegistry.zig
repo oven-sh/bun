@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const UUID = bun.UUID;
-const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
 lock: bun.Mutex = .{},
@@ -121,7 +120,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     }
     const str = arguments.ptr[0].toBunString(globalObject) catch @panic("unreachable");
     if (!str.hasPrefixComptime("blob:")) {
-        return JSC.JSValue.undefined;
+        return .js_undefined;
     }
 
     const slice = str.toUTF8WithoutRef(bun.default_allocator);
@@ -130,10 +129,10 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 
     const sliced = slice.slice();
     if (sliced.len < "blob:".len + UUID.stringLength) {
-        return JSC.JSValue.undefined;
+        return .js_undefined;
     }
     ObjectURLRegistry.singleton().revoke(sliced["blob:".len..]);
-    return JSC.JSValue.undefined;
+    return .js_undefined;
 }
 
 comptime {
@@ -147,7 +146,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JS
     // Not thrown.
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
     if (arguments.len < 1) {
-        return JSC.JSValue.undefined;
+        return .js_undefined;
     }
     const str = try arguments.ptr[0].toBunString(globalObject);
     defer str.deref();
@@ -157,7 +156,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JS
     }
 
     if (!str.hasPrefixComptime("blob:") or str.length() < specifier_len) {
-        return JSC.JSValue.undefined;
+        return .js_undefined;
     }
 
     const slice = str.toUTF8WithoutRef(bun.default_allocator);
@@ -166,7 +165,7 @@ fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JS
 
     const registry = ObjectURLRegistry.singleton();
     const blob = registry.resolveAndDupeToJS(sliced["blob:".len..], globalObject);
-    return blob orelse JSC.JSValue.undefined;
+    return blob orelse .js_undefined;
 }
 
 pub const specifier_len = "blob:".len + UUID.stringLength;

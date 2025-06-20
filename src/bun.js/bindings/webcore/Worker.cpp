@@ -473,10 +473,12 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
     if (globalObject) {
         auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         vm.setHasTerminationRequest();
 
         {
             auto* esmRegistryMap = globalObject->esmRegistryMap();
+            RETURN_IF_EXCEPTION(scope, );
             esmRegistryMap->clear(globalObject);
             globalObject->requireMap()->clear(globalObject);
             vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);

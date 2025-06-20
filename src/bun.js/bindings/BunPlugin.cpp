@@ -152,6 +152,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     global->requireMap()->remove(globalObject, moduleIdValue);
     global->esmRegistryMap()->remove(globalObject, moduleIdValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -577,6 +578,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
 
     auto* esm = globalObject->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);

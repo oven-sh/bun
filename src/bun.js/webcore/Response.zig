@@ -108,6 +108,93 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
     }
 }
 
+fn validateForWasmStreaming(global_object: *JSC.JSGlobalObject, this_value: JSC.JSValue) bun.JSError!JSC.JSValue {
+    const this = Response.fromJS(this_value) orelse return global_object.throwInvalidArgumentTypeValue2(
+        "source",
+        "an instance of Response or an Promise resolving to Response",
+        this_value,
+    );
+
+    const content_type = if (try this.getContentType()) |content_type|
+        content_type.toZigString()
+    else
+        ZigString.static("null").*;
+
+    if (!content_type.eqlComptime("application/wasm")) {
+        return global_object.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{}'", .{content_type}).throw();
+    }
+
+    if (!this.isOK()) {
+        return global_object.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has status code {}", .{this.statusCode()}).throw();
+    }
+
+    if (this.getBodyUsed(global_object).toBoolean()) {
+        return global_object.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response body has already been used", .{}).throw();
+    }
+
+    const body = this.getBodyValue();
+    if (body.* == .Error) {
+        return global_object.throwValue(body.Error.toJS(global_object));
+    }
+
+    bun.Output.warn("HEY, I validated just fine! :3", .{}); // REMOVE ME
+    return .js_undefined;
+}
+
+fn getBodyStreamOrBytesForWasmStreaming(
+    global_object: *JSC.JSGlobalObject,
+    this_value: JSC.JSValue,
+    bytes_ptr_out: *[*]const u8,
+    bytes_len_out: *usize,
+) callconv(.C) JSC.JSValue {
+    // This function should only be called (by C++) when the Response is validated by validateForWasmStreaming
+    const this = Response.fromJS(this_value) orelse @panic("getBodyStreamOrBytesForWasmStreaming should only be called on a valid Response");
+    const body = this.getBodyValue();
+    body.toBlobIfPossible();
+
+    const any_blob = switch (body.*) {
+        .Locked => |*pending| blk: {
+            if (pending.toAnyBlobAllowPromise()) |blob| {
+                body.* = .{ .Used = {} };
+                break :blk blob;
+            }
+
+            bun.Output.warn("HM I am returning a ReadableStream! (1)", .{}); // REMOVE ME
+            return body.toReadableStream(global_object);
+        },
+        else => body.useAsAnyBlobAllowNonUTF8String(),
+    };
+
+    if (any_blob.store()) |store| {
+        if (store.data != .bytes) {
+            // This is a file or an S3 object, which aren't accessible synchronously.
+            // (using any_blob.slice() would return a bogus empty slice)
+
+            // Logic from JSC.WebCore.Body.Value.toReadableStream
+            var blob = any_blob.Blob;
+            defer blob.detach();
+
+            blob.resolveSize();
+            bun.Output.warn("HM I am returning a ReadableStream! (2)", .{}); // REMOVE ME
+            return JSC.WebCore.ReadableStream.fromBlobCopyRef(global_object, &blob, blob.size);
+        }
+    }
+
+    // Give the caller the pointer and length to the blob contents, and return null to
+    // signify this has been done.
+    const slice = any_blob.slice();
+    bytes_ptr_out.* = slice.ptr;
+    bytes_len_out.* = slice.len;
+
+    bun.Output.warn("HM I am returning a slice!", .{}); // REMOVE ME
+    return .null;
+}
+
+comptime {
+    @export(&JSC.host_fn.wrap2(validateForWasmStreaming), .{ .name = "Bun__Response__validateForWasmStreaming" });
+    @export(&getBodyStreamOrBytesForWasmStreaming, .{ .name = "Bun__Response__getBodyStreamOrBytesForWasmStreaming" });
+}
+
 pub fn getFetchHeaders(
     this: *Response,
 ) ?*FetchHeaders {

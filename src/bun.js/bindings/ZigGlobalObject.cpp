@@ -337,8 +337,9 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
     WTF::StringBuilder sb;
 
-    if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, {});
+    auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (errorMessage) {
         auto* str = errorMessage.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (str->length() > 0) {
@@ -350,7 +351,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             sb.append("Error"_s);
         }
     } else {
-        RETURN_IF_EXCEPTION(scope, {});
         sb.append("Error"_s);
     }
 
@@ -781,7 +781,9 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         globalObject = defaultGlobalObject();
         if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-            if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
+            auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
@@ -790,7 +792,6 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                     return result;
                 }
             }
-            RETURN_IF_EXCEPTION(scope, {});
         }
     } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
@@ -2107,8 +2108,10 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
             fn = object;
             target = jsUndefined();
-        } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {
-            if (iterable.isCallable()) {
+        } else {
+            auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (iterable && iterable.isCallable()) {
                 fn = iterable;
             }
         }
@@ -3520,14 +3523,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
 
     if (!base) {
         base = globalObject->functionPrototype();
-    } else if (auto proto = base->getIfPropertyExists(globalObject, vm.propertyNames->prototype)) {
-        if (auto protoObject = proto.getObject()) {
-            prototypeBase = protoObject;
-        }
     } else {
+        auto proto = base->getIfPropertyExists(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        JSC::throwTypeError(globalObject, scope, "Base class must have a prototype property"_s);
-        return encodedJSValue();
+        if (proto) {
+            if (auto protoObject = proto.getObject()) {
+                prototypeBase = protoObject;
+            }
+        } else {
+            JSC::throwTypeError(globalObject, scope, "Base class must have a prototype property"_s);
+            return encodedJSValue();
+        }
     }
 
     JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
@@ -4186,19 +4192,21 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     // Therefore, we modify it in place.
     if (parameters && parameters.isObject()) {
         auto* object = parameters.toObject(globalObject);
-        if (auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword)) {
+        auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (withObject) {
             if (withObject.isObject()) {
                 auto* with = jsCast<JSObject*>(withObject);
-                if (auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
                         parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
                     }
                 }
-                RETURN_IF_EXCEPTION(scope, {});
             }
         }
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,

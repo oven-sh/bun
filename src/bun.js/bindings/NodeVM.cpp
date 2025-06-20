@@ -423,23 +423,26 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
     JSObject* options = asObject(optionsArg);
 
     // Check name property
-    if (JSValue nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s))) {
-        RETURN_IF_EXCEPTION(scope, {});
+    auto nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (nameValue) {
         if (!nameValue.isUndefined() && !nameValue.isString()) {
             return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.name"_s, "string"_s, nameValue);
         }
     }
 
     // Check origin property
-    if (JSValue originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s))) {
-        RETURN_IF_EXCEPTION(scope, {});
+    auto originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (originValue) {
         if (!originValue.isUndefined() && !originValue.isString()) {
             return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.origin"_s, "string"_s, originValue);
         }
     }
 
-    if (JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey))) {
-        RETURN_IF_EXCEPTION(scope, {});
+    auto codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (codeGenerationValue) {
 
         if (codeGenerationValue.isUndefined()) {
             return std::nullopt;
@@ -451,8 +454,9 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
 
         JSObject* codeGenerationObject = asObject(codeGenerationValue);
 
-        if (JSValue allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
+        auto allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (allowStringsValue) {
             if (!allowStringsValue.isBoolean()) {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".strings"_s), "boolean"_s, allowStringsValue);
             }
@@ -460,8 +464,9 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
             outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
         }
 
-        if (JSValue allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
+        auto allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (allowWasmValue) {
             if (!allowWasmValue.isBoolean()) {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".wasm"_s), "boolean"_s, allowWasmValue);
             }
@@ -1260,7 +1265,9 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             return false;
         }
 
-        if (JSValue filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName())) {
+        auto filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+        RETURN_IF_EXCEPTION(scope, false);
+        if (filenameOpt) {
             if (filenameOpt.isString()) {
                 this->filename = filenameOpt.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1270,11 +1277,12 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         } else {
-            RETURN_IF_EXCEPTION(scope, false);
             this->filename = "evalmachine.<anonymous>"_s;
         }
 
-        if (JSValue lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
+        auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (lineOffsetOpt) {
             if (lineOffsetOpt.isAnyInt()) {
                 if (!lineOffsetOpt.isInt32()) {
                     ERR::OUT_OF_RANGE(scope, globalObject, "options.lineOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), lineOffsetOpt);
@@ -1290,9 +1298,10 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         }
-        RETURN_IF_EXCEPTION(scope, false);
 
-        if (JSValue columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
+        auto columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (columnOffsetOpt) {
             if (columnOffsetOpt.isAnyInt()) {
                 if (!columnOffsetOpt.isInt32()) {
                     ERR::OUT_OF_RANGE(scope, globalObject, "options.columnOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), columnOffsetOpt);
@@ -1310,7 +1319,6 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 return false;
             }
         }
-        RETURN_IF_EXCEPTION(scope, false);
     }
 
     return any;
@@ -1321,7 +1329,6 @@ bool BaseVMOptions::validateProduceCachedData(JSC::JSGlobalObject* globalObject,
     JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s));
     RETURN_IF_EXCEPTION(scope, false);
     if (produceCachedDataOpt && !produceCachedDataOpt.isUndefined()) {
-        RETURN_IF_EXCEPTION(scope, {});
         if (!produceCachedDataOpt.isBoolean()) {
             ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
             return false;

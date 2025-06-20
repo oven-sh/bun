@@ -136,24 +136,23 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
-    if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
+    auto exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName());
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        scope.clearException();
+        return result;
+    }
+    if (exportsValue) {
         if (exportsValue.isObject()) {
             result.value.object = exportsValue;
             return result;
         }
-    }
-    if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
-        scope.clearException();
-        scope.release();
-        return result;
     }
 
     scope.throwException(globalObject, createTypeError(globalObject, "\"object\" loader must return an \"exports\" object"_s));
     result.type = OnLoadResultTypeError;
     result.value.error = scope.exception();
     scope.clearException();
-    scope.release();
     return result;
 }
 
@@ -231,11 +230,18 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
 
         result.value.error = scope.exception();
+        scope.clearException();
         result.type = OnLoadResultTypeError;
         return result;
     }
 
-    if (JSC::JSValue loaderValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "loader"_s))) {
+    auto loaderValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "loader"_s));
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        scope.clearException();
+        return result;
+    }
+    if (loaderValue) {
         if (!loaderValue.isUndefinedOrNull()) {
             // If a loader is passed, we must validate it
             loader = BunLoaderTypeNone;
@@ -260,14 +266,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             }
         }
     }
-    if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
-        return result;
-    }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
         result.value.error = scope.exception();
+        scope.clearException();
         return result;
     }
 
@@ -275,7 +278,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     result.value.sourceText.value = JSValue {};
     result.value.sourceText.string = {};
 
-    if (JSC::JSValue contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s))) {
+    auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
+    if (scope.exception()) [[unlikely]] {
+        result.value.error = scope.exception();
+        scope.clearException();
+        return result;
+    }
+    if (contentsValue) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
                 result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
@@ -286,14 +295,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             result.value.sourceText.value = contentsValue;
         }
     }
-    if (scope.exception()) [[unlikely]] {
-        result.value.error = scope.exception();
-        return result;
-    }
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
+        scope.clearException();
         return result;
     }
 
@@ -386,11 +392,15 @@ static JSValue handleVirtualModuleResult(
         JSC::JSObject* object = onLoadResult.value.object.getObject();
         if (commonJSModule) {
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
-            JSValue esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
-            RETURN_IF_EXCEPTION(scope, {});
+            auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
+            if (scope.exception()) [[unlikely]] {
+                return reject(scope.exception());
+            }
             if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
-                JSValue defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
-                RETURN_IF_EXCEPTION(scope, {});
+                auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+                if (scope.exception()) [[unlikely]] {
+                    return reject(scope.exception());
+                }
                 if (defaultValue && !defaultValue.isUndefined()) {
                     commonJSModule->setExportsObject(defaultValue);
                     commonJSModule->hasEvaluated = true;

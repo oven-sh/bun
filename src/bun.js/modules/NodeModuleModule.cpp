@@ -347,13 +347,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             // weird thing.
             (fromValue.isObject()) {
 
-            if (auto idValue = fromValue.getObject()->getIfPropertyExists(
-                    globalObject, builtinNames(vm).filenamePublicName())) {
+            auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (idValue) {
                 if (idValue.isString()) {
                     fromValue = idValue;
                 }
             }
-            RETURN_IF_EXCEPTION(scope, {});
         }
 
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

@@ -1268,14 +1268,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         if (options.isObject()) {
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
-            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+            auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type);
+            REQUIRE_CJS_RETURN_IF_EXCEPTION;
+            if (typeValue) {
                 if (typeValue.isString()) {
                     typeAttribute = typeValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(throwScope, {});
+                    REQUIRE_CJS_RETURN_IF_EXCEPTION;
                     typeAttributeStr = Bun::toString(typeAttribute);
                 }
             }
-            REQUIRE_CJS_RETURN_IF_EXCEPTION;
         }
     }
 

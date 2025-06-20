@@ -25,23 +25,25 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         JSObject* options = asObject(optionsArg);
 
         // Validate contextName and contextOrigin are strings
-        if (JSValue contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s))) {
+        auto contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (contextNameOpt) {
             if (!contextNameOpt.isUndefined() && !contextNameOpt.isString()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextName"_s, "string"_s, contextNameOpt);
                 return false;
             }
             any = true;
         }
-        RETURN_IF_EXCEPTION(scope, false);
 
-        if (JSValue contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s))) {
+        auto contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (contextOriginOpt) {
             if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextOrigin"_s, "string"_s, contextOriginOpt);
                 return false;
             }
             any = true;
         }
-        RETURN_IF_EXCEPTION(scope, false);
 
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
             RETURN_IF_EXCEPTION(scope, false);
@@ -626,8 +628,9 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
-        if (JSValue displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s))) {
-            RETURN_IF_EXCEPTION(scope, false);
+        auto displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (displayErrorsOpt) {
             if (!displayErrorsOpt.isUndefined()) {
                 if (!displayErrorsOpt.isBoolean()) {
                     ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
@@ -637,15 +640,15 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
-        RETURN_IF_EXCEPTION(scope, {});
 
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
             any = true;
         }
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (JSValue breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s))) {
-            RETURN_IF_EXCEPTION(scope, false);
+        auto breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (breakOnSigintOpt) {
             if (!breakOnSigintOpt.isUndefined()) {
                 if (!breakOnSigintOpt.isBoolean()) {
                     ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
@@ -655,7 +658,6 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return any;

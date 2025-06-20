@@ -45,11 +45,11 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* callSite = JSC::jsDynamicCast<CallSite*>(thisValue)) {
-        RELEASE_AND_RETURN(scope, callSite);
+        return callSite;
     }
 
     throwTypeError(globalObject, scope, "CallSite operation called on non-CallSite object"_s);
-    RELEASE_AND_RETURN(scope, nullptr);
+    return nullptr;
 }
 
 #define ENTER_PROTO_FUNC()                                                  \

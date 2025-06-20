@@ -770,7 +770,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     bool asNodeBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
-        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+        auto binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (binaryTypeValue) {
             if (!binaryTypeValue.isString()) {
                 throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
                 return {};
@@ -779,7 +781,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
             asNodeBuffer = binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
             RETURN_IF_EXCEPTION(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;

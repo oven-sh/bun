@@ -238,21 +238,18 @@ extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* 
 
         auto stringConstructorValue = globalObject->stringPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, -1);
-
         if (stringConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::String);
         }
 
         auto symbolConstructorValue = globalObject->symbolPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, -1);
-
         if (symbolConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Symbol);
         }
 
         auto bigIntConstructorValue = globalObject->bigIntPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, -1);
-
         if (bigIntConstructorValue == object) {
             return static_cast<uint8_t>(AsymmetricMatcherConstructorType::BigInt);
         }
@@ -1627,7 +1624,6 @@ bool Bun__deepMatch(
     for (const auto& property : subsetProps) {
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(*throwScope, false);
-
         if (prop.isEmpty()) {
             return false;
         }
@@ -2361,10 +2357,11 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (auto* object = jsDynamicCast<JSObject*>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             scope.release(); // zig binding handles exceptions
-            if (JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length)) {
+            JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, 0);
+            if (lengthValue) {
                 return lengthValue.toNumber(globalObject);
             }
-            RETURN_IF_EXCEPTION(scope, 0);
         }
     }
     }
@@ -4767,6 +4764,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         }
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
+        RETURN_IF_EXCEPTION(scope, );
         except->message = Bun::toStringRef(global, message);
     } else {
         RETURN_IF_EXCEPTION(scope, );
@@ -4848,7 +4846,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             // so in this case, we parse the stack trace as a string
 
             // This one intentionally calls getters.
-            if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
+            JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+            RETURN_IF_EXCEPTION(scope, );
+            if (stackValue) {
                 if (stackValue.isString()) {
                     WTF::String stack = stackValue.toWTFString(global);
                     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -4955,7 +4955,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
-        if (auto name_value = obj->getIfPropertyExists(global, vm.propertyNames->name)) {
+        auto name_value = obj->getIfPropertyExists(global, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (name_value) {
             if (name_value.isString()) {
                 auto name_str = name_value.toWTFString(global);
                 except->name = Bun::toStringRef(name_str);
@@ -4983,7 +4985,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
+        auto message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        RETURN_IF_EXCEPTION(scope, );
+        if (message) {
             if (message.isString()) {
                 except->message = Bun::toStringRef(
                     message.toWTFString(global));
@@ -4994,7 +4998,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
+        auto sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL);
+        RETURN_IF_EXCEPTION(scope, );
+        if (sourceURL) {
             if (sourceURL.isString()) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(
                     sourceURL.toWTFString(global));
@@ -5006,12 +5012,16 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
+        auto line = obj->getIfPropertyExists(global, vm.propertyNames->line);
+        RETURN_IF_EXCEPTION(scope, );
+        if (line) {
             if (line.isNumber()) {
                 except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
                 // TODO: don't sourcemap it twice
-                if (auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName())) {
+                auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
+                RETURN_IF_EXCEPTION(scope, );
+                if (originalLine) {
                     if (originalLine.isNumber()) {
                         except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                     }
@@ -5161,7 +5171,9 @@ extern "C" void JSC__JSValue__getName(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 
     // JSC doesn't include @@toStringTag in calculated display name
     if (displayName.isEmpty()) {
-        if (auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol)) {
+        auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol);
+        RETURN_IF_EXCEPTION(scope, );
+        if (toStringTagValue) {
             if (toStringTagValue.isString()) {
                 displayName = toStringTagValue.toWTFString(globalObject);
             }

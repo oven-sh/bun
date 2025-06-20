@@ -461,26 +461,25 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         RETURN_IF_EXCEPTION(throwScope, {});
 
         // Extract optional domain
-        if (auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName())) {
-            RETURN_IF_EXCEPTION(throwScope, {});
+        auto domainValue = options->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (domainValue) {
 
             if (!domainValue.isUndefined() && !domainValue.isNull()) {
                 deleteOptions.domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
         // Extract optional path
-        if (auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName())) {
-            RETURN_IF_EXCEPTION(throwScope, {});
-
+        auto pathValue = options->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (pathValue) {
             if (!pathValue.isUndefined() && !pathValue.isNull()) {
                 deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     if (nameValue.isString()) {

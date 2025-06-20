@@ -556,6 +556,7 @@ src/install/windows-shim/bun_shim_impl.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig
+src/io/openForWriting.zig
 src/io/PipeReader.zig
 src/io/pipes.zig
 src/io/PipeWriter.zig
@@ -670,6 +671,7 @@ src/shell/states/Stmt.zig
 src/shell/states/Subshell.zig
 src/shell/subproc.zig
 src/shell/util.zig
+src/shell/Yield.zig
 src/sourcemap/CodeCoverage.zig
 src/sourcemap/LineOffsetTable.zig
 src/sourcemap/sourcemap.zig

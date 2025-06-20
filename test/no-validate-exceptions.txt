@@ -151,6 +151,9 @@ test/js/bun/s3/s3-insecure.test.ts
 test/js/bun/s3/s3-list-objects.test.ts
 test/js/bun/s3/s3-storage-class.test.ts
 test/js/bun/s3/s3.test.ts
+test/js/bun/shell/yield.test.ts
+test/js/bun/shell/file-io.test.ts
+test/js/bun/shell/commands/echo.test.ts
 test/js/bun/shell/bunshell-default.test.ts
 test/js/bun/shell/bunshell-file.test.ts
 test/js/bun/shell/bunshell-instance.test.ts

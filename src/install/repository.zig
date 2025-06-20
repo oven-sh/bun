@@ -338,38 +338,56 @@ pub const Repository = extern struct {
         }
     };
 
+    fn rewriteSCPLikePath(after_url_scheme: string, comptime scheme: string, buf: []u8) ?string {
+        // Look for the pattern user@host:path (not :port)
+        const at_index = strings.indexOfChar(after_url_scheme, '@') orelse return null;
+        if (after_url_scheme.len < at_index + 1) return null;
+        const after_at = after_url_scheme[at_index + 1 ..];
+        const colon_index = strings.indexOfChar(after_at, ':') orelse return null;
+        if (after_at.len < colon_index + 1) return null;
+        const host_part = after_at[0..colon_index];
+        const path_part = after_at[colon_index + 1 ..];
+
+        if (path_part.len == 0) return null;
+
+        // Check if this looks like a port number (all digits)
+        var is_port = true;
+        for (path_part) |c| {
+            if (!std.ascii.isDigit(c) and c != '/' and c != '#') {
+                is_port = false;
+                break;
+            }
+            if (c == '/' or c == '#') break;
+        }
+
+        if (is_port) return null;
+
+        // If it's not a port, treat as SCP-like syntax
+        buf[0..scheme.len].* = scheme[0..scheme.len].*;
+        var rest = buf[scheme.len..];
+
+        // Copy host
+        bun.copy(u8, rest, host_part);
+        rest[host_part.len] = '/';
+
+        // Copy path
+        bun.copy(u8, rest[host_part.len + 1 ..], path_part);
+
+        return buf[0 .. scheme.len + host_part.len + 1 + path_part.len];
+    }
+
     pub fn trySSH(url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
             return null;
         }
 
-        if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
+        if (strings.hasPrefixComptime(url, "git@")) {
             return url;
         }
 
-        if (Dependency.isSCPLikePath(url)) {
-            ssh_path_buf[0.."ssh://git@".len].* = "ssh://git@".*;
-            var rest = ssh_path_buf["ssh://git@".len..];
-
-            const colon_index = strings.indexOfChar(url, ':');
-
-            if (colon_index) |colon| {
-                // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |tld| {
-                    bun.copy(u8, rest, url[0..colon]);
-                    bun.copy(u8, rest[colon..], tld);
-                    rest[colon + tld.len] = '/';
-                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
-                    return out;
-                }
-            }
-
-            bun.copy(u8, rest, url);
-            if (colon_index) |colon| rest[colon] = '/';
-            const final = ssh_path_buf[0 .. url.len + "ssh://".len];
-            return final;
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            return rewriteSCPLikePath(url["ssh://".len..], "ssh://", &final_path_buf) orelse url;
         }
 
         return null;
@@ -381,36 +399,42 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            final_path_buf[0.."https".len].* = "https".*;
-            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];
-            return out;
+            return rewriteSCPLikePath(url["ssh://".len..], "https://", &final_path_buf);
         }
 
         if (Dependency.isSCPLikePath(url)) {
-            final_path_buf[0.."https://".len].* = "https://".*;
-            var rest = final_path_buf["https://".len..];
-
-            const colon_index = strings.indexOfChar(url, ':');
-
-            if (colon_index) |colon| {
-                // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |tld| {
-                    bun.copy(u8, rest, url[0..colon]);
-                    bun.copy(u8, rest[colon..], tld);
-                    rest[colon + tld.len] = '/';
-                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    const out = final_path_buf[0 .. url.len + "https://".len + tld.len];
-                    return out;
-                }
-            }
-
-            bun.copy(u8, rest, url);
-            if (colon_index) |colon| rest[colon] = '/';
-            return final_path_buf[0 .. url.len + "https://".len];
+            return rewriteSCPLikePath(url, "https://", &final_path_buf);
         }
 
         return null;
+    }
+
+    pub fn downloadAndPickURL(
+        pm: *PackageManager,
+        allocator: std.mem.Allocator,
+        env: *const DotEnv.Map,
+        log: *logger.Log,
+        cache_dir: std.fs.Dir,
+        task_id: u64,
+        name: string,
+        url: string,
+        attempt: u8,
+    ) !GitRunner.ScheduleResult {
+        if (attempt > 0) {
+            if (strings.hasPrefixComptime(url, "git+ssh://")) {
+                if (trySSH(url)) |ssh| {
+                    return download(pm, allocator, env, log, cache_dir, task_id, name, ssh, url, attempt);
+                }
+            }
+        }
+
+        if (tryHTTPS(url)) |https| {
+            return download(pm, allocator, env, log, cache_dir, task_id, name, https, url, attempt);
+        } else if (trySSH(url)) |ssh| {
+            return download(pm, allocator, env, log, cache_dir, task_id, name, ssh, url, attempt);
+        } else {
+            return download(pm, allocator, env, log, cache_dir, task_id, name, url, url, attempt);
+        }
     }
 
     pub fn download(
@@ -421,9 +445,10 @@ pub const Repository = extern struct {
         cache_dir: std.fs.Dir,
         task_id: u64,
         name: string,
-        url: string,
+        clone_url: string,
+        input_url: string,
         attempt: u8,
-    ) !void {
+    ) !GitRunner.ScheduleResult {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
@@ -446,7 +471,7 @@ pub const Repository = extern struct {
             const context = GitRunner.CompletionContext{
                 .git_clone = .{
                     .name = try allocator.dupe(u8, name),
-                    .url = try allocator.dupe(u8, url),
+                    .url = try allocator.dupe(u8, input_url),
                     .task_id = task_id,
                     .attempt = attempt,
                     .dir = .{ .repo = dir },
@@ -455,23 +480,8 @@ pub const Repository = extern struct {
 
             const runner = try GitRunner.init(allocator, pm, context);
             try runner.spawn(argv, env);
-        } else |not_found| {
-            if (not_found != error.FileNotFound) {
-                pm.git_tasks.writeItem(.{
-                    .task_id = task_id,
-                    .err = not_found,
-                    .context = .{ .git_clone = .{
-                        .name = name,
-                        .url = url,
-                        .task_id = task_id,
-                        .attempt = attempt,
-                        .dir = .{ .cache = cache_dir },
-                    } },
-                    .result = undefined,
-                }) catch {};
-                return;
-            }
-
+            return .scheduled;
+        } else |_| {
             // Need to clone
             const buf = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(buf);
@@ -484,14 +494,14 @@ pub const Repository = extern struct {
                 "core.longpaths=true",
                 "--quiet",
                 "--bare",
-                url,
+                clone_url,
                 target,
             };
 
             const context = GitRunner.CompletionContext{
                 .git_clone = .{
                     .name = try allocator.dupe(u8, name),
-                    .url = try allocator.dupe(u8, url),
+                    .url = try allocator.dupe(u8, input_url),
                     .task_id = task_id,
                     .attempt = attempt,
                     .dir = .{ .cache = cache_dir },
@@ -504,6 +514,7 @@ pub const Repository = extern struct {
                 context,
             );
             try runner.spawn(argv, env);
+            return .scheduled;
         }
     }
 
@@ -516,7 +527,7 @@ pub const Repository = extern struct {
         name: string,
         committish: string,
         task_id: u64,
-    ) !void {
+    ) !GitRunner.ScheduleResult {
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
         const path = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
@@ -539,6 +550,7 @@ pub const Repository = extern struct {
 
         const runner = try GitRunner.init(allocator, pm, context);
         try runner.spawn(argv, env);
+        return .scheduled;
     }
 
     pub fn checkout(
@@ -552,7 +564,7 @@ pub const Repository = extern struct {
         url: string,
         resolved: string,
         task_id: u64,
-    ) !void {
+    ) !GitRunner.ScheduleResult {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
@@ -578,13 +590,9 @@ pub const Repository = extern struct {
                             .cache_dir = cache_dir,
                             .repo_dir = repo_dir,
                         } },
-                        .result = .{ .git_checkout = .{
-                            .url = url,
-                            .resolved = resolved,
-                            .json = null,
-                        } },
+                        .result = undefined,
                     });
-                    return;
+                    return .completed;
                 };
 
                 const ret_json_path = try @import("../fs.zig").FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
@@ -609,6 +617,7 @@ pub const Repository = extern struct {
                         },
                     } },
                 });
+                return .completed;
             },
             .err => {
                 const buf = bun.PathBufferPool.get();
@@ -644,6 +653,7 @@ pub const Repository = extern struct {
 
                 const runner = try GitRunner.init(allocator, pm, context);
                 try runner.spawn(argv, env);
+                return .scheduled;
             },
         }
     }

@@ -26,9 +26,6 @@ pub const GitRunner = struct {
     /// Allocator for this runner
     allocator: std.mem.Allocator,
 
-    /// For multi-step operations like checkout (clone then checkout)
-    is_second_step: bool = false,
-
     pub const CompletionContext = union(enum) {
         git_clone: struct {
             name: []const u8,
@@ -69,6 +66,7 @@ pub const GitRunner = struct {
 
     pub const Result = struct {
         task_id: u64,
+        pending: bool = false,
         err: ?anyerror = null,
 
         // The original context is passed back with the result.
@@ -122,6 +120,15 @@ pub const GitRunner = struct {
     }
 
     pub fn spawn(this: *GitRunner, argv_slice: []const []const u8, env: ?*const DotEnv.Map) !void {
+        if (this.manager.options.log_level.isVerbose()) {
+            Output.prettyError("<r><d>$ git", .{});
+            for (argv_slice[1..]) |arg| {
+                Output.prettyError(" {s}", .{arg});
+            }
+            Output.prettyErrorln("<r>\n", .{});
+            Output.flush();
+        }
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
 
@@ -182,7 +189,6 @@ pub const GitRunner = struct {
 
         const event_loop = &this.manager.event_loop;
         var process = spawned.toProcess(event_loop, false);
-        _ = this.manager.incrementPendingTasks(1);
         this.process = process;
         process.setExitHandler(this);
 
@@ -239,11 +245,7 @@ pub const GitRunner = struct {
     }
 
     pub fn handleExit(this: *GitRunner, status: bun.spawn.Status) void {
-        var must_deinit = true;
-        defer {
-            _ = this.manager.decrementPendingTasks();
-            if (must_deinit) this.deinit();
-        }
+        defer this.deinit();
 
         switch (status) {
             .exited => |exit| {
@@ -264,6 +266,7 @@ pub const GitRunner = struct {
                                             .task_id = ctx.task_id,
                                             .context = .{ .git_clone = ctx.* },
                                             .result = .{ .git_clone = repo_dir },
+                                            .pending = true,
                                         }) catch {};
                                     } else |err| {
                                         this.manager.git_tasks.writeItem(.{
@@ -271,6 +274,7 @@ pub const GitRunner = struct {
                                             .context = .{ .git_clone = ctx.* },
                                             .err = err,
                                             .result = undefined,
+                                            .pending = true,
                                         }) catch {};
                                     }
                                 },
@@ -279,6 +283,7 @@ pub const GitRunner = struct {
                                         .task_id = ctx.task_id,
                                         .context = .{ .git_clone = ctx.* },
                                         .result = .{ .git_clone = repo_dir },
+                                        .pending = true,
                                     }) catch {};
                                 },
                             }
@@ -292,6 +297,7 @@ pub const GitRunner = struct {
                                     .task_id = ctx.task_id,
                                     .context = .{ .git_find_commit = ctx.* },
                                     .result = .{ .git_find_commit = duped },
+                                    .pending = true,
                                 }) catch {};
                             } else {
                                 this.manager.git_tasks.writeItem(.{
@@ -299,90 +305,61 @@ pub const GitRunner = struct {
                                     .context = .{ .git_find_commit = ctx.* },
                                     .err = error.InstallFailed,
                                     .result = undefined,
+                                    .pending = true,
                                 }) catch {};
                             }
                         },
                         .git_checkout => |*ctx| {
-                            if (!this.is_second_step) {
-                                const buf = bun.PathBufferPool.get();
-                                defer bun.PathBufferPool.put(buf);
-                                // First step completed (clone), now do checkout
-                                const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
-                                const folder = Path.joinAbsStringBuf(PackageManager.get().cache_directory_path, buf, &.{folder_name}, .auto);
-                                const checkout_argv = &[_][]const u8{
-                                    GitRunner.gitExecutable(),
-                                    "-C",
-                                    folder,
-                                    "checkout",
-                                    "--quiet",
-                                    ctx.resolved,
-                                };
+                            // Checkout completed, clean up and read package.json
+                            const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
+                            if (bun.openDir(ctx.cache_dir, folder_name)) |dir_const| {
+                                var dir = dir_const;
+                                defer dir.close();
+                                dir.deleteTree(".git") catch {};
 
-                                this.is_second_step = true;
-                                this.stdout.deinit();
-                                this.stderr.deinit();
-                                this.remaining_fds = 0;
+                                if (ctx.resolved.len > 0) {
+                                    switch (bun.sys.File.writeFile(bun.FD.fromStdDir(dir), ".bun-tag", ctx.resolved)) {
+                                        .err => {
+                                            _ = bun.sys.unlinkat(.fromStdDir(dir), ".bun-tag");
+                                        },
+                                        .result => {},
+                                    }
+                                }
 
-                                this.stdout = bun.io.BufferedReader.init(@This());
-                                this.stderr = bun.io.BufferedReader.init(@This());
-                                this.stdout.setParent(this);
-                                this.stderr.setParent(this);
-
-                                this.spawn(checkout_argv, null) catch |err| {
+                                const extract_data = this.readPackageJson(dir, ctx.url, ctx.resolved) catch |err| {
                                     this.manager.git_tasks.writeItem(.{
                                         .task_id = ctx.task_id,
                                         .context = .{ .git_checkout = ctx.* },
                                         .err = err,
                                         .result = undefined,
+                                        .pending = true,
                                     }) catch {};
                                     return;
                                 };
-                                must_deinit = false;
-                            } else {
-                                // Second step completed (checkout), clean up and read package.json
-                                const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
-                                if (bun.openDir(ctx.cache_dir, folder_name)) |dir_const| {
-                                    var dir = dir_const;
-                                    defer dir.close();
-                                    dir.deleteTree(".git") catch {};
-
-                                    if (ctx.resolved.len > 0) {
-                                        switch (bun.sys.File.writeFile(bun.FD.fromStdDir(dir), ".bun-tag", ctx.resolved)) {
-                                            .err => {
-                                                _ = bun.sys.unlinkat(.fromStdDir(dir), ".bun-tag");
-                                            },
-                                            .result => {},
-                                        }
-                                    }
-
-                                    const extract_data = this.readPackageJson(dir, ctx.url, ctx.resolved) catch |err| {
-                                        this.manager.git_tasks.writeItem(.{
-                                            .task_id = ctx.task_id,
-                                            .context = .{ .git_checkout = ctx.* },
-                                            .err = err,
-                                            .result = undefined,
-                                        }) catch {};
-                                        return;
-                                    };
-                                    this.manager.git_tasks.writeItem(.{
-                                        .task_id = ctx.task_id,
-                                        .context = .{ .git_checkout = ctx.* },
-                                        .result = .{ .git_checkout = extract_data },
-                                    }) catch {};
-                                } else |err| {
-                                    this.manager.git_tasks.writeItem(.{
-                                        .task_id = ctx.task_id,
-                                        .context = .{ .git_checkout = ctx.* },
-                                        .err = err,
-                                        .result = undefined,
-                                    }) catch {};
-                                }
+                                this.manager.git_tasks.writeItem(.{
+                                    .task_id = ctx.task_id,
+                                    .context = .{ .git_checkout = ctx.* },
+                                    .result = .{ .git_checkout = extract_data },
+                                    .pending = true,
+                                }) catch {};
+                            } else |err| {
+                                this.manager.git_tasks.writeItem(.{
+                                    .task_id = ctx.task_id,
+                                    .context = .{ .git_checkout = ctx.* },
+                                    .err = err,
+                                    .result = undefined,
+                                    .pending = true,
+                                }) catch {};
                             }
                         },
                     }
                 } else {
                     // Error case - check stderr for specific errors
                     const stderr_data = this.stderr.finalBuffer();
+                    if (this.manager.options.log_level.isVerbose() and stderr_data.items.len > 0) {
+                        Output.printErrorln("<r>{s}<r>\n", .{stderr_data.items});
+                    }
+
                     const err = if ((strings.containsComptime(stderr_data.items, "remote:") and
                         strings.containsComptime(stderr_data.items, "not") and
                         strings.containsComptime(stderr_data.items, "found")) or
@@ -398,6 +375,7 @@ pub const GitRunner = struct {
                                 .context = .{ .git_clone = ctx },
                                 .err = err,
                                 .result = undefined,
+                                .pending = true,
                             }) catch {};
                         },
                         .git_find_commit => |ctx| {
@@ -406,6 +384,7 @@ pub const GitRunner = struct {
                                 .context = .{ .git_find_commit = ctx },
                                 .err = err,
                                 .result = undefined,
+                                .pending = true,
                             }) catch {};
                         },
                         .git_checkout => |ctx| {
@@ -414,6 +393,7 @@ pub const GitRunner = struct {
                                 .context = .{ .git_checkout = ctx },
                                 .err = err,
                                 .result = undefined,
+                                .pending = true,
                             }) catch {};
                         },
                     }
@@ -427,6 +407,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_clone = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                     .git_checkout => |ctx| {
@@ -435,6 +416,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_checkout = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                     .git_find_commit => |ctx| {
@@ -443,6 +425,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_find_commit = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                 }
@@ -455,6 +438,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_clone = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                     .git_find_commit => |ctx| {
@@ -463,6 +447,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_find_commit = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                     .git_checkout => |ctx| {
@@ -471,6 +456,7 @@ pub const GitRunner = struct {
                             .context = .{ .git_checkout = ctx },
                             .err = error.InstallFailed,
                             .result = undefined,
+                            .pending = true,
                         }) catch {};
                     },
                 }
@@ -519,4 +505,9 @@ pub const GitRunner = struct {
         this.arena.deinit();
         this.allocator.destroy(this);
     }
+
+    pub const ScheduleResult = enum {
+        scheduled,
+        completed,
+    };
 };

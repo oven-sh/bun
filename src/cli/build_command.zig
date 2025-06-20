@@ -113,6 +113,7 @@ pub const BuildCommand = struct {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -140,6 +141,7 @@ pub const BuildCommand = struct {
 
                 if (strings.eqlComptime(outfile, "index")) {
                     outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                    was_renamed_from_index = !strings.eqlComptime(outfile, "index");
                 }
 
                 if (strings.eqlComptime(outfile, "bun")) {
@@ -429,6 +431,11 @@ pub const BuildCommand = struct {
 
                 if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
                     outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
+                } else if (was_renamed_from_index and !bun.strings.eqlComptime(outfile, "index")) {
+                    // If we're going to fail due to EISDIR, we should instead pick a different name.
+                    if (bun.sys.directoryExistsAt(bun.FD.fromStdDir(root_dir), outfile).asValue() orelse false) {
+                        outfile = "index";
+                    }
                 }
 
                 try bun.StandaloneModuleGraph.toExecutable(

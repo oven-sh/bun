@@ -364,10 +364,12 @@ pub const S3UploadStreamWrapper = struct {
                 // this match the previous behavior
                 this.endPromise.reject(this.global, js_err);
             }
-            this.task.fail(.{
-                .code = "UnknownError",
-                .message = "ReadableStream ended with an error",
-            });
+            if (!this.task.ended) {
+                this.task.fail(.{
+                    .code = "UnknownError",
+                    .message = "ReadableStream ended with an error",
+                });
+            }
         } else {
             _ = this.task.sendRequestData("", true);
         }
@@ -375,14 +377,18 @@ pub const S3UploadStreamWrapper = struct {
 
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         defer self.deref();
-        if (self.endPromise.hasValue()) {
-            switch (result) {
-                .success => self.endPromise.resolve(self.global, JSC.jsNumber(0)),
-                .failure => |err| {
+        switch (result) {
+            .success => self.endPromise.resolve(self.global, JSC.jsNumber(0)),
+            .failure => |err| {
+                if (self.sink) |sink| {
+                    // sink in progress, cancel it (will call writeEndRequest for cleanup and will reject the endPromise)
+                    sink.cancel(err.toJS(self.global, self.path));
+                } else {
                     self.endPromise.reject(self.global, err.toJS(self.global, self.path));
-                },
-            }
+                }
+            },
         }
+
         if (self.callback) |callback| {
             callback(result, self.callback_context);
         }

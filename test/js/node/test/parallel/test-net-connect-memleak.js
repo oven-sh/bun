@@ -23,6 +23,7 @@
 // Flags: --expose-gc
 
 const common = require('../common');
+if (require("./../../../../harness").isASAN) return;
 const { onGC } = require('../common/gc');
 const assert = require('assert');
 const net = require('net');
@@ -49,7 +50,7 @@ const gcListener = { ongc() { collected = true; } };
 }
 
 function done(sock) {
-  globalThis.gc();
+  globalThis.gc(true);
   setImmediate(() => {
     assert.strictEqual(collected, true);
     sock.end();

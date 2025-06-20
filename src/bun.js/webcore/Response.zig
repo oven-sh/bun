@@ -92,7 +92,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .js_undefined,
+        .Used, .Empty, .Null, .HTMLRoute => return .js_undefined,
         .Blob => |*blob| {
             if (blob.isBunFile()) {
                 return .js_undefined;
@@ -511,6 +511,45 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
+        if (arguments[0].as(HTMLBundle)) |html_bundle| {
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            var init: Init = brk: {
+                if (arguments.len >= 2 and !arguments[1].isUndefinedOrNull()) {
+                    if (arguments[1].isObject()) {
+                        break :brk try Init.init(globalThis, arguments[1]) orelse unreachable;
+                    }
+
+                    if (!globalThis.hasException()) {
+                        return globalThis.throwInvalidArguments(
+                            "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
+                            .{},
+                        );
+                    }
+                    return error.JSError;
+                }
+
+                break :brk Init{
+                    .status_code = 200,
+                    .headers = null,
+                };
+            };
+            errdefer init.deinit(bun.default_allocator);
+
+            var response = bun.new(Response, Response{
+                .init = init,
+                .body = Body{ .value = .{ .HTMLRoute = HTMLBundle.Route.init(html_bundle) } },
+                .url = bun.String.empty,
+            });
+            response.init.headers = response.getOrCreateHeaders(globalThis);
+            response.calculateEstimatedByteSize();
+
+            //return bun.new(Response, response);
+            return response;
+        }
+
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
                 if (!arguments[1].isEmptyOrUndefinedOrNull()) {
@@ -737,6 +776,7 @@ const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
+const HTMLBundle = JSC.API.HTMLBundle;
 const InternalBlob = JSC.WebCore.Blob.Internal;
 const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;

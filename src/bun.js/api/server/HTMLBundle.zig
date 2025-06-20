@@ -64,6 +64,10 @@ pub const Route = struct {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
 
+    /// Optional status code and headers to apply to the generated static route
+    status_code: u16 = 200,
+    headers: Headers = .{ .allocator = bun.default_allocator },
+
     method: union(enum) {
         any: void,
         method: bun.http.Method.Set,
@@ -82,6 +86,16 @@ pub const Route = struct {
             .bundle = .initRef(html_bundle),
             .pending_responses = .{},
             .ref_count = .init(),
+            .server = null,
+            .state = .pending,
+        });
+    }
+
+    pub fn initEmpty() RefPtr(Route) {
+        return .new(.{
+            .bundle = undefined,
+            .pending_response = .{},
+            .refcount = .init(),
             .server = null,
             .state = .pending,
         });
@@ -133,6 +147,82 @@ pub const Route = struct {
 
     pub fn onHEADRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, true);
+    }
+
+    pub fn respondWithInit(this: *Route, req: *uws.Request, resp: HTTPResponse, method: HTTP.Method, resinit: *const Response.Init) void {
+        bun.Output.warn("This feature is in development and requires optimization.", .{});
+        this.ref();
+        defer this.deref();
+
+        const server: AnyServer = this.server orelse {
+            resp.writeStatus("500 Internal Server Error");
+            resp.endWithoutBody(true);
+            return;
+        };
+
+        const is_head = method == .HEAD;
+
+        if (server.config().isDevelopment()) {
+            if (server.devServer()) |dev| {
+                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
+                return;
+            }
+
+            if (this.state == .html) {
+                this.state.html.deref();
+                this.state = .pending;
+            } else if (this.state == .err) {
+                this.state.err.deinit();
+                this.state = .pending;
+            }
+        }
+
+        var cloned_init = resinit.clone(server.globalThis());
+        defer cloned_init.deinit(bun.default_allocator);
+
+        state: while (true)
+            switch (this.state) {
+                .pending => {
+                    this.scheduleBundle(server) catch bun.outOfMemory();
+                    continue :state;
+                },
+                .building => {
+                    const pending = bun.new(PendingResponse, .{
+                        .method = method,
+                        .resp = resp,
+                        .server = this.server,
+                        .route = this,
+                        .init = cloned_init.clone(server.globalThis()),
+                    });
+                    this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                    this.ref();
+                    resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
+                    return;
+                },
+                .err => |log| {
+                    _ = log; // TODO: Surface build errors
+                    resp.writeStatus("500 Build Failed");
+                    resp.endWithoutBody(false);
+                    return;
+                },
+                .html => |html| {
+                    var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
+                    this.status_code = cloned_init.status_code;
+                    route_clone.status_code = cloned_init.status_code;
+                    if (cloned_init.headers) |headers| {
+                        applyInitHeaders(&route_clone.headers, headers, &route_clone.blob) catch bun.outOfMemory();
+                    }
+                    if (is_head) {
+                        route_clone.onHEAD(resp);
+                    } else {
+                        route_clone.on(resp);
+                    }
+                    route_clone.deref();
+                    return;
+                },
+            };
+
+        bun.Output.print("\nhtmlbundle count: {any}\n", .{this.ref_count.active_counts});
     }
 
     fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
@@ -388,11 +478,21 @@ pub const Route = struct {
                         }
                     }
 
+                    if (this.headers.entries.len > 0) {
+                        const extra_entries = this.headers.entries.slice();
+                        const extra_names = extra_entries.items(.name);
+                        const extra_vals = extra_entries.items(.value);
+                        const buf = this.headers.buf.items;
+                        for (extra_names, extra_vals) |name, val| {
+                            headers.append(name.slice(buf), val.slice(buf)) catch bun.outOfMemory();
+                        }
+                    }
+
                     const static_route = bun.new(StaticRoute, .{
                         .ref_count = .init(),
                         .blob = blob,
                         .server = server,
-                        .status_code = 200,
+                        .status_code = this.status_code,
                         .headers = headers,
                         .cached_blob_size = blob.size(),
                     });
@@ -447,10 +547,26 @@ pub const Route = struct {
 
             switch (this.state) {
                 .html => |html| {
-                    if (method == .HEAD) {
-                        html.onHEAD(resp);
+                    const server = this.server.?; // server must exist here
+                    if (pending_response.init) |*_init| {
+                        var route_clone = html.clone(server.globalThis()) catch bun.outOfMemory();
+                        this.status_code = _init.status_code;
+                        route_clone.status_code = _init.status_code;
+                        if (_init.headers) |headers| {
+                            applyInitHeaders(&route_clone.headers, headers, &route_clone.blob) catch bun.outOfMemory();
+                        }
+                        if (method == .HEAD) {
+                            route_clone.onHEAD(resp);
+                        } else {
+                            route_clone.on(resp);
+                        }
+                        route_clone.deref();
                     } else {
-                        html.on(resp);
+                        if (method == .HEAD) {
+                            html.onHEAD(resp);
+                        } else {
+                            html.on(resp);
+                        }
                     }
                 },
                 .err => |log| {
@@ -470,10 +586,23 @@ pub const Route = struct {
         }
     }
 
+    fn applyInitHeaders(headers_out: *Headers, src_headers: *FetchHeaders, blob: *AnyBlob) !void {
+        var extra = try Headers.from(src_headers, bun.default_allocator, .{ .body = blob });
+        defer extra.deinit();
+        const entries = extra.entries.slice();
+        const names = entries.items(.name);
+        const values = entries.items(.value);
+        const buf = extra.buf.items;
+        for (names, values) |name, val| {
+            try headers_out.append(name.slice(buf), val.slice(buf));
+        }
+    }
+
     /// Represents an in-flight response before the bundle has finished building.
     pub const PendingResponse = struct {
         method: bun.http.Method,
         resp: HTTPResponse,
+        init: ?Response.Init = null,
         is_response_pending: bool = true,
         server: ?AnyServer = null,
         route: *Route,
@@ -484,6 +613,11 @@ pub const Route = struct {
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
             }
+
+            if (this.init) |*i| {
+                i.deinit(bun.default_allocator);
+            }
+
             this.route.deref();
             bun.destroy(this);
         }
@@ -511,10 +645,16 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
+const HTTP = bun.http;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
+const Response = JSC.WebCore.Response;
 const StaticRoute = @import("./StaticRoute.zig");
 const RefPtr = bun.ptr.RefPtr;
+const ResponseInit = JSC.WebCore.Response.Init;
+const Headers = bun.http.Headers;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const AnyBlob = JSC.WebCore.Blob.Any;
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

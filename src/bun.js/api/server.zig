@@ -129,6 +129,12 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (argument.as(Response)) |resp| {
+            if (resp.body.value == .HTMLRoute) {
+                return .{ .html = resp.body.value.HTMLRoute.dupeRef() };
+            }
+        }
+
         return null;
     }
 
@@ -488,6 +494,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// User routes may get applied multiple times due to SNI.
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
+
+        // cache HTMLBundle routes returned by handlers at runtime.
+        html_bundle_route_cache: bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)) = undefined,
 
         on_clienterror: JSC.Strong.Optional = .empty,
 
@@ -1535,6 +1544,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
             this.user_routes.deinit(bun.default_allocator);
 
+            //HTMLBundle
+            var iter_html = this.html_bundle_route_cache.valueIterator();
+            while (iter_html.next()) |route_ptr| {
+                route_ptr.deref();
+            }
+            this.html_bundle_route_cache.deinit();
+
             this.config.deinit();
 
             this.on_clienterror.deinit();
@@ -1579,6 +1595,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .allocator = Arena.getThreadlocalDefault(),
                 .dev_server = dev_server,
             });
+
+            server.html_bundle_route_cache = bun.StringHashMap(bun.ptr.RefPtr(HTMLBundle.Route)).init(bun.default_allocator);
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(

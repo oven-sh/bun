@@ -157,10 +157,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 ctx.renderMissingInvalidResponse(value);
                 return;
             };
+
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
             value.protect();
+
+            if (response.body.value == .HTMLRoute) {
+                RenderHTMLBundle(ctx, value, response);
+                return;
+            }
 
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
@@ -1434,7 +1440,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeader("transfer-encoding", "chunked");
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
-                .Used, .Null, .Empty, .Error => {
+                .Used, .Null, .Empty, .Error, .HTMLRoute => {
                     this.renderMetadata();
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());
@@ -1483,10 +1489,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (response_value.as(JSC.WebCore.Response)) |response| {
+            if (response_value.as(Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
+
+                if (response.body.value == .HTMLRoute) {
+                    RenderHTMLBundle(ctx, response_value,response);
+                    return;
+                }
+
                 if (ctx.method == .HEAD) {
                     if (ctx.resp) |resp| {
                         var pair = HeaderResponsePair{ .this = ctx, .response = response };
@@ -1537,6 +1549,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         }
+
                         var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
@@ -1545,6 +1558,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx.response_jsvalue = fulfilled_value;
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
+
+                        if (response.body.value == .HTMLRoute) {
+                            RenderHTMLBundle(ctx, fulfilled_value, response);
+                        }
+
                         ctx.response_ptr = response;
                         if (ctx.method == .HEAD) {
                             if (ctx.resp) |resp| {
@@ -1863,6 +1881,36 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn doRenderBlobCorked(this: *RequestContext) void {
             this.renderMetadata();
             this.renderBytes();
+        }
+
+        pub fn RenderHTMLBundle(ctx: *RequestContext, value: JSValue,response: *Response) void {
+            const route_ref = response.body.value.HTMLRoute;
+            if (ctx.resp) |resp_ptr| {
+                var route = route_ref.data;
+
+                if (route.server == null) {
+                    if (ctx.server) |server_ptr| {
+                        route.server = JSC.API.AnyServer.from(server_ptr);
+                    }
+                }
+
+                ctx.detachResponse();
+                ctx.endRequestStreamingAndDrain();
+
+                if (ctx.signal) |signal_ptr| {
+                    ctx.signal = null;
+                    signal_ptr.pendingActivityUnref();
+                    signal_ptr.unref();
+                }
+
+                const any_resp = uws.AnyResponse.init(resp_ptr);
+                route.respondWithInit(ctx.req.?,any_resp, ctx.method, &response.init);
+
+                ctx.finalizeWithoutDeinit();
+                ctx.deref();
+            } else {
+                ctx.renderMissingInvalidResponse(value);
+            }
         }
 
         pub fn doRender(this: *RequestContext) void {
@@ -2528,6 +2576,7 @@ const Response = JSC.WebCore.Response;
 const FetchHeaders = JSC.WebCore.FetchHeaders;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
+const HTMLBundle = JSC.WebCore.Blob;
 const MimeType = bun.http.MimeType;
 const HTTP = bun.http;
 const Output = bun.Output;

@@ -42,6 +42,11 @@ var max_test_id_for_debugger: u32 = 0;
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
+    /// True when the current test run is executed under `--watch`
+    is_watch_mode: bool = false,
+    /// Runtime flag set by the reporter to abort the current run early
+    /// (used for `--bail` handling in watch mode)
+    should_abort: bool = false,
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,

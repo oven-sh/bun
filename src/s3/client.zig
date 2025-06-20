@@ -28,6 +28,7 @@ pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
 pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
 pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
+
 pub fn stat(
     this: *S3Credentials,
     path: []const u8,
@@ -274,7 +275,6 @@ pub fn writableStream(
                             sink.abort();
                             return;
                         }
-
                         sink.endPromise.reject(sink.globalThis, err.toJS(sink.globalThis, sink.path()));
                     },
                 }
@@ -285,7 +285,7 @@ pub fn writableStream(
     const proxy_url = (proxy orelse "");
     this.ref(); // ref the credentials
     const task = bun.new(MultiPartUpload, .{
-        .ref_count = .init(),
+        .ref_count = .initExactRefs(2), // +1 for the stream
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -301,7 +301,6 @@ pub fn writableStream(
 
     task.poll_ref.ref(task.vm);
 
-    task.ref(); // + 1 for the stream
     var response_stream = JSC.WebCore.NetworkSink.new(.{
         .task = .{ .s3_upload = task },
         .buffer = .{},
@@ -326,6 +325,7 @@ pub const S3UploadStreamWrapper = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
     pub const ResumableSink = @import("../bun.js/webcore/ResumableSink.zig").ResumableS3UploadSink;
+    const log = bun.Output.scoped(.S3UploadStream, false);
 
     ref_count: RefCount,
 
@@ -338,12 +338,14 @@ pub const S3UploadStreamWrapper = struct {
     global: *JSC.JSGlobalObject,
 
     fn detachSink(self: *@This()) void {
+        log("detachSink {}", .{self.sink != null});
         if (self.sink) |sink| {
             self.sink = null;
             sink.deref();
         }
     }
     pub fn onWritable(task: *MultiPartUpload, self: *@This()) void {
+        log("onWritable {} {}", .{ self.sink != null, task.ended });
         if (task.ended) return;
         if (self.sink) |sink| {
             sink.drain();
@@ -351,10 +353,12 @@ pub const S3UploadStreamWrapper = struct {
     }
 
     pub fn writeRequestData(this: *@This(), data: []const u8) bool {
+        log("writeRequestData {}", .{data.len});
         return this.task.sendRequestData(data, false);
     }
 
     pub fn writeEndRequest(this: *@This(), err: ?JSC.JSValue) void {
+        log("writeEndRequest {}", .{err != null});
         this.detachSink();
         defer this.deref();
         if (err) |js_err| {
@@ -363,6 +367,7 @@ pub const S3UploadStreamWrapper = struct {
                 // if not when calling .fail will create a S3Error instance
                 // this match the previous behavior
                 this.endPromise.reject(this.global, js_err);
+                this.endPromise = .empty;
             }
             if (!this.task.ended) {
                 this.task.fail(.{
@@ -376,15 +381,24 @@ pub const S3UploadStreamWrapper = struct {
     }
 
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
+        log("resolve {any}", .{result});
         defer self.deref();
         switch (result) {
-            .success => self.endPromise.resolve(self.global, JSC.jsNumber(0)),
+            .success => {
+                if (self.endPromise.hasValue()) {
+                    self.endPromise.resolve(self.global, JSC.jsNumber(0));
+                    self.endPromise = .empty;
+                }
+            },
             .failure => |err| {
                 if (self.sink) |sink| {
+                    self.sink = null;
                     // sink in progress, cancel it (will call writeEndRequest for cleanup and will reject the endPromise)
                     sink.cancel(err.toJS(self.global, self.path));
-                } else {
+                    sink.deref();
+                } else if (self.endPromise.hasValue()) {
                     self.endPromise.reject(self.global, err.toJS(self.global, self.path));
+                    self.endPromise = .empty;
                 }
             },
         }
@@ -395,6 +409,7 @@ pub const S3UploadStreamWrapper = struct {
     }
 
     fn deinit(self: *@This()) void {
+        log("deinit {}", .{self.sink != null});
         self.detachSink();
         self.task.deref();
         self.endPromise.deinit();
@@ -418,7 +433,6 @@ pub fn uploadStream(
 ) JSC.JSValue {
     this.ref(); // ref the credentials
     const proxy_url = (proxy orelse "");
-
     if (readable_stream.isDisturbed(globalThis)) {
         return JSC.JSPromise.rejectedPromise(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis)).toJS();
     }
@@ -444,7 +458,7 @@ pub fn uploadStream(
     }
 
     const task = bun.new(MultiPartUpload, .{
-        .ref_count = .init(),
+        .ref_count = .initExactRefs(2), // +1 for the stream ctx (only deinit after task and context ended)
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -462,7 +476,7 @@ pub fn uploadStream(
     task.poll_ref.ref(task.vm);
 
     const ctx = bun.new(S3UploadStreamWrapper, .{
-        .ref_count = .init(),
+        .ref_count = .initExactRefs(2), // +1 for the stream sink (only deinit after both sink and task ended)
         .sink = null,
         .callback = callback,
         .callback_context = callback_context,
@@ -471,14 +485,11 @@ pub fn uploadStream(
         .endPromise = JSC.JSPromise.Strong.init(globalThis),
         .global = globalThis,
     });
-    task.ref(); // + 1 for the stream sink
-    const sink = S3UploadStreamWrapper.ResumableSink.init(globalThis, readable_stream, ctx);
-    // make sure the sink is alive so we can abort/resume
-    sink.ref();
+    // +1 because the ctx refs the sink
+    ctx.sink = S3UploadStreamWrapper.ResumableSink.initExactRefs(globalThis, readable_stream, ctx, 2);
     task.callback_context = @ptrCast(ctx);
     task.onWritable = @ptrCast(&S3UploadStreamWrapper.onWritable);
     task.continueStream();
-
     return ctx.endPromise.value();
 }
 

@@ -346,9 +346,8 @@ pub const FetchTasklet = struct {
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
             const globalThis = this.global_this;
             this.ref(); // lets only unref when sink is done
-            const sink = ResumableSink.init(globalThis, stream, this);
-            // make sure the sink is alive so we can abort/resume
-            sink.ref();
+            // +1 because the task refs the sink
+            const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
             this.sink = sink;
         }
     }

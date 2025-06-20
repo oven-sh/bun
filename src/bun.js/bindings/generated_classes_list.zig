@@ -84,6 +84,7 @@ pub const Classes = struct {
     pub const S3Client = webcore.S3Client;
     pub const S3Stat = webcore.S3Stat;
     pub const ResumableFetchSink = webcore.ResumableFetchSink;
+    pub const ResumableS3UploadSink = webcore.ResumableS3UploadSink;
     pub const HTMLBundle = api.HTMLBundle;
     pub const RedisClient = api.Valkey;
     pub const BlockList = api.BlockList;

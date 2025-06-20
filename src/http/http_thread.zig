@@ -84,7 +84,8 @@ pub const HTTPThread = struct {
         flags: packed struct(u8) {
             is_tls: bool,
             ended: bool,
-            _: u6 = 0,
+            chunked: bool,
+            _: u5 = 0,
         },
     };
     const ShutdownMessage = struct {
@@ -402,7 +403,7 @@ pub const HTTPThread = struct {
             this.loop.loop.wakeup();
     }
 
-    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, ended: bool) void {
+    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, ended: bool, chunked: bool) void {
         {
             this.queued_writes_lock.lock();
             defer this.queued_writes_lock.unlock();
@@ -411,6 +412,7 @@ pub const HTTPThread = struct {
                 .flags = .{
                     .is_tls = http.client.isHTTPS(),
                     .ended = ended,
+                    .chunked = chunked,
                 },
             }) catch bun.outOfMemory();
         }

@@ -308,7 +308,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
-        auto name = String::fromUTF8(std::span { chars, len });
+        // We can't really trust that the OS gives us valid UTF-8
+        auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
         keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
 #endif
@@ -347,7 +348,13 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             }
         }
 
-        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
+        // JSObject::putDirectCustomAccessor asserts that the inserted property
+        // is new... so we'll just avoid setting it if it exists already. This
+        // should be fine because we set the values to these getter callbacks
+        // anyway.
+        if (!object->hasProperty(globalObject, identifier)) {
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
+        }
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

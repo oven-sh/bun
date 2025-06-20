@@ -4969,7 +4969,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     // ErrorInstance
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
         auto name_value = obj->getIfPropertyExists(global, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(scope, );
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+        }
         if (name_value) {
             if (name_value.isString()) {
                 auto name_str = name_value.toWTFString(global);
@@ -4994,12 +4996,10 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
+        auto message = obj->getIfPropertyExists(global, vm.propertyNames->message);
         if (scope.exception()) [[unlikely]] {
             scope.clearExceptionExceptTermination();
         }
-
-        auto message = obj->getIfPropertyExists(global, vm.propertyNames->message);
-        RETURN_IF_EXCEPTION(scope, );
         if (message) {
             if (message.isString()) {
                 except->message = Bun::toStringRef(
@@ -5007,16 +5007,13 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
+        auto sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL);
         if (scope.exception()) [[unlikely]] {
             scope.clearExceptionExceptTermination();
         }
-
-        auto sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL);
-        RETURN_IF_EXCEPTION(scope, );
         if (sourceURL) {
             if (sourceURL.isString()) {
-                except->stack.frames_ptr[0].source_url = Bun::toStringRef(
-                    sourceURL.toWTFString(global));
+                except->stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL.toWTFString(global));
                 except->stack.frames_len = 1;
             }
         }
@@ -5026,14 +5023,18 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         }
 
         auto line = obj->getIfPropertyExists(global, vm.propertyNames->line);
-        RETURN_IF_EXCEPTION(scope, );
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+        }
         if (line) {
             if (line.isNumber()) {
                 except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
                 // TODO: don't sourcemap it twice
                 auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
-                RETURN_IF_EXCEPTION(scope, );
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                }
                 if (originalLine) {
                     if (originalLine.isNumber()) {
                         except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
@@ -5192,7 +5193,7 @@ extern "C" void JSC__JSValue__getName(JSC::EncodedJSValue JSValue0, JSC::JSGloba
             }
         }
     }
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         scope.clearException();
 
     *arg2 = Bun::toStringRef(displayName);
@@ -5719,7 +5720,7 @@ restart:
             }
 
             // Ignore exceptions due to getters.
-            if (scope.exception())
+            if (scope.exception()) [[unlikely]]
                 scope.clearException();
 
             if (!propertyValue)

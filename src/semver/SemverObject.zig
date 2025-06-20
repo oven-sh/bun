@@ -1,5 +1,5 @@
 pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalThis, 8);
+    const object = JSC.JSValue.createEmptyObject(globalThis, 9);
 
     object.put(
         globalThis,
@@ -93,6 +93,18 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             JSC.ZigString.static("neq"),
             2,
             SemverObject.neq,
+            false,
+        ),
+    );
+
+    object.put(
+        globalThis,
+        JSC.ZigString.static("valid"),
+        JSC.host_fn.NewFunction(
+            globalThis,
+            JSC.ZigString.static("valid"),
+            1,
+            SemverObject.valid,
             false,
         ),
     );
@@ -225,6 +237,35 @@ pub fn neq(
     const orderResult = try order(globalThis, callFrame);
     const orderValue = orderResult.asNumber();
     return JSC.jsBoolean(orderValue != 0);
+}
+
+pub fn valid(
+    globalThis: *JSC.JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) bun.JSError!JSC.JSValue {
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    var stack_fallback = std.heap.stackFallback(512, arena.allocator());
+    const allocator = stack_fallback.get();
+
+    const arguments = callFrame.arguments();
+    if (arguments.len != 1) {
+        return globalThis.throw("Expected one argument", .{});
+    }
+
+    const arg = arguments[0];
+    const string = try arg.toJSString(globalThis);
+    const string_sliced = string.toSlice(globalThis, allocator);
+    defer string_sliced.deinit();
+
+    const result = Version.parseStrict(SlicedString.init(string_sliced.slice(), string_sliced.slice()));
+    if (result.valid) {
+        const formatter = result.version.min().fmt(string_sliced.slice());
+        const formatted = std.fmt.allocPrint(allocator, "{}", .{formatter}) catch return JSC.JSValue.null;
+        return bun.String.createUTF8ForJS(globalThis, formatted);
+    } else {
+        return JSC.JSValue.null;
+    }
 }
 
 const ArgumentStrings = struct {

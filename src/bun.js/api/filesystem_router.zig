@@ -269,8 +269,8 @@ pub const FileSystemRouter = struct {
             return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        this.arena.deinit();
         this.router.deinit();
+        this.arena.deinit();
         globalThis.allocator().destroy(this.arena);
 
         this.arena = arena;

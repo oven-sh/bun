@@ -321,32 +321,65 @@ pub fn writableStream(
     return response_stream.sink.toJS(globalThis);
 }
 
-const S3UploadStreamWrapper = struct {
+pub const S3UploadStreamWrapper = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
+    pub const ResumableSink = @import("../bun.js/webcore/ResumableSink.zig").ResumableS3UploadSink;
 
     ref_count: RefCount,
-    readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
-    sink: *JSC.WebCore.NetworkSink,
+
+    sink: ?*ResumableSink,
     task: *MultiPartUpload,
+    endPromise: JSC.JSPromise.Strong,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
     path: []const u8, // this is owned by the task not by the wrapper
     global: *JSC.JSGlobalObject,
 
+    fn detachSink(self: *@This()) void {
+        if (self.sink) |sink| {
+            self.sink = null;
+            sink.deref();
+        }
+    }
+    pub fn onWritable(task: *MultiPartUpload, self: *@This()) void {
+        if (task.ended) return;
+        if (self.sink) |sink| {
+            sink.drain();
+        }
+    }
+
+    pub fn writeRequestData(this: *@This(), data: []const u8) bool {
+        return this.task.sendRequestData(data, false);
+    }
+
+    pub fn writeEndRequest(this: *@This(), err: ?JSC.JSValue) void {
+        this.detachSink();
+        defer this.deref();
+        if (err) |js_err| {
+            if (this.endPromise.hasValue() and !js_err.isEmptyOrUndefinedOrNull()) {
+                // if we have a explicit error, reject the promise
+                // if not when calling .fail will create a S3Error instance
+                // this match the previous behavior
+                this.endPromise.reject(this.global, js_err);
+            }
+            this.task.fail(.{
+                .code = "UnknownError",
+                .message = "ReadableStream ended with an error",
+            });
+        } else {
+            _ = this.task.sendRequestData("", true);
+        }
+    }
+
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
-        const sink = self.sink;
         defer self.deref();
-        if (sink.endPromise.hasValue()) {
+        if (self.endPromise.hasValue()) {
             switch (result) {
-                .success => sink.endPromise.resolve(self.global, JSC.jsNumber(0)),
+                .success => self.endPromise.resolve(self.global, JSC.jsNumber(0)),
                 .failure => |err| {
-                    if (!sink.done) {
-                        sink.abort();
-                        return;
-                    }
-                    sink.endPromise.reject(self.global, err.toJS(self.global, self.path));
+                    self.endPromise.reject(self.global, err.toJS(self.global, self.path));
                 },
             }
         }
@@ -356,60 +389,12 @@ const S3UploadStreamWrapper = struct {
     }
 
     fn deinit(self: *@This()) void {
-        self.readable_stream_ref.deinit();
-        self.sink.finalize();
-        self.sink.deinit();
+        self.detachSink();
         self.task.deref();
+        self.endPromise.deinit();
         bun.destroy(self);
     }
 };
-
-pub fn onUploadStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var args = callframe.arguments_old(2);
-    var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
-    defer this.deref();
-
-    if (this.readable_stream_ref.get(globalThis)) |stream| {
-        stream.done(globalThis);
-    }
-    this.readable_stream_ref.deinit();
-    this.task.continueStream();
-
-    return .js_undefined;
-}
-
-pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const args = callframe.arguments_old(2);
-    var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
-    defer this.deref();
-
-    const err = args.ptr[0];
-    if (this.sink.endPromise.hasValue()) {
-        this.sink.endPromise.reject(globalThis, err);
-    }
-
-    if (this.readable_stream_ref.get(globalThis)) |stream| {
-        stream.cancel(globalThis);
-        this.readable_stream_ref.deinit();
-    }
-    if (this.sink.task) |task| {
-        if (task == .s3_upload) {
-            task.s3_upload.fail(.{
-                .code = "UnknownError",
-                .message = "ReadableStream ended with an error",
-            });
-        }
-    }
-    this.task.continueStream();
-
-    return .js_undefined;
-}
-comptime {
-    const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
-    @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
-    const jsonRejectRequestStream = JSC.toJSHostFn(onUploadStreamRejectRequestStream);
-    @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
-}
 
 /// consumes the readable stream and upload to s3
 pub fn uploadStream(
@@ -429,12 +414,12 @@ pub fn uploadStream(
     const proxy_url = (proxy orelse "");
 
     if (readable_stream.isDisturbed(globalThis)) {
-        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        return JSC.JSPromise.rejectedPromise(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis)).toJS();
     }
 
     switch (readable_stream.ptr) {
         .Invalid => {
-            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            return JSC.JSPromise.rejectedPromise(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis)).toJS();
         },
         inline .File, .Bytes => |stream| {
             if (stream.pending.result == .err) {
@@ -470,124 +455,25 @@ pub fn uploadStream(
 
     task.poll_ref.ref(task.vm);
 
-    task.ref(); // + 1 for the stream sink
-
-    var response_stream = JSC.WebCore.NetworkSink.new(.{
-        .task = .{ .s3_upload = task },
-        .buffer = .{},
-        .globalThis = globalThis,
-        .endPromise = JSC.JSPromise.Strong.init(globalThis),
-    }).toSink();
-    task.ref(); // + 1 for the stream wrapper
-
-    const endPromise = response_stream.sink.endPromise.value();
     const ctx = bun.new(S3UploadStreamWrapper, .{
         .ref_count = .init(),
-        .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
-        .sink = &response_stream.sink,
+        .sink = null,
         .callback = callback,
         .callback_context = callback_context,
         .path = task.path,
         .task = task,
+        .endPromise = JSC.JSPromise.Strong.init(globalThis),
         .global = globalThis,
     });
+    task.ref(); // + 1 for the stream sink
+    const sink = S3UploadStreamWrapper.ResumableSink.init(globalThis, readable_stream, ctx);
+    // make sure the sink is alive so we can abort/resume
+    sink.ref();
     task.callback_context = @ptrCast(ctx);
-    // keep the task alive until we are done configuring the signal
-    task.ref();
-    defer task.deref();
+    task.onWritable = @ptrCast(&S3UploadStreamWrapper.onWritable);
+    task.continueStream();
 
-    var signal = &response_stream.sink.signal;
-
-    signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);
-
-    // explicitly set it to a dead pointer
-    // we use this memory address to disable signals being sent
-    signal.clear();
-    bun.assert(signal.isDead());
-
-    // We are already corked!
-    const assignment_result: JSC.JSValue = JSC.WebCore.NetworkSink.JSSink.assignToStream(
-        globalThis,
-        readable_stream.value,
-        response_stream,
-        @as(**anyopaque, @ptrCast(&signal.ptr)),
-    );
-
-    assignment_result.ensureStillAlive();
-
-    // assert that it was updated
-    bun.assert(!signal.isDead());
-
-    if (assignment_result.toError()) |err| {
-        if (response_stream.sink.endPromise.hasValue()) {
-            response_stream.sink.endPromise.reject(globalThis, err);
-        }
-
-        task.fail(.{
-            .code = "UnknownError",
-            .message = "ReadableStream ended with an error",
-        });
-        readable_stream.cancel(globalThis);
-        return endPromise;
-    }
-
-    if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-        assignment_result.ensureStillAlive();
-        // it returns a Promise when it goes through ReadableStreamDefaultReader
-        if (assignment_result.asAnyPromise()) |promise| {
-            switch (promise.status(globalThis.vm())) {
-                .pending => {
-                    // if we eended and its not canceled the promise is the endPromise
-                    // because assignToStream can return the sink.end() promise
-                    // we set the endPromise in the NetworkSink so we need to resolve it
-                    if (response_stream.sink.ended and !response_stream.sink.cancel) {
-                        task.continueStream();
-
-                        readable_stream.done(globalThis);
-                        return endPromise;
-                    }
-                    ctx.ref();
-
-                    assignment_result.then(
-                        globalThis,
-                        task.callback_context,
-                        onUploadStreamResolveRequestStream,
-                        onUploadStreamRejectRequestStream,
-                    );
-                    // we need to wait the promise to resolve because can be an error/cancel here
-                    if (!task.ended)
-                        task.continueStream();
-                },
-                .fulfilled => {
-                    task.continueStream();
-
-                    readable_stream.done(globalThis);
-                },
-                .rejected => {
-                    if (response_stream.sink.endPromise.hasValue()) {
-                        response_stream.sink.endPromise.reject(globalThis, promise.result(globalThis.vm()));
-                    }
-
-                    task.fail(.{
-                        .code = "UnknownError",
-                        .message = "ReadableStream ended with an error",
-                    });
-                    readable_stream.cancel(globalThis);
-                },
-            }
-        } else {
-            if (response_stream.sink.endPromise.hasValue()) {
-                response_stream.sink.endPromise.reject(globalThis, assignment_result);
-            }
-
-            task.fail(.{
-                .code = "UnknownError",
-                .message = "ReadableStream ended with an error",
-            });
-            readable_stream.cancel(globalThis);
-        }
-    }
-    return endPromise;
+    return ctx.endPromise.value();
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)

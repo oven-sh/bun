@@ -184,6 +184,8 @@ pub fn ResumableSink(
 }
 
 pub const ResumableFetchSink = ResumableSink(JSC.Codegen.JSResumableFetchSink, FetchTasklet, FetchTasklet.writeRequestData, FetchTasklet.writeEndRequest);
+const S3UploadStreamWrapper = @import("../../s3/client.zig").S3UploadStreamWrapper;
+pub const ResumableS3UploadSink = ResumableSink(JSC.Codegen.JSResumableS3UploadSink, S3UploadStreamWrapper, S3UploadStreamWrapper.writeRequestData, S3UploadStreamWrapper.writeEndRequest);
 const bun = @import("bun");
 const FetchTasklet = @import("./fetch.zig").FetchTasklet;
 

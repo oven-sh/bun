@@ -27,6 +27,7 @@ pub const ReadableStream = @import("webcore/ReadableStream.zig");
 pub const Blob = @import("webcore/Blob.zig");
 pub const S3Stat = @import("webcore/S3Stat.zig").S3Stat;
 pub const ResumableFetchSink = @import("webcore/ResumableSink.zig").ResumableFetchSink;
+pub const ResumableS3UploadSink = @import("webcore/ResumableSink.zig").ResumableS3UploadSink;
 pub const S3Client = @import("webcore/S3Client.zig").S3Client;
 pub const Request = @import("webcore/Request.zig");
 pub const Body = @import("webcore/Body.zig");

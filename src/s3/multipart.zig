@@ -689,7 +689,7 @@ pub const MultiPartUpload = struct {
     fn hasBackpressure(this: *@This()) bool {
         // if we dont have any space in the queue, we have backpressure
         // since we are not allowed to send more data
-        return this.available.findFirstSet() != null;
+        return this.available.findFirstSet() == null;
     }
 
     pub fn sendRequestData(this: *@This(), chunk: []const u8, is_last: bool) bool {
@@ -700,7 +700,7 @@ pub const MultiPartUpload = struct {
             if (this.buffered.items.len > 0) {
                 this.processBuffered(this.partSizeInBytes());
             }
-            return this.hasBackpressure();
+            return !this.hasBackpressure();
         }
         if (is_last) {
             this.ended = true;
@@ -720,6 +720,6 @@ pub const MultiPartUpload = struct {
 
             // wait for more
         }
-        return this.hasBackpressure();
+        return !this.hasBackpressure();
     }
 };

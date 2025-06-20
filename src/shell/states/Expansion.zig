@@ -137,17 +137,17 @@ pub fn deinit(expansion: *Expansion) void {
     expansion.io.deinit();
 }
 
-pub fn start(this: *Expansion) void {
+pub fn start(this: *Expansion) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.child_state == .idle);
         assert(this.word_idx == 0);
     }
 
     this.state = .normal;
-    this.next();
+    return .{ .expansion = this };
 }
 
-pub fn next(this: *Expansion) void {
+pub fn next(this: *Expansion) Yield {
     while (!(this.state == .done or this.state == .err)) {
         switch (this.state) {
             .normal => {
@@ -160,9 +160,7 @@ pub fn next(this: *Expansion) void {
                 }
 
                 while (this.word_idx < this.node.atomsLen()) {
-                    const is_cmd_subst = this.expandVarAndCmdSubst(this.word_idx);
-                    // yield execution
-                    if (is_cmd_subst) return;
+                    if (this.expandVarAndCmdSubst(this.word_idx)) |yield| return yield;
                 }
 
                 if (this.word_idx >= this.node.atomsLen()) {
@@ -202,7 +200,7 @@ pub fn next(this: *Expansion) void {
 
                 // Shouldn't fall through to here
                 assert(this.word_idx >= this.node.atomsLen());
-                return;
+                return .suspended;
             },
             .braces => {
                 var arena = Arena.init(this.base.interpreter.allocator);
@@ -249,27 +247,25 @@ pub fn next(this: *Expansion) void {
                 }
             },
             .glob => {
-                this.transitionToGlobState();
-                // yield
-                return;
+                return this.transitionToGlobState();
             },
             .done, .err => unreachable,
         }
     }
 
     if (this.state == .done) {
-        this.parent.childDone(this, 0);
-        return;
+        return this.parent.childDone(this, 0);
     }
 
     // Parent will inspect the `this.state.err`
     if (this.state == .err) {
-        this.parent.childDone(this, 1);
-        return;
+        return this.parent.childDone(this, 1);
     }
+
+    unreachable;
 }
 
-fn transitionToGlobState(this: *Expansion) void {
+fn transitionToGlobState(this: *Expansion) Yield {
     var arena = Arena.init(this.base.interpreter.allocator);
     this.child_state = .{ .glob = .{ .walker = .{} } };
     const pattern = this.current_out.items[0..];
@@ -290,16 +286,16 @@ fn transitionToGlobState(this: *Expansion) void {
         .result => {},
         .err => |e| {
             this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
-            this.next();
-            return;
+            return .{ .expansion = this };
         },
     }
 
     var task = ShellGlobTask.createOnMainThread(this.base.interpreter.allocator, &this.child_state.glob.walker, this);
     task.schedule();
+    return .suspended;
 }
 
-pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
+pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
     switch (this.node.*) {
         .simple => |*simp| {
             const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out, true);
@@ -313,7 +309,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
                     .result => |s| s,
                     .err => |e| {
                         this.base.throw(&bun.shell.ShellErr.newSys(e));
-                        return false;
+                        return .failed;
                     },
                 };
                 var script = Script.init(this.base.interpreter, shell_state, &this.node.simple.cmd_subst.script, Script.ParentPtr.init(this), io);
@@ -323,8 +319,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
                         .quoted = simp.cmd_subst.quoted,
                     },
                 };
-                script.start();
-                return true;
+                return script.start();
             } else {
                 this.word_idx += 1;
             }
@@ -346,7 +341,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
                         .result => |s| s,
                         .err => |e| {
                             this.base.throw(&bun.shell.ShellErr.newSys(e));
-                            return false;
+                            return .failed;
                         },
                     };
                     var script = Script.init(this.base.interpreter, shell_state, &simple_atom.cmd_subst.script, Script.ParentPtr.init(this), io);
@@ -356,8 +351,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
                             .quoted = simple_atom.cmd_subst.quoted,
                         },
                     };
-                    script.start();
-                    return true;
+                    return script.start();
                 } else {
                     this.word_idx += 1;
                     this.child_state = .idle;
@@ -366,7 +360,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
         },
     }
 
-    return false;
+    return null;
 }
 
 /// Remove a set of values from the beginning and end of a slice.
@@ -453,7 +447,7 @@ fn convertNewlinesToSpacesSlow(i: usize, stdout: []u8) void {
     }
 }
 
-pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state != .done and this.state != .err);
         assert(this.child_state != .idle);
@@ -491,14 +485,13 @@ pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
         this.word_idx += 1;
         this.child_state = .idle;
         child.deinit();
-        this.next();
-        return;
+        return .{ .expansion = this };
     }
 
     @panic("Invalid child to Expansion, this indicates a bug in Bun. Please file a report on Github.");
 }
 
-fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
+fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
     log("{} onGlobWalkDone", .{this});
     if (comptime bun.Environment.allow_assert) {
         assert(this.child_state == .glob);
@@ -524,8 +517,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
             this.child_state.glob.walker.deinit(true);
             this.child_state = .idle;
             this.state = .done;
-            this.next();
-            return;
+            return .{ .expansion = this };
         }
 
         const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
@@ -536,8 +528,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
         };
         this.child_state.glob.walker.deinit(true);
         this.child_state = .idle;
-        this.next();
-        return;
+        return .{ .expansion = this };
     }
 
     for (task.result.items) |sentinel_str| {
@@ -550,7 +541,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) void {
     this.child_state.glob.walker.deinit(true);
     this.child_state = .idle;
     this.state = .done;
-    this.next();
+    return .{ .expansion = this };
 }
 
 /// If the atom is actually a command substitution then does nothing and returns true
@@ -800,7 +791,7 @@ pub const ShellGlobTask = struct {
 
     pub fn runFromMainThread(this: *This) void {
         debug("runFromJS", .{});
-        this.expansion.onGlobWalkDone(this);
+        this.expansion.onGlobWalkDone(this).run();
         this.ref.unref(this.event_loop);
     }
 
@@ -831,6 +822,7 @@ pub const ShellGlobTask = struct {
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 
 const Allocator = std.mem.Allocator;
 

@@ -71,6 +71,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellGlobTask,
     ShellIOReaderAsyncDeinit,
     ShellIOWriterAsyncDeinit,
+    ShellIOWriter,
     ShellLsTask,
     ShellMkdirTask,
     ShellMvBatchedTask,
@@ -143,6 +144,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             @field(Task.Tag, @typeName(ShellIOWriterAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                 shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, @typeName(ShellIOWriter)) => {
+                var shell_io_writer: *ShellIOWriter = task.get(ShellIOWriter).?;
+                shell_io_writer.runFromMainThread();
             },
             @field(Task.Tag, @typeName(ShellIOReaderAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
@@ -583,6 +588,7 @@ const ShellAsync = shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = shell.Interpreter.AsyncDeinitWriter;
+const ShellIOWriter = shell.Interpreter.IOWriter;
 const TimeoutObject = Timer.TimeoutObject;
 const ImmediateObject = Timer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};

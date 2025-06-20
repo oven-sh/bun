@@ -25,6 +25,9 @@ pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
+pub const Yield = @import("./Yield.zig").Yield;
+pub const unreachableState = interpret.unreachableState;
+
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
@@ -4145,6 +4148,19 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 },
                 .inlined => {
                     _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn pop(this: *@This()) T {
+            switch (this.*) {
+                .heap => {
+                    return this.heap.pop().?;
+                },
+                .inlined => {
+                    const val = this.inlined.items[this.inlined.len - 1];
+                    this.inlined.len -= 1;
+                    return val;
                 },
             }
         }

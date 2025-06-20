@@ -3673,6 +3673,19 @@ void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, 
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
 }
 
+void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
+{
+    auto& vm = JSC::getVM(arg1);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto obj = JSValue::decode(JSValue0);
+    auto key = JSValue::decode(arg2);
+    auto value = JSValue::decode(arg3);
+    auto object = obj.asCell()->getObject();
+    auto pkey = key.toPropertyKey(arg1);
+    RETURN_IF_EXCEPTION(scope, );
+    object->putDirectMayBeIndex(arg1, pkey, value);
+}
+
 extern "C" void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -359,12 +359,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) goto cleanup;
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
                     paths.append(Bun::toStringRef(pathStr));
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
-                if (scope.exception()) goto cleanup;
+                if (scope.exception()) [[unlikely]]
+                    goto cleanup;
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));

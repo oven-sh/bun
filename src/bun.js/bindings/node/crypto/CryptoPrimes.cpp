@@ -207,7 +207,7 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
 
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     ASSERT(result.isEmpty() == !!scope.exception());
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto* err = scope.exception();
         scope.clearException();
         Bun__EventLoop__runCallback1(

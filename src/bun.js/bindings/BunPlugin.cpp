@@ -637,7 +637,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 // consistent with regular esm handling code
                                 auto catchScope = DECLARE_CATCH_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
-                                if (scope.exception()) {
+                                if (scope.exception()) [[unlikely]] {
                                     scope.clearException();
                                     value = jsUndefined();
                                 }

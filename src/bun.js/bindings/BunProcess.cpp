@@ -1167,19 +1167,23 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     JSValue reasonStack {};
     if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
-        if (scope.exception()) scope.clearException();
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
-        if (scope.exception()) scope.clearException();
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
-    if (scope.exception()) scope.clearException();
+    if (scope.exception()) [[unlikely]]
+        scope.clearException();
     Process::emitWarningErrorInstance(globalObject, warning);
-    if (scope.exception()) scope.clearException();
+    if (scope.exception()) [[unlikely]]
+        scope.clearException();
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)

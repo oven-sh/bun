@@ -1036,7 +1036,7 @@ static JSValue fetchESMSourceCode(
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
-        if (scope.exception()) {
+        if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             scope.clearException();
             return reject(exception);
@@ -1136,7 +1136,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     JSC::JSValue result = handleVirtualModuleResult<false>(reinterpret_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
     if (res.success) {
-        if (scope.exception()) {
+        if (scope.exception()) [[unlikely]] {
             auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
             pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
             return retValue;

@@ -922,7 +922,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(thisValue);
 
     assignHeadersFromUWebSocketsForCall(request, methodString, args, globalObject, vm);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         response->endWithoutBody();
         scope.clearException();
@@ -1102,7 +1102,7 @@ static void NodeHTTPServer__writeHead(
 
                 String key = entry.key();
                 String value = headerValue.toWTFString(globalObject);
-                if (scope.exception()) {
+                if (scope.exception()) [[unlikely]] {
                     return false;
                 }
 

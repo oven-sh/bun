@@ -413,8 +413,8 @@ const ProxyTunnel = struct {
     pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         if (this.proxy_tunnel) |proxy| {
             const written = switch (proxy.socket) {
-                .ssl => |socket| socket.write(encoded_data, false, null),
-                .tcp => |socket| socket.write(encoded_data, false, null),
+                .ssl => |socket| socket.write(encoded_data, false),
+                .tcp => |socket| socket.write(encoded_data, false),
                 .none => 0,
             };
             const pending = encoded_data[@intCast(written)..];
@@ -511,7 +511,7 @@ const ProxyTunnel = struct {
         if (encoded_data.len == 0) {
             return;
         }
-        const written = socket.write(encoded_data, true, null);
+        const written = socket.write(encoded_data, true);
         if (written == encoded_data.len) {
             this.write_buffer.reset();
         } else {
@@ -3318,7 +3318,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
         assert(!socket.isShutdown());
         assert(!socket.isClosed());
     }
-    const amount = socket.write(to_send, false, null);
+    const amount = socket.write(to_send, false);
     if (comptime is_first_call) {
         if (amount == 0) {
             // don't worry about it
@@ -3430,7 +3430,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             switch (this.state.original_request_body) {
                 .bytes => {
                     const to_send = this.state.request_body;
-                    const amount = socket.write(to_send, true, null);
+                    const amount = socket.write(to_send, true);
                     if (amount < 0) {
                         this.closeAndFail(error.WriteFailed, is_ssl, socket);
                         return;
@@ -3450,7 +3450,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                     if (stream.buffer.isNotEmpty()) {
                         const to_send = stream.buffer.slice();
-                        const amount = socket.write(to_send, true, null);
+                        const amount = socket.write(to_send, true);
                         if (amount < 0) {
                             this.closeAndFail(error.WriteFailed, is_ssl, socket);
                             return;

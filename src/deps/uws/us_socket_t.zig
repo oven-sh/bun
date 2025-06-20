@@ -132,10 +132,18 @@ pub const us_socket_t = opaque {
         return c.us_socket_context(@intFromBool(ssl), this).?;
     }
 
-    pub fn write(this: *us_socket_t, ssl: bool, data: []const u8, msg_more: bool, error_: ?*i32) i32 {
-        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more), error_);
+    pub fn write(this: *us_socket_t, ssl: bool, data: []const u8, msg_more: bool) i32 {
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more), null);
         debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
         return rc;
+    }
+
+    pub fn writeMaybe(this: *us_socket_t, ssl: bool, data: []const u8, msg_more: bool) bun.Maybe(i32, bun.sys.Error) {
+        var error_: i32 = 0;
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more), &error_);
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        if (error_ > 0) return .initErr(.fromCodeInt(error_, .write));
+        return .initResult(rc);
     }
 
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {

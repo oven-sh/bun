@@ -2220,7 +2220,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const res = this.socket.write(buffer, false, null);
+            const res = this.socket.write(buffer, false);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -2248,6 +2248,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn endBuffered(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+            JSC.markBinding(@src());
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                 return JSValue.jsBoolean(false);
@@ -2540,26 +2541,23 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) error{CalledOnError}!void {
             if (this.buffered_data_for_node_net.len > 0) {
-                var errno: c_int = 0;
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false, &errno), 0));
-                this.bytes_written += written;
-                if (written > 0) {
-                    if (this.buffered_data_for_node_net.len > written) {
-                        const remaining = this.buffered_data_for_node_net.slice()[written..];
-                        _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
-                        this.buffered_data_for_node_net.len = @truncate(remaining.len);
-                    } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
-                    }
-                } else if (errno > 0) {
-                    this.handleError(JSC.SystemError.createJS(this.handlers.globalObject, .{
-                        .errno = @bitCast(errno),
-                        .code = .static(@tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno)))),
-                        .message = bun.String.createFormat("{s} {s}", .{ "write", @tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno))) }) catch bun.outOfMemory(),
-                        .syscall = .static("write"),
-                    }));
-                    return error.CalledOnError;
+                switch (this.socket.writeMaybe(this.buffered_data_for_node_net.slice(), false)) {
+                    .result => |written_| {
+                        const written: usize = @intCast(written_);
+                        this.bytes_written += written;
+                        if (this.buffered_data_for_node_net.len > written) {
+                            const remaining = this.buffered_data_for_node_net.slice()[written..];
+                            _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
+                            this.buffered_data_for_node_net.len = @truncate(remaining.len);
+                        } else {
+                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                            this.buffered_data_for_node_net = .{};
+                        }
+                    },
+                    .err => |err| {
+                        this.handleError(err.toSystemError().toErrorInstance(this.handlers.globalObject));
+                        return error.CalledOnError;
+                    },
                 }
             }
 

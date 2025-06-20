@@ -840,7 +840,7 @@ pub const SendQueue = struct {
                 if (fd) |fd_unwrapped| {
                     this._onWriteComplete(socket.writeFd(data, fd_unwrapped));
                 } else {
-                    this._onWriteComplete(socket.write(data, false, null));
+                    this._onWriteComplete(socket.write(data, false));
                 }
             },
         };

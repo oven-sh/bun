@@ -137,7 +137,6 @@ pub fn transitionToExec(this: *Subshell) Yield {
 }
 
 pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
-    defer child_ptr.deinit();
     this.exit_code = exit_code;
     if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
         if (exit_code != 0) {
@@ -146,10 +145,12 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
             this.state.expanding_redirect.expansion.deinit();
             return this.writeFailingError("{}\n", .{err});
         }
+        child_ptr.deinit();
         return .{ .subshell = this };
     }
 
     if (child_ptr.ptr.is(Script)) {
+        child_ptr.deinit();
         return this.parent.childDone(this, exit_code);
     }
 

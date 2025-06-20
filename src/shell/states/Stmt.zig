@@ -95,7 +95,6 @@ pub fn next(this: *Stmt) Yield {
                     return .failed;
                 },
             };
-            script.deinit();
             return script.start();
         },
         .@"if" => {

@@ -460,13 +460,7 @@ fn initSubproc(this: *Cmd) Yield {
         };
 
         const first_arg_len = std.mem.len(first_arg);
-        var first_arg_real = first_arg[0..first_arg_len];
-
-        if (bun.Environment.isDebug) {
-            if (bun.strings.eqlComptime(first_arg_real, "bun")) {
-                first_arg_real = "bun-debug";
-            }
-        }
+        const first_arg_real = first_arg[0..first_arg_len];
 
         if (Builtin.Kind.fromStr(first_arg[0..first_arg_len])) |b| {
             const cwd = this.base.shell.cwd_fd;

@@ -67,13 +67,14 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *CondExpr {
-    const condexpr = bun.new(CondExpr, .{
+    const condexpr = parent.create(CondExpr);
+    condexpr.* = .{
         .base = State.init(.condexpr, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
         .args = undefined,
-    });
+    };
     condexpr.args = std.ArrayList([:0]const u8).init(condexpr.base.allocator());
     return condexpr;
 }
@@ -211,6 +212,10 @@ fn doStat(this: *CondExpr) Yield {
 
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
+    for (this.args.items) |item| {
+        this.base.allocator().free(item);
+    }
+    this.args.deinit();
     this.base.deinit();
     this.parent.destroy(this);
 }

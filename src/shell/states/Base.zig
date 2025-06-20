@@ -41,6 +41,7 @@ const AllocScope = union(enum) {
     }
 };
 
+/// Crates a _new_ allocation scope for this state node.
 pub fn init(kind: StateKind, interpreter: *Interpreter, shell: *ShellState) Base {
     return .{
         .kind = kind,
@@ -50,6 +51,7 @@ pub fn init(kind: StateKind, interpreter: *Interpreter, shell: *ShellState) Base
     };
 }
 
+/// This will use the allocation scope provided by `scope`
 pub fn initBorrowedAllocScope(kind: StateKind, interpreter: *Interpreter, shell: *ShellState, scope: if (bun.Environment.isDebug) *bun.AllocationScope else void) Base {
     return .{
         .kind = kind,

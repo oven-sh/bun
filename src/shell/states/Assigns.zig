@@ -52,6 +52,7 @@ pub fn init(
     io: IO,
 ) *Assigns {
     const this = parent.create(Assigns);
+    log("Assigns(0x{x}) init", .{@intFromPtr(this)});
     this.* = .{
         .base = State.init(.assign, interpreter, shell_state),
         .node = node,
@@ -211,6 +212,7 @@ pub const AssignCtx = enum {
 
 const std = @import("std");
 const bun = @import("bun");
+const log = bun.shell.interpret.log;
 const Yield = bun.shell.Yield;
 
 const Interpreter = bun.shell.Interpreter;

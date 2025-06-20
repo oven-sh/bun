@@ -601,9 +601,7 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(
-        globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr),
-        JSC::ArgList(args));
+    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -1005,8 +1003,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
-        globalObject);
+    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
         if (catchScope.exception()) {

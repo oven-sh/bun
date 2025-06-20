@@ -1802,7 +1802,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            const result: JSValue = onNodeHTTPRequestFn(
+            const result: JSValue = bun.jsc.fromJSHostCall(globalThis, @src(), onNodeHTTPRequestFn, .{
                 @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
@@ -1815,7 +1815,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp,
                 upgrade_ctx,
                 &node_http_response,
-            );
+            }) catch globalThis.takeException(error.JSError);
 
             const HTTPResult = union(enum) {
                 rejection: JSC.JSValue,

@@ -922,12 +922,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(thisValue);
 
     assignHeadersFromUWebSocketsForCall(request, methodString, args, globalObject, vm);
-    if (scope.exception()) [[unlikely]] {
-        auto* exception = scope.exception();
-        response->endWithoutBody();
-        scope.clearException();
-        return JSValue::encode(exception);
-    }
+    RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
@@ -948,11 +943,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
             args.append(jsUndefined());
         }
     } else {
-        JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(
-            vm,
-            globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject),
-            (us_socket_t*)response,
-            isSSL, nodeHTTPResponseObject);
+        JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(vm, globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject), (us_socket_t*)response, isSSL, nodeHTTPResponseObject);
 
         socket->strongThis.set(vm, socket);
 
@@ -964,13 +955,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
     args.append(jsBoolean(request->isAncient()));
 
-    WTF::NakedPtr<JSC::Exception> exception;
-    JSValue returnValue = AsyncContextFrame::call(globalObject, callbackObject, jsUndefined(), args, exception);
-    if (exception) {
-        auto* ptr = exception.get();
-        exception.clear();
-        return JSValue::encode(ptr);
-    }
+    JSValue returnValue = AsyncContextFrame::profiledCall(globalObject, callbackObject, jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(returnValue);
 }
@@ -1258,7 +1244,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
                     RETURN_IF_EXCEPTION(scope, {});
                 }
 
-                return assignHeadersFromFetchHeaders(impl, globalObject->objectPrototype(), objectValue, tuple, globalObject, vm);
+                RELEASE_AND_RETURN(scope, assignHeadersFromFetchHeaders(impl, globalObject->objectPrototype(), objectValue, tuple, globalObject, vm));
             }
         }
     }

@@ -28,6 +28,7 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
 JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
 {
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
+    if (!stylizeFn) return nullptr;
     JSObject* options = JSC::constructEmptyObject(vm, globalObject->utilInspectOptionsStructure());
     options->putDirectOffset(vm, 0, stylizeFn);
     options->putDirectOffset(vm, 1, jsNumber(max_depth));
@@ -49,6 +50,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSFunction* inspectFn = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, {});

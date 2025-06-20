@@ -812,6 +812,8 @@ pub const StandaloneModuleGraph = struct {
         bun.debugAssert(fd.kind == .system);
 
         if (Environment.isWindows) {
+            var outfile_path_buf: bun.OSPathBuffer = undefined;
+            const outfile_path = bun.strings.toWPathNormalized(&outfile_path_buf, outfile);
             var outfile_buf: bun.OSPathBuffer = undefined;
             const outfile_slice = brk: {
                 const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
@@ -837,7 +839,7 @@ pub const StandaloneModuleGraph = struct {
             if (windows_icon) |icon_utf8| {
                 var icon_buf: bun.OSPathBuffer = undefined;
                 const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
-                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
+                bun.windows.rescle.setIcon(outfile_path.ptr, icon) catch {
                     Output.warn("Failed to set executable icon", .{});
                 };
             }

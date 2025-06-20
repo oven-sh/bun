@@ -152,20 +152,25 @@ describe("Test that all the aliases for --preload work", () => {
     },
   );
 
-  it("When multiple preload flags are used, they execute in order: --preload, --require, --import", async () => {
-    const args = ["--preload", "./preload1.ts", "--require", "./preload2.ts", "--import", "./preload3.ts"];
-    const [out, err, code] = await run("index.ts", { args, cwd: dir });
-    expect(err).toBeEmpty();
-    // Expect output showing preloads executed in correct order
-    expect(out).toBe('[ "multi/preload1.ts", "multi/preload2.ts", "multi/preload3.ts" ]');
-    expect(code).toBe(0);
-  });
+  it.each(['1', '2', '3', '4'])(
+    "When multiple preload flags are used, they execute in order: --preload, --require, --import (#%s)",
+    async i => {
+      let args: string[] = [];
+      if (i === '1') args = ["--preload", "./preload1.ts", "--require", "./preload2.ts", "--import", "./preload3.ts"];
+      if (i === '2') args = ["--import", "./preload3.ts", "--preload=./preload1.ts", "--require", "./preload2.ts"];
+      if (i === '3') args = ["--require", "./preload2.ts", "--import", "./preload3.ts", "--preload", "./preload1.ts"];
+      if (i === '4') args = ["--require", "./preload1.ts", "--import", "./preload3.ts", "--require", "./preload2.ts"];
+      const [out, err, code] = await run("index.ts", { args, cwd: dir });
+      expect(err).toBeEmpty();
+      expect(out).toBe('[ "multi/preload1.ts", "multi/preload2.ts", "multi/preload3.ts" ]');
+      expect(code).toBe(0);
+    },
+  );
 
   it("Duplicate preload flags are only executed once", async () => {
     const args = ["--preload", "./preload1.ts", "--require", "./preload1.ts", "--import", "./preload1.ts"];
     const [out, err, code] = await run("index.ts", { args, cwd: dir });
     expect(err).toBeEmpty();
-    // Expect output showing preload only executed once
     expect(out).toBe('[ "multi/preload1.ts" ]');
     expect(code).toBe(0);
   });

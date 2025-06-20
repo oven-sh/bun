@@ -6736,8 +6736,8 @@ pub const PackageManager = struct {
                 if (input_str.len > 0)
                     try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
-                var iter = input.arrayIterator(globalThis);
-                while (iter.next()) |item| {
+                var iter = try input.arrayIterator(globalThis);
+                while (try iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;

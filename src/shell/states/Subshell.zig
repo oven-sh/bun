@@ -25,7 +25,6 @@ pub const ParentPtr = StatePtrUnion(.{
 
 pub const ChildPtr = StatePtrUnion(.{
     Script,
-    Subshell,
     Expansion,
 });
 
@@ -49,25 +48,24 @@ pub fn init(
     });
 }
 
-pub fn start(this: *Subshell) void {
+pub fn start(this: *Subshell) Yield {
     log("{} start", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
-    script.start();
+    return script.start();
 }
 
-pub fn next(this: *Subshell) void {
+pub fn next(this: *Subshell) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => {
                 this.state = .{
                     .expanding_redirect = .{ .expansion = undefined },
                 };
-                this.next();
+                return .{ .subshell = this };
             },
             .expanding_redirect => {
                 if (this.state.expanding_redirect.idx >= 1) {
-                    this.transitionToExec();
-                    return;
+                    return this.transitionToExec();
                 }
                 this.state.expanding_redirect.idx += 1;
 
@@ -75,8 +73,7 @@ pub fn next(this: *Subshell) void {
                 // `expanding_args` state
                 const node_to_expand = brk: {
                     if (this.node.redirect != null and this.node.redirect.? == .atom) break :brk &this.node.redirect.?.atom;
-                    this.transitionToExec();
-                    return;
+                    return this.transitionToExec();
                 };
 
                 Expansion.init(
@@ -93,25 +90,24 @@ pub fn next(this: *Subshell) void {
                     this.io.copy(),
                 );
 
-                this.state.expanding_redirect.expansion.start();
-                return;
+                return this.state.expanding_redirect.expansion.start();
             },
-            .wait_write_err, .exec => return,
+            .wait_write_err, .exec => return .suspended,
             .done => @panic("This should not be possible."),
         }
     }
 
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
-pub fn transitionToExec(this: *Subshell) void {
+pub fn transitionToExec(this: *Subshell) Yield {
     log("{} transitionToExec", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     this.state = .exec;
-    script.start();
+    return script.start();
 }
 
-pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
     defer child_ptr.deinit();
     this.exit_code = exit_code;
     if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
@@ -119,19 +115,19 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) void
             const err = this.state.expanding_redirect.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_redirect.expansion.deinit();
-            this.writeFailingError("{}\n", .{err});
-            return;
+            return this.writeFailingError("{}\n", .{err});
         }
-        this.next();
+        return .{ .subshell = this };
     }
 
     if (child_ptr.ptr.is(Script)) {
-        this.parent.childDone(this, exit_code);
-        return;
+        return this.parent.childDone(this, exit_code);
     }
+
+    bun.shell.unreachableState("Subshell.childDone", "expected Script or Expansion");
 }
 
-pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .wait_write_err);
     }
@@ -141,7 +137,7 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) void {
     }
 
     this.state = .done;
-    this.parent.childDone(this, this.exit_code);
+    return this.parent.childDone(this, this.exit_code);
 }
 
 pub fn deinit(this: *Subshell) void {
@@ -151,17 +147,18 @@ pub fn deinit(this: *Subshell) void {
     bun.destroy(this);
 }
 
-pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) void {
+pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) Yield {
     const handler = struct {
         fn enqueueCb(ctx: *Subshell) void {
             ctx.state = .wait_write_err;
         }
     };
-    this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
+    return this.base.shell.writeFailingErrorFmt(this, handler.enqueueCb, fmt, args);
 }
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 
 const Interpreter = bun.shell.Interpreter;

@@ -356,7 +356,7 @@ pub const CallbackList = union(enum) {
             },
         }
     }
-    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) void {
+    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) bun.JSError!void {
         switch (self.*) {
             .ack_nack => {},
             .none => {},
@@ -366,8 +366,8 @@ pub const CallbackList = union(enum) {
                 self.* = .none;
             },
             .callback_array => {
-                var iter = self.callback_array.arrayIterator(global);
-                while (iter.next()) |item| {
+                var iter = try self.callback_array.arrayIterator(global);
+                while (try iter.next()) |item| {
                     item.callNextTick(global, .{.null});
                 }
                 self.callback_array.unprotect();
@@ -399,8 +399,8 @@ pub const SendHandle = struct {
 
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
-        self.callbacks.callNextTick(global);
-        self.deinit();
+        defer self.deinit();
+        self.callbacks.callNextTick(global) catch {}; // TODO: properly propagate exception upwards
     }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();
@@ -981,8 +981,8 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
         if (serialized_array.isUndefinedOrNull()) {
             handle = .js_undefined;
         } else {
-            const serialized_handle = serialized_array.getIndex(globalObject, 0);
-            const serialized_message = serialized_array.getIndex(globalObject, 1);
+            const serialized_handle = try serialized_array.getIndex(globalObject, 0);
+            const serialized_message = try serialized_array.getIndex(globalObject, 1);
             handle = serialized_handle;
             message = serialized_message;
         }

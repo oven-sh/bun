@@ -44,7 +44,7 @@ pub fn init(
     return binary;
 }
 
-pub fn start(this: *Binary) void {
+pub fn start(this: *Binary) Yield {
     log("binary start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
     if (comptime bun.Environment.allow_assert) {
         assert(this.left == null);
@@ -57,9 +57,8 @@ pub fn start(this: *Binary) void {
         this.currently_executing = this.makeChild(false);
         this.left = 0;
     }
-    if (this.currently_executing) |exec| {
-        exec.start();
-    }
+    bun.assert(this.currently_executing != null);
+    return this.currently_executing.?.start();
 }
 
 fn makeChild(this: *Binary, left: bool) ?ChildPtr {
@@ -109,7 +108,7 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
     }
 }
 
-pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.left == null or this.right == null);
         assert(this.currently_executing != null);
@@ -122,23 +121,20 @@ pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) void {
     if (this.left == null) {
         this.left = exit_code;
         if ((this.node.op == .And and exit_code != 0) or (this.node.op == .Or and exit_code == 0)) {
-            this.parent.childDone(this, exit_code);
-            return;
+            return this.parent.childDone(this, exit_code);
         }
 
         this.currently_executing = this.makeChild(false);
         if (this.currently_executing == null) {
             this.right = 0;
-            this.parent.childDone(this, 0);
-            return;
-        } else {
-            this.currently_executing.?.start();
+            return this.parent.childDone(this, 0);
         }
-        return;
+
+        return this.currently_executing.?.start();
     }
 
     this.right = exit_code;
-    this.parent.childDone(this, exit_code);
+    return this.parent.childDone(this, exit_code);
 }
 
 pub fn deinit(this: *Binary) void {
@@ -150,6 +146,7 @@ pub fn deinit(this: *Binary) void {
 }
 
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;

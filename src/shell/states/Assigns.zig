@@ -36,8 +36,8 @@ pub inline fn deinit(this: *Assigns) void {
     this.io.deinit();
 }
 
-pub inline fn start(this: *Assigns) void {
-    return this.next();
+pub fn start(this: *Assigns) Yield {
+    return .{ .assigns = this };
 }
 
 pub fn init(
@@ -59,7 +59,7 @@ pub fn init(
     };
 }
 
-pub fn next(this: *Assigns) void {
+pub fn next(this: *Assigns) Yield {
     while (!(this.state == .done)) {
         switch (this.state) {
             .idle => {
@@ -86,18 +86,17 @@ pub fn next(this: *Assigns) void {
                     },
                     this.io.copy(),
                 );
-                this.state.expanding.expansion.start();
-                return;
+                return this.state.expanding.expansion.start();
             },
             .done => unreachable,
             .err => return this.parent.childDone(this, 1),
         }
     }
 
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
-pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Expansion)) {
         const expansion = child.ptr.as(Expansion);
         if (exit_code != 0) {
@@ -105,7 +104,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
                 .err = expansion.state.err,
             };
             expansion.deinit();
-            return;
+            return .failed;
         }
         var expanding = &this.state.expanding;
 
@@ -157,8 +156,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
 
         expanding.idx += 1;
         expansion.deinit();
-        this.next();
-        return;
+        return .{ .assigns = this };
     }
 
     @panic("Invalid child to Assigns expression, this indicates a bug in Bun. Please file a report on Github.");
@@ -172,6 +170,7 @@ pub const AssignCtx = enum {
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;

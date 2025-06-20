@@ -608,7 +608,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArgumentType("sendMany", "first argument", "array");
         }
 
-        const array_len = arg.getLength(globalThis);
+        const array_len = try arg.getLength(globalThis);
         if (this.connect_info == null and array_len % 3 != 0) {
             return globalThis.throwInvalidArguments("Expected 3 arguments for each packet", .{});
         }
@@ -624,11 +624,11 @@ pub const UDPSocket = struct {
         var addr_ptrs = alloc.alloc(?*const anyopaque, len) catch bun.outOfMemory();
         var addrs = alloc.alloc(std.posix.sockaddr.storage, len) catch bun.outOfMemory();
 
-        var iter = arg.arrayIterator(globalThis);
+        var iter = try arg.arrayIterator(globalThis);
 
         var i: u16 = 0;
         var port: JSValue = .zero;
-        while (iter.next()) |val| : (i += 1) {
+        while (try iter.next()) |val| : (i += 1) {
             if (i >= array_len) {
                 return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
             }

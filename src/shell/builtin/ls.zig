@@ -13,25 +13,22 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn start(this: *Ls) Maybe(void) {
-    this.next();
-    return Maybe(void).success;
+pub fn start(this: *Ls) Yield {
+    return this.next();
 }
 
-pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-fn next(this: *Ls) void {
+fn next(this: *Ls) Yield {
     while (!(this.state == .done)) {
         switch (this.state) {
             .idle => {
@@ -44,8 +41,7 @@ fn next(this: *Ls) void {
                             .show_usage => Builtin.Kind.ls.usageString(),
                         };
 
-                        _ = this.writeFailingError(buf, 1);
-                        return;
+                        return this.writeFailingError(buf, 1);
                     },
                 };
 
@@ -70,7 +66,6 @@ fn next(this: *Ls) void {
                 }
             },
             .exec => {
-                // It's done
                 log("Ls(0x{x}, state=exec) Check: tasks_done={d} task_count={d} output_done={d} output_waiting={d}", .{
                     @intFromPtr(this),
                     this.state.exec.tasks_done,
@@ -78,34 +73,33 @@ fn next(this: *Ls) void {
                     this.state.exec.output_done,
                     this.state.exec.output_waiting,
                 });
+                // It's done
                 if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.monotonic) and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                     this.state = .done;
-                    this.bltn().done(exit_code);
-                    return;
+                    return this.bltn().done(exit_code);
                 }
-                return;
+                return .suspended;
             },
             .waiting_write_err => {
-                return;
+                return .failed;
             },
             .done => unreachable,
         }
     }
 
-    this.bltn().done(0);
-    return;
+    return this.bltn().done(0);
 }
 
 pub fn deinit(_: *Ls) void {}
 
-pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) Yield {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
     }
     this.state.exec.output_done += 1;
-    this.next();
+    return this.next();
 }
 
 pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
@@ -124,10 +118,10 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
         this.state.exec.err = err.*;
         task.err = null;
         const error_string = this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
-        output_task.start(error_string);
+        output_task.start(error_string).run();
         return;
     }
-    output_task.start(null);
+    output_task.start(null).run();
 }
 
 pub const ShellLsOutputTask = OutputTask(Ls, .{
@@ -139,36 +133,40 @@ pub const ShellLsOutputTask = OutputTask(Ls, .{
 });
 
 const ShellLsOutputTaskVTable = struct {
-    pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) CoroutineResult {
+    pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) ?Yield {
+        log("ShellLsOutputTaskVTable.writeErr(0x{x}, {s})", .{ @intFromPtr(this), errbuf });
         if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
-            return .yield;
+            return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
-        return .cont;
+        return null;
     }
 
     pub fn onWriteErr(this: *Ls) void {
+        log("ShellLsOutputTaskVTable.onWriteErr(0x{x})", .{@intFromPtr(this)});
         this.state.exec.output_done += 1;
     }
 
-    pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) CoroutineResult {
+    pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) ?Yield {
+        log("ShellLsOutputTaskVTable.writeOut(0x{x}, {s})", .{ @intFromPtr(this), output.slice() });
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
-            return .yield;
+            return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
+        log("ShellLsOutputTaskVTable.writeOut(0x{x}, {s}) no IO", .{ @intFromPtr(this), output.slice() });
         _ = this.bltn().writeNoIO(.stdout, output.slice());
-        return .cont;
+        return null;
     }
 
     pub fn onWriteOut(this: *Ls) void {
+        log("ShellLsOutputTaskVTable.onWriteOut(0x{x})", .{@intFromPtr(this)});
         this.state.exec.output_done += 1;
     }
 
-    pub fn onDone(this: *Ls) void {
-        this.next();
+    pub fn onDone(this: *Ls) Yield {
+        log("ShellLsOutputTaskVTable.onDone(0x{x})", .{@intFromPtr(this)});
+        return this.next();
     }
 };
 
@@ -780,6 +778,7 @@ pub inline fn bltn(this: *Ls) *Builtin {
 const Ls = @This();
 const log = bun.Output.scoped(.ls, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
@@ -788,7 +787,6 @@ const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ExitCode = shell.ExitCode;
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");
 const Syscall = bun.sys;
 const ShellSyscall = interpreter.ShellSyscall;
@@ -796,4 +794,3 @@ const Allocator = std.mem.Allocator;
 const DirIterator = bun.DirIterator;
 const OutputTask = interpreter.OutputTask;
 const OutputSrc = interpreter.OutputSrc;
-const CoroutineResult = interpreter.CoroutineResult;

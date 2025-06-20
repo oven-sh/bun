@@ -85,7 +85,7 @@ typedef struct BunString {
 
 typedef struct ZigErrorType {
     ZigErrorCode code;
-    void* ptr;
+    JSC::EncodedJSValue value;
 } ZigErrorType;
 typedef union ErrorableZigStringResult {
     ZigString value;

@@ -1967,11 +1967,12 @@ pub const E = struct {
             defer obj.unprotect();
             const props: []const G.Property = this.properties.slice();
             for (props) |prop| {
-                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
+                if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.value == null) {
                     return error.@"Cannot convert argument type to JS";
                 }
-                var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
+                const key = try prop.key.?.data.toJS(allocator, globalObject);
+                const value = try prop.value.?.toJS(allocator, globalObject);
+                try obj.putToPropertyKey(globalObject, key, value);
             }
 
             return obj;
@@ -8228,7 +8229,7 @@ pub const Macro = struct {
 
         switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
             .rejected => |result| {
-                _ = vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+                vm.unhandledRejection(vm.global, result, loaded_result.asValue());
                 vm.disableMacroMode();
                 return error.MacroLoadError;
             },
@@ -8303,7 +8304,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch ((try JSC.ConsoleObject.Formatter.Tag.get(value, this.global)).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -8409,7 +8410,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var iter = JSC.JSArrayIterator.init(value, this.global);
+                        var iter = try JSC.JSArrayIterator.init(value, this.global);
                         if (iter.len == 0) {
                             const result = Expr.init(
                                 E.Array,
@@ -8435,7 +8436,7 @@ pub const Macro = struct {
 
                         errdefer this.allocator.free(array);
                         var i: usize = 0;
-                        while (iter.next()) |item| {
+                        while (try iter.next()) |item| {
                             array[i] = try this.run(item);
                             if (array[i].isMissing())
                                 continue;
@@ -8539,7 +8540,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
+                            this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

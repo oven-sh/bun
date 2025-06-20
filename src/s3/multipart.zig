@@ -143,6 +143,7 @@ pub const MultiPartUpload = struct {
     } = .not_started,
 
     callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
+    onWritable: ?*const fn (*MultiPartUpload, *anyopaque) void = null,
     callback_context: *anyopaque,
 
     const Self = @This();
@@ -394,9 +395,20 @@ pub const MultiPartUpload = struct {
             this.processMultiPart(partSize);
         }
 
-        if (this.ended and this.available.mask == std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull().mask) {
-            // we are done and no more parts are running
-            this.done();
+        // empty queue
+        if (this.available.mask == std.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull().mask) {
+            if (this.onWritable) |callback| {
+                callback(this, this.callback_context);
+            }
+            if (this.ended) {
+                // we are done and no more parts are running
+                this.done();
+            }
+        } else if (!this.hasBackpressure()) {
+            // we have more space in the queue, we can drain more
+            if (this.onWritable) |callback| {
+                callback(this, this.callback_context);
+            }
         }
     }
     /// Finalize the upload with a failure
@@ -674,15 +686,21 @@ pub const MultiPartUpload = struct {
         }
     }
 
-    pub fn sendRequestData(this: *@This(), chunk: []const u8, is_last: bool) void {
-        if (this.ended) return;
+    fn hasBackpressure(this: *@This()) bool {
+        // if we dont have any space in the queue, we have backpressure
+        // since we are not allowed to send more data
+        return this.available.findFirstSet() != null;
+    }
+
+    pub fn sendRequestData(this: *@This(), chunk: []const u8, is_last: bool) bool {
+        if (this.ended) return true; // no backpressure since we are done
         if (this.state == .wait_stream_check and chunk.len == 0 and is_last) {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
             this.ended = true;
             if (this.buffered.items.len > 0) {
                 this.processBuffered(this.partSizeInBytes());
             }
-            return;
+            return this.hasBackpressure();
         }
         if (is_last) {
             this.ended = true;
@@ -692,16 +710,16 @@ pub const MultiPartUpload = struct {
             this.processBuffered(this.partSizeInBytes());
         } else {
             // still have more data and receive empty, nothing todo here
-            if (chunk.len == 0) return;
+            if (chunk.len == 0) return this.hasBackpressure();
             this.buffered.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
             const partSize = this.partSizeInBytes();
             if (this.buffered.items.len >= partSize) {
                 // send the part we have enough data
                 this.processBuffered(partSize);
-                return;
             }
 
             // wait for more
         }
+        return this.hasBackpressure();
     }
 };

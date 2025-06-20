@@ -306,7 +306,6 @@ pub fn writableStream(
         .task = .{ .s3_upload = task },
         .buffer = .{},
         .globalThis = globalThis,
-        .encoded = false,
         .endPromise = JSC.JSPromise.Strong.init(globalThis),
     }).toSink();
 
@@ -477,7 +476,6 @@ pub fn uploadStream(
         .task = .{ .s3_upload = task },
         .buffer = .{},
         .globalThis = globalThis,
-        .encoded = false,
         .endPromise = JSC.JSPromise.Strong.init(globalThis),
     }).toSink();
     task.ref(); // + 1 for the stream wrapper

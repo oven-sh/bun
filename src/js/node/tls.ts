@@ -208,6 +208,7 @@ var InternalSecureContext = class SecureContext {
   passphrase;
   servername;
   secureOptions;
+  allowPartialTrustChain;
 
   constructor(options) {
     const context = {};
@@ -249,6 +250,10 @@ var InternalSecureContext = class SecureContext {
       }
 
       this.secureOptions = secureOptions;
+
+      if (options.allowPartialTrustChain !== undefined) {
+        this.allowPartialTrustChain = !!options.allowPartialTrustChain;
+      }
 
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
         if ($isUndefinedOrNull(options.privateKeyEngine)) {
@@ -495,6 +500,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,
+    allowPartialTrustChain: this[ksecureContext]?.allowPartialTrustChain,
     ...this[ksecureContext],
   };
 };

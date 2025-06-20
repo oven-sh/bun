@@ -36,6 +36,7 @@ void *sni_find(void *sni, const char *hostname);
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/x509_vfy.h>
 #elif LIBUS_USE_WOLFSSL
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/dh.h>
@@ -1318,6 +1319,12 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.secure_options) {
     SSL_CTX_set_options(ssl_context, options.secure_options);
+  }
+
+  // After setting up the cert store (after all SSL_CTX_set_cert_store calls):
+  if (options.allow_partial_trust_chain) {
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
+    X509_STORE_set_flags(cert_store, X509_V_FLAG_PARTIAL_CHAIN);
   }
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */

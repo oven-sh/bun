@@ -164,7 +164,7 @@ pub fn ResumableSink(
         }
 
         fn detachJS(this: *@This()) void {
-            if (this.self.get()) |js_this| {
+            if (this.self.trySwap()) |js_this| {
                 setDrain(js_this, this.globalThis, .zero);
                 setCancel(js_this, this.globalThis, .zero);
                 setStream(js_this, this.globalThis, .zero);

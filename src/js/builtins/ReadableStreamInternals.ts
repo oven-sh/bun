@@ -795,9 +795,9 @@ export function assignStreamIntoResumableSink(stream, sink) {
       stream = undefined;
     }
   }
-  function endSink(reason?: Error | null) {
+  function endSink(...args: any[]) {
     try {
-      sink.end(reason);
+      sink.end(...args);
     } catch {} // should never throw
     releaseReader();
   }

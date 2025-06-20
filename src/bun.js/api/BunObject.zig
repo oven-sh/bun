@@ -1315,7 +1315,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if (unsorted_files[index].loader.isJavaScriptLike()) continue;
+        if (!unsorted_files[index].appearsInEmbeddedFilesArray()) continue;
         sort_indices.appendAssumeCapacity(@intCast(index));
     }
 

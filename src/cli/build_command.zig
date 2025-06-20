@@ -353,7 +353,20 @@ pub const BuildCommand = struct {
 
             if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                 output_dir = std.fs.path.dirname(outfile) orelse ".";
-                output_files[0].dest_path = std.fs.path.basename(outfile);
+                if (ctx.bundler_options.compile) {
+                    // If the first output file happens to be a client-side chunk imported server-side
+                    // then don't rename it to something else, since an HTML
+                    // import manifest might depend on the file path being the
+                    // one we think it should be.
+                    for (output_files) |*f| {
+                        if (f.output_kind == .@"entry-point" and (f.side orelse .server) == .server) {
+                            f.dest_path = std.fs.path.basename(outfile);
+                            break;
+                        }
+                    }
+                } else {
+                    output_files[0].dest_path = std.fs.path.basename(outfile);
+                }
             }
 
             if (!ctx.bundler_options.compile) {

@@ -201,6 +201,17 @@ pub const BundleV2 = struct {
             this_transpiler.options.define.drop_debugger,
         );
 
+        // We need to make sure it has [hash] in the names so we don't get conflicts.
+        if (this_transpiler.options.compile) {
+            client_transpiler.options.asset_naming = bun.options.PathTemplate.asset.data;
+            client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
+            client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
+
+            // Avoid setting a public path for --compile since all the assets
+            // will be served relative to the server root.
+            client_transpiler.options.public_path = "";
+        }
+
         client_transpiler.setLog(this_transpiler.log);
         client_transpiler.setAllocator(allocator);
         client_transpiler.linker.resolver = &client_transpiler.resolver;
@@ -1525,8 +1536,12 @@ pub const BundleV2 = struct {
                     else
                         PathTemplate.asset;
 
-                    if (this.transpiler.options.asset_naming.len > 0)
-                        template.data = this.transpiler.options.asset_naming;
+                    const target = targets[index];
+                    const asset_naming = this.transpilerForTarget(target).options.asset_naming;
+                    if (asset_naming.len > 0) {
+                        template.data = asset_naming;
+                    }
+
                     const source = &sources[index];
 
                     const output_path = brk: {
@@ -1546,7 +1561,7 @@ pub const BundleV2 = struct {
                         }
 
                         if (template.needs(.target)) {
-                            template.placeholder.target = @tagName(targets[index]);
+                            template.placeholder.target = @tagName(target);
                         }
                         break :brk std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory();
                     };

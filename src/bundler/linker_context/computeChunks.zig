@@ -25,8 +25,10 @@ pub noinline fn computeChunks(
     const css_chunking = this.options.css_chunking;
     var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     const loaders = this.parse_graph.input_files.items(.loader);
+    const ast_targets = this.graph.ast.items(.target);
 
     const code_splitting = this.graph.code_splitting;
+    const could_be_browser_target_from_server_build = this.options.target.isServerSide() and this.parse_graph.html_imports.html_source_indices.len > 0;
 
     // Create chunks for entry points
     for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -61,6 +63,7 @@ pub noinline fn computeChunks(
                     .entry_bits = entry_bits.*,
                     .content = .html,
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
         }
@@ -95,6 +98,7 @@ pub noinline fn computeChunks(
                     },
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                     .has_html_chunk = has_html_chunk,
+                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
 
@@ -116,6 +120,7 @@ pub noinline fn computeChunks(
             },
             .has_html_chunk = has_html_chunk,
             .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
         };
 
         {
@@ -168,6 +173,7 @@ pub noinline fn computeChunks(
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                         .has_html_chunk = has_html_chunk,
+                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                     };
                 }
             }
@@ -200,6 +206,7 @@ pub noinline fn computeChunks(
                         var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
 
                         if (!js_chunk_entry.found_existing) {
+                            const is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index.get()] == .browser;
                             js_chunk_entry.value_ptr.* = .{
                                 .entry_bits = entry_bits.*,
                                 .entry_point = .{
@@ -209,6 +216,7 @@ pub noinline fn computeChunks(
                                     .javascript = .{},
                                 },
                                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                                .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
                             };
                         }
 
@@ -305,6 +313,8 @@ pub noinline fn computeChunks(
 
     const kinds = this.graph.files.items(.entry_point_kind);
     const output_paths = this.graph.entry_points.items(.output_path);
+    const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
+    const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", this);
     for (chunks, 0..) |*chunk, chunk_id| {
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
@@ -317,21 +327,27 @@ pub noinline fn computeChunks(
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
-            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
+            if (has_server_html_imports and bv2.transpiler.options.entry_naming.len == 0) {
                 chunk.template = PathTemplate.fileWithTarget;
             } else {
                 chunk.template = PathTemplate.file;
-                if (this.resolver.opts.entry_naming.len > 0)
-                    chunk.template.data = this.resolver.opts.entry_naming;
+                if (chunk.is_browser_chunk_from_server_build) {
+                    chunk.template.data = bv2.transpilerForTarget(.browser).options.entry_naming;
+                } else {
+                    chunk.template.data = bv2.transpiler.options.entry_naming;
+                }
             }
         } else {
-            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.chunk_naming.len == 0) {
+            if (has_server_html_imports and bv2.transpiler.options.chunk_naming.len == 0) {
                 chunk.template = PathTemplate.chunkWithTarget;
             } else {
                 chunk.template = PathTemplate.chunk;
+                if (chunk.is_browser_chunk_from_server_build) {
+                    chunk.template.data = bv2.transpilerForTarget(.browser).options.chunk_naming;
+                } else {
+                    chunk.template.data = bv2.transpiler.options.chunk_naming;
+                }
             }
-            if (this.resolver.opts.chunk_naming.len > 0)
-                chunk.template.data = this.resolver.opts.chunk_naming;
         }
 
         const pathname = Fs.PathName.init(output_paths[chunk.entry_point.entry_point_id].slice());
@@ -340,7 +356,6 @@ pub noinline fn computeChunks(
 
         if (chunk.template.needs(.target)) {
             // Determine the target from the AST of the entry point source
-            const ast_targets = this.graph.ast.items(.target);
             const chunk_target = ast_targets[chunk.entry_point.source_index];
             chunk.template.placeholder.target = switch (chunk_target) {
                 .browser => "browser",

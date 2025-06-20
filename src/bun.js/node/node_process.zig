@@ -199,7 +199,7 @@ pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     if (vm.module_loader.eval_source) |source| {
         return JSC.ZigString.init(source.contents).toJS(globalObject);
     }
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub const getCwd = JSC.host_fn.wrap1(getCwd_);

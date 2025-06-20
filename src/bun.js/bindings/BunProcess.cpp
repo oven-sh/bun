@@ -2430,10 +2430,20 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, Enc
     return true;
 }
 
-static JSValue processGetEval(VM& vm, JSObject* processObject)
+JSC_DEFINE_CUSTOM_GETTER(processGetEval, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
-    auto* globalObject = processObject->globalObject();
-    return JSValue::decode(Bun__Process__getEval(globalObject));
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return Bun__Process__getEval(globalObject);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessGetEval, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
+{
+    // dont allow setting eval from js
+    return true;
 }
 
 static JSValue constructBrowser(VM& vm, JSObject* processObject)

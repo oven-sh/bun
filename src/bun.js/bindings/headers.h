@@ -629,6 +629,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0
 ZIG_DECL void Bun__Process__getTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
+ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif
 CPP_DECL ZigException ZigException__fromException(JSC::Exception* arg0);

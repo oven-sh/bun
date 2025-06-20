@@ -25,7 +25,6 @@ parent: ParentPtr,
 spawn_arena: bun.ArenaAllocator,
 spawn_arena_freed: bool = false,
 
-/// This allocated by the above arena
 args: std.ArrayList(?[*:0]const u8),
 
 /// If the cmd redirects to a file we have to expand that string.
@@ -235,13 +234,13 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *Cmd {
-    var cmd = interpreter.allocator.create(Cmd) catch bun.outOfMemory();
+    var cmd = parent.create(Cmd);
     cmd.* = .{
-        .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
+        .base = State.init(.cmd, interpreter, shell_state),
         .node = node,
         .parent = parent,
 
-        .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
+        .spawn_arena = undefined,
         .args = undefined,
         .redirection_file = undefined,
 
@@ -249,8 +248,8 @@ pub fn init(
         .io = io,
         .state = .idle,
     };
-    cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
-
+    cmd.spawn_arena = bun.ArenaAllocator.init(cmd.base.allocator());
+    cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len) catch bun.outOfMemory();
     cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
 
     return cmd;
@@ -261,7 +260,7 @@ pub fn next(this: *Cmd) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding_assigns = undefined };
-                Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
+                Assigns.initBorrowed(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
                 return this.state.expanding_assigns.start();
             },
             .expanding_assigns => {
@@ -392,7 +391,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
                 .expanding_args => this.state.expanding_args.expansion.state.err,
                 else => @panic("Invalid state"),
             };
-            defer err.deinit(bun.default_allocator);
+            defer err.deinit(this.base.allocator());
             return this.writeFailingError("{}\n", .{err});
         }
         // Handling this case from the shell spec:
@@ -420,7 +419,7 @@ fn initSubproc(this: *Cmd) Yield {
     log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
     var arena = &this.spawn_arena;
-    var arena_allocator = arena.allocator();
+    // var arena_allocator = arena.allocator();
     var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
 
     spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
@@ -503,7 +502,8 @@ fn initSubproc(this: *Cmd) Yield {
             return this.writeFailingError("bun: command not found: {s}\n", .{first_arg});
         };
 
-        const duped = arena_allocator.dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
+        this.base.allocator().free(first_arg_real);
+        const duped = this.base.allocator().dupeZ(u8, bun.span(resolved)) catch bun.outOfMemory();
         this.args.items[0] = duped;
 
         break :args this.args;
@@ -726,13 +726,23 @@ pub fn deinit(this: *Cmd) void {
         this.exec = .none;
     }
 
+    {
+        for (this.args.items) |maybe_arg| {
+            if (maybe_arg) |arg| {
+                this.base.allocator().free(bun.sliceTo(arg, 0));
+            }
+        }
+        this.args.deinit();
+    }
+
     if (!this.spawn_arena_freed) {
         log("Spawn arena free", .{});
         this.spawn_arena.deinit();
     }
 
     this.io.deref();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.deinit();
+    this.parent.destroy(this);
 }
 
 pub fn bufferedInputClose(this: *Cmd) void {

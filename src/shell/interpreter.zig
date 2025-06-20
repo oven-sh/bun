@@ -6,16 +6,8 @@
 //! machine part manually keeps track of execution state (which coroutines would
 //! do for us), but makes the code very confusing because control flow is less obvious.
 //!
-//! Things to note:
-//! - If you want to do something analogous to yielding execution, you must
-//!    `return` from the function. For example in the code we start an async
-//!    BufferedWriter and "yield" execution by calling =.start()= on the writer and
-//!    then `return`ing form the function
-//! - Sometimes a state machine will immediately finish and deinit itself so
-//!     that might cause some unintuitive things to happen. For example if you
-//!     `defer` some code, then try to yield execution to some state machine struct,
-//!     and it immediately finishes, it will deinit itself and the defer code might
-//!     use undefined memory.
+//! # Memory management
+//! Almost all allocations are go through the `AllocationScope` allocator. This lets us track
 const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
@@ -258,6 +250,8 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
+    __alloc_scope: if (bun.Environment.isDebug) bun.AllocationScope else void,
+
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
     pub const Script = @import("./states/Script.zig");
@@ -329,6 +323,8 @@ pub const Interpreter = struct {
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
+        __alloc_scope: if (bun.Environment.isDebug) *bun.AllocationScope else void,
+
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
         const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
@@ -339,6 +335,11 @@ pub const Interpreter = struct {
             subshell,
             pipeline,
         };
+
+        pub fn allocator(this: *ShellState) std.mem.Allocator {
+            if (comptime bun.Environment.isDebug) return this.__alloc_scope.allocator();
+            return bun.default_allocator;
+        }
 
         pub fn buffered_stdout(this: *ShellState) *bun.ByteList {
             return switch (this._buffered_stdout) {
@@ -402,11 +403,17 @@ pub const Interpreter = struct {
             this.__prev_cwd.deinit();
             closefd(this.cwd_fd);
 
-            if (comptime destroy_this) bun.default_allocator.destroy(this);
+            if (comptime destroy_this) this.allocator().destroy(this);
         }
 
-        pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
-            const duped = allocator.create(ShellState) catch bun.outOfMemory();
+        pub fn dupeForSubshell(
+            this: *ShellState,
+            alloc_scope: if (bun.Environment.isDebug) *bun.AllocationScope else void,
+            alloc: Allocator,
+            io: IO,
+            kind: Kind,
+        ) Maybe(*ShellState) {
+            const duped = alloc.create(ShellState) catch bun.outOfMemory();
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
                 .err => |err| return .{ .err = err },
@@ -442,13 +449,14 @@ pub const Interpreter = struct {
                 ._buffered_stdout = stdout,
                 ._buffered_stderr = stderr,
                 .shell_env = this.shell_env.clone(),
-                .cmd_local_env = EnvMap.init(allocator),
+                .cmd_local_env = EnvMap.init(alloc),
                 .export_env = this.export_env.clone(),
 
                 .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
                 .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
                 // TODO probably need to use os.dup here
                 .cwd_fd = dupedfd,
+                .__alloc_scope = alloc_scope,
             };
 
             return .{ .result = duped };
@@ -809,6 +817,8 @@ pub const Interpreter = struct {
                 .__cwd = cwd_arr,
                 .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
                 .cwd_fd = cwd_fd,
+
+                .__alloc_scope = undefined,
             },
 
             .root_io = .{
@@ -824,12 +834,15 @@ pub const Interpreter = struct {
             },
 
             .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .__alloc_scope = if (bun.Environment.isDebug) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
 
         if (cwd_) |c| {
             if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
+
+        interpreter.root_shell.__alloc_scope = if (bun.Environment.isDebug) &interpreter.__alloc_scope else {};
 
         return .{ .result = interpreter };
     }
@@ -1358,6 +1371,56 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                 @compileError(@typeName(Type) ++ " does not have ChildPtr aksjdflkasjdflkasdjf");
             }
             return Type.ChildPtr;
+        }
+
+        pub fn scopedAllocator(this: @This()) if (bun.Environment.isDebug) *bun.AllocationScope else void {
+            if (comptime !bun.Environment.isDebug) return;
+
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    if (comptime Ty == Interpreter) {
+                        return &casted.__alloc_scope;
+                    }
+                    return casted.base.__alloc_scope.scopedAllocator();
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        pub fn allocator(this: @This()) std.mem.Allocator {
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    if (comptime Ty == Interpreter) {
+                        if (bun.Environment.isDebug) return casted.__alloc_scope.allocator();
+                        return bun.default_allocator;
+                    }
+                    return casted.base.allocator();
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        pub fn create(this: @This(), comptime Ty: type) *Ty {
+            if (comptime bun.Environment.isDebug) {
+                return this.allocator().create(Ty) catch bun.outOfMemory();
+            }
+            return bun.default_allocator.create(Ty) catch bun.outOfMemory();
+        }
+
+        pub fn destroy(this: @This(), ptr: anytype) void {
+            if (comptime bun.Environment.isDebug) {
+                this.allocator().destroy(ptr);
+            } else {
+                bun.default_allocator.destroy(ptr);
+            }
         }
 
         /// Starts the state node.

@@ -306,6 +306,7 @@ fn callImplWithType(this: *Builtin, comptime BuiltinImpl: type, comptime Ret: ty
 }
 
 pub inline fn allocator(this: *Builtin) Allocator {
+    // FIXME: This should be `this.parentCmd().base.allocator()`
     return this.parentCmd().base.interpreter.allocator;
 }
 

@@ -38,14 +38,16 @@ pub fn init(
     io: IO,
 ) *Async {
     interpreter.async_commands_executing += 1;
-    return bun.new(Async, .{
-        .base = .{ .kind = .@"async", .interpreter = interpreter, .shell = shell_state },
+    const async_cmd = parent.create(Async);
+    async_cmd.* = .{
+        .base = State.init(.@"async", interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
         .event_loop = interpreter.event_loop,
         .concurrent_task = JSC.EventLoopTask.fromEventLoop(interpreter.event_loop),
-    });
+    };
+    return async_cmd;
 }
 
 pub fn start(this: *Async) Yield {

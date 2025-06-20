@@ -31,13 +31,14 @@ pub fn init(
     parent: anytype,
     io: IO,
 ) *Stmt {
-    var script = interpreter.allocator.create(Stmt) catch bun.outOfMemory();
-    script.base = .{ .kind = .stmt, .interpreter = interpreter, .shell = shell_state };
-    script.node = node;
-    script.parent = switch (@TypeOf(parent)) {
+    const parent_ptr = switch (@TypeOf(parent)) {
         ParentPtr => parent,
         else => ParentPtr.init(parent),
     };
+    var script = parent_ptr.create(Stmt);
+    script.base = State.init(.stmt, interpreter, shell_state);
+    script.node = node;
+    script.parent = parent_ptr;
     script.idx = 0;
     script.last_exit_code = null;
     script.currently_executing = null;
@@ -77,21 +78,25 @@ pub fn next(this: *Stmt) Yield {
             return pipeline.start();
         },
         .assign => |assigns| {
-            var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-            assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
+            const assign_machine = Assigns.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
             return assign_machine.start();
         },
         .subshell => {
-            switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
-                .result => |shell_state| {
-                    var script = Subshell.init(this.base.interpreter, shell_state, child.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    return script.start();
-                },
+            var script = switch (Subshell.initDupeShellState(
+                this.base.interpreter,
+                this.base.shell,
+                child.subshell,
+                Subshell.ParentPtr.init(this),
+                this.io.copy(),
+            )) {
+                .result => |s| s,
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
                     return .failed;
                 },
-            }
+            };
+            script.deinit();
+            return script.start();
         },
         .@"if" => {
             const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
@@ -126,7 +131,8 @@ pub fn deinit(this: *Stmt) void {
     if (this.currently_executing) |child| {
         child.deinit();
     }
-    this.base.interpreter.allocator.destroy(this);
+    this.base.deinit();
+    this.parent.destroy(this);
 }
 
 const bun = @import("bun");

@@ -33,9 +33,9 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *Binary {
-    var binary = interpreter.allocator.create(Binary) catch bun.outOfMemory();
+    var binary = parent.create(Binary);
     binary.node = node;
-    binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
+    binary.base = State.init(.binary, interpreter, shell_state);
     binary.parent = parent;
     binary.io = io;
     binary.left = null;
@@ -77,15 +77,19 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             return ChildPtr.init(pipeline);
         },
         .assign => |assigns| {
-            var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-            assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
-            return ChildPtr.init(assign_machine);
+            const assign = Assigns.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
+            return ChildPtr.init(assign);
         },
         .subshell => {
-            switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
-                .result => |shell_state| {
-                    const script = Subshell.init(this.base.interpreter, shell_state, node.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    return ChildPtr.init(script);
+            switch (Subshell.initDupeShellState(
+                this.base.interpreter,
+                this.base.shell,
+                node.subshell,
+                Subshell.ParentPtr.init(this),
+                this.io.copy(),
+            )) {
+                .result => |subshell| {
+                    return ChildPtr.init(subshell);
                 },
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
@@ -142,7 +146,8 @@ pub fn deinit(this: *Binary) void {
         child.deinit();
     }
     this.io.deinit();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.deinit();
+    this.parent.allocator().destroy(this);
 }
 
 const bun = @import("bun");

@@ -45,12 +45,14 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *If {
-    return bun.new(If, .{
-        .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
+    const if_stmt = parent.create(If);
+    if_stmt.* = .{
+        .base = State.init(.if_clause, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-    });
+    };
+    return if_stmt;
 }
 
 pub fn start(this: *If) Yield {
@@ -149,7 +151,8 @@ pub fn next(this: *If) Yield {
 pub fn deinit(this: *If) void {
     log("{} deinit", .{this});
     this.io.deref();
-    bun.destroy(this);
+    this.base.deinit();
+    this.parent.destroy(this);
 }
 
 pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {

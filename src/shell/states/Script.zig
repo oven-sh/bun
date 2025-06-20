@@ -40,9 +40,9 @@ pub fn init(
     parent_ptr: ParentPtr,
     io: IO,
 ) *Script {
-    const script = interpreter.allocator.create(Script) catch bun.outOfMemory();
+    const script = parent_ptr.create(Script);
     script.* = .{
-        .base = .{ .kind = .script, .interpreter = interpreter, .shell = shell_state },
+        .base = State.init(.script, interpreter, shell_state),
         .node = node,
         .parent = parent_ptr,
         .io = io,
@@ -101,7 +101,8 @@ pub fn deinit(this: *Script) void {
         this.base.shell.deinit();
     }
 
-    bun.default_allocator.destroy(this);
+    this.base.deinit();
+    this.parent.destroy(this);
 }
 
 pub fn deinitFromInterpreter(this: *Script) void {

@@ -16,6 +16,7 @@ state: union(enum) {
     done,
 },
 ctx: AssignCtx,
+owned: bool = true,
 io: IO,
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -34,6 +35,8 @@ pub inline fn deinit(this: *Assigns) void {
         this.state.expanding.current_expansion_result.deinit();
     }
     this.io.deinit();
+    this.base.deinit();
+    if (this.owned) this.parent.destroy(this);
 }
 
 pub fn start(this: *Assigns) Yield {
@@ -41,6 +44,26 @@ pub fn start(this: *Assigns) Yield {
 }
 
 pub fn init(
+    interpreter: *Interpreter,
+    shell_state: *ShellState,
+    node: []const ast.Assign,
+    ctx: AssignCtx,
+    parent: ParentPtr,
+    io: IO,
+) *Assigns {
+    const this = parent.create(Assigns);
+    this.* = .{
+        .base = State.init(.assign, interpreter, shell_state),
+        .node = node,
+        .parent = parent,
+        .state = .idle,
+        .ctx = ctx,
+        .io = io,
+    };
+    return this;
+}
+
+pub fn initBorrowed(
     this: *Assigns,
     interpreter: *Interpreter,
     shell_state: *ShellState,
@@ -50,11 +73,12 @@ pub fn init(
     io: IO,
 ) void {
     this.* = .{
-        .base = .{ .kind = .assign, .interpreter = interpreter, .shell = shell_state },
+        .base = State.init(.assign, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .state = .idle,
         .ctx = ctx,
+        .owned = false,
         .io = io,
     };
 }
@@ -64,13 +88,14 @@ pub fn next(this: *Assigns) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding = .{
-                    .current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator),
+                    .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.allocator()),
                     .expansion = undefined,
                 } };
                 continue;
             },
             .expanding => {
                 if (this.state.expanding.idx >= this.node.len) {
+                    this.state.expanding.current_expansion_result.clearAndFree();
                     this.state = .done;
                     continue;
                 }
@@ -98,8 +123,10 @@ pub fn next(this: *Assigns) Yield {
 
 pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Expansion)) {
+        bun.assert(this.state == .expanding);
         const expansion = child.ptr.as(Expansion);
         if (exit_code != 0) {
+            this.state.expanding.current_expansion_result.clearAndFree();
             this.state = .{
                 .err = expansion.state.err,
             };
@@ -110,20 +137,29 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
 
         const label = this.node[expanding.idx].label;
 
+        // Did it expand to a single word?
         if (expanding.current_expansion_result.items.len == 1) {
             const value = expanding.current_expansion_result.items[0];
+            // We're going to let `EnvStr` manage the allocation for `value`
+            // from here on out
+            this.base.leakSlice(value);
+            expanding.current_expansion_result.clearAndFree();
+
             const ref = EnvStr.initRefCounted(value);
             defer ref.deref();
+
             this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), ref, this.ctx);
-            expanding.current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator);
         } else {
+            // Multiple words, need to concatenate them together. First
+            // calculate size of the total buffer.
             const size = brk: {
                 var total: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, i| {
                     total += slice.len;
                     if (i != last) {
-                        // for space
+                        // Let's not forget to count the space in between the
+                        // words!
                         total += 1;
                     }
                 }
@@ -131,7 +167,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
             };
 
             const value = brk: {
-                var merged = bun.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
+                var merged = this.base.allocator().allocSentinel(u8, size, 0) catch bun.outOfMemory();
                 var i: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, j| {
@@ -144,12 +180,17 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
                 }
                 break :brk merged;
             };
+
+            // We're going to let `EnvStr` manage the allocation for `value`
+            // from here on out
+            this.base.leakSlice(value);
+
             const value_ref = EnvStr.initRefCounted(value);
             defer value_ref.deref();
 
             this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), value_ref, this.ctx);
             for (expanding.current_expansion_result.items) |slice| {
-                bun.default_allocator.free(slice);
+                this.base.allocator().free(slice);
             }
             expanding.current_expansion_result.clearRetainingCapacity();
         }

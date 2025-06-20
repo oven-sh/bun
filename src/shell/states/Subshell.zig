@@ -39,13 +39,42 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *Subshell {
-    return bun.new(Subshell, .{
-        .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+    const subshell = parent.create(Subshell);
+    subshell.* = .{
+        .base = State.init(.subshell, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-        .redirection_file = std.ArrayList(u8).init(bun.default_allocator),
-    });
+        .redirection_file = undefined,
+    };
+    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    return subshell;
+}
+
+pub fn initDupeShellState(
+    interpreter: *Interpreter,
+    shell_state: *ShellState,
+    node: *const ast.Subshell,
+    parent: ParentPtr,
+    io: IO,
+) bun.JSC.Maybe(*Subshell) {
+    const subshell = parent.create(Subshell);
+    subshell.* = .{
+        .base = State.init(.subshell, interpreter, shell_state),
+        .node = node,
+        .parent = parent,
+        .io = io,
+        .redirection_file = undefined,
+    };
+    subshell.base.shell = switch (shell_state.dupeForSubshell(subshell.base.allocScope(), subshell.base.allocator(), io, .subshell)) {
+        .result => |s| s,
+        .err => |e| {
+            parent.destroy(subshell);
+            return .{ .err = e };
+        },
+    };
+    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    return .{ .result = subshell };
 }
 
 pub fn start(this: *Subshell) Yield {
@@ -144,7 +173,8 @@ pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();
     this.redirection_file.deinit();
-    bun.destroy(this);
+    this.base.deinit();
+    this.parent.destroy(this);
 }
 
 pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) Yield {

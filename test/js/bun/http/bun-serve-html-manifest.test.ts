@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles, rmScope } from "harness";
+import { bunEnv, bunExe, rmScope, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe("Bun.serve HTML manifest", () => {
@@ -53,19 +53,19 @@ describe("Bun.serve HTML manifest", () => {
 
     const { stdout, stderr, exited } = proc;
     const out = await new Response(stdout).text();
-    
+
     // Extract port
     const portMatch = out.match(/PORT=(\d+)/);
     expect(portMatch).toBeTruthy();
-    
+
     if (portMatch) {
       const port = parseInt(portMatch[1]);
-      
+
       // Test the server
       const res = await fetch(`http://localhost:${port}/`);
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/html");
-      
+
       const html = await res.text();
       expect(html).toContain("Hello World");
       expect(html).toContain("<script");
@@ -163,7 +163,7 @@ describe("Bun.serve HTML manifest", () => {
 
     if (portMatch) {
       const port = parseInt(portMatch[1]);
-      
+
       // Test both routes
       const homeRes = await fetch(`http://localhost:${port}/`);
       expect(homeRes.status).toBe(200);
@@ -282,7 +282,7 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     const out = await new Response(proc.stdout).text();
-    
+
     // Should have proper content types
     expect(out).toContain("text/html");
     expect(out).toContain("text/css");

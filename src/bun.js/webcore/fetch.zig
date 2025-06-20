@@ -1183,7 +1183,7 @@ pub const FetchTasklet = struct {
             var needs_schedule = false;
             defer if (needs_schedule) {
                 // wakeup the http thread to write the data
-                http.http_thread.scheduleRequestWrite(this.http.?, false);
+                http.http_thread.scheduleRequestWrite(this.http.?, false, true);
             };
             defer buffer.release();
 
@@ -1218,7 +1218,7 @@ pub const FetchTasklet = struct {
         } else {
             if (this.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
-                http.http_thread.scheduleRequestWrite(http_, true);
+                http.http_thread.scheduleRequestWrite(http_, true, true);
             }
         }
     }

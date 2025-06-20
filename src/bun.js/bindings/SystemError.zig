@@ -52,7 +52,7 @@ pub const SystemError = extern struct {
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstance, .{ this, global }) catch @panic("unreachable");
+        return SystemError__toErrorInstance(this, global);
     }
 
     /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
@@ -74,9 +74,9 @@ pub const SystemError = extern struct {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) bun.JSError!JSValue {
         defer this.deref();
-        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstanceWithInfoObject, .{ this, global }) catch @panic("unreachable");
+        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstanceWithInfoObject, .{ this, global });
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

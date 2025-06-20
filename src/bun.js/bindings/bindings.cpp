@@ -2149,24 +2149,14 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue message = JSC::jsUndefined();
+    WTF::String message = String(""_s);
     if (err.message.tag != BunStringTag::Empty) {
-        message = Bun::toJS(globalObject, err.message);
+        message = err.message.toWTFString();
     }
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSValue options = JSC::jsUndefined();
-
-    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, globalObject->errorStructureWithErrorType<JSC::ErrorType::Error>(), message, options);
-    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return JSValue::encode(jsCast<JSObject*>(thrown_exception->value()));
-    }
+    JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2202,8 +2192,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
-    RETURN_IF_EXCEPTION(scope, {});
-
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     return JSC::JSValue::encode(JSC::JSValue(result));
 }
 
@@ -2224,13 +2213,7 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     JSC::JSValue options = JSC::jsUndefined();
     JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
-    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return JSValue::encode(jsCast<JSObject*>(thrown_exception->value()));
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
     auto clientData = WebCore::clientData(vm);

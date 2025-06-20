@@ -861,15 +861,6 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
 
     auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
     auto error = JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
-    if (auto* thrown_exception = throwScope.exception()) [[unlikely]] {
-        throwScope.clearException();
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        throwScope.throwException(globalObject, thrown_exception->value());
-        throwScope.release();
-        return {};
-    }
     throwScope.throwException(globalObject, error);
     throwScope.release();
     return {};

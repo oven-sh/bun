@@ -322,7 +322,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
@@ -345,7 +344,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
         auto* globalObject = castedThis->globalObject();
         RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTFMove(cookie))));
@@ -381,7 +379,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
@@ -548,7 +545,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         auto cookie = cookie_exception.releaseReturnValue();
         return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTFMove(cookie)));
     }
@@ -563,7 +559,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -604,7 +599,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTFMove(cookie)));

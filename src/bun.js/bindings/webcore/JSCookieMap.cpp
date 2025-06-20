@@ -178,7 +178,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto result = result_exception.releaseReturnValue();
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTFMove(result))));
@@ -410,7 +409,6 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto cookie = cookie_exception.releaseReturnValue();
 
     impl.set(WTFMove(cookie));

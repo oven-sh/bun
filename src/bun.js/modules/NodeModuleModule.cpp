@@ -320,22 +320,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     switch (callFrame->argumentCount()) {
     case 0: {
         // not "requires" because "require" could be confusing
-        JSC::throwTypeError(
-            globalObject, scope,
-            "Module._resolveFilename needs 2+ arguments (a string)"_s);
-        scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::throwTypeError(globalObject, scope, "Module._resolveFilename needs 2+ arguments (a string)"_s);
+        return {};
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
 
         if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope,
-                "Module._resolveFilename expects a string"_s);
-            scope.release();
-            return JSC::JSValue::encode(JSC::JSValue {});
+            JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
+            return {};
         }
 
         if (
@@ -356,21 +350,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
         }
 
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        auto result = Bun__resolveSync(
-            globalObject,
-            JSC::JSValue::encode(moduleName), JSValue::encode(fromValue),
-            false,
-            true);
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
             JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
 
-        scope.release();
-        return result;
+        RELEASE_AND_RETURN(scope, result);
     }
     }
 }

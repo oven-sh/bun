@@ -788,8 +788,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    scope.release();
-                    return result;
+                    RELEASE_AND_RETURN(scope, result);
                 }
             }
         }
@@ -800,8 +799,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
                     auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    scope.release();
-                    return result;
+                    RELEASE_AND_RETURN(scope, result);
                 }
             }
         }

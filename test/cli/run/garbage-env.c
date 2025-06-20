@@ -86,7 +86,7 @@ int exec_garbage_env() {
     }
     char *bun = "bun";
 
-    char *args[] = {bun, (char *)fixturesPath, NULL};
+    char *args[] = {bun, "-e", "console.log(process.env)", NULL};
     execve(path, args, garbage_env);
 
     // If execve fails, try with /bin/env

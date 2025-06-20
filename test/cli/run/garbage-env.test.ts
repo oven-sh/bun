@@ -25,7 +25,7 @@ describe("garbage env", () => {
 
     const proc = Bun.spawn({
       cmd: [bunExe(), "-e", bunScript()],
-      env: { ...bunEnv, BUN_PATH: bunExe(), FIXTURE_PATH: fixturesPath },
+      env: { ...bunEnv, BUN_PATH: bunExe() },
       cwd: import.meta.dirname,
       stdout: "pipe",
       stderr: "pipe",

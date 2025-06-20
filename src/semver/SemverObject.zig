@@ -115,8 +115,8 @@ pub fn order(
     const left = argumentStrings.left.slice();
     const right = argumentStrings.right.slice();
 
-    const left_result = Version.parse(SlicedString.init(left, left));
-    const right_result = Version.parse(SlicedString.init(right, right));
+    const left_result = Version.parseStrict(SlicedString.init(left, left));
+    const right_result = Version.parseStrict(SlicedString.init(right, right));
 
     if (!left_result.valid) {
         return globalThis.throw("Invalid SemVer: {s}\n", .{left});
@@ -150,7 +150,7 @@ pub fn satisfies(
     const left = argumentStrings.left.slice();
     const right = argumentStrings.right.slice();
 
-    const left_result = Version.parse(SlicedString.init(left, left));
+    const left_result = Version.parseStrict(SlicedString.init(left, left));
     if (left_result.wildcard != .none) {
         return .false;
     }

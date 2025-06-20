@@ -315,7 +315,8 @@ pub const HTTPThread = struct {
                                 if (client.state.original_request_body == .stream) {
                                     var stream = &client.state.original_request_body.stream;
                                     stream.ended = ended;
-                                    if (ended) {
+                                    if (ended and write.flags.chunked) {
+                                        // only send the 0-length chunk if the request body is chunked
                                         client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                     } else {
                                         client.flushStream(is_tls, socket);

@@ -28,7 +28,6 @@ pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
 pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
 pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
-
 pub fn stat(
     this: *S3Credentials,
     path: []const u8,

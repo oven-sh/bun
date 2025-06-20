@@ -675,7 +675,7 @@ pub const Version = extern struct {
                         }
                     },
                     '-' => {
-                        if (state != .pre) {
+                        if (state == .none) {
                             state = .pre;
                             start = i + 1;
                         }

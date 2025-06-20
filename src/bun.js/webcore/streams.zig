@@ -29,7 +29,7 @@ pub const Start = union(Tag) {
         done,
     };
 
-    pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Start, globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
         switch (this) {
             .empty, .ready => {
                 return .js_undefined;

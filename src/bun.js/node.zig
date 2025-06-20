@@ -193,7 +193,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,

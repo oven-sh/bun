@@ -459,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "write"_s);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_writeBody(globalObject, callFrame, castedThis);
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_writeBody(globalObject, callFrame, castedThis));
 }
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -467,7 +467,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "end"_s);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_endBody(globalObject, callFrame, castedThis);
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_endBody(globalObject, callFrame, castedThis));
 }
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -475,7 +475,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSStringDecoder* castedThis = jsStringDecoderCast(globalObject, callFrame->thisValue(), "text"_s);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
-    return jsStringDecoderPrototypeFunction_textBody(globalObject, callFrame, castedThis);
+    RELEASE_AND_RETURN(scope, jsStringDecoderPrototypeFunction_textBody(globalObject, callFrame, castedThis));
 }
 
 static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastChar, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

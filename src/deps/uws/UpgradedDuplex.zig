@@ -96,7 +96,7 @@ fn callWriteOrEnd(this: *UpgradedDuplex, data: ?[]const u8, msg_more: bool) void
         const globalThis = this.global.?;
         const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
         if (data) |data_| {
-            const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis);
+            const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis) catch .zero; // TODO: properly propagate exception upwards
             buffer.ensureStillAlive();
 
             _ = writeOrEnd.call(globalThis, duplex, &.{buffer}) catch |err| {

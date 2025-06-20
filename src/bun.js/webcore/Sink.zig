@@ -471,7 +471,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            return this.sink.end(null).toJS(globalThis);
+            return this.sink.end(null).toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
         }
 
         pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -568,7 +568,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return this.sink.endFromJS(globalThis).toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
         }
 
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {

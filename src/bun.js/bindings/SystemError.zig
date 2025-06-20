@@ -76,8 +76,7 @@ pub const SystemError = extern struct {
     /// to match the error code that `node:os` throws.
     pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
-        return SystemError__toErrorInstanceWithInfoObject(this, global);
+        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstanceWithInfoObject, .{ this, global }) catch @panic("unreachable");
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

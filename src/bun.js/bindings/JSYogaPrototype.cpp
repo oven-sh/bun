@@ -107,13 +107,13 @@ static JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc);
 static JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirtiedFunc);
 
 // External implementations
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent);
-extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent);
+JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc);
 
 // Hash table for Node prototype properties
 static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
@@ -499,117 +499,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject* globalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// Min/Max Width/Height setters
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    // Forward to parseYogaValue implementation
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth);
-    return jsYogaNodeProtoFuncSetMinWidth(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight);
-    return jsYogaNodeProtoFuncSetMinHeight(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth);
-    return jsYogaNodeProtoFuncSetMaxWidth(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight);
-    return jsYogaNodeProtoFuncSetMaxHeight(globalObject, callFrame);
-}
-
-// Style setters
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis);
-    return jsYogaNodeProtoFuncSetFlexBasis(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding);
-    return jsYogaNodeProtoFuncSetPadding(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition);
-    return jsYogaNodeProtoFuncSetPosition(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap);
-    return jsYogaNodeProtoFuncSetGap(globalObject, callFrame);
-}
-
-// Style getters
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetWidth);
-    return jsYogaNodeProtoFuncGetWidth(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHeight);
-    return jsYogaNodeProtoFuncGetHeight(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinWidth);
-    return jsYogaNodeProtoFuncGetMinWidth(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinHeight);
-    return jsYogaNodeProtoFuncGetMinHeight(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxWidth);
-    return jsYogaNodeProtoFuncGetMaxWidth(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxHeight);
-    return jsYogaNodeProtoFuncGetMaxHeight(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexBasis, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexBasis);
-    return jsYogaNodeProtoFuncGetFlexBasis(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin);
-    return jsYogaNodeProtoFuncGetMargin(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding);
-    return jsYogaNodeProtoFuncGetPadding(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
-{
-    extern JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition);
-    return jsYogaNodeProtoFuncGetPosition(globalObject, callFrame);
-}
 
 // Layout property setters (simple enum setters)
 JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexDirection, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))

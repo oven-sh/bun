@@ -613,13 +613,7 @@ pub fn onReaderDone(this: *FileReader) void {
                         globalThis,
                         .js_undefined,
                         &.{
-                            JSC.ArrayBuffer.fromBytes(
-                                buffered.items,
-                                .Uint8Array,
-                            ).toJS(
-                                globalThis,
-                                null,
-                            ),
+                            JSC.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis, null) catch .zero, // TODO: properly propagate exception upwards
                         },
                     );
                 }

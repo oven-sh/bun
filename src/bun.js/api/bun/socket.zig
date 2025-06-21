@@ -190,7 +190,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk false;
             };
@@ -208,11 +208,12 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            _ = globalThis;
 
             const args = callframe.arguments_old(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk true;
             };
@@ -635,7 +636,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var js_error: JSValue = .js_undefined;
             if (err != 0) {
                 // errors here are always a read error
-                js_error = bun.sys.Error.fromCodeInt(err, .read).toJSC(globalObject);
+                js_error = bun.sys.Error.fromCodeInt(err, .read).toJS(globalObject);
             }
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{
@@ -661,7 +662,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const output_value = handlers.binary_type.toJS(data, globalObject);
+            const output_value = handlers.binary_type.toJS(data, globalObject) catch .zero; // TODO: properly propagate exception upwards
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -722,7 +723,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (args.len == 0) {
                 return globalObject.throw("Expected 1 argument, got 0", .{});
             }
-            const t = args.ptr[0].coerce(i32, globalObject);
+            const t = try args.ptr[0].coerce(i32, globalObject);
             if (t < 0) {
                 return globalObject.throw("Timeout must be a positive integer", .{});
             }
@@ -2059,7 +2060,7 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
     if (rc != 0) {
         const err = bun.sys.Error.fromCode(bun.sys.getErrno(rc), .socketpair);
-        return global.throwValue(err.toJSC(global));
+        return global.throwValue(err.toJS(global));
     }
 
     _ = bun.FD.fromNative(fds_[0]).updateNonblocking(true);
@@ -2091,12 +2092,12 @@ pub fn jsSetSocketOptions(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
         if (is_for_send_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJSC(global));
+                return global.throwValue(err.toJS(global));
             }
         } else if (is_for_recv_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJSC(global));
+                return global.throwValue(err.toJS(global));
             }
         }
     }

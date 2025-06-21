@@ -501,7 +501,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJSC(globalObject),
+                    err.toJS(globalObject),
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -527,7 +527,7 @@ pub const FSWatcher = struct {
         var filename: JSC.JSValue = .js_undefined;
         if (file_name.len > 0) {
             if (this.encoding == .buffer)
-                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
+                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
                 filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {

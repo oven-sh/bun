@@ -1132,7 +1132,7 @@ pub const TestingAPIs = struct {
         defer args.deinit();
 
         if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         }
 
         return .true;
@@ -1179,7 +1179,7 @@ pub const TestingAPIs = struct {
 
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
-                    globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
+                    globalThis.throwValue(e.withPath(path).toJS(globalThis)) catch {};
                     return .initErr(.js_undefined);
                 },
                 .result => |fd| fd,

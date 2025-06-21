@@ -281,14 +281,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
     }
 
     auto view = str->view(global);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;

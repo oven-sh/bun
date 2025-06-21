@@ -45,8 +45,8 @@ pub fn flush(_: *ArrayBufferSink) JSC.Maybe(void) {
 pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
     if (this.streaming) {
         const value: JSValue = switch (this.as_uint8array) {
-            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
-            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array) catch .zero, // TODO: properly propagate exception upwards
+            false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer) catch .zero, // TODO: properly propagate exception upwards
         };
         this.bytes.len = 0;
         if (wait) {}

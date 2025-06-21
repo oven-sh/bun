@@ -60,7 +60,7 @@ fn colorIntFromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue, comptime 
     }
 
     // CSS spec says to clamp values to their valid range so we'll respect that here
-    return std.math.clamp(input.coerce(i32, globalThis), 0, 255);
+    return std.math.clamp(try input.coerce(i32, globalThis), 0, 255);
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55

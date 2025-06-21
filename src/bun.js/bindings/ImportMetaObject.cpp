@@ -107,7 +107,9 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+                auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (pathsObject) {
                     if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                         auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                         if (pathsArray->length() > 0) {
@@ -213,7 +215,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
-            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (pathsObject) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -246,6 +250,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString())
             from = JSC::JSValue::encode(pathProperty);
@@ -354,12 +359,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) goto cleanup;
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
                     paths.append(Bun::toStringRef(pathStr));
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
-                if (scope.exception()) goto cleanup;
+                if (scope.exception()) [[unlikely]]
+                    goto cleanup;
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
@@ -418,7 +425,9 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (pathsObject) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -444,6 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString()) [[likely]] {
             from = pathProperty;

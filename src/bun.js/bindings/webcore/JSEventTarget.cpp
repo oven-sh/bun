@@ -233,6 +233,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
             warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
         }
         auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
+        RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
         JSObject& target = *castedThis;
         errorInstance->putDirect(vm, vm.propertyNames->target, &target);

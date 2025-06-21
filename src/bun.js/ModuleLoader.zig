@@ -1358,7 +1358,7 @@ pub fn transpileSourceCode(
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            try JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
                 }

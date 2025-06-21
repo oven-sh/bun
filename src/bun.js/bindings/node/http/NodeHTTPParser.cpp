@@ -541,7 +541,7 @@ int HTTPParser::onBody(const char* at, size_t length)
 
     JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, onBodyCallback, callData, m_thisParser, args);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
         return HPE_USER;
     }
@@ -583,7 +583,7 @@ int HTTPParser::onMessageComplete()
     MarkedArgumentBuffer args;
     JSC::profiledCall(globalObject, ProfilingReason::API, onMessageCompleteCallback, callData, thisParser, args);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         return -1;
     }
 

@@ -1815,7 +1815,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJSC(globalThis);
+                                error_instance = sys_err.toJS(globalThis);
                             },
                         }
                     },
@@ -1922,7 +1922,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            const result: JSValue = onNodeHTTPRequestFn(
+            const result: JSValue = bun.jsc.fromJSHostCall(globalThis, @src(), onNodeHTTPRequestFn, .{
                 @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
@@ -1935,7 +1935,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp,
                 upgrade_ctx,
                 &node_http_response,
-            );
+            }) catch globalThis.takeException(error.JSError);
 
             const HTTPResult = union(enum) {
                 rejection: JSC.JSValue,
@@ -2911,7 +2911,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 const error_code_value = JSValue.jsNumber(error_code);
-                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet);
+                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet) catch return; // TODO: properly propagate exception upwards
                 const loop = this.globalThis.bunVM().eventLoop();
                 loop.enter();
                 defer loop.exit();

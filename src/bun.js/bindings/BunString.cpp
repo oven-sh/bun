@@ -106,7 +106,6 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) [[unlikely]] {
         return JSValue::encode(JSC::jsEmptyString(vm));

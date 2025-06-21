@@ -55,7 +55,7 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
         scope.clearExceptionExceptTermination();
         return Nothing<bool>();
     }
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return Nothing<bool>();
     }

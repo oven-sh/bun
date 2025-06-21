@@ -9,6 +9,18 @@
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
 
+#define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
+    do {                                                                                                           \
+        SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm();                                                     \
+        EXCEPTION_ASSERT(!!(scope__).exception() == vm.traps().needHandling(JSC::VMTraps::NeedExceptionHandling)); \
+        if (vm.traps().maybeNeedHandling()) [[unlikely]] {                                                         \
+            if (vm.hasExceptionsAfterHandlingTraps()) {                                                            \
+                scope__.release();                                                                                 \
+                return value__;                                                                                    \
+            }                                                                                                      \
+        }                                                                                                          \
+    } while (false)
+
 namespace Bun {
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {

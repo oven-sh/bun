@@ -86,7 +86,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         } else if (syntheticThis) {
             syntheticThis->evaluate(globalObject);
         }
-        if (scope.exception()) {
+        if (scope.exception()) [[unlikely]] {
             return;
         }
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));

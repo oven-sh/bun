@@ -107,7 +107,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         return {};
     return result;
 }

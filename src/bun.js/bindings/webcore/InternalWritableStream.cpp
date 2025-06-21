@@ -89,7 +89,7 @@ bool InternalWritableStream::locked() const
     ASSERT(!arguments.hasOverflowed());
 
     auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         scope.clearException();
 
     return result.hasException() ? false : result.returnValue().isTrue();

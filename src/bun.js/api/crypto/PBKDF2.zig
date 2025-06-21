@@ -76,11 +76,6 @@ pub const Job = struct {
         const output_slice = this.output;
         assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
         const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
-        if (buffer_value == .zero) {
-            promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
-            return;
-        }
-
         this.output = &[_]u8{};
         promise.resolve(globalThis, buffer_value);
     }
@@ -149,7 +144,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
         return globalThis.throwInvalidArgumentTypeValue("iterations", "number", arg2);
     }
 
-    const iteration_count = arg2.coerce(i64, globalThis);
+    const iteration_count = try arg2.coerce(i64, globalThis);
 
     if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(i32))) {
         return globalThis.throwRangeError(iteration_count, .{ .field_name = "iterations", .min = 1, .max = std.math.maxInt(i32) + 1 });

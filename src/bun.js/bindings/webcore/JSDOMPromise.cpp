@@ -58,7 +58,7 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     auto thenFunction = promise->get(&lexicalGlobalObject, privateName);
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         return IsCallbackRegistered::No;
 
     ASSERT(thenFunction.isCallable());

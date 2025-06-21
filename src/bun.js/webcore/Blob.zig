@@ -248,7 +248,7 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJSC(globalThis)) catch {};
+                                    globalThis.throwValue(err.toJS(globalThis)) catch {};
                                     this.failed = true;
                                 },
                                 .result => |result| {
@@ -813,11 +813,7 @@ pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string:
 /// Returns an encoded `*JSPromise` that resolves if the file
 /// - doesn't exist and is created
 /// - exists and is truncated
-fn writeFileWithEmptySourceToDestination(
-    ctx: *JSC.JSGlobalObject,
-    destination_blob: *Blob,
-    options: WriteFileOptions,
-) JSC.JSValue {
+fn writeFileWithEmptySourceToDestination(ctx: *JSC.JSGlobalObject, destination_blob: *Blob, options: WriteFileOptions) bun.JSError!JSC.JSValue {
     // SAFETY: null-checked by caller
     const destination_store = destination_blob.store.?;
     defer destination_blob.detach();
@@ -894,7 +890,7 @@ fn writeFileWithEmptySourceToDestination(
                 }
 
                 result.err = result.err.withPathLike(file.pathlike);
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, result.toJS(ctx));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, try result.toJS(ctx));
             }
         },
         .s3 => |*s3| {
@@ -958,12 +954,7 @@ fn writeFileWithEmptySourceToDestination(
     return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0));
 }
 
-pub fn writeFileWithSourceDestination(
-    ctx: *JSC.JSGlobalObject,
-    source_blob: *Blob,
-    destination_blob: *Blob,
-    options: WriteFileOptions,
-) JSC.JSValue {
+pub fn writeFileWithSourceDestination(ctx: *JSC.JSGlobalObject, source_blob: *Blob, destination_blob: *Blob, options: WriteFileOptions) bun.JSError!JSC.JSValue {
     const destination_store = destination_blob.store orelse Output.panic("Destination blob is detached", .{});
     const destination_type = std.meta.activeTag(destination_store.data);
 
@@ -1546,7 +1537,7 @@ fn writeStringToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1587,11 +1578,11 @@ fn writeStringToFileFast(
                         return .zero;
                     }
                     if (comptime !needs_open) {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     }
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                        err.withPath(pathlike.path.slice()).toJS(globalThis),
                     );
                 },
             }
@@ -1633,7 +1624,7 @@ fn writeBytesToFileFast(
 
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1666,12 +1657,12 @@ fn writeBytesToFileFast(
                 if (comptime !needs_open) {
                     return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.toJSC(globalThis),
+                        err.toJS(globalThis),
                     );
                 }
                 return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJSC(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis),
                 );
             },
         }
@@ -1777,7 +1768,7 @@ pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
             if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                 set_last_modified = true;
-                blob.last_modified = last_modified.coerce(f64, globalThis);
+                blob.last_modified = try last_modified.coerce(f64, globalThis);
             }
         }
     }
@@ -1876,7 +1867,7 @@ pub fn constructBunFile(
                 }
             }
             if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
-                blob.last_modified = last_modified.coerce(f64, globalObject);
+                blob.last_modified = try last_modified.coerce(f64, globalObject);
             }
         }
     }
@@ -2407,7 +2398,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                         break :brk result;
                     },
                     .err => |err| {
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJS(globalThis));
                     },
                 }
                 unreachable;
@@ -2440,7 +2431,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2448,7 +2439,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2483,7 +2474,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *JSC.JSGlobalObject, re
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
             },
             else => {},
         }
@@ -2650,7 +2641,7 @@ pub fn getWriter(
                     break :brk result;
                 },
                 .err => |err| {
-                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJSC(globalThis));
+                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJS(globalThis));
                 },
             }
             @compileError(unreachable);
@@ -2683,7 +2674,7 @@ pub fn getWriter(
             switch (sink.writer.startSync(fd, false)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2691,7 +2682,7 @@ pub fn getWriter(
             switch (sink.writer.start(fd, true)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJSC(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2731,7 +2722,7 @@ pub fn getWriter(
     switch (sink.start(stream_start)) {
         .err => |err| {
             sink.deref();
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         else => {},
     }

@@ -55,7 +55,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    return globalObject.throwValue(err.toJSC(globalObject)) catch .zero;
+                    return globalObject.throwValue(err.toJS(globalObject)) catch .zero;
                 },
             }
         }
@@ -72,7 +72,7 @@ pub const ArrayBuffer = extern struct {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 fd.close();
-                return globalObject.throwValue(err.toJSC(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -109,7 +109,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                return globalObject.throwValue(err.toJSC(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject));
             },
         }
     }
@@ -141,34 +141,32 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
-    // TODO: this can throw an error! should use JSError!JSValue
-    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
-            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false),
-            .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
+            .Uint8Array => bun.jsc.fromJSHostCall(globalThis, @src(), Bun__createUint8ArrayForCopy, .{ globalThis, bytes.ptr, bytes.len, false }),
+            .ArrayBuffer => bun.jsc.fromJSHostCall(globalThis, @src(), Bun__createArrayBufferForCopy, .{ globalThis, bytes.ptr, bytes.len }),
             else => @compileError("Not implemented yet"),
         };
     }
 
-    pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
+    pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
         return switch (comptime kind) {
-            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, null, 0, false),
-            .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, null, 0),
+            .Uint8Array => bun.jsc.fromJSHostCall(Bun__createUint8ArrayForCopy, .{ globalThis, null, 0, false }),
+            .ArrayBuffer => bun.jsc.fromJSHostCall(Bun__createArrayBufferForCopy, .{ globalThis, null, 0 }),
             else => @compileError("Not implemented yet"),
         };
     }
 
-    pub fn createBuffer(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSC.JSValue {
+    pub fn createBuffer(globalThis: *JSC.JSGlobalObject, bytes: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
+        return bun.jsc.fromJSHostCall(globalThis, @src(), Bun__createUint8ArrayForCopy, .{ globalThis, bytes.ptr, bytes.len, true });
     }
 
-    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSC.JSValue {
+    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+        return bun.jsc.fromJSHostCall(globalThis, @src(), Bun__createUint8ArrayForCopy, .{ globalThis, bytes.ptr, bytes.len, false });
     }
 
     extern "c" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
@@ -177,13 +175,10 @@ pub const ArrayBuffer = extern struct {
     pub fn alloc(global: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType, len: u32) JSError!struct { JSC.JSValue, []u8 } {
         var ptr: [*]u8 = undefined;
         const buf = switch (comptime kind) {
-            .Uint8Array => Bun__allocUint8ArrayForCopy(global, len, @ptrCast(&ptr)),
-            .ArrayBuffer => Bun__allocArrayBufferForCopy(global, len, @ptrCast(&ptr)),
+            .Uint8Array => try bun.jsc.fromJSHostCall(global, @src(), Bun__allocUint8ArrayForCopy, .{ global, len, @ptrCast(&ptr) }),
+            .ArrayBuffer => try bun.jsc.fromJSHostCall(global, @src(), Bun__allocArrayBufferForCopy, .{ global, len, @ptrCast(&ptr) }),
             else => @compileError("Not implemented yet"),
         };
-        if (buf == .zero) {
-            return error.JSError;
-        }
         return .{ buf, ptr[0..len] };
     }
 
@@ -215,7 +210,7 @@ pub const ArrayBuffer = extern struct {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
-    pub fn toJSUnchecked(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJSUnchecked(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) bun.JSError!JSC.JSValue {
 
         // The reason for this is
         // JSC C API returns a detached arraybuffer
@@ -258,7 +253,7 @@ pub const ArrayBuffer = extern struct {
 
     const log = Output.scoped(.ArrayBuffer, false);
 
-    pub fn toJS(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJS(this: ArrayBuffer, ctx: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) bun.JSError!JSC.JSValue {
         if (this.value != .zero) {
             return this.value;
         }
@@ -434,7 +429,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         /// This clones bytes
-        pub fn toJS(this: BinaryType, bytes: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: BinaryType, bytes: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             switch (this) {
                 .Buffer => return JSC.ArrayBuffer.createBuffer(globalThis, bytes),
                 .ArrayBuffer => return JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer),
@@ -442,7 +437,7 @@ pub const ArrayBuffer = extern struct {
 
                 // These aren't documented, but they are supported
                 .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float16Array, .Float32Array, .Float64Array => {
-                    const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
+                    const buffer = try JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
                     return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
                 },
             }

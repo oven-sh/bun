@@ -9,7 +9,7 @@ pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
     code: String = .empty,
-    message: String = .empty,
+    message: String, // it is illegal to have an empty message
     path: String = .empty,
     syscall: String = .empty,
     hostname: String = .empty,
@@ -52,7 +52,6 @@ pub const SystemError = extern struct {
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
         return SystemError__toErrorInstance(this, global);
     }
 
@@ -75,10 +74,9 @@ pub const SystemError = extern struct {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) bun.JSError!JSValue {
         defer this.deref();
-
-        return SystemError__toErrorInstanceWithInfoObject(this, global);
+        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstanceWithInfoObject, .{ this, global });
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

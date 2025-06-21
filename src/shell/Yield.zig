@@ -55,7 +55,7 @@ pub const Yield = union(enum) {
     },
 
     suspended,
-    /// Failed and throwed a JS error
+    /// Failed and threw a JS error
     failed,
     done,
 

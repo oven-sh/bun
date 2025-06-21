@@ -37,10 +37,11 @@ pub const JSBigInt = opaque {
 
     extern fn JSC__JSBigInt__toString(*JSBigInt, *JSGlobalObject) bun.String;
     pub fn toString(this: *JSBigInt, global: *JSGlobalObject) JSError!bun.String {
+        var scope: jsc.CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
         const str = JSC__JSBigInt__toString(this, global);
-        if (global.hasException()) {
-            return error.JSError;
-        }
+        try scope.returnIfException();
         return str;
     }
 };

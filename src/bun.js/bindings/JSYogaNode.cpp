@@ -57,6 +57,11 @@ JSYogaNode* JSYogaNode::fromYGNode(YGNodeRef nodeRef)
     return static_cast<JSYogaNode*>(YGNodeGetContext(nodeRef));
 }
 
+JSC::JSGlobalObject* JSYogaNode::globalObject() const
+{
+    return this->structure()->globalObject();
+}
+
 template<typename MyClassT, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
 {

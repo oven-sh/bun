@@ -3664,6 +3664,9 @@ pub const rescle = struct {
         const status = rescle__setIcon(exe_path, icon);
         return switch (status) {
             0 => {},
+            -1 => error.ExecutableLoadFailed,
+            -2 => error.IconSetFailed,
+            -3 => error.ExecutableCommitFailed,
             else => error.IconEditError,
         };
     }

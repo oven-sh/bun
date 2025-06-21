@@ -653,8 +653,11 @@ pub const StandaloneModuleGraph = struct {
                 // Close the file descriptor temporarily to avoid sharing conflicts
                 cloned_executable_fd.close();
 
-                bun.windows.rescle.setIcon(tempfile.ptr, icon) catch {
-                    Output.warn("Failed to set executable icon", .{});
+                bun.windows.rescle.setIcon(tempfile.ptr, icon) catch |err| switch (err) {
+                    error.ExecutableLoadFailed => Output.warn("Failed to set executable icon: cannot load executable file", .{}),
+                    error.IconSetFailed => Output.warn("Failed to set executable icon: cannot read or parse icon file", .{}),
+                    error.ExecutableCommitFailed => Output.warn("Failed to set executable icon: cannot commit changes to executable", .{}),
+                    else => Output.warn("Failed to set executable icon", .{}),
                 };
 
                 // Reopen the file for further operations

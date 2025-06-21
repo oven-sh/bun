@@ -177,7 +177,7 @@ it("end doesn't close when backed by a file descriptor", async () => {
   const chunk = Buffer.from("1 Hello, world!");
   const file = Bun.file(fd);
   const writer = file.writer();
-  const written = await writer.write(chunk);
+  const written = writer.write(chunk);
   await writer.end();
   await util.promisify(fs.ftruncate)(fd, written);
   await util.promisify(fs.close)(fd);
@@ -188,7 +188,7 @@ it("end does close when not backed by a file descriptor", async () => {
   const x = tmpdirSync();
   const file = Bun.file(path.join(x, "test.txt"));
   const writer = file.writer();
-  await writer.write(Buffer.from("1 Hello, world!"));
+  writer.write(Buffer.from("1 Hello, world!"));
   await writer.end();
   await Bun.sleep(10); // For the file descriptor leak checker.
 });
@@ -199,9 +199,9 @@ it("write result is not cumulative", async () => {
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const file = Bun.file(fd);
   const writer = file.writer();
-  expect(await writer.write("1 ")).toBe(2);
-  expect(await writer.write("Hello, ")).toBe(7);
-  expect(await writer.write("world!")).toBe(6);
+  expect(writer.write("1 ")).toBe(2);
+  expect(writer.write("Hello, ")).toBe(7);
+  expect(writer.write("world!")).toBe(6);
   await writer.end();
   await util.promisify(fs.close)(fd);
 });

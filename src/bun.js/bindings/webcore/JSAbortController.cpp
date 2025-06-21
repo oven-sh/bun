@@ -48,6 +48,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "ErrorCode.h"
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -56,6 +57,7 @@ using namespace JSC;
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort);
+static JSC_DECLARE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_customInspect);
 
 // Attributes
 
@@ -149,6 +151,7 @@ void JSAbortControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortController::info(), JSAbortControllerPrototypeTableValues, *this);
+    this->putDirectNativeFunction(vm, this->globalObject(), builtinNames(vm).inspectCustomPublicName(), 2, jsAbortControllerPrototypeFunction_customInspect, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::Function | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -225,6 +228,78 @@ JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort, (JSGlobalObje
     return IDLOperation<JSAbortController>::call<jsAbortControllerPrototypeFunction_abortBody>(*lexicalGlobalObject, *callFrame, "abort");
 }
 
+static inline JSC::EncodedJSValue jsAbortControllerPrototypeFunction_customInspectBody(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, typename IDLOperation<JSAbortController>::ClassParameter castedThis)
+{
+
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSValue depthValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+
+    auto depth = depthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (depth < 0) {
+        return JSValue::encode(jsNontrivialString(vm, "[AbortController]"_s));
+    }
+
+    if (!depthValue.isUndefinedOrNull()) {
+        depthValue = jsNumber(depth - 1);
+    }
+
+    JSObject* options = optionsValue.toObject(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    PropertyNameArray optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    options->getPropertyNames(lexicalGlobalObject, optionsArray, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject* newOptions = constructEmptyObject(lexicalGlobalObject);
+    for (size_t i = 0; i < optionsArray.size(); i++) {
+        auto name = optionsArray[i];
+
+        JSValue value = options->get(lexicalGlobalObject, name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        newOptions->putDirect(vm, name, value, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    PutPropertySlot slot(newOptions);
+    newOptions->put(newOptions, lexicalGlobalObject, Identifier::fromString(vm, "depth"_s), depthValue, slot);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto& impl = castedThis->wrapped();
+
+    JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
+
+    inputObj->putDirect(vm, Identifier::fromString(vm, "signal"_s), toJS<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.signal()), 0);
+
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    auto callData = JSC::getCallData(utilInspect);
+    MarkedArgumentBuffer arguments;
+    arguments.append(inputObj);
+    arguments.append(newOptions);
+
+    auto inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, inputObj, arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto inspectStringView = inspectString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSValue result = jsString(vm, makeString("AbortController "_s, inspectStringView.data));
+
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSAbortController>::call<jsAbortControllerPrototypeFunction_customInspectBody>(*lexicalGlobalObject, *callFrame, "inspect");
+}
+
 JSC::GCClient::IsoSubspace* JSAbortController::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSAbortController, UseCustomHeapCellType::No>(
@@ -242,6 +317,7 @@ void JSAbortController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     addWebCoreOpaqueRoot(visitor, thisObject->wrapped().opaqueRoot());
+    thisObject->wrapped().signal().reason().visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortController);

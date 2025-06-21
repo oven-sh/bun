@@ -472,4 +472,4 @@ const InitError = HTTPClient.InitError;
 const Batch = bun.ThreadPool.Batch;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
-const log = Output.scoped(.HTTPThread, true);
+const log = Output.scoped(.HTTPThread, false);

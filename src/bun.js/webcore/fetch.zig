@@ -367,16 +367,28 @@ pub const FetchTasklet = struct {
             var err = this.onReject();
             var need_deinit = true;
             defer if (need_deinit) err.deinit();
+            var js_err = JSValue.zero;
             // if we are streaming update with error
             if (this.readable_stream_ref.get(globalThis)) |readable| {
                 if (readable.ptr == .Bytes) {
+                    js_err = err.toJS(globalThis);
+                    js_err.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{
-                            .err = .{ .JSValue = err.toJS(globalThis) },
+                            .err = .{ .JSValue = js_err },
                         },
                         bun.default_allocator,
                     );
                 }
+            }
+            if (this.sink) |sink| {
+                if (js_err == .zero) {
+                    js_err = err.toJS(globalThis);
+                    js_err.ensureStillAlive();
+                }
+                sink.cancel(js_err);
+                this.clearSink();
+                return;
             }
             // if we are buffering resolve the promise
             if (this.getCurrentResponse()) |response| {
@@ -593,7 +605,11 @@ pub const FetchTasklet = struct {
             false => brk: {
                 // in this case we wanna a JSC.Strong.Optional so we just convert it
                 var value = this.onReject();
-                _ = value.toJS(globalThis);
+                const err = value.toJS(globalThis);
+                if (this.sink) |sink| {
+                    sink.cancel(err);
+                    this.clearSink();
+                }
                 break :brk value.JSValue;
             },
         };

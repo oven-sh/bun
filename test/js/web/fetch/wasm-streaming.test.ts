@@ -147,8 +147,9 @@ describe("WebAssembly.compileStreaming", () => {
       },
     });
 
-    // TODO: Use getWasmBufferFromValue in JSWasmStreamingCompiler
-    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow("Type error");
+    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+      "chunk must be an ArrayBufferView or an ArrayBuffer",
+    );
   });
 
   test("doesn't compile a response that isn't valid WebAssembly", async () => {

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
-import { rmSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import path from "path";
 import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
@@ -639,4 +639,38 @@ error: Hello World`,
     },
     run: { stdout: "Hello, world!" },
   });
+  itBundled.skipIf(!isWindows, "compile/WindowsHideConsole", {
+    compile: true,
+    compileOptions: {
+      windowsHideConsole: true,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("Hello, world!");
+      `,
+    },
+    outfile: "out.exe",
+    onAfterBundle(api) {
+      expect(getSubsystem(api.outfile)).toBe("GUI");
+    },
+  });
 });
+
+const PE_HEADER_OFFSET_ADDRESS = 0x3c;
+const SUBSYSTEM_RELATIVE_OFFSET = 0x5c;
+
+function getSubsystem(exePath: string): string {
+  const buffer = readFileSync(exePath);
+  const peHeaderOffset = buffer.readUInt32LE(PE_HEADER_OFFSET_ADDRESS);
+  const subsystemOffset = peHeaderOffset + SUBSYSTEM_RELATIVE_OFFSET;
+  const subsystem = buffer.readUInt16LE(subsystemOffset);
+
+  switch (subsystem) {
+    case 2:
+      return "GUI";
+    case 3:
+      return "CUI";
+    default:
+      return `Unknown: ${subsystem}`;
+  }
+}

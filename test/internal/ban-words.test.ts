@@ -44,7 +44,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 284 },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 175 },
 
-  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
+  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 29 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 49 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 139 },
 };

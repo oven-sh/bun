@@ -791,7 +791,7 @@ pub const StandaloneModuleGraph = struct {
             },
         }
 
-        return cloned_executable_fd;
+        unreachable;
     }
 
     pub const CompileTarget = @import("./compile_target.zig");

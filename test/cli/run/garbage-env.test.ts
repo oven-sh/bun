@@ -1,36 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 
 describe("garbage env", () => {
   test("garbage env", async () => {
-    const fixturesPath = path.join(import.meta.dirname, "garbage-env-fixtures.ts");
+    const cfile = path.join(import.meta.dirname, "garbage-env.c");
+    {
+      const { exitCode, stderr } = await Bun.$`clang -o garbage-env ${cfile}`;
+      const stderrText = stderr.toString();
+      if (stderrText.length > 0) {
+        console.error(stderrText);
+      }
+      expect(exitCode).toBe(0);
+    }
 
-    const bunScript = () => /* ts */ `
-      import { cc } from "bun:ffi";
-      import path from "path"
-      const program = cc({
-        source: path.join(import.meta.dirname, "garbage-env.c"),
-        symbols: {
-          exec_garbage_env: {
-            args: [],
-            returns: "int",
-          },
-        },
-      });
-      program.symbols.exec_garbage_env();
-    `;
-
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", bunScript()],
-      env: { ...bunEnv, BUN_PATH: bunExe() },
-      cwd: import.meta.dirname,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    const stderr = await new Response(proc.stderr).text();
-    expect(stderr).toBe("");
+    const { exitCode, stderr } = await Bun.$`./garbage-env`.env({ BUN_PATH: bunExe() });
+    expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
   });
 });

@@ -5,7 +5,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-int exec_garbage_env() {
+int main() {
   int stdout_pipe[2], stderr_pipe[2];
   pid_t pid;
   int status;
@@ -46,12 +46,15 @@ int exec_garbage_env() {
   garbage5[12] = 0xF5;
   garbage5[13] = 0xC1;
   garbage5[14] = 0xC2;
-  garbage5[15] = '\0';
 
   char *garbage_env[] = {
-      garbage5,     garbage1,           garbage2,
-      garbage3,     garbage4,           "BUN_DEBUG_QUIET_LOGS=1",
-      "OOGA=booga", "OOGA=laskdjflsdf", NULL};
+      garbage5,
+      //   garbage1,
+      //   garbage2,
+      //   garbage3,
+      //   garbage4,
+      "PATH=/usr/bin:/bin", // Keep PATH so we can find commands
+      "BUN_DEBUG_QUIET_LOGS=1", "OOGA=booga", "OOGA=laskdjflsdf", NULL};
 
   pid = fork();
 
@@ -72,25 +75,15 @@ int exec_garbage_env() {
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
 
-    const char *path = getenv("BUN_PATH");
-    if (path == NULL) {
-      printf("MISSING BUN_PATH\n");
-      fflush(stdout);
+    char *BUN_PATH = getenv("BUN_PATH");
+    if (BUN_PATH == NULL) {
+      fprintf(stderr, "Missing BUN_PATH!\n");
+      fflush(stderr);
       exit(1);
     }
-    const char *fixturesPath = getenv("FIXTURE_PATH");
-    if (fixturesPath == NULL) {
-      printf("MISSING FIXTURE_PATH\n");
-      fflush(stdout);
-      exit(1);
-    }
-    char *bun = "bun";
-
-    char *args[] = {bun, "-e", "console.log(process.env)", NULL};
-    execve(path, args, garbage_env);
-
-    // If execve fails, try with /bin/env
-    // execve("/bin/env", (char *[]){"env", NULL}, garbage_env);
+    execve(BUN_PATH,
+           (char *[]){"bun-debug", "-e", "console.log(process.env)", NULL},
+           garbage_env);
 
     // If both fail, exit with error
     perror("execve");
@@ -129,10 +122,8 @@ int exec_garbage_env() {
     fflush(stdout);
 
     if (stderr_bytes > 0) {
-      fprintf(stderr, "\n=== STDERR ===\n");
-      fprintf(stderr, "%s", stderr_buffer);
-      fflush(stderr);
-      exit(status);
+      printf("\n=== STDERR ===\n");
+      printf("%s", stderr_buffer);
     }
     exit(status);
   }

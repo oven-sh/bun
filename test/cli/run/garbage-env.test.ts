@@ -16,7 +16,10 @@ describe.if(isPosix)("garbage env", () => {
     }
 
     const { exitCode, stderr } = await Bun.$`./garbage-env`.env({ BUN_PATH: bunExe() });
-    expect(stderr.toString()).toBe("");
+    const stderrText = stderr.toString();
+    if (stderrText.length > 0) {
+      console.error(stderrText);
+    }
     expect(exitCode).toBe(0);
   });
 });

@@ -122,8 +122,9 @@ int main() {
     fflush(stdout);
 
     if (stderr_bytes > 0) {
-      printf("\n=== STDERR ===\n");
-      printf("%s", stderr_buffer);
+      fprintf(stderr, "\n=== STDERR ===\n");
+      fprintf(stderr, "%s", stderr_buffer);
+      fflush(stderr);
     }
     exit(status);
   }

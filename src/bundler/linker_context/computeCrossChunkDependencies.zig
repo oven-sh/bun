@@ -82,14 +82,14 @@ const CrossChunkDependencies = struct {
             if (chunk.content != .javascript) continue;
 
             // Go over each part in this file that's marked for inclusion in this chunk
-            const parts = deps.parts[source_index].slice();
+            const parts: []const Part = deps.parts[source_index].slice();
             var import_records = deps.import_records[source_index].slice();
             const imports_to_bind = deps.imports_to_bind[source_index];
             const wrap = deps.flags[source_index].wrap;
             const wrapper_ref = deps.wrapper_refs[source_index];
             const _chunks = deps.chunks;
 
-            for (parts) |part| {
+            for (parts) |*part| {
                 if (!part.is_live)
                     continue;
 
@@ -114,7 +114,7 @@ const CrossChunkDependencies = struct {
                 // the same name should already be marked as all being in a single
                 // chunk. In that case this will overwrite the same value below which
                 // is fine.
-                deps.symbols.assignChunkIndex(part.declared_symbols, @as(u32, @truncate(chunk_index)));
+                deps.symbols.assignChunkIndex(&part.declared_symbols, @as(u32, @truncate(chunk_index)));
 
                 const used_refs = part.symbol_uses.keys();
 

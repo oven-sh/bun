@@ -13,21 +13,86 @@ describe("describe scope", () => {
   afterAll(() => hooks_run.push("describe afterAll"));
   afterEach(() => hooks_run.push("describe afterEach"));
 
-  it("should run after beforeAll/beforeEach in the correct order", () => {
-    expect(hooks_run).toEqual(["global beforeAll", "describe beforeAll", "global beforeEach", "describe beforeEach"]);
+  describe("nested describe scope", () => {
+    beforeAll(() => hooks_run.push("nested describe beforeAll"));
+    beforeEach(() => hooks_run.push("nested describe beforeEach"));
+    afterAll(() => hooks_run.push("nested describe afterAll"));
+    afterEach(() => hooks_run.push("nested describe afterEach"));
+
+    it("should run after nested beforeAll/beforeEach in the correct order", () => {
+      // Entries from before first test
+      expect(hooks_run).toEqual([
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+      ]);
+    });
+
+    it("should run after nested afterEach/afterAll in the correct order", () => {
+      expect(hooks_run).toEqual([
+        // Entries from before first test
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+
+        // Entries from after first test
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+
+        // Entries from before second test
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+      ]);
+    });
   });
 
-  it("should run after afterEach/afterAll in the correct order", () => {
-    expect(hooks_run).toEqual([
-      "global beforeAll",
-      "describe beforeAll",
-      "global beforeEach",
-      "describe beforeEach",
-      "describe afterEach",
-      "global afterEach",
-      "global beforeEach",
-      "describe beforeEach",
-    ]);
+  describe("nested describe scope 2", () => {
+    beforeAll(() => hooks_run.push("nested describe 2 beforeAll"));
+    beforeEach(() => hooks_run.push("nested describe 2 beforeEach"));
+    afterAll(() => hooks_run.push("nested describe 2 afterAll"));
+    afterEach(() => hooks_run.push("nested describe 2 afterEach"));
+
+    it("should run after beforeAll/beforeEach in the correct order", () => {
+      expect(hooks_run).toEqual([
+        // Entries from first test
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+
+        // Entries from after first test
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+
+        // Entries from before second test
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+
+        // Entries from after second test
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+        "nested describe afterAll",
+
+        // Entries from before third test
+        "nested describe 2 beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe 2 beforeEach",
+      ]);
+    });
   });
 });
 

@@ -524,9 +524,6 @@ pub const FetchTasklet = struct {
         if (vm.isShuttingDown()) {
             this.mutex.unlock();
             if (is_done) {
-                if (this.sink) |sink| {
-                    sink.cancel(.js_undefined);
-                }
                 this.deref();
             }
             return;

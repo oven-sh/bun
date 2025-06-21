@@ -524,7 +524,11 @@ pub const Result = union(Tag) {
                 promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
-                const value = result.toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
+                const value = result.toJS(globalThis) catch |err| {
+                    result.* = .{ .temporary = .{} };
+                    promise.reject(globalThis, err);
+                    return;
+                };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };

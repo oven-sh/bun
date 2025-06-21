@@ -2311,3 +2311,4 @@ test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
 
 # uses jsobjectref
 test/js/node/test/parallel/test-fs-readdir-buffer.js
+test/js/node/test/parallel/test-stream-finished.js

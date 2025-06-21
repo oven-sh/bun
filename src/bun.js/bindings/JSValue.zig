@@ -1147,16 +1147,12 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
     pub fn toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void {
-        return JSC__JSValue__toZigException(this, global, exception);
+        return bun.jsc.fromJSHostCallVoid(global, @src(), JSC__JSValue__toZigException, .{ this, global, exception }) catch return; // TODO: properly propagate termination
     }
 
     extern fn JSC__JSValue__toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void;
     pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) JSError!void {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src(), .enabled);
-        defer scope.deinit();
-        JSC__JSValue__toZigString(this, out, global);
-        try scope.returnIfException();
+        return bun.jsc.fromJSHostCallVoid(global, @src(), JSC__JSValue__toZigString, .{ this, out, global });
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.

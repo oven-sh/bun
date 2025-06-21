@@ -358,7 +358,7 @@ pub const UDPSocket = struct {
                 }
 
                 if (bun.c_ares.Error.initEAI(ret)) |eai_err| {
-                    return globalThis.throwValue(eai_err.toJS(globalThis));
+                    return globalThis.throwValue(eai_err.toJSWithSyscallAndHostname(globalThis, "connect", connect.address));
                 }
             }
             this.connect_info = .{ .port = connect.port };

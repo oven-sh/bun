@@ -63,7 +63,7 @@ pub const CopyFile = struct {
 
     pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
         const globalThis = this.globalThis;
-        var system_error: SystemError = this.system_error orelse SystemError{};
+        var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
             system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
         }

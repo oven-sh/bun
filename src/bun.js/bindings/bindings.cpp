@@ -4721,14 +4721,10 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
         populateStackTrace(vm, *stackTrace, &except->stack, global, flags);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-            return;
-        }
+
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), &except->stack, global, flags);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-            return;
-        }
+
     } else {
         getFromSourceURL = true;
     }
@@ -4741,18 +4737,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
     if (except->type == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-            return;
-        }
+
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
+
         except->message = Bun::toStringRef(global, message);
     } else {
-        RETURN_IF_EXCEPTION(scope, );
+
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-            return;
-        }
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -4769,54 +4760,49 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     const auto& names = builtinNames(vm);
     if (except->type != SYNTAX_ERROR_CODE) {
 
-        if (JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName())) {
+        JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName());
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
+        if (syscall) {
             if (syscall.isString()) {
                 except->syscall = Bun::toStringRef(global, syscall);
             }
         }
 
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName());
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        }
-
-        if (JSC::JSValue code = getNonObservable(vm, global, obj, names.codePublicName())) {
+        if (code) {
             if (code.isString() || code.isNumber()) {
                 except->system_code = Bun::toStringRef(global, code);
             }
         }
 
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        JSC::JSValue path = getNonObservable(vm, global, obj, names.pathPublicName());
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        }
-
-        if (JSC::JSValue path = getNonObservable(vm, global, obj, names.pathPublicName())) {
+        if (path) {
             if (path.isString()) {
                 except->path = Bun::toStringRef(global, path);
             }
         }
 
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        JSC::JSValue fd = getNonObservable(vm, global, obj, names.fdPublicName());
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        }
-
-        if (JSC::JSValue fd = getNonObservable(vm, global, obj, names.fdPublicName())) {
+        if (fd) {
             if (fd.isNumber()) {
                 except->fd = fd.toInt32(global);
             }
         }
 
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+        JSC::JSValue errno_ = getNonObservable(vm, global, obj, names.errnoPublicName());
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        }
-
-        if (JSC::JSValue errno_ = getNonObservable(vm, global, obj, names.errnoPublicName())) {
+        if (errno_) {
             if (errno_.isNumber()) {
                 except->errno_ = errno_.toInt32(global);
             }
-        }
-
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-            return;
         }
     }
 
@@ -4828,7 +4814,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
             // This one intentionally calls getters.
             JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
-            RETURN_IF_EXCEPTION(scope, );
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
             if (stackValue) {
                 if (stackValue.isString()) {
                     WTF::String stack = stackValue.toWTFString(global);
@@ -4876,29 +4863,37 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     }
                 }
             }
-
-            if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-                return;
-            }
         }
 
-        if (JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL)) {
+        JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
+        if (sourceURL) {
             if (sourceURL.isString()) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
                 // Take care not to make these getter calls observable.
 
-                if (JSC::JSValue column = getNonObservable(vm, global, obj, vm.propertyNames->column)) {
+                JSC::JSValue column = getNonObservable(vm, global, obj, vm.propertyNames->column);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
+                if (column) {
                     if (column.isNumber()) {
                         except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                     }
                 }
 
-                if (JSC::JSValue line = getNonObservable(vm, global, obj, vm.propertyNames->line)) {
+                JSC::JSValue line = getNonObservable(vm, global, obj, vm.propertyNames->line);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
+                if (line) {
                     if (line.isNumber()) {
                         except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
-                        if (JSC::JSValue lineText = getNonObservable(vm, global, obj, builtinNames(vm).lineTextPublicName())) {
+                        JSC::JSValue lineText = getNonObservable(vm, global, obj, builtinNames(vm).lineTextPublicName());
+                        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                            return;
+                        if (lineText) {
                             if (lineText.isString()) {
                                 if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                                     auto str = jsStr->value(global);
@@ -4917,6 +4912,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 except->stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except->stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
             }
         }
     }

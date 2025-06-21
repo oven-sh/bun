@@ -9,7 +9,7 @@ pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
     code: String = .empty,
-    message: String = .empty,
+    message: String, // it is illegal to have an empty message
     path: String = .empty,
     syscall: String = .empty,
     hostname: String = .empty,

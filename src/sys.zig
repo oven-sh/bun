@@ -536,6 +536,7 @@ pub const Error = struct {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label
@@ -571,6 +572,7 @@ pub const Error = struct {
         var err = SystemError{
             .errno = -%@as(c_int, this.errno),
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label

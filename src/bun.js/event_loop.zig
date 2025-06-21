@@ -614,6 +614,10 @@ pub fn unrefConcurrently(this: *EventLoop) void {
     this.wakeup();
 }
 
+pub fn isEventLoopThread(this: *const EventLoop) bool {
+    return this.virtual_machine.isJavaScriptThread();
+}
+
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;
 pub const ConcurrentPromiseTask = @import("./event_loop/ConcurrentPromiseTask.zig").ConcurrentPromiseTask;
 pub const WorkTask = @import("./event_loop/WorkTask.zig").WorkTask;

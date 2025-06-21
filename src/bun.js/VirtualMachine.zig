@@ -231,7 +231,11 @@ pub fn uvLoop(this: *const VirtualMachine) *bun.Async.Loop {
     return this.event_loop_handle.?;
 }
 
-pub fn isMainThread(this: *const VirtualMachine) bool {
+pub fn isJavaScriptThread(this: *const VirtualMachine) bool {
+    return this == VMHolder.vm;
+}
+
+pub fn isMainThreadVM(this: *const VirtualMachine) bool {
     return this.worker == null;
 }
 
@@ -3594,7 +3598,7 @@ pub const ExitHandler = struct {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
-        if (vm.isMainThread()) {
+        if (vm.isMainThreadVM()) {
             Bun__closeAllSQLiteDatabasesForTermination();
         }
     }

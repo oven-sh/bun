@@ -11,8 +11,13 @@ tasks: Queue = undefined,
 ///   - immediate_tasks: tasks that will run on the current tick
 ///
 /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
+/// We also have immediate_cpp_tasks and next_immediate_cpp_tasks which are basically
+/// exactly the same thing, except these just come from c++ code. The behaviour and theory
+/// for executing them is the same. You can call "globalObject->queueImmediateCppTask()" to queue a task from cpp
 immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
 next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+next_immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
 
 concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
 global: *JSC.JSGlobalObject = undefined,
@@ -28,6 +33,13 @@ concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
 signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
+
+// this exists because while we're inside a spawnSync call, some tasks can actually
+// still complete which leads to a case where module resolution can partially complete and
+// some modules are only partialy evaluated which causes reference errors.
+// TODO: A better fix here could be a second event loop so we can come off the main one
+// while processing spawnSync, then resume back to here afterwards
+is_inside_spawn_sync: bool = false,
 
 pub const Debug = if (Environment.isDebug) struct {
     is_inside_tick_queue: bool = false,
@@ -113,6 +125,11 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
     scope.init(globalObject, @src(), .enabled);
     defer scope.deinit();
 
+    // see is_inside_spawn_sync doc comment
+    if (this.is_inside_spawn_sync) {
+        return;
+    }
+
     jsc_vm.releaseWeakRefs();
     JSC__JSGlobalObject__drainMicrotasks(globalObject);
     try scope.assertNoExceptionExceptTermination();
@@ -196,9 +213,18 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
     var to_run_now = this.immediate_tasks;
+    var to_run_now_cpp = this.immediate_cpp_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
+
+    this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
+    this.next_immediate_cpp_tasks = .{};
+
+    for (to_run_now_cpp.items) |task| {
+        log("running immediate cpp task", .{});
+        task.run(virtual_machine.global);
+    }
 
     var exception_thrown = false;
     for (to_run_now.items) |task| {
@@ -209,6 +235,22 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     if (exception_thrown) {
         this.maybeDrainMicrotasks();
     }
+
+    if (this.next_immediate_cpp_tasks.capacity > 0) {
+        // this would only occur if we were recursively running tickImmediateTasks.
+        @branchHint(.unlikely);
+        this.immediate_cpp_tasks.appendSlice(bun.default_allocator, this.next_immediate_cpp_tasks.items) catch bun.outOfMemory();
+        this.next_immediate_cpp_tasks.deinit(bun.default_allocator);
+    }
+
+    if (to_run_now_cpp.capacity > 1024 * 128) {
+        // once in a while, deinit the array to free up memory
+        to_run_now_cpp.clearAndFree(bun.default_allocator);
+    } else {
+        to_run_now_cpp.clearRetainingCapacity();
+    }
+
+    this.next_immediate_cpp_tasks = to_run_now_cpp;
 
     if (this.next_immediate_tasks.capacity > 0) {
         // this would only occur if we were recursively running tickImmediateTasks.
@@ -519,6 +561,10 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) 
 
 pub fn enqueueTask(this: *EventLoop, task: Task) void {
     this.tasks.writeItem(task) catch unreachable;
+}
+
+pub fn enqueueImmediateCppTask(this: *EventLoop, task: *CppTask) void {
+    this.immediate_cpp_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
 }
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {

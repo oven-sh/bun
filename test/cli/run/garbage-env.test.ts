@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, isPosix } from "harness";
 import path from "path";
 
-describe("garbage env", () => {
+describe.if(isPosix)("garbage env", () => {
   test("garbage env", async () => {
     const cfile = path.join(import.meta.dirname, "garbage-env.c");
     {

@@ -638,11 +638,9 @@ pub const StandaloneModuleGraph = struct {
                 bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
                     Output.err(err, "failed to disable console on executable", .{});
                     cleanup(zname, cloned_executable_fd);
-
                     Global.exit(1);
                 };
             }
-
             // this should be done before embedding the content because rescle sanitizes the file
             if (inject_options.windows_icon) |icon_utf8| {
                 var normalized_buf: bun.OSPathBuffer = undefined;

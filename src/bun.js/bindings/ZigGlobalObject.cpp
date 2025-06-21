@@ -4455,7 +4455,6 @@ extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStr
 
 extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
 {
-    fprintf(stderr, "\t\tHi, we're using the slice approach (magic is %c%c%c, size %ld)\n", spanPtr[1], spanPtr[2], spanPtr[3], spanSize); // REMOVE ME
     compiler->addBytes(std::span(spanPtr, spanSize));
 }
 
@@ -4483,7 +4482,6 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
         return promise;
     }
 
-    fprintf(stderr, "\t\tHello, we're gonna consume a stream\n"); // REMOVE ME
     auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(compiler));
     auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
     auto callData = JSC::getCallData(builtin);

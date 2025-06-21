@@ -1,21 +1,37 @@
-const bun = @import("bun");
+const bun = @import("root").bun;
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const strings = bun.strings;
 const logger = bun.logger;
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../env_loader.zig");
-const Environment = @import("../env.zig");
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const ExtractData = Install.ExtractData;
-const PackageManager = Install.PackageManager;
-const Semver = bun.Semver;
-const String = Semver.String;
 const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const GitSHA = String;
 const Path = bun.path;
+const ExtractData = @import("./install.zig").ExtractData;
+const Install = @import("./install.zig");
+const PackageID = Install.PackageID;
+const ExternalSliceAllocator = Install.ExternalSliceAllocator;
+const invalid_package_id = Install.invalid_package_id;
+const DependencyID = Install.DependencyID;
+const Lockfile = @import("./lockfile.zig");
+const PackageManager = Install.PackageManager;
+const GitSHA = String;
+const String = @import("./semver.zig").String;
+const Semver = @import("./semver.zig");
+const ExternalString = Semver.ExternalString;
+const GlobalStringBuilder = @import("../string_builder.zig");
+const Output = bun.Output;
+const Global = bun.Global;
+const FileSystem = @import("../fs.zig").FileSystem;
 const File = bun.sys.File;
+const Env = bun.DotEnv;
+const Resolution = @import("./resolution.zig").Resolution;
 const OOM = bun.OOM;
+const Features = @import("../analytics/analytics_thread.zig").Features;
+const Dependency = @import("./dependency.zig");
+const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const Syscall = bun.sys;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
@@ -337,46 +353,7 @@ pub const Repository = extern struct {
         }
     };
 
-    fn exec(
-        allocator: std.mem.Allocator,
-        _env: DotEnv.Map,
-        argv: []const string,
-    ) !string {
-        var env = _env;
-        var std_map = try env.stdEnvMap(allocator);
-
-        defer std_map.deinit();
-
-        const result = if (comptime Environment.isWindows)
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            })
-        else
-            try std.process.Child.run(.{
-                .allocator = allocator,
-                .argv = argv,
-                .env_map = std_map.get(),
-            });
-
-        switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout else if (
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
-            (strings.containsComptime(result.stderr, "remote:") and
-                strings.containsComptime(result.stderr, "not") and
-                strings.containsComptime(result.stderr, "found")) or
-                strings.containsComptime(result.stderr, "does not exist"))
-            {
-                return error.RepositoryNotFound;
-            },
-            else => {},
-        }
-
-        return error.InstallFailed;
-    }
+    // The old synchronous exec function has been removed in favor of async GitRunner
 
     pub fn trySSH(url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
@@ -454,7 +431,7 @@ pub const Repository = extern struct {
     }
 
     pub fn download(
-        allocator: std.mem.Allocator,
+        pm: *PackageManager,
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
@@ -462,96 +439,128 @@ pub const Repository = extern struct {
         name: string,
         url: string,
         attempt: u8,
-    ) !std.fs.Dir {
+    ) !void {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
-            const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-            _ = exec(
-                allocator,
-                env,
-                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
-            ) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git fetch\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
-            break :fetch dir;
-        } else |not_found| clone: {
+        // Check if already cloned
+        if (cache_dir.openDirZ(folder_name, .{})) |dir| {
+            // Need to fetch
+            const path = Path.joinAbsString(pm.cache_directory_path, &.{folder_name}, .auto);
+            
+            var git_runner = GitRunner.new(.{
+                .process = null,
+                .manager = pm,
+                .completion_context = .{
+                    .download = .{
+                        .name = name,
+                        .url = url,
+                        .task_id = task_id,
+                        .attempt = attempt,
+                        .log = log,
+                        .cache_dir = dir,
+                    },
+                },
+                .envp = try env.createNullDelimitedEnvMap(pm.allocator),
+                .allocator = pm.allocator,
+                .argv = try pm.allocator.alloc(string, 5),
+            });
+            
+            git_runner.argv[0] = try pm.allocator.dupe(u8, "git");
+            git_runner.argv[1] = try pm.allocator.dupe(u8, "-C");
+            git_runner.argv[2] = try pm.allocator.dupe(u8, path);
+            git_runner.argv[3] = try pm.allocator.dupe(u8, "fetch");
+            git_runner.argv[4] = try pm.allocator.dupe(u8, "--quiet");
+            
+            try git_runner.spawn();
+        } else |not_found| {
             if (not_found != error.FileNotFound) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            // Need to clone
+            const target = Path.joinAbsString(pm.cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c core.longpaths=true",
-                "--quiet",
-                "--bare",
-                url,
-                target,
-            }) catch |err| {
-                if (err == error.RepositoryNotFound or attempt > 1) {
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        allocator,
-                        "\"git clone\" for \"{s}\" failed",
-                        .{name},
-                    ) catch unreachable;
-                }
-                return err;
-            };
-
-            break :clone try cache_dir.openDirZ(folder_name, .{});
-        };
+            var git_runner = GitRunner.new(.{
+                .process = null,
+                .manager = pm,
+                .completion_context = .{
+                    .download = .{
+                        .name = name,
+                        .url = url,
+                        .task_id = task_id,
+                        .attempt = attempt,
+                        .log = log,
+                        .cache_dir = cache_dir,
+                    },
+                },
+                .envp = try env.createNullDelimitedEnvMap(pm.allocator),
+                .allocator = pm.allocator,
+                .argv = try pm.allocator.alloc(string, 7),
+            });
+            
+            git_runner.argv[0] = try pm.allocator.dupe(u8, "git");
+            git_runner.argv[1] = try pm.allocator.dupe(u8, "clone");
+            git_runner.argv[2] = try pm.allocator.dupe(u8, "-c core.longpaths=true");
+            git_runner.argv[3] = try pm.allocator.dupe(u8, "--quiet");
+            git_runner.argv[4] = try pm.allocator.dupe(u8, "--bare");
+            git_runner.argv[5] = try pm.allocator.dupe(u8, url);
+            git_runner.argv[6] = try pm.allocator.dupe(u8, target);
+            
+            try git_runner.spawn();
+        }
     }
 
     pub fn findCommit(
-        allocator: std.mem.Allocator,
+        pm: *PackageManager,
         env: *DotEnv.Loader,
         log: *logger.Log,
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
         task_id: u64,
-    ) !string {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+    ) !void {
+        const path = Path.joinAbsString(pm.cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
         _ = repo_dir;
 
-        return std.mem.trim(u8, exec(
-            allocator,
-            shared_env.get(allocator, env),
-            if (committish.len > 0)
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1", committish }
+        var git_runner = GitRunner.new(.{
+            .process = null,
+            .manager = pm,
+            .completion_context = .{
+                .find_commit = .{
+                    .name = name,
+                    .committish = committish,
+                    .task_id = task_id,
+                    .log = log,
+                    .repo_dir = repo_dir,
+                },
+            },
+            .envp = try shared_env.get(pm.allocator, env).createNullDelimitedEnvMap(pm.allocator),
+            .allocator = pm.allocator,
+            .argv = if (committish.len > 0)
+                try pm.allocator.alloc(string, 7)
             else
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
-        ) catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
-                .{ committish, name },
-            ) catch unreachable;
-            return err;
-        }, " \t\r\n");
+                try pm.allocator.alloc(string, 6),
+        });
+        
+        git_runner.argv[0] = try pm.allocator.dupe(u8, "git");
+        git_runner.argv[1] = try pm.allocator.dupe(u8, "-C");
+        git_runner.argv[2] = try pm.allocator.dupe(u8, path);
+        git_runner.argv[3] = try pm.allocator.dupe(u8, "log");
+        git_runner.argv[4] = try pm.allocator.dupe(u8, "--format=%H");
+        git_runner.argv[5] = try pm.allocator.dupe(u8, "-1");
+        if (committish.len > 0) {
+            git_runner.argv[6] = try pm.allocator.dupe(u8, committish);
+        }
+        
+        try git_runner.spawn();
     }
 
     pub fn checkout(
-        allocator: std.mem.Allocator,
+        pm: *PackageManager,
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
@@ -559,102 +568,514 @@ pub const Repository = extern struct {
         name: string,
         url: string,
         resolved: string,
-    ) !ExtractData {
+    ) !void {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
-        var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
+        // Check if already exists
+        if (bun.openDir(cache_dir, folder_name)) |dir| {
+            dir.close();
+            // Already exists, we're done
+            pm.onGitCheckoutComplete(0, .{
+                .url = url,
+                .resolved = resolved,
+            }) catch |err| {
+                pm.onGitError(0, err);
+            };
+            return;
+        } else |not_found| {
             if (not_found != error.ENOENT) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            // Need to clone with --no-checkout first
+            const target = Path.joinAbsString(pm.cache_directory_path, &.{folder_name}, .auto);
+            const repo_path = try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf);
 
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c core.longpaths=true",
-                "--quiet",
-                "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
-                target,
-            }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
+            var git_runner = GitRunner.new(.{
+                .process = null,
+                .manager = pm,
+                .completion_context = .{
+                    .checkout = .{
+                        .name = name,
+                        .url = url,
+                        .resolved = resolved,
+                        .log = log,
+                        .cache_dir = cache_dir,
+                        .repo_dir = repo_dir,
+                    },
+                },
+                .envp = try env.createNullDelimitedEnvMap(pm.allocator),
+                .allocator = pm.allocator,
+                .argv = try pm.allocator.alloc(string, 7),
+            });
+            
+            git_runner.argv[0] = try pm.allocator.dupe(u8, "git");
+            git_runner.argv[1] = try pm.allocator.dupe(u8, "clone");
+            git_runner.argv[2] = try pm.allocator.dupe(u8, "-c core.longpaths=true");
+            git_runner.argv[3] = try pm.allocator.dupe(u8, "--quiet");
+            git_runner.argv[4] = try pm.allocator.dupe(u8, "--no-checkout");
+            git_runner.argv[5] = try pm.allocator.dupe(u8, repo_path);
+            git_runner.argv[6] = try pm.allocator.dupe(u8, target);
+            
+            try git_runner.spawn();
+        }
+    }
+};
 
-            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
-            var dir = try bun.openDir(cache_dir, folder_name);
-            dir.deleteTree(".git") catch {};
-
-            if (resolved.len > 0) insert_tag: {
-                const git_tag = dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
-                defer git_tag.close();
-                git_tag.writeAll(resolved) catch {
-                    dir.deleteFileZ(".bun-tag") catch {};
-                };
-            }
-
-            break :brk dir;
-        };
-        defer package_dir.close();
-
-        const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
-            if (err == error.ENOENT) {
-                // allow git dependencies without package.json
-                return .{
-                    .url = url,
-                    .resolved = resolved,
-                };
-            }
-
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "\"package.json\" for \"{s}\" failed to open: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-        defer json_file.close();
-
-        const json_path = json_file.getPath(
-            &json_path_buf,
-        ).unwrap() catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "\"package.json\" for \"{s}\" failed to resolve: {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
-
-        const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
-        return .{
-            .url = url,
-            .resolved = resolved,
-            .json = .{
-                .path = ret_json_path,
-                .buf = json_buf,
+pub const GitRunner = struct {
+    const GitRunner = @This();
+    const Process = bun.spawn.Process;
+    const OutputReader = bun.io.BufferedReader;
+    
+    process: ?*Process = null,
+    stdout: OutputReader = OutputReader.init(@This()),
+    stderr: OutputReader = OutputReader.init(@This()),
+    manager: *PackageManager,
+    remaining_fds: i8 = 0,
+    has_called_process_exit: bool = false,
+    completion_context: CompletionContext,
+    envp: [:null]?[*:0]const u8,
+    allocator: std.mem.Allocator,
+    argv: []const string,
+    
+    pub const CompletionContext = union(enum) {
+        download: struct {
+            name: string,
+            url: string,
+            task_id: u64,
+            attempt: u8,
+            log: *logger.Log,
+            cache_dir: std.fs.Dir,
+        },
+        find_commit: struct {
+            name: string,
+            committish: string,
+            task_id: u64,
+            log: *logger.Log,
+            repo_dir: std.fs.Dir,
+        },
+        checkout: struct {
+            name: string,
+            url: string,
+            resolved: string,
+            log: *logger.Log,
+            cache_dir: std.fs.Dir,
+            repo_dir: std.fs.Dir,
+        },
+    };
+    
+    pub const new = bun.TrivialNew(@This());
+    
+    pub fn eventLoop(this: *const GitRunner) *JSC.AnyEventLoop {
+        return &this.manager.event_loop;
+    }
+    
+    pub fn loop(this: *const GitRunner) *bun.uws.Loop {
+        return this.manager.event_loop.loop();
+    }
+    
+    pub fn spawn(this: *GitRunner) !void {
+        this.stdout.setParent(this);
+        this.stderr.setParent(this);
+        
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdin = .ignore,
+            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
+            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = this.stderr.source.?.pipe },
+            .cwd = this.manager.cache_directory_path,
+            .windows = if (Environment.isWindows) .{
+                .loop = JSC.EventLoopHandle.init(&this.manager.event_loop),
             },
+            .stream = false,
         };
+        
+        this.remaining_fds = 0;
+        
+        // Convert argv to null-terminated for spawning
+        var argv_buf = try this.allocator.allocSentinel(?[*:0]const u8, this.argv.len, null);
+        defer this.allocator.free(argv_buf);
+        for (this.argv, 0..) |arg, i| {
+            argv_buf[i] = try this.allocator.dupeZ(u8, arg);
+        }
+        
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, argv_buf, this.envp)).unwrap();
+        
+        if (comptime Environment.isPosix) {
+            if (spawned.stdout) |stdout| {
+                if (!spawned.memfds[1]) {
+                    this.stdout.setParent(this);
+                    _ = bun.sys.setNonblocking(stdout);
+                    this.remaining_fds += 1;
+                    
+                    resetOutputFlags(&this.stdout, stdout);
+                    try this.stdout.start(stdout, true).unwrap();
+                    if (this.stdout.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
+                } else {
+                    this.stdout.setParent(this);
+                    this.stdout.startMemfd(stdout);
+                }
+            }
+            if (spawned.stderr) |stderr| {
+                if (!spawned.memfds[2]) {
+                    this.stderr.setParent(this);
+                    _ = bun.sys.setNonblocking(stderr);
+                    this.remaining_fds += 1;
+                    
+                    resetOutputFlags(&this.stderr, stderr);
+                    try this.stderr.start(stderr, true).unwrap();
+                    if (this.stderr.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
+                } else {
+                    this.stderr.setParent(this);
+                    this.stderr.startMemfd(stderr);
+                }
+            }
+        } else if (comptime Environment.isWindows) {
+            if (spawned.stdout == .buffer) {
+                this.stdout.parent = this;
+                this.remaining_fds += 1;
+                try this.stdout.startWithCurrentPipe().unwrap();
+            }
+            if (spawned.stderr == .buffer) {
+                this.stderr.parent = this;
+                this.remaining_fds += 1;
+                try this.stderr.startWithCurrentPipe().unwrap();
+            }
+        }
+        
+        const event_loop = &this.manager.event_loop;
+        var process = spawned.toProcess(event_loop, false);
+        
+        if (this.process) |proc| {
+            proc.detach();
+            proc.deref();
+        }
+        
+        this.process = process;
+        process.setExitHandler(this);
+        
+        switch (process.watchOrReap()) {
+            .err => |err| {
+                if (!process.hasExited())
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+            },
+            .result => {},
+        }
+    }
+    
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+        output.flags.nonblocking = true;
+        output.flags.socket = true;
+        output.flags.memfd = false;
+        output.flags.received_eof = false;
+        output.flags.closed_without_reporting = false;
+        
+        if (comptime Environment.allow_assert) {
+            const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
+            
+            const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
+        }
+    }
+    
+    pub fn onReaderDone(this: *GitRunner) void {
+        bun.assert(this.remaining_fds > 0);
+        this.remaining_fds -= 1;
+        this.maybeFinished();
+    }
+    
+    pub fn onReaderError(this: *GitRunner, err: bun.sys.Error) void {
+        bun.assert(this.remaining_fds > 0);
+        this.remaining_fds -= 1;
+        
+        Output.prettyErrorln("<r><red>error<r>: Failed to read git output due to error <b>{d} {s}<r>", .{
+            err.errno,
+            @tagName(err.getErrno()),
+        });
+        Output.flush();
+        this.maybeFinished();
+    }
+    
+    fn maybeFinished(this: *GitRunner) void {
+        if (!this.has_called_process_exit or this.remaining_fds != 0)
+            return;
+        
+        const process = this.process orelse return;
+        this.handleExit(process.status);
+    }
+    
+    pub fn onProcessExit(this: *GitRunner, proc: *Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        if (this.process != proc) {
+            Output.debugWarn("<d>[GitRunner]<r> onProcessExit called with wrong process", .{});
+            return;
+        }
+        this.has_called_process_exit = true;
+        this.maybeFinished();
+    }
+    
+    pub fn handleExit(this: *GitRunner, status: bun.spawn.Status) void {
+        const task_id = this.getTaskId();
+        
+        switch (status) {
+            .exited => |exit| {
+                if (exit.code == 0) {
+                    const stdout = this.stdout.finalBuffer();
+                    
+                    switch (this.completion_context) {
+                        .download => |ctx| {
+                            // Open the directory and notify completion
+                            const folder_name = std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
+                                bun.fmt.hexIntLower(ctx.task_id),
+                            }) catch |err| {
+                                this.manager.onGitError(ctx.task_id, err);
+                                this.deinit();
+                                return;
+                            };
+                            
+                            const dir = ctx.cache_dir.openDirZ(folder_name, .{}) catch |err| {
+                                this.manager.onGitError(ctx.task_id, err);
+                                this.deinit();
+                                return;
+                            };
+                            
+                            this.manager.onGitDownloadComplete(ctx.task_id, dir) catch |err| {
+                                this.manager.onGitError(ctx.task_id, err);
+                            };
+                            this.deinit();
+                        },
+                        .find_commit => |ctx| {
+                            const commit = std.mem.trim(u8, stdout.items, " \t\r\n");
+                            const commit_str = this.allocator.dupe(u8, commit) catch bun.outOfMemory();
+                            this.manager.onGitFindCommitComplete(ctx.task_id, commit_str) catch |err| {
+                                this.manager.onGitError(ctx.task_id, err);
+                            };
+                            this.deinit();
+                        },
+                        .checkout => |ctx| {
+                            // Check if this is the first clone or the actual checkout  
+                            // by looking for "clone" in the argv
+                            var is_clone = false;
+                            for (this.argv) |arg| {
+                                if (strings.eqlComptime(arg, "clone")) {
+                                    is_clone = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (is_clone) {
+                                // This was the clone --no-checkout, now do the actual checkout
+                                const folder = Path.joinAbsString(this.manager.cache_directory_path, &.{
+                                    PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null),
+                                }, .auto);
+                                
+                                // Create a new GitRunner for the checkout command
+                                var checkout_runner = this.manager.allocator.create(GitRunner) catch bun.outOfMemory();
+                                checkout_runner.* = GitRunner.new(.{
+                                    .process = null,
+                                    .manager = this.manager,
+                                    .completion_context = .{
+                                        .checkout = ctx,
+                                    },
+                                    .envp = this.envp,
+                                    .allocator = this.allocator,
+                                    .argv = this.allocator.alloc(string, 6) catch bun.outOfMemory(),
+                                });
+                                
+                                checkout_runner.argv[0] = this.allocator.dupe(u8, "git") catch bun.outOfMemory();
+                                checkout_runner.argv[1] = this.allocator.dupe(u8, "-C") catch bun.outOfMemory();
+                                checkout_runner.argv[2] = this.allocator.dupe(u8, folder) catch bun.outOfMemory();
+                                checkout_runner.argv[3] = this.allocator.dupe(u8, "checkout") catch bun.outOfMemory();
+                                checkout_runner.argv[4] = this.allocator.dupe(u8, "--quiet") catch bun.outOfMemory();
+                                checkout_runner.argv[5] = this.allocator.dupe(u8, ctx.resolved) catch bun.outOfMemory();
+                                
+                                // Transfer ownership of envp to the new runner
+                                this.envp = &[_]?[*:0]const u8{};
+                                
+                                checkout_runner.spawn() catch |err| {
+                                    this.manager.onGitError(0, err);
+                                    checkout_runner.deinit();
+                                };
+                                this.deinit();
+                            } else {
+                                // This was the final checkout, clean up and complete
+                                const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, ctx.resolved, null);
+                                
+                                // Clean up .git directory
+                                if (bun.openDir(ctx.cache_dir, folder_name)) |package_dir| {
+                                    package_dir.deleteTree(".git") catch {};
+                                    
+                                    // Insert .bun-tag file
+                                    if (ctx.resolved.len > 0) insert_tag: {
+                                        const git_tag = package_dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+                                        defer git_tag.close();
+                                        git_tag.writeAll(ctx.resolved) catch {
+                                            package_dir.deleteFileZ(".bun-tag") catch {};
+                                        };
+                                    }
+                                    
+                                    // Read package.json
+                                    const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", this.allocator).unwrap() catch |err| {
+                                        if (err == error.ENOENT) {
+                                            // Allow git dependencies without package.json
+                                            this.manager.onGitCheckoutComplete(task_id, .{
+                                                .url = ctx.url,
+                                                .resolved = ctx.resolved,
+                                            }) catch |checkout_err| {
+                                                this.manager.onGitError(task_id, checkout_err);
+                                            };
+                                            package_dir.close();
+                                            this.deinit();
+                                            return;
+                                        }
+                                        
+                                        ctx.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "\"package.json\" for \"{s}\" failed to open: {s}",
+                                            .{ ctx.name, @errorName(err) },
+                                        ) catch unreachable;
+                                        this.manager.onGitError(task_id, error.InstallFailed);
+                                        package_dir.close();
+                                        this.deinit();
+                                        return;
+                                    };
+                                    defer json_file.close();
+                                    
+                                    const json_path = json_file.getPath(
+                                        &json_path_buf,
+                                    ).unwrap() catch |err| {
+                                        ctx.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "\"package.json\" for \"{s}\" failed to resolve: {s}",
+                                            .{ ctx.name, @errorName(err) },
+                                        ) catch unreachable;
+                                        this.manager.onGitError(task_id, error.InstallFailed);
+                                        this.allocator.free(json_buf);
+                                        package_dir.close();
+                                        this.deinit();
+                                        return;
+                                    };
+                                    
+                                    const ret_json_path = FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path) catch |err| {
+                                        this.manager.onGitError(task_id, err);
+                                        this.allocator.free(json_buf);
+                                        package_dir.close();
+                                        this.deinit();
+                                        return;
+                                    };
+                                    
+                                    this.manager.onGitCheckoutComplete(task_id, .{
+                                        .url = ctx.url,
+                                        .resolved = ctx.resolved,
+                                        .json = .{
+                                            .path = ret_json_path,
+                                            .buf = json_buf,
+                                        },
+                                    }) catch |checkout_err| {
+                                        this.manager.onGitError(task_id, checkout_err);
+                                    };
+                                    
+                                    package_dir.close();
+                                } else |err| {
+                                    this.manager.onGitError(task_id, err);
+                                }
+                                this.deinit();
+                            }
+                        },
+                    }
+                } else {
+                    // Check stderr for specific error messages
+                    const stderr = this.stderr.finalBuffer();
+                    const err = if ((strings.containsComptime(stderr.items, "remote:") and
+                        strings.containsComptime(stderr.items, "not") and
+                        strings.containsComptime(stderr.items, "found")) or
+                        strings.containsComptime(stderr.items, "does not exist"))
+                        error.RepositoryNotFound
+                    else
+                        error.InstallFailed;
+                    
+                    switch (this.completion_context) {
+                        .download => |ctx| {
+                            if (err == error.RepositoryNotFound and ctx.attempt == 1) {
+                                ctx.log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "\"git clone\" for \"{s}\" failed",
+                                    .{ctx.name},
+                                ) catch unreachable;
+                            }
+                        },
+                        .find_commit => |ctx| {
+                            ctx.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
+                                .{ ctx.committish, ctx.name },
+                            ) catch unreachable;
+                        },
+                        .checkout => |ctx| {
+                            ctx.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.allocator,
+                                "\"git checkout\" for \"{s}\" failed",
+                                .{ctx.name},
+                            ) catch unreachable;
+                        },
+                    }
+                    
+                    this.manager.onGitError(task_id, err);
+                    this.deinit();
+                }
+            },
+            .err => |err| {
+                this.manager.onGitError(task_id, err.toError());
+                this.deinit();
+            },
+            .signaled => |signal| {
+                _ = signal;
+                this.manager.onGitError(task_id, error.GitProcessKilled);
+                this.deinit();
+            },
+            else => {
+                this.manager.onGitError(task_id, error.UnknownGitError);
+                this.deinit();
+            },
+        }
+    }
+    
+    fn getTaskId(this: *const GitRunner) u64 {
+        return switch (this.completion_context) {
+            .download => |ctx| ctx.task_id,
+            .find_commit => |ctx| ctx.task_id,
+            .checkout => |ctx| ctx.task_id,
+        };
+    }
+    
+    pub fn deinit(this: *GitRunner) void {
+        if (this.process) |process| {
+            this.process = null;
+            process.close();
+            process.deref();
+        }
+        
+        this.stdout.deinit();
+        this.stderr.deinit();
+        
+        // Clean up argv
+        for (this.argv) |arg| {
+            this.allocator.free(arg);
+        }
+        this.allocator.free(this.argv);
+        
+        bun.destroy(this);
     }
 };

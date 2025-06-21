@@ -84,6 +84,7 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
+const GitRunner = @import("../../../install/repository.zig").GitRunner;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
 
@@ -96,7 +97,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
-
+            GitRunner,
             SyncProcess,
         },
     );
@@ -126,6 +127,10 @@ pub const ProcessExitHandler = struct {
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(GitRunner)) => {
+                const runner = this.ptr.as(GitRunner);
+                runner.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);

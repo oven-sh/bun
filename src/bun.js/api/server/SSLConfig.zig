@@ -29,6 +29,7 @@ protos: ?[*:0]const u8 = null,
 protos_len: usize = 0,
 client_renegotiation_limit: u32 = 0,
 client_renegotiation_window: u32 = 0,
+allow_partial_trust_chain: i32 = 0,
 
 const BlobFileContentResult = struct {
     data: [:0]const u8,
@@ -91,6 +92,7 @@ pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
     }
     ctx_opts.request_cert = this.request_cert;
     ctx_opts.reject_unauthorized = this.reject_unauthorized;
+    ctx_opts.allow_partial_trust_chain = this.allow_partial_trust_chain;
 
     return ctx_opts;
 }
@@ -444,6 +446,11 @@ pub fn fromJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSV
 
     if (try obj.getBooleanStrict(global, "rejectUnauthorized")) |reject_unauthorized| {
         result.reject_unauthorized = if (reject_unauthorized) 1 else 0;
+        any = true;
+    }
+
+    if (try obj.getBooleanStrict(global, "allowPartialTrustChain")) |allow_partial_trust_chain| {
+        result.allow_partial_trust_chain = @intFromBool(allow_partial_trust_chain);
         any = true;
     }
 

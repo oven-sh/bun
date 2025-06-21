@@ -43,7 +43,6 @@ const Yield = shell.Yield;
 
 pub const Pipe = [2]bun.FileDescriptor;
 const shell = bun.shell;
-const ShellError = shell.ShellError;
 const ast = shell.AST;
 pub const SmolList = shell.SmolList;
 

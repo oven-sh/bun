@@ -201,7 +201,10 @@ pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) Api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
+    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
+        false => .bun,
+        true => .throw,
+    };
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
@@ -532,60 +535,80 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
     return globalObject.ERR(.UNHANDLED_REJECTION, msg, .{"undefined"}).toJS();
 }
 
-pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
+pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {
     if (this.isShuttingDown()) {
         Output.debugWarn("unhandledRejection during shutdown.", .{});
-        return true;
+        return;
     }
 
     if (isBunTest) {
         this.unhandled_error_counter += 1;
         this.onUnhandledRejection(this, globalObject, reason);
-        return true;
+        return;
     }
 
     switch (this.unhandledRejectionsMode()) {
         .bun => {
-            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             // continue to default handler
         },
         .none => {
-            defer this.eventLoop().drainMicrotasks();
-            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
-            return true; // ignore the unhandled rejection
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
+            return; // ignore the unhandled rejection
         },
         .warn => {
-            defer this.eventLoop().drainMicrotasks();
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
             Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
-            return true;
+            return;
         },
         .warn_with_error_code => {
-            defer this.eventLoop().drainMicrotasks();
-            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             this.exit_handler.exit_code = 1;
-            return true;
+            return;
         },
         .strict => {
-            defer this.eventLoop().drainMicrotasks();
+            defer this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => {}, // we are returning anyway
+            };
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
-            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
             Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
-            return true;
+            return;
         },
         .throw => {
-            defer this.eventLoop().drainMicrotasks();
-            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
-            if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) {
+                this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                    error.JSExecutionTerminated => {}, // we are returning anyway
+                };
+                return;
+            }
             // continue to default handler
+            this.eventLoop().drainMicrotasks() catch |e| switch (e) {
+                error.JSExecutionTerminated => return,
+            };
         },
     }
     this.unhandled_error_counter += 1;
     this.onUnhandledRejection(this, globalObject, reason);
-    return false;
+    return;
 }
 
 pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, promise: JSValue) bool {
@@ -633,7 +656,7 @@ pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObjec
 pub fn handlePendingInternalPromiseRejection(this: *JSC.VirtualMachine) void {
     var promise = this.pending_internal_promise.?;
     if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        _ = this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -1657,7 +1680,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 printed,
             ),
         };
-        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+        res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;
     }
 
@@ -1747,7 +1770,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
         };
 
         {
-            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())).asVoid());
+            res.* = ErrorableString.err(err, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         }
 
         return;
@@ -1769,7 +1792,8 @@ pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callfram
 }
 
 pub fn drainMicrotasks(this: *VirtualMachine) void {
-    this.eventLoop().drainMicrotasks();
+    // TODO: properly propagate exception upwards
+    this.eventLoop().drainMicrotasks() catch {};
 }
 
 pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
@@ -1791,7 +1815,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 };
             };
             {
-                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid());
+                ret.* = ErrorableResolvedSource.err(err, (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)));
             }
             return;
         },
@@ -1799,13 +1823,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
         1 => {
             const msg = log.msgs.items[0];
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)).asVoid(),
+                .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
                     referrer.toUTF8(bun.default_allocator).slice(),
-                ) catch |e| globalThis.takeException(e)).asVoid(),
+                ) catch |e| globalThis.takeException(e)),
             });
             return;
         },
@@ -1838,7 +1862,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                             specifier,
                         }) catch unreachable,
                     ),
-                ).asVoid(),
+                ),
             );
         },
     }
@@ -1907,8 +1931,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
 
     const writer = buffered_writer.writer();
 
-    if (result.isException(this.global.vm())) {
-        const exception = @as(*Exception, @ptrCast(result.asVoid()));
+    if (result.asException(this.jsc)) |exception| {
         this.printException(
             exception,
             exception_list,
@@ -1984,7 +2007,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 return error.ModuleNotFound;
             },
         };
-        var promise = JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
+        var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
         this.pending_internal_promise = promise;
         JSValue.fromCell(promise).protect();
@@ -3088,7 +3111,7 @@ fn printErrorInstance(
                 }
 
                 formatter.format(
-                    JSC.Formatter.Tag.getAdvanced(
+                    try JSC.Formatter.Tag.getAdvanced(
                         value,
                         this.global,
                         .{ .disable_inspect_custom = true, .hide_global = true },
@@ -3129,7 +3152,7 @@ fn printErrorInstance(
 
         // "cause" is not enumerable, so the above loop won't see it.
         if (!saw_cause) {
-            if (error_instance.getOwn(this.global, "cause")) |cause| {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
                     try errors_to_append.append(cause);
@@ -3138,7 +3161,7 @@ fn printErrorInstance(
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
-        const tag = JSC.Formatter.Tag.getAdvanced(
+        const tag = try JSC.Formatter.Tag.getAdvanced(
             error_instance,
             this.global,
             .{ .disable_inspect_custom = true, .hide_global = true },

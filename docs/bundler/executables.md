@@ -353,5 +353,4 @@ Currently, the `--compile` flag can only accept a single entrypoint at a time an
 - `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
-- `--format` - always outputs a binary executable. Internally, it's almost esm.
 - `--no-bundle` - we always bundle everything into the executable.

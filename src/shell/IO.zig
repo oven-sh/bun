@@ -5,6 +5,10 @@ stdin: InKind,
 stdout: OutKind,
 stderr: OutKind,
 
+pub fn format(this: IO, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
+}
+
 pub fn deinit(this: *IO) void {
     this.stdin.close();
     this.stdout.close();
@@ -32,6 +36,13 @@ pub fn deref(this: *IO) void {
 pub const InKind = union(enum) {
     fd: *Interpreter.IOReader,
     ignore,
+
+    pub fn format(this: InKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            .fd => try writer.print("fd: {}", .{this.fd.fd}),
+            .ignore => try writer.print("ignore", .{}),
+        }
+    }
 
     pub fn ref(this: InKind) InKind {
         switch (this) {
@@ -79,6 +90,13 @@ pub const OutKind = union(enum) {
     ignore,
 
     // fn dupeForSubshell(this: *ShellState,
+    pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
+            .pipe => try writer.print("pipe", .{}),
+            .ignore => try writer.print("ignore", .{}),
+        }
+    }
 
     pub fn ref(this: @This()) @This() {
         switch (this) {

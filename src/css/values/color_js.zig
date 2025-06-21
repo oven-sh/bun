@@ -183,18 +183,18 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
 
             break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = rgba.alpha, .red = rgba.red, .green = rgba.green, .blue = rgba.blue } } };
         } else if (args[0].jsType().isArrayLike()) {
-            switch (args[0].getLength(globalThis)) {
+            switch (try args[0].getLength(globalThis)) {
                 3 => {
-                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
-                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
-                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
+                    const r = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 2), "[2]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = 255, .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 4 => {
-                    const r = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 0), "[0]");
-                    const g = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 1), "[1]");
-                    const b = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 2), "[2]");
-                    const a = try colorIntFromJS(globalThis, args[0].getIndex(globalThis, 3), "[3]");
+                    const r = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 0), "[0]");
+                    const g = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 1), "[1]");
+                    const b = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 2), "[2]");
+                    const a = try colorIntFromJS(globalThis, try args[0].getIndex(globalThis, 3), "[3]");
                     break :brk .{ .result = css.CssColor{ .rgba = .{ .alpha = @intCast(a), .red = @intCast(r), .green = @intCast(g), .blue = @intCast(b) } } };
                 },
                 else => {

@@ -123,6 +123,15 @@ pub const JSError = error{
     OutOfMemory,
 };
 
+pub const JSExecutionTerminated = error{
+    /// JavaScript execution has been terminated.
+    /// This condition is indicated by throwing an exception, so most code should still handle it
+    /// with JSError. If you expect that you will not throw any errors other than the termination
+    /// exception, you can catch JSError, assert that the exception is the termination exception,
+    /// and return error.JSExecutionTerminated.
+    JSExecutionTerminated,
+};
+
 pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("ci_info.zig").detectCI;
@@ -3708,24 +3717,16 @@ const StackOverflow = error{StackOverflow};
 // We keep up to 4 path buffers alive per thread at a time.
 pub fn PathBufferPoolT(comptime T: type) type {
     return struct {
-        const Pool = ObjectPool(PathBuf, null, true, 4);
-        pub const PathBuf = struct {
-            bytes: T,
-
-            pub fn deinit(this: *PathBuf) void {
-                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-                node.release();
-            }
-        };
+        const Pool = ObjectPool(T, null, true, 4);
 
         pub fn get() *T {
             // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+            return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
         pub fn put(buffer: *T) void {
-            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-            path_buf.deinit();
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+            node.release();
         }
 
         pub fn deleteAll() void {

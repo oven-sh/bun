@@ -1363,7 +1363,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          zigInternal.add(`return JSC.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
@@ -1373,7 +1373,12 @@ for (const [filename, { functions, typedefs }] of files) {
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
+      zigInternal.add(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}`);
+      if (returnStrategy.type === "jsvalue") {
+        zigInternal.line(", .{");
+      } else {
+        zigInternal.line("(");
+      }
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
@@ -1421,7 +1426,7 @@ for (const [filename, { functions, typedefs }] of files) {
       zigInternal.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`));`);
+          zigInternal.line(`});`);
           break;
         case "basic-out-param":
         case "void":

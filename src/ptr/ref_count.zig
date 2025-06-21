@@ -75,6 +75,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
 
         const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
         pub const scope = bun.Output.Scoped(debug_name, true);
+        const DEBUG_STACK_TRACE = false;
 
         const Destructor = if (options.destructor_ctx) |ctx| fn (*T, ctx) void else fn (*T) void;
         const destructor: Destructor = destructor_untyped;
@@ -106,10 +107,12 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                     counter.active_counts,
                     counter.active_counts + 1,
                 });
-                bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
-                    .frame_count = 2,
-                    .skip_file_patterns = &.{"ptr/ref_count.zig"},
-                });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts += 1;
@@ -130,10 +133,12 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                     counter.active_counts,
                     counter.active_counts - 1,
                 });
-                bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
-                    .frame_count = 2,
-                    .skip_file_patterns = &.{"ptr/ref_count.zig"},
-                });
+                if (DEBUG_STACK_TRACE) {
+                    bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
+                        .frame_count = 2,
+                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                    });
+                }
             }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts -= 1;
@@ -494,6 +499,7 @@ pub fn DebugData(thread_safe: bool) type {
             assertValid(debug);
             debug.magic = undefined;
             debug.lock.lock();
+            defer debug.lock.unlock();
             debug.map.clearAndFree(bun.default_allocator);
             debug.frees.clearAndFree(bun.default_allocator);
             if (debug.allocation_scope) |scope| {

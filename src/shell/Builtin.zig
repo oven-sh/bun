@@ -156,6 +156,8 @@ pub const BuiltinIO = struct {
                     this.fd.writer.deref();
                 },
                 .blob => this.blob.deref(),
+                // FIXME: should this be here??
+                .arraybuf => this.arraybuf.buf.deinit(),
                 else => {},
             }
         }
@@ -182,12 +184,16 @@ pub const BuiltinIO = struct {
             comptime fmt_: []const u8,
             args: anytype,
             _: OutputNeedsIOSafeGuard,
-        ) void {
-            this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
+        ) Yield {
+            return this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
         }
 
-        pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8, _: OutputNeedsIOSafeGuard) void {
-            this.fd.writer.enqueue(ptr, this.fd.captured, buf);
+        pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8, _: OutputNeedsIOSafeGuard) Yield {
+            return this.fd.writer.enqueue(ptr, this.fd.captured, buf);
+        }
+
+        pub fn enqueueFmt(this: *@This(), ptr: anytype, comptime fmt: []const u8, args: anytype, _: OutputNeedsIOSafeGuard) Yield {
+            return this.fd.writer.enqueueFmt(ptr, this.fd.captured, fmt, args);
         }
     };
 
@@ -314,7 +320,7 @@ pub fn init(
     cmd_local_env: *EnvMap,
     cwd: bun.FileDescriptor,
     io: *IO,
-) CoroutineResult {
+) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
         .fd => |fd| .{ .fd = fd.refSelf() },
         .ignore => .ignore,
@@ -366,40 +372,90 @@ pub fn init(
         },
     }
 
+    return initRedirections(cmd, kind, node, interpreter);
+}
+
+fn initRedirections(
+    cmd: *Cmd,
+    kind: Kind,
+    node: *const ast.Cmd,
+    interpreter: *Interpreter,
+) ?Yield {
     if (node.redirect_file) |file| {
         switch (file) {
             .atom => {
                 if (cmd.redirection_file.items.len == 0) {
-                    cmd.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)});
-                    return .yield;
+                    return cmd.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)});
                 }
 
-                // Regular files are not pollable on linux
-                const is_pollable: bool = if (bun.Environment.isLinux) false else true;
+                // Regular files are not pollable on linux and macos
+                const is_pollable: bool = if (bun.Environment.isPosix) false else true;
 
                 const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                 log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                 const perm = 0o666;
-                const is_nonblocking = false;
-                const flags = node.redirect.toFlags();
-                const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
-                    .err => |e| {
-                        cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
-                        return .yield;
-                    },
-                    .result => |f| f,
+
+                var pollable = false;
+                var is_socket = false;
+                var is_nonblocking = false;
+
+                const redirfd = redirfd: {
+                    if (node.redirect.stdin) {
+                        break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
+                            .err => |e| {
+                                return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                            },
+                            .result => |f| f,
+                        };
+                    }
+
+                    const result = bun.io.openForWritingImpl(
+                        cmd.base.shell.cwd_fd,
+                        path,
+                        node.redirect.toFlags(),
+                        perm,
+                        &pollable,
+                        &is_socket,
+                        false,
+                        &is_nonblocking,
+                        void,
+                        {},
+                        struct {
+                            fn onForceSyncOrIsaTTY(_: void) void {}
+                        }.onForceSyncOrIsaTTY,
+                        shell.interpret.isPollableFromMode,
+                        ShellSyscall.openat,
+                    );
+
+                    break :redirfd switch (result) {
+                        .err => |e| {
+                            return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                        },
+                        .result => |f| {
+                            if (bun.Environment.isWindows) {
+                                switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
+                                    .err => |e| {
+                                        return cmd.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                                    },
+                                    .result => |f2| break :redirfd f2,
+                                }
+                            }
+                            break :redirfd f;
+                        },
+                    };
                 };
+
                 if (node.redirect.stdin) {
                     cmd.exec.bltn.stdin.deref();
                     cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                 }
                 if (node.redirect.stdout) {
                     cmd.exec.bltn.stdout.deref();
-                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
                 }
                 if (node.redirect.stderr) {
                     cmd.exec.bltn.stderr.deref();
-                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
                 }
             },
             .jsbuf => |val| {
@@ -428,7 +484,7 @@ pub fn init(
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
-                        return .yield;
+                        return .failed;
                     }
 
                     var original_blob = body.use();
@@ -457,7 +513,7 @@ pub fn init(
                     if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
                         cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{}) catch {};
-                        return .yield;
+                        return .failed;
                     }
 
                     const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
@@ -478,7 +534,7 @@ pub fn init(
                 } else {
                     const jsval = cmd.base.interpreter.jsobjs[val.idx];
                     cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)}) catch {};
-                    return .yield;
+                    return .failed;
                 }
             },
         }
@@ -494,7 +550,7 @@ pub fn init(
         }
     }
 
-    return .cont;
+    return null;
 }
 
 pub inline fn eventLoop(this: *const Builtin) JSC.EventLoopHandle {
@@ -515,7 +571,7 @@ pub inline fn parentCmdMut(this: *Builtin) *Cmd {
     return @fieldParentPtr("exec", union_ptr);
 }
 
-pub fn done(this: *Builtin, exit_code: anytype) void {
+pub fn done(this: *Builtin, exit_code: anytype) Yield {
     const code: ExitCode = switch (@TypeOf(exit_code)) {
         bun.sys.E => @intFromEnum(exit_code),
         u1, u8, u16 => exit_code,
@@ -537,16 +593,11 @@ pub fn done(this: *Builtin, exit_code: anytype) void {
         cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
     }
 
-    cmd.parent.childDone(cmd, this.exit_code.?);
+    return cmd.parent.childDone(cmd, this.exit_code.?);
 }
 
-pub fn start(this: *Builtin) Maybe(void) {
-    switch (this.callImpl(Maybe(void), "start", .{})) {
-        .err => |e| return Maybe(void).initErr(e),
-        .result => {},
-    }
-
-    return Maybe(void).success;
+pub fn start(this: *Builtin) Yield {
+    return this.callImpl(Yield, "start", .{});
 }
 
 pub fn deinit(this: *Builtin) void {
@@ -685,6 +736,7 @@ pub const Mv = @import("./builtin/mv.zig");
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 
 const shell = bun.shell;
 const Interpreter = shell.interpret.Interpreter;
@@ -704,4 +756,3 @@ const ShellSyscall = shell.interpret.ShellSyscall;
 const Allocator = std.mem.Allocator;
 const ast = shell.AST;
 const IO = shell.Interpreter.IO;
-const CoroutineResult = shell.interpret.CoroutineResult;

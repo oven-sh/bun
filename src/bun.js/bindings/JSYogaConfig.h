@@ -25,6 +25,7 @@ public:
     DECLARE_INFO;
 
     YGConfigRef internal() { return m_config; }
+    void clearInternal() { m_config = nullptr; }
 
 private:
     JSYogaConfig(JSC::VM&, JSC::Structure*);

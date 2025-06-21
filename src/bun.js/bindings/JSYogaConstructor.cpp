@@ -28,6 +28,9 @@ void JSYogaConfigConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototy
 {
     Base::finishCreation(vm, 0, "Config"_s);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    
+    // Add static methods - create() is an alias for the constructor
+    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 0, constructJSYogaConfig, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 // Node Constructor implementation
@@ -42,6 +45,9 @@ void JSYogaNodeConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype
 {
     Base::finishCreation(vm, 1, "Node"_s);  // 1 for optional config parameter
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    
+    // Add static methods - create() is an alias for the constructor
+    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 1, constructJSYogaNode, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 // Constructor functions

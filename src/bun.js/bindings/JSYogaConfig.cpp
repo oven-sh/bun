@@ -16,8 +16,10 @@ JSYogaConfig::JSYogaConfig(JSC::VM& vm, JSC::Structure* structure)
 
 JSYogaConfig::~JSYogaConfig()
 {
+    // Only free if not already freed via free() method
     if (m_config) {
         YGConfigFree(m_config);
+        m_config = nullptr;
     }
 }
 

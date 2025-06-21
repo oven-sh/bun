@@ -6,7 +6,8 @@ describe("garbage env", () => {
   test("garbage env", async () => {
     const cfile = path.join(import.meta.dirname, "garbage-env.c");
     {
-      const { exitCode, stderr } = await Bun.$`clang -o garbage-env ${cfile}`;
+      const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
+      const { exitCode, stderr } = await Bun.$`${cc} -o garbage-env ${cfile}`;
       const stderrText = stderr.toString();
       if (stderrText.length > 0) {
         console.error(stderrText);

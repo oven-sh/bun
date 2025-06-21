@@ -53,11 +53,11 @@ pub fn init(
     });
 }
 
-pub fn start(this: *If) void {
-    this.next();
+pub fn start(this: *If) Yield {
+    return .{ .@"if" = this };
 }
 
-fn next(this: *If) void {
+pub fn next(this: *If) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => {
@@ -79,8 +79,7 @@ fn next(this: *If) void {
                             }
                             switch (this.node.else_parts.len()) {
                                 0 => {
-                                    this.parent.childDone(this, 0);
-                                    return;
+                                    return this.parent.childDone(this, 0);
                                 },
                                 1 => {
                                     this.state.exec.state = .@"else";
@@ -98,8 +97,7 @@ fn next(this: *If) void {
                         },
                         // done
                         .then => {
-                            this.parent.childDone(this, this.state.exec.last_exit_code);
-                            return;
+                            return this.parent.childDone(this, this.state.exec.last_exit_code);
                         },
                         // if succesful, execute the elif's then branch
                         // otherwise, move to the next elif, or to the final else if it exists
@@ -114,8 +112,7 @@ fn next(this: *If) void {
                             this.state.exec.state.elif.idx += 2;
 
                             if (this.state.exec.state.elif.idx >= this.node.else_parts.len()) {
-                                this.parent.childDone(this, 0);
-                                return;
+                                return this.parent.childDone(this, 0);
                             }
 
                             if (this.state.exec.state.elif.idx == this.node.else_parts.len() -| 1) {
@@ -130,8 +127,7 @@ fn next(this: *If) void {
                             continue;
                         },
                         .@"else" => {
-                            this.parent.childDone(this, this.state.exec.last_exit_code);
-                            return;
+                            return this.parent.childDone(this, this.state.exec.last_exit_code);
                         },
                     }
                 }
@@ -140,15 +136,14 @@ fn next(this: *If) void {
                 this.state.exec.stmt_idx += 1;
                 const stmt = this.state.exec.stmts.getConst(idx);
                 var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
-                newstmt.start();
-                return;
+                return newstmt.start();
             },
-            .waiting_write_err => return, // yield execution
+            .waiting_write_err => return .suspended, // yield execution
             .done => @panic("This code should not be reachable"),
         }
     }
 
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
 pub fn deinit(this: *If) void {
@@ -157,7 +152,7 @@ pub fn deinit(this: *If) void {
     bun.destroy(this);
 }
 
-pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
     defer child.deinit();
 
     if (this.state != .exec) {
@@ -168,8 +163,8 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
     exec.last_exit_code = exit_code;
 
     switch (exec.state) {
-        .cond => this.next(),
-        .then => this.next(),
+        .cond => return .{ .@"if" = this },
+        .then => return .{ .@"if" = this },
         .elif => {
             // if (exit_code == 0) {
             //     exec.stmts = this.node.else_parts.getConst(exec.state.elif.idx + 1);
@@ -178,15 +173,15 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
             //     this.next();
             //     return;
             // }
-            this.next();
-            return;
+            return .{ .@"if" = this };
         },
-        .@"else" => this.next(),
+        .@"else" => return .{ .@"if" = this },
     }
 }
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 
 const Interpreter = bun.shell.Interpreter;

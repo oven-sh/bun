@@ -340,6 +340,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         return error.MultipleOutputFilesWithoutOutputDir;
     }
 
+    const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
+
     if (root_path.len > 0) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
@@ -347,11 +349,16 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         for (chunks) |*chunk| {
             var display_size: usize = 0;
 
+            const public_path = if (chunk.is_browser_chunk_from_server_build)
+                bundler.transpilerForTarget(.browser).options.public_path
+            else
+                c.options.public_path;
+
             const _code_result = chunk.intermediate_output.code(
                 null,
                 c.parse_graph,
                 &c.graph,
-                c.resolver.opts.public_path,
+                public_path,
                 chunk,
                 chunks,
                 &display_size,
@@ -376,8 +383,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
                     if (tag == .linked) {
-                        const a, const b = if (c.options.public_path.len > 0)
-                            cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                        const a, const b = if (public_path.len > 0)
+                            cheapPrefixNormalizer(public_path, source_map_final_rel_path)
                         else
                             .{ "", std.fs.path.basename(source_map_final_rel_path) };
 
@@ -471,7 +478,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                                 .data = .{
                                     .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                 },
-                                .side = null,
+                                .side = .server,
                                 .entry_point_index = null,
                                 .is_executable = false,
                             });
@@ -522,7 +529,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 .is_executable = chunk.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
-                .side = if (chunk.content == .css)
+                .side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
                     .client
                 else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                     .browser => .client,

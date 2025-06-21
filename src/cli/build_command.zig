@@ -113,6 +113,7 @@ pub const BuildCommand = struct {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -140,6 +141,7 @@ pub const BuildCommand = struct {
 
                 if (strings.eqlComptime(outfile, "index")) {
                     outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                    was_renamed_from_index = !strings.eqlComptime(outfile, "index");
                 }
 
                 if (strings.eqlComptime(outfile, "bun")) {
@@ -353,7 +355,20 @@ pub const BuildCommand = struct {
 
             if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                 output_dir = std.fs.path.dirname(outfile) orelse ".";
-                output_files[0].dest_path = std.fs.path.basename(outfile);
+                if (ctx.bundler_options.compile) {
+                    // If the first output file happens to be a client-side chunk imported server-side
+                    // then don't rename it to something else, since an HTML
+                    // import manifest might depend on the file path being the
+                    // one we think it should be.
+                    for (output_files) |*f| {
+                        if (f.output_kind == .@"entry-point" and (f.side orelse .server) == .server) {
+                            f.dest_path = std.fs.path.basename(outfile);
+                            break;
+                        }
+                    }
+                } else {
+                    output_files[0].dest_path = std.fs.path.basename(outfile);
+                }
             }
 
             if (!ctx.bundler_options.compile) {
@@ -416,6 +431,11 @@ pub const BuildCommand = struct {
 
                 if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
                     outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
+                } else if (was_renamed_from_index and !bun.strings.eqlComptime(outfile, "index")) {
+                    // If we're going to fail due to EISDIR, we should instead pick a different name.
+                    if (bun.sys.directoryExistsAt(bun.FD.fromStdDir(root_dir), outfile).asValue() orelse false) {
+                        outfile = "index";
+                    }
                 }
 
                 try bun.StandaloneModuleGraph.toExecutable(

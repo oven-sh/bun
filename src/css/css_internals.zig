@@ -158,8 +158,8 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
     _ = allocator; // autofix
     if (try jsobj.getTruthy(globalThis, "flags")) |val| {
         if (val.isArray()) {
-            var iter = val.arrayIterator(globalThis);
-            while (iter.next()) |item| {
+            var iter = try val.arrayIterator(globalThis);
+            while (try iter.next()) |item| {
                 const bunstr = try item.toBunString(globalThis);
                 defer bunstr.deref();
                 const str = bunstr.toUTF8(bun.default_allocator);

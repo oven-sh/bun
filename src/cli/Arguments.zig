@@ -82,6 +82,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
     clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
     clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
+    clap.parseParam("--import <STR>...                 Alias of --preload, for Node.js compatibility") catch unreachable,
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -542,13 +543,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     // runtime commands
     if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-        var preloads = args.options("--preload");
-        if (preloads.len == 0) {
-            if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
-                preloads = bun.default_allocator.dupe([]const u8, &.{preload}) catch unreachable;
+        {
+            const preloads = args.options("--preload");
+            const preloads2 = args.options("--require");
+            const preloads3 = args.options("--import");
+            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+
+            const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
+            if (total_preloads > 0) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
+                if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
+                if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);
+                if (preloads3.len > 0) all.appendSliceAssumeCapacity(preloads3);
+                if (preload4) |p| all.appendAssumeCapacity(p);
+                ctx.preloads = all.items;
             }
         }
-        const preloads2 = args.options("--require");
 
         if (args.flag("--hot")) {
             ctx.debug.hot_reload = .hot;
@@ -643,25 +654,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                 Global.exit(1);
             }
-        }
-
-        if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
-            var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
-            all.appendSliceAssumeCapacity(ctx.preloads);
-            all.appendSliceAssumeCapacity(preloads);
-            all.appendSliceAssumeCapacity(preloads2);
-            ctx.preloads = all.items;
-        } else if (preloads.len > 0) {
-            if (preloads2.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
-                all.appendSliceAssumeCapacity(preloads);
-                all.appendSliceAssumeCapacity(preloads2);
-                ctx.preloads = all.items;
-            } else {
-                ctx.preloads = preloads;
-            }
-        } else if (preloads2.len > 0) {
-            ctx.preloads = preloads2;
         }
 
         if (args.option("--print")) |script| {

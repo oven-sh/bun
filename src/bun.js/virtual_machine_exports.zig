@@ -12,6 +12,7 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
 
+/// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.get().eventLoop().tick();
 }
@@ -115,7 +116,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    _ = jsc_vm.unhandledRejection(global, result, promise.toJS());
+    jsc_vm.unhandledRejection(global, result, promise.toJS());
     jsc_vm.autoGarbageCollect();
 }
 

@@ -513,7 +513,7 @@ pub const Expect = struct {
         const left = try this.getValue(globalThis, thisValue, "toBe", "<green>expected<r>");
 
         const not = this.flags.not;
-        var pass = right.isSameValue(left, globalThis);
+        var pass = try right.isSameValue(left, globalThis);
 
         if (not) pass = !pass;
         if (pass) return .js_undefined;
@@ -594,7 +594,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const actual_length = value.getLengthIfPropertyExistsInternal(globalThis);
+        const actual_length = try value.getLengthIfPropertyExistsInternal(globalThis);
 
         if (actual_length == std.math.inf(f64)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -652,15 +652,15 @@ pub const Expect = struct {
         };
 
         if (list_value.jsTypeLoose().isArrayLike()) {
-            var itr = list_value.arrayIterator(globalThis);
-            while (itr.next()) |item| {
+            var itr = try list_value.arrayIterator(globalThis);
+            while (try itr.next()) |item| {
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
                 if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
                 }
             }
-        } else if (list_value.isIterable(globalThis)) {
+        } else if (try list_value.isIterable(globalThis)) {
             var expected_entry = ExpectedEntry{
                 .globalThis = globalThis,
                 .expected = expected,
@@ -736,9 +736,9 @@ pub const Expect = struct {
         };
 
         if (value.jsTypeLoose().isArrayLike()) {
-            var itr = value.arrayIterator(globalThis);
-            while (itr.next()) |item| {
-                if (item.isSameValue(expected, globalThis)) {
+            var itr = try value.arrayIterator(globalThis);
+            while (try itr.next()) |item| {
+                if (try item.isSameValue(expected, globalThis)) {
                     pass = true;
                     break;
                 }
@@ -756,7 +756,7 @@ pub const Expect = struct {
             } else if (value_string.len == 0 and expected_string.len == 0) { // edge case two empty strings are true
                 pass = true;
             }
-        } else if (value.isIterable(globalThis)) {
+        } else if (try value.isIterable(globalThis)) {
             var expected_entry = ExpectedEntry{
                 .globalThis = globalThis,
                 .expected = expected,
@@ -770,7 +770,7 @@ pub const Expect = struct {
                     item: JSValue,
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.isSameValue(entry.expected, entry.globalThis)) {
+                    if (item.isSameValue(entry.expected, entry.globalThis) catch return) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }
@@ -828,11 +828,7 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
         }
 
-        var pass = value.hasOwnPropertyValue(globalThis, expected);
-
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var pass = try value.hasOwnPropertyValue(globalThis, expected);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -880,7 +876,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var pass = brk: {
-            const count = expected.getLength(globalThis);
+            const count = try expected.getLength(globalThis);
 
             // jest-extended checks for truthiness before calling hasOwnProperty
             // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
@@ -889,19 +885,15 @@ pub const Expect = struct {
             var i: u32 = 0;
 
             while (i < count) : (i += 1) {
-                const key = expected.getIndex(globalThis, i);
+                const key = try expected.getIndex(globalThis, i);
 
-                if (!value.hasOwnPropertyValue(globalThis, key)) {
+                if (!try value.hasOwnPropertyValue(globalThis, key)) {
                     break :brk false;
                 }
             }
 
             break :brk true;
         };
-
-        if (globalThis.hasException()) {
-            return .zero;
-        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -951,16 +943,16 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const count = expected.getLength(globalObject);
+        const count = try expected.getLength(globalObject);
 
-        var keys = value.keys(globalObject);
-        if (keys.getLength(globalObject) == count) {
-            var itr = keys.arrayIterator(globalObject);
+        var keys = try value.keys(globalObject);
+        if (try keys.getLength(globalObject) == count) {
+            var itr = try keys.arrayIterator(globalObject);
             outer: {
-                while (itr.next()) |item| {
+                while (try itr.next()) |item| {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
-                        const key = expected.getIndex(globalObject, i);
+                        const key = try expected.getIndex(globalObject, i);
                         if (try item.jestDeepEquals(key, globalObject)) break;
                     } else break :outer;
                 }
@@ -1016,21 +1008,17 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const count = expected.getLength(globalThis);
+        const count = try expected.getLength(globalThis);
 
         var i: u32 = 0;
 
         while (i < count) : (i += 1) {
-            const key = expected.getIndex(globalThis, i);
+            const key = try expected.getIndex(globalThis, i);
 
-            if (value.hasOwnPropertyValue(globalThis, key)) {
+            if (try value.hasOwnPropertyValue(globalThis, key)) {
                 pass = true;
                 break;
             }
-        }
-
-        if (globalThis.hasException()) {
-            return .zero;
         }
 
         if (not) pass = !pass;
@@ -1078,9 +1066,9 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            const values = value.values(globalObject);
-            var itr = values.arrayIterator(globalObject);
-            while (itr.next()) |item| {
+            const values = try value.values(globalObject);
+            var itr = try values.arrayIterator(globalObject);
+            while (try itr.next()) |item| {
                 if (try item.jestDeepEquals(expected, globalObject)) {
                     pass = true;
                     break;
@@ -1136,14 +1124,14 @@ pub const Expect = struct {
         var pass = true;
 
         if (!value.isUndefinedOrNull()) {
-            const values = value.values(globalObject);
-            var itr = expected.arrayIterator(globalObject);
-            const count = values.getLength(globalObject);
+            const values = try value.values(globalObject);
+            var itr = try expected.arrayIterator(globalObject);
+            const count = try values.getLength(globalObject);
 
-            while (itr.next()) |item| {
+            while (try itr.next()) |item| {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
-                    const key = values.getIndex(globalObject, i);
+                    const key = try values.getIndex(globalObject, i);
                     if (try key.jestDeepEquals(item, globalObject)) break;
                 } else {
                     pass = false;
@@ -1200,16 +1188,16 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            var values = value.values(globalObject);
-            var itr = expected.arrayIterator(globalObject);
-            const count = values.getLength(globalObject);
-            const expectedLength = expected.getLength(globalObject);
+            var values = try value.values(globalObject);
+            var itr = try expected.arrayIterator(globalObject);
+            const count = try values.getLength(globalObject);
+            const expectedLength = try expected.getLength(globalObject);
 
             if (count == expectedLength) {
-                while (itr.next()) |item| {
+                while (try itr.next()) |item| {
                     var i: u32 = 0;
                     while (i < count) : (i += 1) {
-                        const key = values.getIndex(globalObject, i);
+                        const key = try values.getIndex(globalObject, i);
                         if (try key.jestDeepEquals(item, globalObject)) {
                             pass = true;
                             break;
@@ -1270,14 +1258,14 @@ pub const Expect = struct {
         var pass = false;
 
         if (!value.isUndefinedOrNull()) {
-            var values = value.values(globalObject);
-            var itr = expected.arrayIterator(globalObject);
-            const count = values.getLength(globalObject);
+            var values = try value.values(globalObject);
+            var itr = try expected.arrayIterator(globalObject);
+            const count = try values.getLength(globalObject);
 
-            outer: while (itr.next()) |item| {
+            outer: while (try itr.next()) |item| {
                 var i: u32 = 0;
                 while (i < count) : (i += 1) {
-                    const key = values.getIndex(globalObject, i);
+                    const key = try values.getIndex(globalObject, i);
                     if (try key.jestDeepEquals(item, globalObject)) {
                         pass = true;
                         break :outer;
@@ -1340,8 +1328,8 @@ pub const Expect = struct {
         const expected_type = expected.jsType();
 
         if (value_type.isArrayLike()) {
-            var itr = value.arrayIterator(globalThis);
-            while (itr.next()) |item| {
+            var itr = try value.arrayIterator(globalThis);
+            while (try itr.next()) |item| {
                 if (try item.jestDeepEquals(expected, globalThis)) {
                     pass = true;
                     break;
@@ -1366,7 +1354,7 @@ pub const Expect = struct {
                 else
                     strings.indexOf(value_string.slice(), expected_string.slice()) != null;
             }
-        } else if (value.isIterable(globalThis)) {
+        } else if (try value.isIterable(globalThis)) {
             var expected_entry = ExpectedEntry{
                 .globalThis = globalThis,
                 .expected = expected,
@@ -1685,7 +1673,7 @@ pub const Expect = struct {
 
         const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveProperty", "<green>path<r><d>, <r><green>value<r>");
 
-        if (!expected_property_path.isString() and !expected_property_path.isIterable(globalThis)) {
+        if (!expected_property_path.isString() and !try expected_property_path.isIterable(globalThis)) {
             return globalThis.throw("Expected path must be a string or an array", .{});
         }
 
@@ -1697,7 +1685,7 @@ pub const Expect = struct {
         var received_property: JSValue = .zero;
 
         if (pass) {
-            received_property = value.getIfPropertyExistsFromPath(globalThis, expected_property_path);
+            received_property = try value.getIfPropertyExistsFromPath(globalThis, expected_property_path);
             pass = received_property != .zero;
         }
 
@@ -2290,7 +2278,7 @@ pub const Expect = struct {
                 if (globalThis.hasException()) return .zero;
 
                 // no partial match for this case
-                if (!expected_message.isSameValue(received_message, globalThis)) return .js_undefined;
+                if (!try expected_message.isSameValue(received_message, globalThis)) return .js_undefined;
 
                 return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
             }
@@ -2397,7 +2385,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
-                    if (received_message.isSameValue(expected_message, globalThis)) return .js_undefined;
+                    if (try received_message.isSameValue(expected_message, globalThis)) return .js_undefined;
                 }
 
                 // error: message from received error does not match expected error message.
@@ -2916,7 +2904,7 @@ pub const Expect = struct {
 
             const prop_matchers = _prop_matchers;
 
-            if (!value.jestDeepMatch(prop_matchers, globalThis, true)) {
+            if (!try value.jestDeepMatch(prop_matchers, globalThis, true)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -2986,11 +2974,11 @@ pub const Expect = struct {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
 
-        const actual_length = value.getLengthIfPropertyExistsInternal(globalThis);
+        const actual_length = try value.getLengthIfPropertyExistsInternal(globalThis);
 
         if (actual_length == std.math.inf(f64)) {
             if (value.jsTypeLoose().isObject()) {
-                if (value.isIterable(globalThis)) {
+                if (try value.isIterable(globalThis)) {
                     var any_properties_in_iterator = false;
                     value.forEach(globalThis, &any_properties_in_iterator, struct {
                         pub fn anythingInIterator(
@@ -3060,7 +3048,7 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const not = this.flags.not;
-        var pass = value.isObjectEmpty(globalThis);
+        var pass = try value.isObjectEmpty(globalThis);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -3153,7 +3141,7 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const not = this.flags.not;
-        var pass = value.jsType().isArray() and @as(i32, @intCast(value.getLength(globalThis))) == size.toInt32();
+        var pass = value.jsType().isArray() and @as(i32, @intCast(try value.getLength(globalThis))) == size.toInt32();
 
         if (not) pass = !pass;
         if (pass) return .js_undefined;
@@ -4198,7 +4186,8 @@ pub const Expect = struct {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
-        var pass = calls.getLength(globalThis) > 0;
+        const calls_length = try calls.getLength(globalThis);
+        var pass = calls_length > 0;
 
         const not = this.flags.not;
         if (not) pass = !pass;
@@ -4207,11 +4196,11 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalled", "", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls_length});
         }
 
         const signature = comptime getSignature("toHaveBeenCalled", "", false);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls.getLength(globalThis)});
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls_length});
     }
 
     pub fn toHaveBeenCalledOnce(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4229,7 +4218,8 @@ pub const Expect = struct {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
-        var pass = @as(i32, @intCast(calls.getLength(globalThis))) == 1;
+        const calls_length = try calls.getLength(globalThis);
+        var pass = calls_length == 1;
 
         const not = this.flags.not;
         if (not) pass = !pass;
@@ -4238,11 +4228,11 @@ pub const Expect = struct {
         // handle failure
         if (not) {
             const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", true);
-            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
         }
 
         const signature = comptime getSignature("toHaveBeenCalledOnce", "<green>expected<r>", false);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls.getLength(globalThis)});
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
     }
 
     pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -4268,7 +4258,7 @@ pub const Expect = struct {
 
         const times = arguments[0].coerce(i32, globalThis);
 
-        var pass = @as(i32, @intCast(calls.getLength(globalThis))) == times;
+        var pass = @as(i32, @intCast(try calls.getLength(globalThis))) == times;
 
         const not = this.flags.not;
         if (not) pass = !pass;
@@ -4320,7 +4310,7 @@ pub const Expect = struct {
 
         const property_matchers = args[0];
 
-        var pass = received_object.jestDeepMatch(property_matchers, globalThis, true);
+        var pass = try received_object.jestDeepMatch(property_matchers, globalThis, true);
 
         if (not) pass = !pass;
         if (pass) return .js_undefined;
@@ -4360,20 +4350,20 @@ pub const Expect = struct {
 
         var pass = false;
 
-        if (calls.getLength(globalThis) > 0) {
-            var itr = calls.arrayIterator(globalThis);
-            while (itr.next()) |callItem| {
+        if (try calls.getLength(globalThis) > 0) {
+            var itr = try calls.arrayIterator(globalThis);
+            while (try itr.next()) |callItem| {
                 if (callItem == .zero or !callItem.jsType().isArray()) {
                     return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
                 }
 
-                if (callItem.getLength(globalThis) != arguments.len) {
+                if (try callItem.getLength(globalThis) != arguments.len) {
                     continue;
                 }
 
-                var callItr = callItem.arrayIterator(globalThis);
+                var callItr = try callItem.arrayIterator(globalThis);
                 var match = true;
-                while (callItr.next()) |callArg| {
+                while (try callItr.next()) |callArg| {
                     if (!try callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
                         match = false;
                         break;
@@ -4417,23 +4407,23 @@ pub const Expect = struct {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
-        const totalCalls = @as(u32, @intCast(calls.getLength(globalThis)));
+        const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
         var lastCallValue: JSValue = .zero;
 
         var pass = totalCalls > 0;
 
         if (pass) {
-            lastCallValue = calls.getIndex(globalThis, totalCalls - 1);
+            lastCallValue = try calls.getIndex(globalThis, totalCalls - 1);
 
-            if (lastCallValue == .zero or !lastCallValue.jsType().isArray()) {
+            if (!lastCallValue.jsType().isArray()) {
                 return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
             }
 
-            if (lastCallValue.getLength(globalThis) != arguments.len) {
+            if (try lastCallValue.getLength(globalThis) != arguments.len) {
                 pass = false;
             } else {
-                var itr = lastCallValue.arrayIterator(globalThis);
-                while (itr.next()) |callArg| {
+                var itr = try lastCallValue.arrayIterator(globalThis);
+                while (try itr.next()) |callArg| {
                     if (!try callArg.jestDeepEquals(arguments[itr.i - 1], globalThis)) {
                         pass = false;
                         break;
@@ -4481,23 +4471,23 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
         }
 
-        const totalCalls = calls.getLength(globalThis);
+        const totalCalls = try calls.getLength(globalThis);
         var nthCallValue: JSValue = .zero;
 
         var pass = totalCalls >= nthCallNum;
 
         if (pass) {
-            nthCallValue = calls.getIndex(globalThis, @as(u32, @intCast(nthCallNum)) - 1);
+            nthCallValue = try calls.getIndex(globalThis, @as(u32, @intCast(nthCallNum)) - 1);
 
-            if (nthCallValue == .zero or !nthCallValue.jsType().isArray()) {
+            if (!nthCallValue.jsType().isArray()) {
                 return globalThis.throw("Expected value must be a mock function with calls: {}", .{value});
             }
 
-            if (nthCallValue.getLength(globalThis) != (arguments.len - 1)) {
+            if (try nthCallValue.getLength(globalThis) != (arguments.len - 1)) {
                 pass = false;
             } else {
-                var itr = nthCallValue.arrayIterator(globalThis);
-                while (itr.next()) |callArg| {
+                var itr = try nthCallValue.arrayIterator(globalThis);
+                while (try itr.next()) |callArg| {
                     if (!try callArg.jestDeepEquals(arguments[itr.i], globalThis)) {
                         pass = false;
                         break;
@@ -4567,7 +4557,7 @@ pub const Expect = struct {
             index,
         );
 
-        const total_count = returns.getLength(globalThis);
+        const total_count = try returns.getLength(globalThis);
 
         const return_status: ReturnStatus = brk: {
             // Returns is an array of:
@@ -5445,7 +5435,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         captured_args.ensureStillAlive();
 
         // prepare the args array as `[received, ...captured_args]`
-        const args_count = captured_args.getLength(globalThis);
+        const args_count = captured_args.getLength(globalThis) catch return false;
         var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
             globalThis.throwOutOfMemory() catch {};
@@ -5453,7 +5443,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         };
         matcher_args.appendAssumeCapacity(received);
         for (0..args_count) |i| {
-            matcher_args.appendAssumeCapacity(captured_args.getIndex(globalThis, @truncate(i)));
+            matcher_args.appendAssumeCapacity(captured_args.getIndex(globalThis, @truncate(i)) catch return false);
         }
 
         return Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true) catch false;
@@ -5466,34 +5456,30 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         return JSValue.jsBoolean(matched);
     }
 
+    fn maybeClear(comptime dontThrow: bool, globalThis: *JSGlobalObject, err: bun.JSError) bun.JSError!bool {
+        if (dontThrow) {
+            globalThis.clearException();
+            return false;
+        }
+        return err;
+    }
+
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
     pub fn customPrint(_: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, writer: anytype, comptime dontThrow: bool) !bool {
         const matcher_fn: JSValue = js.matcherFnGetCached(thisValue) orelse return false;
-        if (matcher_fn.get_unsafe(globalThis, "toAsymmetricMatcher")) |fn_value| {
+        if (matcher_fn.get(globalThis, "toAsymmetricMatcher") catch |e| return maybeClear(dontThrow, globalThis, e)) |fn_value| {
             if (fn_value.jsType().isFunction()) {
                 const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse return false;
                 var stack_fallback = std.heap.stackFallback(256, globalThis.allocator());
-                const args_len = captured_args.getLength(globalThis);
+                const args_len = captured_args.getLength(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
                 var args = try std.ArrayList(JSValue).initCapacity(stack_fallback.get(), args_len);
-                var iter = captured_args.arrayIterator(globalThis);
-                while (iter.next()) |arg| {
+                var iter = captured_args.arrayIterator(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
+                while (iter.next() catch |e| return maybeClear(dontThrow, globalThis, e)) |arg| {
                     args.appendAssumeCapacity(arg);
                 }
 
-                const result = matcher_fn.call(globalThis, thisValue, args.items) catch |err| {
-                    if (dontThrow) {
-                        globalThis.clearException();
-                        return false;
-                    }
-                    return err;
-                };
-                try writer.print("{}", .{result.toBunString(globalThis) catch {
-                    if (dontThrow) {
-                        globalThis.clearException();
-                        return false;
-                    }
-                    return error.JSError;
-                }});
+                const result = matcher_fn.call(globalThis, thisValue, args.items) catch |e| return maybeClear(dontThrow, globalThis, e);
+                try writer.print("{}", .{result.toBunString(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e)});
             }
         }
         return false;

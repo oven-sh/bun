@@ -48,23 +48,23 @@ pub fn init(
     });
 }
 
-pub fn start(this: *Async) void {
+pub fn start(this: *Async) Yield {
     log("{} start", .{this});
     this.enqueueSelf();
-    this.parent.childDone(this, 0);
+    return this.parent.childDone(this, 0);
 }
 
-pub fn next(this: *Async) void {
+pub fn next(this: *Async) Yield {
     log("{} next {s}", .{ this, @tagName(this.state) });
     switch (this.state) {
         .idle => {
             this.state = .{ .exec = .{} };
             this.enqueueSelf();
+            return .suspended;
         },
         .exec => {
             if (this.state.exec.child) |child| {
-                child.start();
-                return;
+                return child.start();
             }
 
             const child = brk: {
@@ -104,9 +104,11 @@ pub fn next(this: *Async) void {
             };
             this.state.exec.child = child;
             this.enqueueSelf();
+            return .suspended;
         },
         .done => {
             this.base.interpreter.asyncCmdDone(this);
+            return .done;
         },
     }
 }
@@ -119,11 +121,12 @@ pub fn enqueueSelf(this: *Async) void {
     }
 }
 
-pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) void {
+pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
     log("{} childDone", .{this});
     child_ptr.deinit();
     this.state = .{ .done = exit_code };
     this.enqueueSelf();
+    return .suspended;
 }
 
 /// This function is purposefully empty as a hack to ensure Async runs in the background while appearing to
@@ -143,7 +146,7 @@ pub fn actuallyDeinit(this: *Async) void {
 }
 
 pub fn runFromMainThread(this: *Async) void {
-    this.next();
+    this.next().run();
 }
 
 pub fn runFromMainThreadMini(this: *Async, _: *void) void {
@@ -152,6 +155,7 @@ pub fn runFromMainThreadMini(this: *Async, _: *void) void {
 
 const std = @import("std");
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 
 const Interpreter = bun.shell.Interpreter;

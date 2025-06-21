@@ -584,8 +584,11 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

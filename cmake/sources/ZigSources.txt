@@ -73,6 +73,10 @@ src/bun.js/api/server/StaticRoute.zig
 src/bun.js/api/server/WebSocketServerContext.zig
 src/bun.js/api/streams.classes.zig
 src/bun.js/api/Timer.zig
+src/bun.js/api/Timer/EventLoopTimer.zig
+src/bun.js/api/Timer/ImmediateObject.zig
+src/bun.js/api/Timer/TimeoutObject.zig
+src/bun.js/api/Timer/TimerObjectInternals.zig
 src/bun.js/api/TOMLObject.zig
 src/bun.js/api/UnsafeObject.zig
 src/bun.js/bindgen_test.zig
@@ -81,6 +85,7 @@ src/bun.js/bindings/AnyPromise.zig
 src/bun.js/bindings/bun-simdutf.zig
 src/bun.js/bindings/CachedBytecode.zig
 src/bun.js/bindings/CallFrame.zig
+src/bun.js/bindings/CatchScope.zig
 src/bun.js/bindings/codegen.zig
 src/bun.js/bindings/CommonAbortReason.zig
 src/bun.js/bindings/CommonStrings.zig
@@ -551,6 +556,7 @@ src/install/windows-shim/bun_shim_impl.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig
+src/io/openForWriting.zig
 src/io/PipeReader.zig
 src/io/pipes.zig
 src/io/PipeWriter.zig
@@ -665,6 +671,7 @@ src/shell/states/Stmt.zig
 src/shell/states/Subshell.zig
 src/shell/subproc.zig
 src/shell/util.zig
+src/shell/Yield.zig
 src/sourcemap/CodeCoverage.zig
 src/sourcemap/LineOffsetTable.zig
 src/sourcemap/sourcemap.zig

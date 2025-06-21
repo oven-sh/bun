@@ -105,7 +105,7 @@ pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalOb
 
     const WrappedFn = struct {
         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-            return JSC.toJSHostValue(g, Function(b, g, by, .clone));
+            return JSC.toJSHostCall(g, @src(), Function, .{ b, g, by, .clone });
         }
     };
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
@@ -1231,7 +1231,7 @@ pub fn writeFileInternal(globalThis: *JSC.JSGlobalObject, path_or_blob_: *PathOr
                     bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
         {
             if (data.isString()) {
-                const len = data.getLength(globalThis);
+                const len = try data.getLength(globalThis);
 
                 if (len < 256 * 1024) {
                     const str = try data.toBunString(globalThis);
@@ -1899,6 +1899,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, glob
             }
         }
     }
+
     const path: JSC.Node.PathOrFileDescriptor = brk: {
         switch (path_or_fd.*) {
             .path => {
@@ -2012,7 +2013,7 @@ pub fn toStreamWithOffset(
 fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*Blob, *JSC.JSGlobalObject) JSC.JSValue {
     return struct {
         fn wrap(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            return JSC.toJSHostValue(globalObject, Fn(this, globalObject, lifetime));
+            return JSC.toJSHostCall(globalObject, @src(), Fn, .{ this, globalObject, lifetime });
         }
     }.wrap;
 }
@@ -3762,13 +3763,13 @@ fn fromJSWithoutDeferGC(
     var fail_if_top_value_is_not_typed_array_like = false;
     switch (current.jsTypeLoose()) {
         .Array, .DerivedArray => {
-            var top_iter = JSC.JSArrayIterator.init(current, global);
+            var top_iter = try JSC.JSArrayIterator.init(current, global);
             might_only_be_one_thing = top_iter.len == 1;
             if (top_iter.len == 0) {
                 return Blob{ .globalThis = global };
             }
             if (might_only_be_one_thing) {
-                top_value = top_iter.next().?;
+                top_value = (try top_iter.next()).?;
             }
         },
         else => {
@@ -3875,10 +3876,10 @@ fn fromJSWithoutDeferGC(
             },
 
             .Array, .DerivedArray => {
-                var iter = JSC.JSArrayIterator.init(current, global);
+                var iter = try JSC.JSArrayIterator.init(current, global);
                 try stack.ensureUnusedCapacity(iter.len);
                 var any_arrays = false;
-                while (iter.next()) |item| {
+                while (try iter.next()) |item| {
                     if (item.isUndefinedOrNull()) continue;
 
                     // When it's a string or ArrayBuffer inside an array, we can avoid the extra push/pop

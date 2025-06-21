@@ -140,6 +140,8 @@ export interface BundlerTestInput {
   /** Use --compile */
   compile?: boolean;
   compileOptions?: {
+    /** Use --windows-hide-console */
+    windowsHideConsole?: boolean;
     /** Use --windows-icon */
     windowsIcon?: string;
   };
@@ -688,6 +690,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              compileOptions.windowsHideConsole && "--windows-hide-console",
               compileOptions.windowsIcon && `--windows-icon=${compileOptions.windowsIcon}`,
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),

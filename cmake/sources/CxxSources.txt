@@ -92,6 +92,10 @@ src/bun.js/bindings/JSWrappingFunction.cpp
 src/bun.js/bindings/JSX509Certificate.cpp
 src/bun.js/bindings/JSX509CertificateConstructor.cpp
 src/bun.js/bindings/JSX509CertificatePrototype.cpp
+src/bun.js/bindings/JSYogaConfig.cpp
+src/bun.js/bindings/JSYogaConstructor.cpp
+src/bun.js/bindings/JSYogaNode.cpp
+src/bun.js/bindings/JSYogaPrototype.cpp
 src/bun.js/bindings/linux_perf_tracing.cpp
 src/bun.js/bindings/MarkingConstraint.cpp
 src/bun.js/bindings/ModuleLoader.cpp

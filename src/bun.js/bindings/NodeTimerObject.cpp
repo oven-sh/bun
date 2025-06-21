@@ -19,7 +19,7 @@ using namespace JSC;
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;

@@ -4,7 +4,6 @@ const bun = @import("bun");
 const JSValue = JSC.JSValue;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
-
 const log = bun.Output.scoped(.napi, false);
 
 const Async = bun.Async;
@@ -271,7 +270,7 @@ pub export fn napi_get_undefined(env_: napi_env, result_: ?*napi_value) napi_sta
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.set(env, JSValue.jsUndefined());
+    result.set(env, .js_undefined);
     return env.ok();
 }
 pub export fn napi_get_null(env_: napi_env, result_: ?*napi_value) napi_status {
@@ -308,7 +307,7 @@ pub export fn napi_create_array(env_: napi_env, result_: ?*napi_value) napi_stat
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.set(env, JSValue.createEmptyArray(env.toJS(), 0));
+    result.set(env, JSValue.createEmptyArray(env.toJS(), 0) catch return env.setLastError(.pending_exception));
     return env.ok();
 }
 pub export fn napi_create_array_with_length(env_: napi_env, length: usize, result_: ?*napi_value) napi_status {
@@ -325,7 +324,7 @@ pub export fn napi_create_array_with_length(env_: napi_env, length: usize, resul
     // Node and V8 convert out-of-bounds array sizes to 0
     const len = std.math.cast(u32, length) orelse 0;
 
-    const array = JSC.JSValue.createEmptyArray(env.toJS(), len);
+    const array = JSC.JSValue.createEmptyArray(env.toJS(), len) catch return env.setLastError(.pending_exception);
     array.ensureStillAlive();
     result.set(env, array);
     return env.ok();
@@ -571,7 +570,7 @@ pub export fn napi_get_array_length(env_: napi_env, value_: napi_value, result_:
         return env.setLastError(.array_expected);
     }
 
-    result.* = @as(u32, @truncate(value.getLength(env.toJS())));
+    result.* = @truncate(value.getLength(env.toJS()) catch return env.setLastError(.pending_exception));
     return env.ok();
 }
 pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_value, result_: ?*bool) napi_status {
@@ -583,8 +582,8 @@ pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_va
         return env.invalidArg();
     };
     const lhs, const rhs = .{ lhs_.get(), rhs_.get() };
-    // there is some nuance with NaN here i'm not sure about
-    result.* = lhs.isSameValue(rhs, env.toJS());
+    // TODO: this needs to be strictEquals not isSameValue (NaN !== NaN and -0 === 0)
+    result.* = lhs.isSameValue(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
@@ -675,7 +674,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         if (recv != .zero)
             recv
         else
-            .undefined,
+            .js_undefined,
         if (arg_count > 0 and args != null)
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
@@ -1593,7 +1592,7 @@ pub const ThreadSafeFunction = struct {
             break :brk .{ !this.isClosing(), t };
         };
 
-        this.call(task, !is_first);
+        this.call(task, !is_first) catch return false;
 
         if (queue_finalizer_after_call) {
             this.maybeQueueFinalizer();
@@ -1605,10 +1604,10 @@ pub const ThreadSafeFunction = struct {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) void {
+    fn call(this: *ThreadSafeFunction, task: ?*anyopaque, is_first: bool) bun.JSExecutionTerminated!void {
         const env = this.env;
         if (!is_first) {
-            this.event_loop.drainMicrotasks();
+            try this.event_loop.drainMicrotasks();
         }
         const globalObject = env.toJS();
 
@@ -1617,16 +1616,16 @@ pub const ThreadSafeFunction = struct {
 
         switch (this.callback) {
             .js => |strong| {
-                const js = strong.get() orelse .undefined;
+                const js: JSValue = strong.get() orelse .js_undefined;
                 if (js.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
 
-                _ = js.call(globalObject, .undefined, &.{}) catch |err|
+                _ = js.call(globalObject, .js_undefined, &.{}) catch |err|
                     globalObject.reportActiveExceptionAsUnhandled(err);
             },
             .c => |cb| {
-                const js = cb.js.get() orelse .undefined;
+                const js: JSValue = cb.js.get() orelse .js_undefined;
 
                 const handle_scope = NapiHandleScope.open(env, false);
                 defer if (handle_scope) |scope| scope.close(env);

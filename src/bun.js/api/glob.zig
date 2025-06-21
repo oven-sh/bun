@@ -199,7 +199,7 @@ pub const WalkTask = struct {
             return;
         }
 
-        const jsStrings = globWalkResultToJS(this.walker, this.global);
+        const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
         promise.resolve(this.global, jsStrings);
     }
 
@@ -209,7 +209,7 @@ pub const WalkTask = struct {
     }
 };
 
-fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
+fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
@@ -331,7 +331,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     var arena = std.heap.ArenaAllocator.init(alloc);
     const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
 
     incrPendingActivityFlag(&this.has_pending_activity);
@@ -354,7 +354,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     var arena = std.heap.ArenaAllocator.init(alloc);
     var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
         arena.deinit();
-        return .undefined;
+        return .js_undefined;
     };
     defer globWalker.deinit(true);
 

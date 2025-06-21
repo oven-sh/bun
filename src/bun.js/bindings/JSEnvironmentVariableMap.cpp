@@ -78,7 +78,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     ZigString name = toZigString(propertyName.publicName());
     ZigString value = { nullptr, 0 };
 
-    if (auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName())) {
+    auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasExistingValue) {
         return JSValue::encode(hasExistingValue);
     }
 

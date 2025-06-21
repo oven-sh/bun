@@ -25,14 +25,11 @@ const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
-const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
-  "socket.zig",
-  "createNodeTLSBinding",
-);
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
-import type { ServerOpts } from "node:net";
+import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
+import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
@@ -52,6 +49,11 @@ const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
 const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+
+const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -310,7 +312,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketEmitEndNT = (self, _err?) => {
+function SocketEmitEndNT(self, _err?) {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -322,9 +324,9 @@ const SocketEmitEndNT = (self, _err?) => {
   // if (err) {
   //   self.destroy(err);
   // }
-};
+}
 
-const ServerHandlers: SocketHandler = {
+const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -335,10 +337,10 @@ const ServerHandlers: SocketHandler = {
     }
   },
   close(socket, err) {
+    $debug("Bun.Server close");
     const data = this.data;
     if (!data) return;
 
-    data.server._connections--;
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
@@ -349,20 +351,18 @@ const ServerHandlers: SocketHandler = {
         socket[owner_symbol] = null;
       }
     }
-
-    data.server._emitCloseIfDrained();
   },
   end(socket) {
     SocketHandlers.end(socket);
   },
   open(socket) {
-    const self = this.data;
+    $debug("Bun.Server open");
+    const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({});
+    const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
-    _socket.server = self;
     _socket._requestCert = requestCert;
     _socket._rejectUnauthorized = rejectUnauthorized;
 
@@ -395,7 +395,6 @@ const ServerHandlers: SocketHandler = {
       };
 
       socket.end();
-
       self.emit("drop", data);
       return;
     }
@@ -404,6 +403,7 @@ const ServerHandlers: SocketHandler = {
     const isTLS = typeof bunTLS === "function";
 
     self._connections++;
+    _socket.server = self;
 
     if (pauseOnConnect) {
       _socket.pause();
@@ -422,7 +422,7 @@ const ServerHandlers: SocketHandler = {
     }
   },
   handshake(socket, success, verifyError) {
-    const { data: self } = socket;
+    const self = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
@@ -436,7 +436,7 @@ const ServerHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
-    const server = self.server;
+    const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -509,9 +509,8 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-type SocketHandleData = NonNullable<import("node:net").Socket["_handle"]>["data"];
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: SocketHandler<SocketHandleData> = {
+const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -1164,6 +1163,14 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
     process.nextTick(emitCloseNT, this, false);
   }
+
+  if (this.server) {
+    $debug("has server");
+    this.server._connections--;
+    if (this.server._emitCloseIfDrained) {
+      this.server._emitCloseIfDrained();
+    }
+  }
 };
 
 Socket.prototype._final = function _final(callback) {
@@ -1701,12 +1708,12 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   if (localAddress || localPort) {
     if (addressType === 4) {
-      localAddress ||= DEFAULT_IPV4_ADDR;
+      localAddress ||= "0.0.0.0";
       // TODO:
       // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
-      localAddress ||= DEFAULT_IPV6_ADDR;
+      localAddress ||= "::";
       // TODO:
       // err = self._handle.bind6(localAddress, localPort, flags);
     }
@@ -2377,6 +2384,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   } else if (fd != null) {
     this._handle = Bun.listen({
@@ -2388,6 +2396,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   } else {
     this._handle = Bun.listen({
@@ -2399,11 +2408,9 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: this,
     });
   }
-
-  //make this instance available on handlers
-  this._handle.data = this;
 
   const addr = this.address();
   if (addr && typeof addr === "object") {

@@ -219,21 +219,15 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
-#if ASSERT_ENABLED
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
-#if ASSERT_ENABLED
-    if (!uint8Array) [[unlikely]] {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !uint8Array);
 
     return uint8Array;
 }
@@ -241,19 +235,13 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_
 static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
 
-#if ASSERT_ENABLED
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
     auto* result = createUninitializedBuffer(lexicalGlobalObject, byteLength);
 
-#if ASSERT_ENABLED
-    if (!result) [[unlikely]] {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !result);
 
     return result;
 }
@@ -442,7 +430,7 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
-    return createBuffer(lexicalGlobalObject, data.data(), data.size());
+    return createBuffer(lexicalGlobalObject, data.begin(), data.size());
 }
 
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)
@@ -566,6 +554,7 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         }
         }
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue decoded = JSC::JSValue::decode(result);
     if (!result) [[unlikely]] {
@@ -606,7 +595,7 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     }
 
     if (str->length() == 0)
-        return constructBufferEmpty(lexicalGlobalObject);
+        RELEASE_AND_RETURN(scope, constructBufferEmpty(lexicalGlobalObject));
 
     JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, view, encoding);
 
@@ -626,7 +615,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (length == 0) {
-        return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
     }
     // fill argument
     if (callFrame->argumentCount() > 1) [[unlikely]] {

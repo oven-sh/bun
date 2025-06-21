@@ -358,7 +358,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     paths.append(Bun::toStringRef(pathStr));
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.data(), paths.size());
+                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
                 if (scope.exception()) goto cleanup;
 
                 if (!JSC::JSValue::decode(result).isString()) {
@@ -541,7 +541,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * glo
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
+    auto* nullable = thisObject->requireProperty.getInitializedOnMainThread(thisObject);
+    return JSValue::encode(nullable ? nullable : jsUndefined());
 }
 
 // https://github.com/oven-sh/bun/issues/11754#issuecomment-2452626172
@@ -651,6 +652,7 @@ void ImportMetaObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
         WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
@@ -666,8 +668,10 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        JSFunction* value = jsCast<JSFunction*>(Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path));
-        init.set(value);
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        RETURN_IF_EXCEPTION(scope, );
+        ASSERT(object);
+        init.set(jsCast<JSFunction*>(object));
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
@@ -749,6 +753,12 @@ void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     // }
     Base::analyzeHeap(cell, analyzer);
+}
+
+JSValue ImportMetaObject::getPrototype(JSObject* object, JSC::JSGlobalObject* globalObject)
+{
+    ASSERT(object->inherits(info()));
+    return jsNull();
 }
 
 const JSC::ClassInfo ImportMetaObject::s_info = { "ImportMeta"_s, &Base::s_info, nullptr, nullptr,

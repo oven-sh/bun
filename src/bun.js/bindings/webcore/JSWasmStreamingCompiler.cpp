@@ -3,12 +3,11 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
-#include "IDLTypes.h"
-#include "JSDOMConvertUnion.h"
-#include "JSDOMConvertBufferSource.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
+
+#include "ErrorCode.h"
 
 namespace WebCore {
 
@@ -117,11 +116,39 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
 
-    // TODO: Add wasm/js/JSWebAssemblyHelpers.h to JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS in JSC's CMakeFiles.txt
-    //       Then, use getWasmBufferFromValue to get better error messages.
-    BufferSource bufferSource = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    auto chunkValue = callFrame->uncheckedArgument(0);
+    std::span<const uint8_t> chunk;
+
+    // See getWasmBufferFromValue in JSC's JSWebAssemblyHelpers.h
+    if (auto arrayBufferView = jsDynamicCast<JSArrayBufferView*>(chunkValue)) {
+        if (isTypedArrayType(arrayBufferView->type())) {
+            validateTypedArray(lexicalGlobalObject, arrayBufferView);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        } else {
+            // DataView
+            IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
+            if (!jsCast<JSDataView*>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
+                throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
+                return {};
+            }
+        }
+
+        chunk = { static_cast<const uint8_t*>(arrayBufferView->vector()), arrayBufferView->byteLength() };
+    } else if (auto arrayBuffer = jsDynamicCast<JSArrayBuffer*>(chunkValue)) {
+        auto arrayBufferImpl = arrayBuffer->impl();
+        if (arrayBufferImpl->isDetached()) {
+            throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
+            return {};
+        }
+
+        chunk = { static_cast<const uint8_t*>(arrayBufferImpl->data()), arrayBufferImpl->byteLength() };
+    } else [[unlikely]] {
+        // See WasmStreamingObject::Push in Node.js's node_wasm_web_api.cc
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "chunk must be an ArrayBufferView or an ArrayBuffer");
+    }
+
     RETURN_IF_EXCEPTION(throwScope, {});
-    impl.addBytes({ bufferSource.data(), bufferSource.length() });
+    impl.addBytes(chunk);
 
     return encodedJSUndefined();
 }

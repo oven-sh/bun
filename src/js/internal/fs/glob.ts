@@ -65,6 +65,8 @@ function mapOptions(options: GlobOptions): ExtendedGlobOptions {
     cwd: options?.cwd ?? process.cwd(),
     // https://github.com/nodejs/node/blob/a9546024975d0bfb0a8ae47da323b10fb5cbb88b/lib/internal/fs/glob.js#L655
     followSymlinks: true,
+    // https://github.com/oven-sh/bun/issues/20507
+    onlyFiles: false,
     exclude,
   };
 }

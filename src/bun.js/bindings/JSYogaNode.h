@@ -29,9 +29,11 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     YGNodeRef internal() { return m_node; }
+    void clearInternal() { m_node = nullptr; }
     
     // Helper to get JS wrapper from Yoga node
     static JSYogaNode* fromYGNode(YGNodeRef);
+    JSC::JSGlobalObject* globalObject() const;
 
     // Storage for JS callbacks
     JSC::Strong<JSC::JSObject> m_measureFunc;

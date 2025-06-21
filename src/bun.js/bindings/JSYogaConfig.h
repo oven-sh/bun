@@ -19,9 +19,9 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     ~JSYogaConfig();
 
-    template<typename, JSC::SubspaceAccess> 
+    template<typename, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
-    
+
     DECLARE_INFO;
 
     YGConfigRef internal() { return m_config; }
@@ -30,7 +30,7 @@ public:
 private:
     JSYogaConfig(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
-    
+
     YGConfigRef m_config;
 };
 

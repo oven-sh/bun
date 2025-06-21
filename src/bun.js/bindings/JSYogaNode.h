@@ -22,15 +22,15 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     ~JSYogaNode();
 
-    template<typename, JSC::SubspaceAccess> 
+    template<typename, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
-    
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
     YGNodeRef internal() { return m_node; }
     void clearInternal() { m_node = nullptr; }
-    
+
     // Helper to get JS wrapper from Yoga node
     static JSYogaNode* fromYGNode(YGNodeRef);
     JSC::JSGlobalObject* globalObject() const;
@@ -42,7 +42,7 @@ public:
 private:
     JSYogaNode(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, YGConfigRef config);
-    
+
     YGNodeRef m_node;
 };
 

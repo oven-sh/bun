@@ -28,7 +28,7 @@ void JSYogaConfigConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototy
 {
     Base::finishCreation(vm, 0, "Config"_s);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    
+
     // Add static methods - create() is an alias for the constructor
     putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 0, constructJSYogaConfig, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
@@ -43,22 +43,22 @@ JSYogaNodeConstructor::JSYogaNodeConstructor(JSC::VM& vm, JSC::Structure* struct
 
 void JSYogaNodeConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
-    Base::finishCreation(vm, 1, "Node"_s);  // 1 for optional config parameter
+    Base::finishCreation(vm, 1, "Node"_s); // 1 for optional config parameter
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    
+
     // Add static methods - create() is an alias for the constructor
     putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 1, constructJSYogaNode, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 // Constructor functions
-JSC_DEFINE_HOST_FUNCTION(constructJSYogaConfig, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(constructJSYogaConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaConfigClassStructure.get(zigGlobalObject);
-    
+
     // Handle subclassing
     JSC::JSValue newTarget = callFrame->newTarget();
     if (UNLIKELY(zigGlobalObject->m_JSYogaConfigClassStructure.constructor(zigGlobalObject) != newTarget)) {
@@ -66,18 +66,18 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaConfig, (JSC::JSGlobalObject* globalObje
             throwTypeError(globalObject, scope, "Class constructor Config cannot be invoked without 'new'"_s);
             return {};
         }
-        
+
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = JSC::InternalFunction::createSubclassStructure(
             globalObject, newTarget.getObject(), functionGlobalObject->m_JSYogaConfigClassStructure.get(functionGlobalObject));
         scope.release();
     }
-    
+
     return JSC::JSValue::encode(JSYogaConfig::create(vm, structure));
 }
 
-JSC_DEFINE_HOST_FUNCTION(callJSYogaConfig, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(callJSYogaConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -85,14 +85,14 @@ JSC_DEFINE_HOST_FUNCTION(callJSYogaConfig, (JSC::JSGlobalObject* globalObject, J
     return {};
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaNodeClassStructure.get(zigGlobalObject);
-    
+
     // Handle subclassing
     JSC::JSValue newTarget = callFrame->newTarget();
     if (UNLIKELY(zigGlobalObject->m_JSYogaNodeClassStructure.constructor(zigGlobalObject) != newTarget)) {
@@ -100,14 +100,14 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject* globalObject
             throwTypeError(globalObject, scope, "Class constructor Node cannot be invoked without 'new'"_s);
             return {};
         }
-        
+
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = JSC::InternalFunction::createSubclassStructure(
             globalObject, newTarget.getObject(), functionGlobalObject->m_JSYogaNodeClassStructure.get(functionGlobalObject));
         scope.release();
     }
-    
+
     // Optional config parameter
     YGConfigRef config = nullptr;
     if (callFrame->argumentCount() > 0) {
@@ -121,11 +121,11 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject* globalObject
             config = jsConfig->internal();
         }
     }
-    
+
     return JSC::JSValue::encode(JSYogaNode::create(vm, structure, config));
 }
 
-JSC_DEFINE_HOST_FUNCTION(callJSYogaNode, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(callJSYogaNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

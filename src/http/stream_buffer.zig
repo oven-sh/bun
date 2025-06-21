@@ -33,7 +33,7 @@ pub const ThreadSafeStreamBuffer = struct {
         this.mutex.unlock();
     }
 
-    /// Attention should only be called in the main thread and before schedule the it to the http thread
+    /// Should only be called in the main thread and before schedule the it to the http thread
     pub fn setDrainCallback(this: *ThreadSafeStreamBuffer, comptime T: type, callback: *const fn (*T) void, context: *T) void {
         this.callback = Callback.init(T, callback, context);
     }
@@ -42,7 +42,7 @@ pub const ThreadSafeStreamBuffer = struct {
         this.callback = null;
     }
 
-    /// Attention never call this from the main thread this is exclusively called from the http thread
+    /// This is exclusively called from the http thread
     /// Buffer should be acquired before calling this
     pub fn reportDrain(this: *ThreadSafeStreamBuffer) void {
         if (this.buffer.isEmpty()) {

@@ -152,17 +152,12 @@ fn getBodyStreamOrBytesForWasmStreaming(
     const body = this.getBodyValue();
     body.toBlobIfPossible();
 
-    const any_blob = switch (body.*) {
-        .Locked => |*pending| blk: {
-            if (pending.toAnyBlobAllowPromise()) |blob| {
-                body.* = .{ .Used = {} };
-                break :blk blob;
-            }
-
+    var any_blob = switch (body.*) {
+        .Locked => body.tryUseAsAnyBlob() orelse {
             bun.Output.warn("HM I am returning a ReadableStream! (1)", .{}); // REMOVE ME
             return body.toReadableStream(global_object);
         },
-        else => body.useAsAnyBlobAllowNonUTF8String(),
+        else => body.useAsAnyBlob(),
     };
 
     if (any_blob.store()) |store| {
@@ -179,6 +174,9 @@ fn getBodyStreamOrBytesForWasmStreaming(
             return JSC.WebCore.ReadableStream.fromBlobCopyRef(global_object, &blob, blob.size);
         }
     }
+
+    // TODO: DEINIT THE BLOOB OR ELSE MEMORY LEAK, EXCEPT C++ NEEDS THE MEMORY FIRST
+    // defer any_blob.detach();
 
     // Give the caller the pointer and length to the blob contents, and return null to
     // signify this has been done.

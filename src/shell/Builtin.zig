@@ -20,10 +20,18 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-/// The following are allocated with the above arena
-args: *const std.ArrayList(?[*:0]const u8),
-args_slice: ?[]const [:0]const u8 = null,
 cwd: bun.FileDescriptor,
+
+/// TODO: It would be nice to make this mutable so that certain commands (e.g.
+/// `export`) don't have to duplicate arguments. However, it is tricky because
+/// modifications will invalidate any codepath which previously sliced the array
+/// list (e.g. turned it into a `[]const [:0]const u8`)
+args: *const std.ArrayList(?[*:0]const u8),
+/// Cached slice of `args`.
+///
+/// This caches the result of calling `bun.span(this.args.items[i])` since the
+/// items in `this.args` are sentinel terminated and don't carry their length.
+args_slice: ?[]const [:0]const u8 = null,
 
 impl: Impl,
 
@@ -562,6 +570,7 @@ pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
     this.parentCmd().base.throw(err) catch {};
 }
 
+/// The `Cmd` state node associated with this builtin
 pub inline fn parentCmd(this: *const Builtin) *const Cmd {
     const union_ptr: *const Cmd.Exec = @fieldParentPtr("bltn", this);
     return @fieldParentPtr("exec", union_ptr);

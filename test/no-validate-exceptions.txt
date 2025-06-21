@@ -29,6 +29,8 @@ test/bundler/css/wpt/relative_color_out_of_gamut.test.ts
 test/bundler/esbuild/css.test.ts
 test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/extra.test.ts
+test/bundler/bundler_html_server.test.ts
+test/js/bun/http/bun-serve-html-manifest.test.ts
 test/bundler/esbuild/importstar_ts.test.ts
 test/bundler/esbuild/importstar.test.ts
 test/bundler/esbuild/loader.test.ts

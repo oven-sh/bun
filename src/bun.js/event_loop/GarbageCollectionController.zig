@@ -137,7 +137,9 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, t
             if (this_heap_size != prev) {
                 this.updateGCRepeatTimer(.fast);
 
-                if (this_heap_size > prev * 2) {
+                // Use saturating multiplication to avoid overflow
+                const doubled_prev = std.math.mul(usize, prev, 2) catch std.math.maxInt(usize);
+                if (this_heap_size > doubled_prev) {
                     this.performGC();
                 } else {
                     this.scheduleGCTimer();
@@ -145,7 +147,9 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, t
             }
         },
         .scheduled => {
-            if (this_heap_size > prev * 2) {
+            // Use saturating multiplication to avoid overflow
+            const doubled_prev = std.math.mul(usize, prev, 2) catch std.math.maxInt(usize);
+            if (this_heap_size > doubled_prev) {
                 this.updateGCRepeatTimer(.fast);
                 this.performGC();
             }

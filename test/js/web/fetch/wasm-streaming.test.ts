@@ -38,6 +38,13 @@ const validUtf8Wasm =
   // The ¿ near the end of the string is represented by two bytes (0xC2 and 0xBF) in UTF-8.
   "\x00asm\x01\x00\x00\x00\x01\x06\x01`\x01~\x01|\x03\x02\x01\x00\x07\x07\x01\x03foo\x00\x00\n\b\x01\x06\x00 \x00¿\x0B";
 
+const responseFromStream = (pull: (controller: ReadableStreamDefaultController<any>) => void | PromiseLike<void>) =>
+  new Response(new ReadableStream({ pull }), {
+    headers: {
+      "Content-Type": "application/wasm",
+    },
+  });
+
 describe("WebAssembly.compileStreaming", () => {
   test("compiles a non-streaming Response", async () => {
     const response = await fetch(simpleWasmUri);
@@ -91,18 +98,10 @@ describe("WebAssembly.compileStreaming", () => {
 
   test("doesn't compile a used streaming response", async () => {
     let i = 0;
-    const stream = new ReadableStream({
-      async pull(controller) {
-        controller.enqueue(new Uint8Array([1, 2, 3]));
-        if (i == 3) controller.close();
-        i++;
-      },
-    });
-
-    const response = new Response(stream, {
-      headers: {
-        "Content-Type": "application/wasm",
-      },
+    const response = responseFromStream(async controller => {
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      if (i == 3) controller.close();
+      i++;
     });
 
     // @ts-expect-error ReadableStreams are in fact async iterables
@@ -117,38 +116,46 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a streaming response that throws while streaming", async () => {
     let i = 0;
     const error = new Error("sudden explosion in stream");
-    const stream = new ReadableStream({
-      async pull(controller) {
-        controller.enqueue(new Uint8Array([1, 2, 3]));
-        if (i == 3) throw error;
-        i++;
-      },
-    });
-
-    const response = new Response(stream, {
-      headers: {
-        "Content-Type": "application/wasm",
-      },
+    const response = responseFromStream(async controller => {
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      if (i == 3) throw error;
+      i++;
     });
 
     await expect(WebAssembly.compileStreaming(response)).rejects.toBe(error);
   });
 
   test("doesn't compile a streaming response that yields neither ArrayBuffer nor ArrayBufferView", async () => {
-    const stream = new ReadableStream({
-      async pull(controller) {
-        controller.enqueue("something random");
-      },
-    });
-
-    const response = new Response(stream, {
-      headers: {
-        "Content-Type": "application/wasm",
-      },
+    const response = responseFromStream(async controller => {
+      controller.enqueue("something random");
     });
 
     await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "chunk must be an ArrayBufferView or an ArrayBuffer",
+    );
+  });
+
+  test("doesn't compile a streaming response that yields a detached TypedArray", async () => {
+    const response = responseFromStream(async controller => {
+      const array = new Uint8Array(123);
+      array.buffer.transfer();
+      controller.enqueue(array);
+    });
+
+    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+      "Underlying ArrayBuffer has been detached from the view or out-of-bounds",
+    );
+  });
+
+  test("doesn't compile a streaming response that yields a detached ArrayBuffer", async () => {
+    const response = responseFromStream(async controller => {
+      const buffer = new ArrayBuffer(123);
+      buffer.transfer();
+      controller.enqueue(buffer);
+    });
+
+    await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+      "Underlying ArrayBuffer has been detached from the view or out-of-bounds",
     );
   });
 
@@ -200,22 +207,14 @@ describe("WebAssembly.instantiateStreaming", () => {
   test("instantiates a ReadableStream response", async () => {
     const buffer = Buffer.from(simpleWasm, "base64");
     let i = 0;
-    const stream = new ReadableStream({
-      async pull(controller) {
-        const chunkSize = 10;
+    const response = responseFromStream(async controller => {
+      const chunkSize = 10;
 
-        await Bun.sleep(10);
-        controller.enqueue(buffer.subarray(i, i + chunkSize));
+      await Bun.sleep(10);
+      controller.enqueue(buffer.subarray(i, i + chunkSize));
 
-        i += chunkSize;
-        if (i >= buffer.length) controller.close();
-      },
-    });
-
-    const response = new Response(stream, {
-      headers: {
-        "Content-Type": "application/wasm",
-      },
+      i += chunkSize;
+      if (i >= buffer.length) controller.close();
     });
 
     await expect(instantiateAndGetExports(response, imports)).resolves.toHaveProperty("div");

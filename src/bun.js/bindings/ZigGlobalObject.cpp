@@ -177,6 +177,7 @@
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include "JSYogaConstructor.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2808,6 +2809,16 @@ void GlobalObject::finishCreation(VM& vm)
             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
         });
 
+    m_JSYogaConfigClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSYogaConfigClassStructure(init);
+        });
+
+    m_JSYogaNodeClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSYogaNodeClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3782,6 +3793,32 @@ extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 }
 
 // ====================== end conditional builtin globals ======================
+
+extern "C" void JSC__JSGlobalObject__exposeYoga(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    
+    // Create the Yoga namespace object
+    JSC::JSObject* yogaObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    
+    // Attach Config constructor
+    yogaObject->putDirect(vm, JSC::Identifier::fromString(vm, "Config"_s), 
+        globalObject->m_JSYogaConfigClassStructure.constructor(globalObject),
+        PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    
+    // Attach Node constructor
+    yogaObject->putDirect(vm, JSC::Identifier::fromString(vm, "Node"_s), 
+        globalObject->m_JSYogaNodeClassStructure.constructor(globalObject),
+        PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    
+    // TODO: Add all the Yoga enums here
+    // Align, Direction, Edge, etc...
+    
+    // Expose Yoga globally
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "Yoga"_s), yogaObject, 
+        PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+}
 
 void GlobalObject::drainMicrotasks()
 {

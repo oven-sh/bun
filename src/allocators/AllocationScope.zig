@@ -216,6 +216,8 @@ pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_add
 /// Returns true if the free was invalid.
 pub fn trackExternalFree(scope: *AllocationScope, ptr: []const u8, ret_addr: ?usize) bool {
     if (!enabled) return;
+    // Empty slice usually means invalid pointer
+    if (ptr.len == 0) return false;
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     return trackFreeAssumeLocked(scope, ptr, ret_addr orelse @returnAddress());

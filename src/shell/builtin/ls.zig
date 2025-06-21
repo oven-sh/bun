@@ -13,6 +13,8 @@ state: union(enum) {
     done,
 } = .idle,
 
+alloc_scope: shell.AllocScope,
+
 pub fn start(this: *Ls) Yield {
     return this.next();
 }
@@ -56,12 +58,20 @@ fn next(this: *Ls) Yield {
                 const cwd = this.bltn().cwd;
                 if (paths) |p| {
                     for (p) |path_raw| {
-                        const path = path_raw[0..std.mem.len(path_raw) :0];
-                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn().eventLoop());
+                        const path = this.alloc_scope.allocator().dupeZ(u8, path_raw[0..std.mem.len(path_raw) :0]) catch bun.outOfMemory();
+                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, true, this.bltn().eventLoop());
                         task.schedule();
                     }
                 } else {
-                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn().eventLoop());
+                    var task = ShellLsTask.create(
+                        this,
+                        this.opts,
+                        &this.state.exec.task_count,
+                        cwd,
+                        ".",
+                        false,
+                        this.bltn().eventLoop(),
+                    );
                     task.schedule();
                 }
             },
@@ -76,6 +86,7 @@ fn next(this: *Ls) Yield {
                 // It's done
                 if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.monotonic) and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+                    if (this.state.exec.err) |*err| err.deinitWithAllocator(this.alloc_scope.allocator());
                     this.state = .done;
                     return this.bltn().done(exit_code);
                 }
@@ -91,7 +102,9 @@ fn next(this: *Ls) Yield {
     return this.bltn().done(0);
 }
 
-pub fn deinit(_: *Ls) void {}
+pub fn deinit(this: *Ls) void {
+    this.alloc_scope.endScope();
+}
 
 pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) Yield {
     if (e) |err| err.deref();
@@ -103,24 +116,39 @@ pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) Yield {
 }
 
 pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
-    defer task.deinit(true);
     this.state.exec.tasks_done += 1;
     var output = task.takeOutput();
 
     // TODO: Reuse the *ShellLsTask allocation
     const output_task: *ShellLsOutputTask = bun.new(ShellLsOutputTask, .{
         .parent = this,
-        .output = .{ .arrlist = output.moveToUnmanaged() },
+        .output = .{
+            .arrlist = brk: {
+                // TODO: This is a quick fix, we should refactor shell.OutputTask to
+                // also track allocations properly.
+                this.alloc_scope.leakSlice(output.items);
+                break :brk output.moveToUnmanaged();
+            },
+        },
         .state = .waiting_write_err,
     });
 
-    if (task.err) |*err| {
-        this.state.exec.err = err.*;
+    if (task.err) |*err_ptr| {
+        const error_string = error_string: {
+            if (this.state.exec.err == null) {
+                this.state.exec.err = err_ptr.*;
+                break :error_string this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
+            }
+            var err = err_ptr.*;
+            err.deinitWithAllocator(this.alloc_scope.allocator());
+            break :error_string this.bltn().taskErrorToString(.ls, err);
+        };
         task.err = null;
-        const error_string = this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
+        task.deinit();
         output_task.start(error_string).run();
         return;
     }
+    task.deinit();
     output_task.start(null).run();
 }
 
@@ -176,12 +204,11 @@ pub const ShellLsTask = struct {
     opts: Opts,
 
     is_root: bool = true,
+    owned_string: bool,
     task_count: *std.atomic.Value(usize),
 
     cwd: bun.FileDescriptor,
-    /// Should be allocated with bun.default_allocator
     path: [:0]const u8 = &[0:0]u8{},
-    /// Should use bun.default_allocator
     output: std.ArrayList(u8),
     is_absolute: bool = false,
     err: ?Syscall.Error = null,
@@ -197,25 +224,39 @@ pub const ShellLsTask = struct {
         JSC.WorkPool.schedule(&this.task);
     }
 
-    pub fn create(ls: *Ls, opts: Opts, task_count: *std.atomic.Value(usize), cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: JSC.EventLoopHandle) *@This() {
-        const task = bun.default_allocator.create(@This()) catch bun.outOfMemory();
+    pub fn create(
+        ls: *Ls,
+        opts: Opts,
+        task_count: *std.atomic.Value(usize),
+        cwd: bun.FileDescriptor,
+        path: [:0]const u8,
+        owned_string: bool,
+        event_loop: JSC.EventLoopHandle,
+    ) *@This() {
+        // We're going to free `task.path` so ensure it is allocated in this
+        // scope and NOT a string literal or other string we don't own.
+        if (owned_string) ls.alloc_scope.assertInScope(path);
+
+        const task = ls.alloc_scope.allocator().create(@This()) catch bun.outOfMemory();
         task.* = @This(){
             .ls = ls,
             .opts = opts,
             .cwd = cwd,
-            .path = bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
-            .output = std.ArrayList(u8).init(bun.default_allocator),
             .concurrent_task = JSC.EventLoopTask.fromEventLoop(event_loop),
             .event_loop = event_loop,
             .task_count = task_count,
+            .path = path,
+            .output = std.ArrayList(u8).init(ls.alloc_scope.allocator()),
+            .owned_string = owned_string,
         };
+
         return task;
     }
 
     pub fn enqueue(this: *@This(), path: [:0]const u8) void {
         debug("enqueue: {s}", .{path});
         const new_path = this.join(
-            bun.default_allocator,
+            this.ls.alloc_scope.allocator(),
             &[_][]const u8{
                 this.path[0..this.path.len],
                 path[0..path.len],
@@ -223,7 +264,7 @@ pub const ShellLsTask = struct {
             this.is_absolute,
         );
 
-        var subtask = @This().create(this.ls, this.opts, this.task_count, this.cwd, new_path, this.event_loop);
+        var subtask = @This().create(this.ls, this.opts, this.task_count, this.cwd, new_path, true, this.event_loop);
         _ = this.task_count.fetchAdd(1, .monotonic);
         subtask.is_root = false;
         subtask.schedule();
@@ -315,8 +356,7 @@ pub const ShellLsTask = struct {
     }
 
     fn errorWithPath(this: *@This(), err: Syscall.Error, path: [:0]const u8) Syscall.Error {
-        _ = this;
-        return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+        return err.withPath(this.ls.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
     }
 
     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
@@ -336,7 +376,7 @@ pub const ShellLsTask = struct {
 
     pub fn takeOutput(this: *@This()) std.ArrayList(u8) {
         const ret = this.output;
-        this.output = std.ArrayList(u8).init(bun.default_allocator);
+        this.output = std.ArrayList(u8).init(this.ls.alloc_scope.allocator());
         return ret;
     }
 
@@ -349,11 +389,12 @@ pub const ShellLsTask = struct {
         this.runFromMainThread();
     }
 
-    pub fn deinit(this: *@This(), comptime free_this: bool) void {
-        debug("deinit {s}", .{if (free_this) "free_this=true" else "free_this=false"});
-        bun.default_allocator.free(this.path);
+    pub fn deinit(this: *@This()) void {
+        debug("deinit {s}", .{"free"});
+        if (this.owned_string) this.ls.alloc_scope.allocator().free(this.path);
+        if (this.err) |*err| err.deinitWithAllocator(this.ls.alloc_scope.allocator());
         this.output.deinit();
-        if (comptime free_this) bun.default_allocator.destroy(this);
+        this.ls.alloc_scope.allocator().destroy(this);
     }
 };
 

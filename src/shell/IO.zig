@@ -85,6 +85,8 @@ pub const OutKind = union(enum) {
     /// in the Interpreter struct
     fd: struct { writer: *Interpreter.IOWriter, captured: ?*bun.ByteList = null },
     /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
+    ///
+    /// This is set when the shell is called with `.quiet()`
     pipe,
     /// Discards output
     ignore,

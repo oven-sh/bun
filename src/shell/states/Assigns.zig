@@ -167,8 +167,9 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
                 break :brk total;
             };
 
-            const value = brk: {
-                var merged = this.base.allocator().allocSentinel(u8, size, 0) catch bun.outOfMemory();
+            const value: []const u8 = brk: {
+                if (size == 0) break :brk "";
+                var merged = this.base.allocator().alloc(u8, size) catch bun.outOfMemory();
                 var i: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, j| {

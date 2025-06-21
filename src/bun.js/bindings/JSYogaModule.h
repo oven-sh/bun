@@ -10,7 +10,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSYogaModule* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*);
-    
+
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

@@ -20,34 +20,34 @@ JSYogaModule* JSYogaModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
 void JSYogaModule::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    
+
     // Create Config constructor and prototype
     auto* configPrototype = JSYogaConfigPrototype::create(vm, globalObject,
         JSYogaConfigPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    
-    auto* configConstructor = JSYogaConfigConstructor::create(vm, 
+
+    auto* configConstructor = JSYogaConfigConstructor::create(vm,
         JSYogaConfigConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()),
         configPrototype);
-    
-    // Create Node constructor and prototype  
+
+    // Create Node constructor and prototype
     auto* nodePrototype = JSYogaNodePrototype::create(vm, globalObject,
         JSYogaNodePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    
+
     auto* nodeConstructor = JSYogaNodeConstructor::create(vm,
         JSYogaNodeConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()),
         nodePrototype);
-    
+
     // Add constructors to module
     putDirect(vm, vm.propertyNames->Config, configConstructor, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirect(vm, JSC::Identifier::fromString(vm, "Node"_s), nodeConstructor, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    
+
     // Add all constants directly to the Yoga object
     auto* constants = JSYogaConstants::create(vm, JSYogaConstants::createStructure(vm, globalObject, JSC::jsNull()));
-    
+
     // Copy all properties from constants object to this module
     JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     constants->getPropertyNames(globalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
-    
+
     for (const auto& propertyName : properties) {
         JSC::PropertySlot slot(constants, JSC::PropertySlot::InternalMethodType::Get);
         if (constants->getPropertySlot(globalObject, propertyName, slot)) {

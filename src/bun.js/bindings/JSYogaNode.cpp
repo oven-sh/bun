@@ -36,7 +36,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config)
     } else {
         m_node = YGNodeNew();
     }
-    
+
     // Essential: store JS wrapper in Yoga node's context for callbacks and hierarchy traversal
     YGNodeSetContext(m_node, this);
 }

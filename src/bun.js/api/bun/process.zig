@@ -81,6 +81,7 @@ pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
 
 const Subprocess = JSC.Subprocess;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const GitRunner = bun.install.GitRunner;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
@@ -94,6 +95,7 @@ pub const ProcessExitHandler = struct {
         .{
             Subprocess,
             LifecycleScriptSubprocess,
+            GitRunner,
             ShellSubprocess,
             ProcessHandle,
 
@@ -117,6 +119,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(LifecycleScriptSubprocess)) => {
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(GitRunner)) => {
+                const subprocess = this.ptr.as(GitRunner);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {

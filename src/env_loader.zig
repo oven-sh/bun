@@ -13,6 +13,8 @@ const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 const s3 = bun.S3;
 
+pub const NullDelimitedEnvMap = [:null]?[*:0]const u8;
+
 const DotEnvFileSuffix = enum {
     development,
     production,
@@ -1146,13 +1148,11 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]const u8 {
-        var env_map = &this.map;
-
-        const envp_count = env_map.count();
+    pub fn createNullDelimitedEnvMap(this: *const Map, arena: std.mem.Allocator) !NullDelimitedEnvMap {
+        const envp_count = this.map.count();
         const envp_buf = try arena.allocSentinel(?[*:0]const u8, envp_count, null);
         {
-            var it = env_map.iterator();
+            var it = this.map.iterator();
             var i: usize = 0;
             while (it.next()) |pair| : (i += 1) {
                 const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.value.len + 1, 0);

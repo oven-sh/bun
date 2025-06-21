@@ -34,6 +34,37 @@ pub fn allocate(this: *StringBuilder, allocator: Allocator) Allocator.Error!void
     this.len = 0;
 }
 
+/// Allocates a null-terminated slice in a single allocation.
+pub fn createNullDelimited(allocator: Allocator, args: anytype) Allocator.Error!struct { [*:null]?[*:0]const u8, []u8 } {
+    var this = bun.StringBuilder{};
+    for (args) |arg| {
+        this.countZ(arg);
+    }
+
+    const byte_len = this.cap + ((args.len + 1) * @sizeOf([*:0]const u8));
+    // Slice of:
+    // ptrs: [*:null][*:0]const u8
+    // bytes: [*]u8
+
+    const raw_bytes = allocator.rawAlloc(
+        byte_len,
+        .@"8",
+        @returnAddress(),
+    ) orelse return error.OutOfMemory;
+    const allocated_bytes = raw_bytes[0..byte_len];
+    const ptrs: [*:null]?[*:0]const u8 = @alignCast(@ptrCast(allocated_bytes.ptr));
+    const bytes: []u8 = allocated_bytes[((args.len + 1) * @sizeOf([*:0]const u8))..];
+
+    this.ptr = bytes.ptr;
+
+    for (ptrs[0..args.len], args) |*ptr, arg| {
+        ptr.* = this.appendZ(arg).ptr;
+    }
+    ptrs[args.len] = null;
+
+    return .{ ptrs, bytes };
+}
+
 pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     if (this.ptr == null or this.cap == 0) return;
     allocator.free(this.ptr.?[0..this.cap]);

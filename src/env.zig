@@ -19,6 +19,7 @@ pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
 pub const isPosix = !isWindows and !isWasm;
 pub const isDebug = @import("builtin").mode == .Debug;
+pub const isRelease = @import("builtin").mode != .Debug;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();

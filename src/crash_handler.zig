@@ -70,6 +70,8 @@ var before_crash_handlers_mutex: bun.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 
+extern fn WTFReportBacktrace() void;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -249,7 +251,7 @@ pub fn crashHandler(
                     } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                         const name = unsupported_uv_function orelse "<unknown>";
                         const fmt =
-                            \\Bun encountered a crash when running a NAPI module that tried to call 
+                            \\Bun encountered a crash when running a NAPI module that tried to call
                             \\the <red>{s}<r> libuv function.
                             \\
                             \\Bun is actively working on supporting all libuv functions for POSIX
@@ -363,7 +365,7 @@ pub fn crashHandler(
                         } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                             const name = unsupported_uv_function orelse "<unknown>";
                             const fmt =
-                                \\Bun encountered a crash when running a NAPI module that tried to call 
+                                \\Bun encountered a crash when running a NAPI module that tried to call
                                 \\the <red>{s}<r> libuv function.
                                 \\
                                 \\Bun is actively working on supporting all libuv functions for POSIX
@@ -410,6 +412,12 @@ pub fn crashHandler(
                     writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
 
                     writer.writeAll("\n") catch std.posix.abort();
+                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
+
+                    if (bun.Environment.is_canary) {
+                        WTFReportBacktrace();
+                        writer.writeAll("\n") catch std.posix.abort();
+                    }
                 }
 
                 if (Output.enable_ansi_colors) {
@@ -812,7 +820,9 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     );
 }
 
-var did_register_sigaltstack = false;
+// skip in canary since we let WTFReportBacktrace print trace
+// this will make stack overflow have a slightly worse ux but its rare enough to be worth it and still unique enough to be diagnosable
+var did_register_sigaltstack = bun.Environment.isRelease and bun.Environment.is_canary;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
 fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {

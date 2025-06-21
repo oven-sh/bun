@@ -49,6 +49,8 @@ pub fn installHoistedPackages(
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
 ) !PackageInstall.Summary {
+    bun.Analytics.Features.hoisted_bun_install += 1;
+
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 

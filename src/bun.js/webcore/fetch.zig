@@ -280,6 +280,7 @@ pub const FetchTasklet = struct {
             http_.clearData();
         }
 
+
         if (this.metadata != null) {
             this.metadata.?.deinit(allocator);
             this.metadata = null;
@@ -387,7 +388,6 @@ pub const FetchTasklet = struct {
                     js_err.ensureStillAlive();
                 }
                 sink.cancel(js_err);
-                this.clearSink();
                 return;
             }
             // if we are buffering resolve the promise
@@ -524,6 +524,9 @@ pub const FetchTasklet = struct {
         if (vm.isShuttingDown()) {
             this.mutex.unlock();
             if (is_done) {
+                if (this.sink) |sink| {
+                    sink.cancel(.js_undefined);
+                }
                 this.deref();
             }
             return;
@@ -608,7 +611,6 @@ pub const FetchTasklet = struct {
                 const err = value.toJS(globalThis);
                 if (this.sink) |sink| {
                     sink.cancel(err);
-                    this.clearSink();
                 }
                 break :brk value.JSValue;
             },
@@ -1227,8 +1229,9 @@ pub const FetchTasklet = struct {
             if (this.signal_store.aborted.load(.monotonic)) {
                 return;
             }
-            jsError.ensureStillAlive();
-            this.abort_reason.set(this.global_this, jsError);
+            if (!jsError.isUndefinedOrNull()) {
+                this.abort_reason.set(this.global_this, jsError);
+            }
             this.abortTask();
         } else {
             if (this.http) |http_| {

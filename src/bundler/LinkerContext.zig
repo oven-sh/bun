@@ -841,13 +841,18 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
+        const public_path = if (chunk.is_browser_chunk_from_server_build)
+            @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
+        else
+            c.options.public_path;
+
         // Also hash the public path. If provided, this is used whenever files
         // reference each other such as cross-chunk imports, asset file references,
         // and source map comments. We always include the hash in all chunks instead
         // of trying to figure out which chunks will include the public path for
         // simplicity and for robustness to code changes in the future.
-        if (c.options.public_path.len > 0) {
-            hasher.write(c.options.public_path);
+        if (public_path.len > 0) {
+            hasher.write(public_path);
         }
 
         // Include the generated output content in the hash. This excludes the

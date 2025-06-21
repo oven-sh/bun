@@ -527,3 +527,99 @@ if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
     expect(await exited).toBe(0);
   }, 10000);
 }
+
+describe("Bun.write - writing a file to itself", () => {
+  test("should work with its own Bun.file", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}.txt`);
+    const content = "Hello, world!";
+
+    const file = Bun.file(tempFilePath);
+    await Bun.write(file, content);
+
+    const fileContent1 = await file.text();
+    expect(fileContent1).toBe(content);
+
+    const size = await Bun.write(file, file);
+    expect(size).toBe(content.length);
+
+    const fileContent2 = await file.text();
+    expect(fileContent2).toBe(content);
+
+    fs.unlinkSync(tempFilePath);
+  });
+
+  test("should work with a different reference", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-2.txt`);
+    const content = "Hello, world!";
+
+    const file1 = Bun.file(tempFilePath);
+    await Bun.write(file1, content);
+
+    const file2 = Bun.file(tempFilePath);
+
+    const size = await Bun.write(file1, file2);
+    expect(size).toBe(content.length);
+
+    const fileContent = await file1.text();
+    expect(fileContent).toBe(content);
+
+    fs.unlinkSync(tempFilePath);
+  });
+
+  test("even with just a string path", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-3.txt`);
+    const content = "Hello, world!";
+
+    const file1 = Bun.file(tempFilePath);
+    await file1.write(content);
+
+    const size = await Bun.write(tempFilePath, file1);
+    expect(size).toBe(content.length);
+
+    const fileContent = await file1.text();
+    expect(fileContent).toBe(content);
+
+    fs.unlinkSync(tempFilePath);
+  });
+
+  test("should handle same file descriptor", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-4.txt`);
+    const content = "Hello, world!";
+
+    const file = Bun.file(tempFilePath);
+    await Bun.write(file, content);
+
+    const fd = fs.openSync(tempFilePath, "r+");
+    const fdFile = Bun.file(fd);
+
+    const size = await Bun.write(fdFile, fdFile);
+    expect(size).toBe(content.length);
+
+    const fileContent = await fdFile.text();
+    expect(fileContent).toBe(content);
+
+    fs.closeSync(fd);
+    fs.unlinkSync(tempFilePath);
+  });
+
+  // right now it doesn't handle this case
+  test.todo("should handle same file descriptor (2)", async () => {
+    const tempFilePath = join(tmpdir(), `bun-write-self-test-${Date.now()}-4.txt`);
+    const content = "Hello, world!";
+
+    const file = Bun.file(tempFilePath);
+    await Bun.write(file, content);
+
+    const fd = fs.openSync(tempFilePath, "r+");
+    const fdFile = Bun.file(fd);
+
+    const size = await Bun.write(fdFile, file);
+    expect(size).toBe(content.length);
+
+    const fileContent = await fdFile.text();
+    expect(fileContent).toBe(content);
+
+    fs.closeSync(fd);
+    fs.unlinkSync(tempFilePath);
+  });
+});

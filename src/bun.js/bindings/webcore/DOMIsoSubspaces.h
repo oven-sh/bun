@@ -68,6 +68,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSYogaConfig;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSYogaNode;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

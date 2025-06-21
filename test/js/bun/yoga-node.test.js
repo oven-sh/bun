@@ -21,20 +21,20 @@ describe("Yoga.Node", () => {
 
   test("setWidth with various values", () => {
     const node = new Yoga.Node();
-    
+
     // Number
     expect(() => node.setWidth(100)).not.toThrow();
-    
+
     // Percentage string
     expect(() => node.setWidth("50%")).not.toThrow();
-    
+
     // Auto
     expect(() => node.setWidth("auto")).not.toThrow();
-    
+
     // Object format
     expect(() => node.setWidth({ unit: Yoga.UNIT_POINT, value: 200 })).not.toThrow();
     expect(() => node.setWidth({ unit: Yoga.UNIT_PERCENT, value: 75 })).not.toThrow();
-    
+
     // Undefined/null
     expect(() => node.setWidth(undefined)).not.toThrow();
     expect(() => node.setWidth(null)).not.toThrow();
@@ -42,15 +42,15 @@ describe("Yoga.Node", () => {
 
   test("getWidth returns correct format", () => {
     const node = new Yoga.Node();
-    
+
     node.setWidth(100);
     let width = node.getWidth();
     expect(width).toEqual({ unit: Yoga.UNIT_POINT, value: 100 });
-    
+
     node.setWidth("50%");
     width = node.getWidth();
     expect(width).toEqual({ unit: Yoga.UNIT_PERCENT, value: 50 });
-    
+
     node.setWidth("auto");
     width = node.getWidth();
     expect(width).toEqual({ unit: Yoga.UNIT_AUTO, value: expect.any(Number) });
@@ -58,13 +58,13 @@ describe("Yoga.Node", () => {
 
   test("setMargin/getPadding edge values", () => {
     const node = new Yoga.Node();
-    
+
     // Set margins
     node.setMargin(Yoga.EDGE_TOP, 10);
     node.setMargin(Yoga.EDGE_RIGHT, "20%");
     node.setMargin(Yoga.EDGE_BOTTOM, "auto");
     node.setMargin(Yoga.EDGE_LEFT, { unit: Yoga.UNIT_POINT, value: 30 });
-    
+
     // Get margins
     expect(node.getMargin(Yoga.EDGE_TOP)).toEqual({ unit: Yoga.UNIT_POINT, value: 10 });
     expect(node.getMargin(Yoga.EDGE_RIGHT)).toEqual({ unit: Yoga.UNIT_PERCENT, value: 20 });
@@ -74,19 +74,19 @@ describe("Yoga.Node", () => {
 
   test("flexbox properties", () => {
     const node = new Yoga.Node();
-    
+
     // Flex direction
     expect(() => node.setFlexDirection(Yoga.FLEX_DIRECTION_ROW)).not.toThrow();
     expect(() => node.setFlexDirection(Yoga.FLEX_DIRECTION_COLUMN)).not.toThrow();
-    
+
     // Justify content
     expect(() => node.setJustifyContent(Yoga.JUSTIFY_CENTER)).not.toThrow();
     expect(() => node.setJustifyContent(Yoga.JUSTIFY_SPACE_BETWEEN)).not.toThrow();
-    
+
     // Align items
     expect(() => node.setAlignItems(Yoga.ALIGN_CENTER)).not.toThrow();
     expect(() => node.setAlignItems(Yoga.ALIGN_FLEX_START)).not.toThrow();
-    
+
     // Flex properties
     expect(() => node.setFlex(1)).not.toThrow();
     expect(() => node.setFlexGrow(2)).not.toThrow();
@@ -99,18 +99,18 @@ describe("Yoga.Node", () => {
     const parent = new Yoga.Node();
     const child1 = new Yoga.Node();
     const child2 = new Yoga.Node();
-    
+
     // Insert children
     parent.insertChild(child1, 0);
     parent.insertChild(child2, 1);
-    
+
     expect(parent.getChildCount()).toBe(2);
     expect(parent.getChild(0)).toBe(child1);
     expect(parent.getChild(1)).toBe(child2);
-    
+
     expect(child1.getParent()).toBe(parent);
     expect(child2.getParent()).toBe(parent);
-    
+
     // Remove child
     parent.removeChild(child1);
     expect(parent.getChildCount()).toBe(1);
@@ -123,14 +123,14 @@ describe("Yoga.Node", () => {
     root.setWidth(500);
     root.setHeight(300);
     root.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
-    
+
     const child = new Yoga.Node();
     child.setFlex(1);
     root.insertChild(child, 0);
-    
+
     // Calculate layout
     root.calculateLayout(500, 300, Yoga.DIRECTION_LTR);
-    
+
     // Get computed layout
     const layout = root.getComputedLayout();
     expect(layout).toHaveProperty("left");
@@ -139,7 +139,7 @@ describe("Yoga.Node", () => {
     expect(layout).toHaveProperty("height");
     expect(layout.width).toBe(500);
     expect(layout.height).toBe(300);
-    
+
     const childLayout = child.getComputedLayout();
     expect(childLayout.width).toBe(500); // Should fill parent width
     expect(childLayout.height).toBe(300); // Should fill parent height
@@ -148,19 +148,19 @@ describe("Yoga.Node", () => {
   test("measure function", () => {
     const node = new Yoga.Node();
     let measureCalled = false;
-    
+
     const measureFunc = (width, widthMode, height, heightMode) => {
       measureCalled = true;
       return { width: 100, height: 50 };
     };
-    
+
     node.setMeasureFunc(measureFunc);
     node.markDirty();
-    
+
     // Calculate layout - this should call measure function
     node.calculateLayout();
     expect(measureCalled).toBe(true);
-    
+
     // Clear measure function
     node.setMeasureFunc(null);
   });
@@ -168,16 +168,16 @@ describe("Yoga.Node", () => {
   test("dirtied callback", () => {
     const node = new Yoga.Node();
     let dirtiedCalled = false;
-    
+
     const dirtiedFunc = () => {
       dirtiedCalled = true;
     };
-    
+
     node.setDirtiedFunc(dirtiedFunc);
     node.markDirty();
-    
+
     expect(dirtiedCalled).toBe(true);
-    
+
     // Clear dirtied function
     node.setDirtiedFunc(null);
   });
@@ -187,9 +187,9 @@ describe("Yoga.Node", () => {
     node.setWidth(100);
     node.setHeight(200);
     node.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
-    
+
     node.reset();
-    
+
     // After reset, values should be back to defaults
     const width = node.getWidth();
     expect(width.unit).toBe(Yoga.UNIT_UNDEFINED);
@@ -197,14 +197,14 @@ describe("Yoga.Node", () => {
 
   test("dirty state", () => {
     const node = new Yoga.Node();
-    
+
     // Initially not dirty
     expect(node.isDirty()).toBe(false);
-    
+
     // Mark as dirty
     node.markDirty();
     expect(node.isDirty()).toBe(true);
-    
+
     // Calculate layout clears dirty flag
     node.calculateLayout();
     expect(node.isDirty()).toBe(false);
@@ -218,23 +218,23 @@ describe("Yoga.Node", () => {
 
   test("aspect ratio", () => {
     const node = new Yoga.Node();
-    
+
     // Set aspect ratio
-    expect(() => node.setAspectRatio(16/9)).not.toThrow();
+    expect(() => node.setAspectRatio(16 / 9)).not.toThrow();
     expect(() => node.setAspectRatio(undefined)).not.toThrow();
     expect(() => node.setAspectRatio(null)).not.toThrow();
   });
 
   test("display type", () => {
     const node = new Yoga.Node();
-    
+
     expect(() => node.setDisplay(Yoga.DISPLAY_FLEX)).not.toThrow();
     expect(() => node.setDisplay(Yoga.DISPLAY_NONE)).not.toThrow();
   });
 
   test("overflow", () => {
     const node = new Yoga.Node();
-    
+
     expect(() => node.setOverflow(Yoga.OVERFLOW_VISIBLE)).not.toThrow();
     expect(() => node.setOverflow(Yoga.OVERFLOW_HIDDEN)).not.toThrow();
     expect(() => node.setOverflow(Yoga.OVERFLOW_SCROLL)).not.toThrow();
@@ -242,14 +242,14 @@ describe("Yoga.Node", () => {
 
   test("position type", () => {
     const node = new Yoga.Node();
-    
+
     expect(() => node.setPositionType(Yoga.POSITION_TYPE_RELATIVE)).not.toThrow();
     expect(() => node.setPositionType(Yoga.POSITION_TYPE_ABSOLUTE)).not.toThrow();
   });
 
   test("gap property", () => {
     const node = new Yoga.Node();
-    
+
     expect(() => node.setGap(Yoga.GUTTER_ROW, 10)).not.toThrow();
     expect(() => node.setGap(Yoga.GUTTER_COLUMN, 20)).not.toThrow();
   });

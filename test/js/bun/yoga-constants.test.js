@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // Test if we can access Yoga via globalThis (once it's exposed)
 const Yoga = globalThis.Yoga;

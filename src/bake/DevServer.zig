@@ -1824,7 +1824,7 @@ const DeferredRequest = struct {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     const max_preallocated = 16;
 
-    pub const List = std.SinglyLinkedList(DeferredRequest);
+    pub const List = bun.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
     route_bundle_index: RouteBundle.Index,

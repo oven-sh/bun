@@ -3758,6 +3758,18 @@ pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
     }
 }
 
+pub extern "kernel32" fn GetEnvironmentStringsW() callconv(.winapi) ?LPWSTR;
+
+pub extern "kernel32" fn FreeEnvironmentStringsW(
+    penv: LPWSTR,
+) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn GetEnvironmentVariableW(
+    lpName: ?LPCWSTR,
+    lpBuffer: ?[*]WCHAR,
+    nSize: DWORD,
+) callconv(.winapi) DWORD;
+
 pub fn spawnWatcherChild(
     allocator: std.mem.Allocator,
     procinfo: *std.os.windows.PROCESS_INFORMATION,
@@ -3783,7 +3795,10 @@ pub fn spawnWatcherChild(
         return error.Win32Error;
     }
 
-    const flags: DWORD = c.CREATE_UNICODE_ENVIRONMENT | c.EXTENDED_STARTUPINFO_PRESENT;
+    const flags: std.os.windows.CreateProcessFlags = .{
+        .create_unicode_environment = true,
+        .extended_startupinfo_present = true,
+    };
 
     const image_path = exePathW();
     var wbuf: WPathBuffer = undefined;
@@ -3792,9 +3807,9 @@ pub fn spawnWatcherChild(
 
     const image_pathZ = wbuf[0..image_path.len :0];
 
-    const kernelenv = kernel32.GetEnvironmentStringsW();
+    const kernelenv = GetEnvironmentStringsW();
     defer if (kernelenv) |envptr| {
-        _ = kernel32.FreeEnvironmentStringsW(envptr);
+        _ = FreeEnvironmentStringsW(envptr);
     };
 
     var size: usize = 0;

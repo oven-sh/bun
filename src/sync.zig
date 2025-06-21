@@ -1106,7 +1106,7 @@ else
     struct {
         mutex: Mutex,
         notified: bool,
-        waiters: std.SinglyLinkedList(Event),
+        waiters: bun.SinglyLinkedList(Event),
 
         pub fn init() Condvar {
             return .{

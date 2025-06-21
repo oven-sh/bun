@@ -404,7 +404,7 @@ const AbortHandler = struct {
         if (Environment.isPosix) {
             const action = std.posix.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
-                .mask = std.posix.empty_sigset,
+                .mask = std.posix.sigemptyset(),
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
             std.posix.sigaction(std.posix.SIG.INT, &action, null);

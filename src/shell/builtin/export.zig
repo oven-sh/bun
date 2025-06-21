@@ -77,6 +77,8 @@ pub fn start(this: *Export) Yield {
         return this.bltn().done(0);
     }
 
+    // TODO: It would be nice to not have to duplicate the arguments here. Can
+    // we make `Builtin.args` mutable so that we can take it out of the argv?
     for (args) |arg_raw| {
         const arg_sentinel = arg_raw[0..std.mem.len(arg_raw) :0];
         const arg = arg_sentinel[0..arg_sentinel.len];
@@ -87,13 +89,22 @@ pub fn start(this: *Export) Yield {
                 const buf = this.bltn().fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
                 return this.writeOutput(.stderr, "{s}\n", .{buf});
             }
-            this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(arg), EnvStr.initSlice(""), .exported);
+
+            const label_env_str = EnvStr.dupeRefCounted(arg);
+            defer label_env_str.deref();
+            this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, label_env_str, EnvStr.initSlice(""), .exported);
             continue;
         };
 
         const label = arg[0..eqsign_idx];
         const value = arg_sentinel[eqsign_idx + 1 .. :0];
-        this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(label), EnvStr.initSlice(value), .exported);
+
+        const label_env_str = EnvStr.dupeRefCounted(label);
+        const value_env_str = EnvStr.dupeRefCounted(value);
+        defer label_env_str.deref();
+        defer value_env_str.deref();
+
+        this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, label_env_str, value_env_str, .exported);
     }
 
     return this.bltn().done(0);

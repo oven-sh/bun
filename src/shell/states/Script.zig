@@ -35,14 +35,14 @@ pub fn format(this: *const Script, comptime _: []const u8, _: std.fmt.FormatOpti
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Script,
     parent_ptr: ParentPtr,
     io: IO,
 ) *Script {
-    const script = interpreter.allocator.create(Script) catch bun.outOfMemory();
+    const script = parent_ptr.create(Script);
     script.* = .{
-        .base = .{ .kind = .script, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.script, interpreter, shell_state),
         .node = node,
         .parent = parent_ptr,
         .io = io,
@@ -101,7 +101,8 @@ pub fn deinit(this: *Script) void {
         this.base.shell.deinit();
     }
 
-    bun.default_allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn deinitFromInterpreter(this: *Script) void {
@@ -121,7 +122,7 @@ const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

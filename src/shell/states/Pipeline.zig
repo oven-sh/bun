@@ -51,14 +51,14 @@ const CmdOrResult = union(enum) {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Pipeline,
     parent: ParentPtr,
     io: IO,
 ) *Pipeline {
-    const pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
+    const pipeline = parent.create(Pipeline);
     pipeline.* = .{
-        .base = .{ .kind = .pipeline, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.pipeline, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .exited_count = 0,
@@ -95,9 +95,9 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.interpreter.allocator.alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
     if (this.cmds == null) return null;
-    var pipes = this.base.interpreter.allocator.alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -122,7 +122,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 cmd_io.stdin = stdin;
                 cmd_io.stdout = stdout;
                 _ = cmd_io.stderr.ref();
-                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, cmd_io, .pipeline)) {
+                const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), cmd_io, .pipeline)) {
                     .result => |s| s,
                     .err => |err| {
                         const system_err = err.toShellSystemError();
@@ -269,13 +269,14 @@ pub fn deinit(this: *Pipeline) void {
         }
     }
     if (this.pipes) |pipes| {
-        this.base.interpreter.allocator.free(pipes);
+        this.base.allocator().free(pipes);
     }
     if (this.cmds) |cmds| {
-        this.base.interpreter.allocator.free(cmds);
+        this.base.allocator().free(cmds);
     }
     this.io.deref();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
@@ -332,7 +333,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

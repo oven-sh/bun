@@ -39,6 +39,7 @@ pub fn writeOutputFilesToDisk(
     const code_with_inline_source_map_allocator = max_heap_allocator_inline_source_map.init(bun.default_allocator);
 
     var pathbuf: bun.PathBuffer = undefined;
+    const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", c);
 
     for (chunks) |*chunk| {
         const trace2 = bun.perf.trace("Bundler.writeChunkToDisk");
@@ -59,11 +60,16 @@ pub fn writeOutputFilesToDisk(
             }
         }
         var display_size: usize = 0;
+        const public_path = if (chunk.is_browser_chunk_from_server_build)
+            bv2.transpilerForTarget(.browser).options.public_path
+        else
+            c.resolver.opts.public_path;
+
         var code_result = chunk.intermediate_output.code(
             code_allocator,
             c.parse_graph,
             &c.graph,
-            c.resolver.opts.public_path,
+            public_path,
             chunk,
             chunks,
             &display_size,
@@ -89,8 +95,8 @@ pub fn writeOutputFilesToDisk(
                 }) catch @panic("Failed to allocate memory for external source map path");
 
                 if (tag == .linked) {
-                    const a, const b = if (c.options.public_path.len > 0)
-                        cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                    const a, const b = if (public_path.len > 0)
+                        cheapPrefixNormalizer(public_path, source_map_final_rel_path)
                     else
                         .{ "", std.fs.path.basename(source_map_final_rel_path) };
 

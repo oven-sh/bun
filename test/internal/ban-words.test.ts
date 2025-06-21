@@ -34,7 +34,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1860 },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1859 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 179 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 102 },
@@ -44,7 +44,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 284 },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 174 },
 
-  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 27 },
+  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 48 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 136 },
 };

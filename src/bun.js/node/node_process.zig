@@ -9,6 +9,7 @@ comptime {
     @export(&createArgv0, .{ .name = "Bun__Process__createArgv0" });
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&createExecArgv, .{ .name = "Bun__Process__createExecArgv" });
+    @export(&getEval, .{ .name = "Bun__Process__getEval" });
 }
 
 var title_mutex = bun.Mutex{};
@@ -191,6 +192,14 @@ pub fn getArgv(global: *JSGlobalObject) callconv(.c) JSValue {
 extern fn Bun__Process__getExecArgv(global: *JSGlobalObject) JSValue;
 pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
+}
+
+pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.module_loader.eval_source) |source| {
+        return JSC.ZigString.init(source.contents).toJS(globalObject);
+    }
+    return .js_undefined;
 }
 
 pub const getCwd = JSC.host_fn.wrap1(getCwd_);

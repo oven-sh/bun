@@ -1890,6 +1890,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, glob
             }
         }
     }
+
     const path: JSC.Node.PathOrFileDescriptor = brk: {
         switch (path_or_fd.*) {
             .path => {

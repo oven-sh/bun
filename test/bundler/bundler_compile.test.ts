@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import path from "path";
 import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
@@ -625,5 +626,17 @@ error: Hello World`,
         },
       },
     ],
+  });
+  itBundled.skipIf(!isWindows, "compile/WindowsIcon", {
+    compile: true,
+    compileOptions: {
+      windowsIcon: path.join(import.meta.dir, "./fixtures/icon.ico"),
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("Hello, world!");
+      `,
+    },
+    run: { stdout: "Hello, world!" },
   });
 });

@@ -139,6 +139,10 @@ export interface BundlerTestInput {
   outputPaths?: string[];
   /** Use --compile */
   compile?: boolean;
+  compileOptions?: {
+    /** Use --windows-icon */
+    windowsIcon?: string;
+  };
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -420,6 +424,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    compileOptions = {},
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -683,6 +688,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              compileOptions.windowsIcon && `--windows-icon=${compileOptions.windowsIcon}`,
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -1698,6 +1704,19 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
   }
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
   if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
+  return testRef(id, opts);
+};
+
+itBundled.skipIf = (condition: boolean, id: string, opts: BundlerTestInput) => {
+  if (FILTER && !filterMatches(id)) {
+    return testRef(id, opts);
+  }
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+  if (condition) {
+    if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
+  } else {
+    it(id, () => expectBundled(id, opts));
+  }
   return testRef(id, opts);
 };
 

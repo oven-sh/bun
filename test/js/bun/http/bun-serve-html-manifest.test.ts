@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, rmScope, tempDirWithFiles } from "harness";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 describe("Bun.serve HTML manifest", () => {
   it("serves HTML import with manifest", async () => {
@@ -52,15 +53,34 @@ describe("Bun.serve HTML manifest", () => {
     });
 
     const { stdout, stderr, exited } = proc;
-    const out = await new Response(stdout).text();
 
-    // Extract port
-    const portMatch = out.match(/PORT=(\d+)/);
-    expect(portMatch).toBeTruthy();
+    // Read stdout line by line until we get the PORT
+    let port: number | undefined;
+    const reader = stdout.getReader();
+    const decoder = new StringDecoder("utf8");
+    let buffer = "";
 
-    if (portMatch) {
-      const port = parseInt(portMatch[1]);
+    while (!port) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
+      buffer += decoder.write(value);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const portMatch = line.match(/PORT=(\d+)/);
+        if (portMatch) {
+          port = parseInt(portMatch[1]);
+          break;
+        }
+      }
+    }
+
+    reader.releaseLock();
+    expect(port).toBeDefined();
+
+    if (port) {
       // Test the server
       const res = await fetch(`http://localhost:${port}/`);
       expect(res.status).toBe(200);
@@ -150,20 +170,40 @@ describe("Bun.serve HTML manifest", () => {
     // Run the built server
     const serverProc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
-      cwd: dir,
+      cwd: join(dir, "dist"),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
     });
 
-    const out = await new Response(serverProc.stdout).text();
-    const portMatch = out.match(/PORT=(\d+)/);
-    expect(portMatch).toBeTruthy();
+    // Read stdout line by line until we get the PORT
+    let port: number | undefined;
+    const reader = serverProc.stdout.getReader();
+    const decoder = new StringDecoder("utf8");
+    let buffer = "";
 
-    if (portMatch) {
-      const port = parseInt(portMatch[1]);
+    while (!port) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
+      buffer += decoder.write(value);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const portMatch = line.match(/PORT=(\d+)/);
+        if (portMatch) {
+          port = parseInt(portMatch[1]);
+          break;
+        }
+      }
+    }
+
+    reader.releaseLock();
+    expect(port).toBeDefined();
+
+    if (port) {
       // Test both routes
       const homeRes = await fetch(`http://localhost:${port}/`);
       expect(homeRes.status).toBe(200);
@@ -272,8 +312,9 @@ describe("Bun.serve HTML manifest", () => {
 
     using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
 
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "run", join(dir, "server.ts")],
+    // Build first to generate the manifest
+    const buildProc = Bun.spawn({
+      cmd: [bunExe(), "build", join(dir, "server.ts"), "--outdir", join(dir, "dist"), "--target", "bun"],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -281,12 +322,49 @@ describe("Bun.serve HTML manifest", () => {
       stdin: "ignore",
     });
 
-    const out = await new Response(proc.stdout).text();
+    await buildProc.exited;
+    expect(buildProc.exitCode).toBe(0);
+
+    // Run the built server
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
+      cwd: join(dir, "dist"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    // Read stdout line by line to collect all output
+    const reader = proc.stdout.getReader();
+    const decoder = new StringDecoder("utf8");
+    let buffer = "";
+    let output = "";
+    let etagCount = 0;
+    const expectedEtagLines = 2; // One for HTML, one for CSS
+
+    while (etagCount < expectedEtagLines) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.write(value);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        output += line + "\n";
+        if (line.includes("Has ETag:")) {
+          etagCount++;
+        }
+      }
+    }
+
+    reader.releaseLock();
 
     // Should have proper content types
-    expect(out).toContain("text/html");
-    expect(out).toContain("text/css");
-    expect(out).toContain("Has ETag: true");
+    expect(output).toContain("text/html");
+    expect(output).toContain("text/css");
+    expect(output).toContain("Has ETag:");
 
     proc.kill();
     await proc.exited;

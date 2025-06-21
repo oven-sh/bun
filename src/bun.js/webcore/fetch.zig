@@ -280,7 +280,6 @@ pub const FetchTasklet = struct {
             http_.clearData();
         }
 
-
         if (this.metadata != null) {
             this.metadata.?.deinit(allocator);
             this.metadata = null;

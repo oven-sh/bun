@@ -1768,7 +1768,7 @@ pub fn JSDOMFile__construct_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
             if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
                 set_last_modified = true;
-                blob.last_modified = last_modified.coerce(f64, globalThis);
+                blob.last_modified = try last_modified.coerce(f64, globalThis);
             }
         }
     }
@@ -1867,7 +1867,7 @@ pub fn constructBunFile(
                 }
             }
             if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
-                blob.last_modified = last_modified.coerce(f64, globalObject);
+                blob.last_modified = try last_modified.coerce(f64, globalObject);
             }
         }
     }

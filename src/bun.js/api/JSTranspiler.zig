@@ -486,7 +486,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
 
     if (try object.getTruthy(globalThis, "minify")) |minify| {
         if (minify.isBoolean()) {
-            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
+            transpiler.minify_whitespace = minify.toBoolean();
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
         } else if (minify.isObject()) {

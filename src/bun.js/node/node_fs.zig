@@ -1577,7 +1577,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
@@ -1585,7 +1585,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -2360,14 +2360,14 @@ pub const Arguments = struct {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -3085,7 +3085,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
+                    mode = try arg.coerce(i32, ctx);
                 }
             }
 
@@ -3148,7 +3148,7 @@ pub const StatOrNotFound = union(enum) {
         };
     }
 
-    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJSNewlyCreated(globalObject),
             .not_found => .js_undefined,

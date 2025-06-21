@@ -1077,7 +1077,7 @@ pub fn close(
             return globalThis.throwInvalidArguments("close requires a numeric code or undefined", .{});
         }
 
-        break :brk args.ptr[0].coerce(i32, globalThis);
+        break :brk try args.ptr[0].coerce(i32, globalThis);
     };
 
     var message_value: ZigString.Slice = brk: {

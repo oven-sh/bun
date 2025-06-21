@@ -1100,12 +1100,12 @@ pub const Interpreter = struct {
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            if (this.this_jsvalue != .zero) {
-                const this_jsvalue = this.this_jsvalue;
+            const this_jsvalue = this.this_jsvalue;
+            if (this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
-                    this.this_jsvalue = .zero;
-                    const globalThis = this.globalThis;
                     const loop = this.event_loop.js;
+                    const globalThis = this.globalThis;
+                    this.this_jsvalue = .zero;
                     this.keep_alive.disable();
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
@@ -1124,34 +1124,6 @@ pub const Interpreter = struct {
         }
 
         return .done;
-    }
-
-    fn errored(this: *ThisInterpreter, the_error: ShellError) void {
-        _ = the_error; // autofix
-        defer decrPendingActivityFlag(&this.has_pending_activity);
-
-        if (this.event_loop == .js) {
-            const this_jsvalue = this.this_jsvalue;
-            if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
-                    const loop = this.event_loop.js;
-                    const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
-                    this.keep_alive.disable();
-
-                    loop.enter();
-                    _ = reject.call(globalThis, &[_]JSValue{
-                        JSValue.jsNumberFromChar(1),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-
-                    loop.exit();
-                }
-            }
-        }
     }
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
@@ -1248,42 +1220,26 @@ pub const Interpreter = struct {
         return .js_undefined;
     }
 
-    pub fn isRunning(
-        this: *ThisInterpreter,
-        _: *JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.hasPendingActivity());
     }
 
-    pub fn getStarted(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
         return JSC.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
-    pub fn getBufferedStdout(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
 
-    pub fn getBufferedStderr(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSC.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
     }
 
-    pub fn finalize(
-        this: *ThisInterpreter,
-    ) void {
+    pub fn finalize(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }

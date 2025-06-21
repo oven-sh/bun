@@ -226,6 +226,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                         }
                         return true;
                     });
+                    RETURN_IF_EXCEPTION(throwScope, {});
                 }
             }
         }

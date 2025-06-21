@@ -1017,7 +1017,7 @@ pub const FileSystemFlags = enum(c_int) {
             if (!val.isInt32()) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
-            const number = val.coerce(i32, ctx);
+            const number = try val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
         }
 

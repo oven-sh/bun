@@ -2119,7 +2119,7 @@ pub fn spawnMaybeSync(
 
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
-                    const value = val.coerce(i64, globalThis);
+                    const value = try val.coerce(i64, globalThis);
                     if (value > 0) {
                         maxBuffer = value;
                     }

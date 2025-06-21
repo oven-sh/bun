@@ -767,7 +767,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
-                    const v = opt.coerce(f64, globalThis);
+                    const v = try opt.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -795,7 +795,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
-                    const v = depthArg.coerce(f64, globalThis);
+                    const v = try depthArg.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -803,10 +803,7 @@ pub const FormatOptions = struct {
                     }
                 }
                 if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
-                    formatOptions.enable_colors = arguments[1].coerce(bool, globalThis);
-                    if (globalThis.hasException()) {
-                        return error.JSError;
-                    }
+                    formatOptions.enable_colors = arguments[1].toBoolean();
                 }
             }
         }
@@ -2175,7 +2172,7 @@ pub const Formatter = struct {
                 }
             },
             .Integer => {
-                const int = value.coerce(i64, this.globalThis);
+                const int = try value.coerce(i64, this.globalThis);
                 if (int < std.math.maxInt(u32)) {
                     var i = int;
                     const is_negative = i < 0;

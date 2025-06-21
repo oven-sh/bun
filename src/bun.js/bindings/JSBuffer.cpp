@@ -345,6 +345,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
@@ -356,6 +357,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     } else {
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
+
+    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
+    scope.assertNoException();
+    ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
 }

@@ -125,26 +125,17 @@ pub const JSValue = enum(i64) {
         try scope.returnIfException();
     }
 
-    extern fn JSC__JSValue__coerceToDouble(this: JSValue, globalObject: *JSC.JSGlobalObject) f64;
-    /// Prefer toNumber over this function to
-    /// - Match the underlying JSC api name
-    /// - Match the underlying specification
-    /// - Catch exceptions
-    pub fn coerceToDouble(this: JSValue, globalObject: *JSC.JSGlobalObject) f64 {
-        return JSC__JSValue__coerceToDouble(this, globalObject);
-    }
-
-    extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject, had_error: *bool) f64;
+    extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject) f64;
 
     /// Perform the ToNumber abstract operation, coercing a value to a number.
     /// Equivalent to `+value`
     /// https://tc39.es/ecma262/#sec-tonumber
     pub fn toNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!f64 {
-        var had_error: bool = false;
-        const result = Bun__JSValue__toNumber(this, global, &had_error);
-        if (had_error) {
-            return error.JSError;
-        }
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(global, @src(), .enabled);
+        defer scope.deinit();
+        const result = Bun__JSValue__toNumber(this, global);
+        try scope.returnIfException();
         return result;
     }
 
@@ -176,14 +167,13 @@ pub const JSValue = enum(i64) {
         return @trunc(d) == d and @abs(d) <= JSC.MAX_SAFE_INTEGER;
     }
 
-    pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
+    pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) bun.JSError!T {
         return switch (T) {
-            bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
                     return this.asDouble();
                 }
-                return this.coerceToDouble(globalThis);
+                return this.toNumber(globalThis);
             },
             i64 => {
                 return this.coerceToInt64(globalThis);

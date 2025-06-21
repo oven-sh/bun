@@ -190,7 +190,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk false;
             };
@@ -208,11 +208,12 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            _ = globalThis;
 
             const args = callframe.arguments_old(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
-                    break :brk args.ptr[0].coerce(bool, globalThis);
+                    break :brk args.ptr[0].toBoolean();
                 }
                 break :brk true;
             };
@@ -722,7 +723,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (args.len == 0) {
                 return globalObject.throw("Expected 1 argument, got 0", .{});
             }
-            const t = args.ptr[0].coerce(i32, globalObject);
+            const t = try args.ptr[0].coerce(i32, globalObject);
             if (t < 0) {
                 return globalObject.throw("Timeout must be a positive integer", .{});
             }

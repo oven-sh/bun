@@ -4239,27 +4239,12 @@ int32_t JSC__JSValue__toInt32(JSC::EncodedJSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
-CPP_DECL double JSC__JSValue__coerceToDouble(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(arg1);
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     auto scope = DECLARE_THROW_SCOPE(arg1->vm());
-    double result = value.toNumber(arg1);
-    if (scope.exception()) [[unlikely]] {
-        result = PNaN;
-    }
-
-    return result;
-}
-CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, bool* had_exception)
-{
-    ASSERT_NO_PENDING_EXCEPTION(arg1);
-    auto catchScope = DECLARE_CATCH_SCOPE(arg1->vm());
     double result = JSC::JSValue::decode(JSValue0).toNumber(arg1);
-    if (catchScope.exception()) {
-        *had_exception = true;
-        return PNaN;
-    }
+    RETURN_IF_EXCEPTION(scope, PNaN);
     return result;
 }
 
@@ -6551,8 +6536,9 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     scope.assertNoExceptionExceptTermination();
-    if (!object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot)) {
-        scope.assertNoExceptionExceptTermination();
+    auto has = object->getNonIndexPropertySlot(global, builtinNames.codePublicName(), slot);
+    scope.assertNoExceptionExceptTermination();
+    if (!has) {
         return {};
     }
 

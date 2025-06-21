@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunExe } from "harness";
 import path from "path";
 
 describe("garbage env", () => {

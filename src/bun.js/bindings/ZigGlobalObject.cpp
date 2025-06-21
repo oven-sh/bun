@@ -4450,8 +4450,14 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     return result;
 }
 
-extern "C" JSC::EncodedJSValue Bun__Response__validateForWasmStreaming(JSGlobalObject*, EncodedJSValue response);
-extern "C" JSC::EncodedJSValue Bun__Response__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, const uint8_t** bytesPtrOut, size_t* bytesSizeOut);
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__validateResponseForWasmStreaming(JSGlobalObject*, EncodedJSValue response);
+extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
+
+extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
+{
+    fprintf(stderr, "\t\tHi, we're using the slice approach (magic is %c%c%c, size %ld)\n", spanPtr[1], spanPtr[2], spanPtr[3], spanSize); // REMOVE ME
+    compiler->addBytes(std::span(spanPtr, spanSize));
+}
 
 static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject)
 {
@@ -4459,25 +4465,20 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     auto& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
 
-    // validateForWasmStreaming throws the proper exception. Since this is being
+    // validateResponseForWasmStreaming throws the proper exception. Since this is being
     // executed in a .then(...) callback, throwing is perfectly fine.
-    auto valid = Bun__Response__validateForWasmStreaming(globalObject, JSC::JSValue::encode(source));
+    auto valid = Zig__GlobalObject__validateResponseForWasmStreaming(globalObject, JSC::JSValue::encode(source));
     if (!valid) return nullptr;
 
     auto deferred = WebCore::DeferredPromise::create(*globalObject, WebCore::DeferredPromise::Mode::RetainPromiseOnResolve);
     auto promise = jsCast<JSPromise*>(deferred->promise());
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject);
 
-    const uint8_t* spanPtr;
-    size_t spanSize;
-
-    auto readableStreamMaybe = JSC::JSValue::decode(Bun__Response__getBodyStreamOrBytesForWasmStreaming(
-        globalObject, JSC::JSValue::encode(source), &spanPtr, &spanSize));
+    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+        globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
-        fprintf(stderr, "\t\tHi, we're using the slice approach (magic is %c%c%c, size %ld)\n", spanPtr[1], spanPtr[2], spanPtr[3], spanSize); // REMOVE ME
-        compiler->addBytes(std::span(spanPtr, spanSize));
         compiler->finalize(globalObject);
         return promise;
     }

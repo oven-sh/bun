@@ -819,6 +819,85 @@ pub const JSGlobalObject = opaque {
         @panic("A C++ exception occurred");
     }
 
+    fn validateResponseForWasmStreaming(this: *JSC.JSGlobalObject, response_value: JSC.JSValue) bun.JSError!JSC.JSValue {
+        const response = JSC.WebCore.Response.fromJS(response_value) orelse return this.throwInvalidArgumentTypeValue2(
+            "source",
+            "an instance of Response or an Promise resolving to Response",
+            response_value,
+        );
+
+        const content_type = if (try response.getContentType()) |content_type|
+            content_type.toZigString()
+        else
+            ZigString.static("null").*;
+
+        if (!content_type.eqlComptime("application/wasm")) {
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{}'", .{content_type}).throw();
+        }
+
+        if (!response.isOK()) {
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has status code {}", .{response.statusCode()}).throw();
+        }
+
+        if (response.getBodyUsed(this).toBoolean()) {
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response body has already been used", .{}).throw();
+        }
+
+        const body = response.getBodyValue();
+        if (body.* == .Error) {
+            return this.throwValue(body.Error.toJS(this));
+        }
+
+        bun.Output.warn("HEY, I validated just fine! :3", .{}); // REMOVE ME
+        return .js_undefined;
+    }
+
+    extern fn JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler: *anyopaque, bytes_ptr: [*]const u8, bytes_len: usize) void;
+
+    fn getBodyStreamOrBytesForWasmStreaming(
+        this: *JSC.JSGlobalObject,
+        response_value: JSC.JSValue,
+        streaming_compiler: *anyopaque,
+    ) callconv(.C) JSC.JSValue {
+        // This function should only be called (by C++) when the Response is validated by validateResponseForWasmStreaming
+        const response = JSC.WebCore.Response.fromJS(response_value) orelse @panic("getBodyStreamOrBytesForWasmStreaming should only be called on a valid Response");
+        const body = response.getBodyValue();
+        body.toBlobIfPossible();
+
+        var any_blob = switch (body.*) {
+            .Locked => body.tryUseAsAnyBlob() orelse {
+                bun.Output.warn("HM I am returning a ReadableStream! (1)", .{}); // REMOVE ME
+                return body.toReadableStream(this);
+            },
+            else => body.useAsAnyBlob(),
+        };
+
+        if (any_blob.store()) |store| {
+            if (store.data != .bytes) {
+                // This is a file or an S3 object, which aren't accessible synchronously.
+                // (using any_blob.slice() would return a bogus empty slice)
+
+                // Logic from JSC.WebCore.Body.Value.toReadableStream
+                var blob = any_blob.Blob;
+                defer blob.detach();
+
+                blob.resolveSize();
+                bun.Output.warn("HM I am returning a ReadableStream! (2)", .{}); // REMOVE ME
+                return JSC.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.size);
+            }
+        }
+
+        defer any_blob.detach();
+
+        // Give the caller the pointer and length to the blob contents, and return null to
+        // signify this has been done.
+        const slice = any_blob.slice();
+        JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.ptr, slice.len);
+
+        bun.Output.warn("HM I am returning a slice!", .{}); // REMOVE ME
+        return .null;
+    }
+
     pub fn createError(
         globalThis: *jsc.JSGlobalObject,
         comptime fmt: string,
@@ -875,6 +954,8 @@ pub const JSGlobalObject = opaque {
         @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
         @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
         @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
+        @export(&JSC.host_fn.wrap2(validateResponseForWasmStreaming), .{ .name = "Zig__GlobalObject__validateResponseForWasmStreaming" });
+        @export(&getBodyStreamOrBytesForWasmStreaming, .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };
 

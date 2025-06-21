@@ -105,7 +105,7 @@ describe("WebAssembly.compileStreaming", () => {
       },
     });
 
-    // @ts-ignore ReadableStreams are in fact async iterables
+    // @ts-expect-error ReadableStreams are in fact async iterables
     for await (const _ of response.body); // Consume the stream
     ok(response.bodyUsed);
 

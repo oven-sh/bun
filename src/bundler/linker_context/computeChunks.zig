@@ -29,6 +29,7 @@ pub noinline fn computeChunks(
 
     const code_splitting = this.graph.code_splitting;
     const could_be_browser_target_from_server_build = this.options.target.isServerSide() and this.parse_graph.html_imports.html_source_indices.len > 0;
+    const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
 
     // Create chunks for entry points
     for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -134,7 +135,8 @@ pub noinline fn computeChunks(
             if (css_source_indices.len > 0) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
 
-                const hash_to_use = if (!css_chunking)
+                const use_content_based_key = css_chunking or has_server_html_imports;
+                const hash_to_use = if (!use_content_based_key)
                     bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
                 else brk: {
                     var hasher = std.hash.Wyhash.init(5);
@@ -313,7 +315,6 @@ pub noinline fn computeChunks(
 
     const kinds = this.graph.files.items(.entry_point_kind);
     const output_paths = this.graph.entry_points.items(.output_path);
-    const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
     const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", this);
     for (chunks, 0..) |*chunk, chunk_id| {
         // Assign a unique key to each chunk. This key encodes the index directly so

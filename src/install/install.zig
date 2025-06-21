@@ -799,6 +799,9 @@ pub const Task = struct {
                             return;
                         }
 
+                        this.err = err;
+                        this.status = Status.fail;
+                        this.data = .{ .git_clone = bun.invalid_fd };
                         attempt += 1;
                         break :brk null;
                     };
@@ -816,12 +819,12 @@ pub const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
-
                     return;
                 } else {
                     return;
                 };
 
+                this.err = null;
                 this.data = .{ .git_clone = .fromStdDir(dir) };
                 this.status = Status.success;
             },

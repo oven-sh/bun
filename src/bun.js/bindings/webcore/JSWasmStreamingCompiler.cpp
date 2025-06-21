@@ -7,11 +7,8 @@
 #include "JSDOMConvertUnion.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMBinding.h"
-// ... idfk
 #include "JSDOMOperation.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
-// #include <wtf/GetPtr.h>
-// #include <wtf/PointerPreparations.h>
 
 namespace WebCore {
 
@@ -120,6 +117,8 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
 
+    // TODO: Add wasm/js/JSWebAssemblyHelpers.h to JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS in JSC's CMakeFiles.txt
+    //       Then, use getWasmBufferFromValue to get better error messages.
     BufferSource bufferSource = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(throwScope, {});
     impl.addBytes({ bufferSource.data(), bufferSource.length() });

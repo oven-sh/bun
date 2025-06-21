@@ -753,6 +753,27 @@ function ClientRequest(input, options, cb) {
       );
     this._ensureTls().key = options.key;
   }
+  if (agent.options.ca) {
+    if (!isValidTLSArray(agent.options.ca))
+      throw new TypeError(
+        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().ca = agent.options.ca;
+  }
+  if (agent.options.cert) {
+    if (!isValidTLSArray(agent.options.cert))
+      throw new TypeError(
+        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().cert = agent.options.cert;
+  }
+  if (agent.options.key) {
+    if (!isValidTLSArray(agent.options.key))
+      throw new TypeError(
+        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().key = agent.options.key;
+  }
   if (options.passphrase) {
     if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
     this._ensureTls().passphrase = options.passphrase;

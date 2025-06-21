@@ -489,8 +489,11 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
                 any.runFromJSThread();
             },
-
-            .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
+            @field(Task.Tag, @typeName(shell.Interpreter.Builtin.Yes.YesTask)) => {
+                var yes_task: *shell.Interpreter.Builtin.Yes.YesTask = task.get(shell.Interpreter.Builtin.Yes.YesTask).?;
+                yes_task.runFromMainThread();
+            },
+            .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
             },
             _ => {

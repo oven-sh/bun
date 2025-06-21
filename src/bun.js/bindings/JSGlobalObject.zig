@@ -848,7 +848,6 @@ pub const JSGlobalObject = opaque {
             return this.throwValue(body.Error.toJS(this));
         }
 
-        bun.Output.warn("HEY, I validated just fine! :3", .{}); // REMOVE ME
         return .js_undefined;
     }
 
@@ -865,10 +864,7 @@ pub const JSGlobalObject = opaque {
         body.toBlobIfPossible();
 
         var any_blob = switch (body.*) {
-            .Locked => body.tryUseAsAnyBlob() orelse {
-                bun.Output.warn("HM I am returning a ReadableStream! (1)", .{}); // REMOVE ME
-                return body.toReadableStream(this);
-            },
+            .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),
             else => body.useAsAnyBlob(),
         };
 
@@ -882,7 +878,6 @@ pub const JSGlobalObject = opaque {
                 defer blob.detach();
 
                 blob.resolveSize();
-                bun.Output.warn("HM I am returning a ReadableStream! (2)", .{}); // REMOVE ME
                 return JSC.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.size);
             }
         }
@@ -894,7 +889,6 @@ pub const JSGlobalObject = opaque {
         const slice = any_blob.slice();
         JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.ptr, slice.len);
 
-        bun.Output.warn("HM I am returning a slice!", .{}); // REMOVE ME
         return .null;
     }
 

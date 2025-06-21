@@ -205,7 +205,9 @@ describe("WebAssembly.instantiateStreaming", () => {
         const chunkSize = 10;
 
         await Bun.sleep(10);
-        controller.enqueue(buffer.subarray(i, (i += chunkSize)));
+        controller.enqueue(buffer.subarray(i, i + chunkSize));
+
+        i += chunkSize;
         if (i >= buffer.length) controller.close();
       },
     });

@@ -51,14 +51,14 @@ const CmdOrResult = union(enum) {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Pipeline,
     parent: ParentPtr,
     io: IO,
 ) *Pipeline {
     const pipeline = parent.create(Pipeline);
     pipeline.* = .{
-        .base = State.init(.pipeline, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.pipeline, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .exited_count = 0,
@@ -275,7 +275,7 @@ pub fn deinit(this: *Pipeline) void {
         this.base.allocator().free(cmds);
     }
     this.io.deref();
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -333,7 +333,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

@@ -35,7 +35,7 @@ pub inline fn deinit(this: *Assigns) void {
         this.state.expanding.current_expansion_result.deinit();
     }
     this.io.deinit();
-    this.base.deinit();
+    this.base.endScope();
     if (this.owned) this.parent.destroy(this);
 }
 
@@ -45,7 +45,7 @@ pub fn start(this: *Assigns) Yield {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: []const ast.Assign,
     ctx: AssignCtx,
     parent: ParentPtr,
@@ -54,7 +54,7 @@ pub fn init(
     const this = parent.create(Assigns);
     log("Assigns(0x{x}) init", .{@intFromPtr(this)});
     this.* = .{
-        .base = State.init(.assign, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.assign, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .state = .idle,
@@ -67,14 +67,14 @@ pub fn init(
 pub fn initBorrowed(
     this: *Assigns,
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: []const ast.Assign,
     ctx: AssignCtx,
     parent: ParentPtr,
     io: IO,
 ) void {
     this.* = .{
-        .base = State.init(.assign, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.assign, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .state = .idle,
@@ -219,7 +219,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const EnvStr = bun.shell.interpret.EnvStr;

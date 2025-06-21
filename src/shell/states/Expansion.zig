@@ -122,7 +122,7 @@ pub fn allocator(this: *Expansion) std.mem.Allocator {
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     expansion: *Expansion,
     node: *const ast.Atom,
     parent: ParentPtr,
@@ -150,7 +150,7 @@ pub fn deinit(expansion: *Expansion) void {
     log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
     expansion.current_out.deinit();
     expansion.io.deinit();
-    expansion.base.deinit();
+    expansion.base.endScope();
 }
 
 pub fn start(this: *Expansion) Yield {
@@ -858,7 +858,7 @@ const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
 const GlobWalker = bun.shell.interpret.GlobWalker;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

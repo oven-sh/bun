@@ -34,14 +34,14 @@ pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOp
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
 ) *Subshell {
     const subshell = parent.create(Subshell);
     subshell.* = .{
-        .base = State.init(.subshell, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -53,14 +53,14 @@ pub fn init(
 
 pub fn initDupeShellState(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
 ) bun.JSC.Maybe(*Subshell) {
     const subshell = parent.create(Subshell);
     subshell.* = .{
-        .base = State.init(.subshell, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -174,7 +174,7 @@ pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();
     this.redirection_file.deinit();
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -196,7 +196,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

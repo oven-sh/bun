@@ -1,13 +1,62 @@
 //! The interpreter for the shell language
 //!
-//! Normally, the implementation would be a very simple tree-walk of the AST,
-//! but it needs to be non-blocking, and Zig does not have coroutines yet, so
-//! this implementation is half tree-walk half one big state machine. The state
-//! machine part manually keeps track of execution state (which coroutines would
-//! do for us), but makes the code very confusing because control flow is less obvious.
+//! There are several constraints on the Bun shell language that make this
+//! interpreter implementation unique:
+//!
+//! 1. We try to keep everything in the Bun process as much as possible for
+//!    performance reasons and also to leverage Bun's existing IO/FS code
+//! 2. We try to use non-blocking IO operations as much as possible so the
+//!    shell does not block the main JS thread
+//! 3. Zig does not have coroutines (yet)
+//!
+//! The idea is that this is a tree-walking interpreter. Except it's not.
+//!
+//! Why not? Because 99% of operations in the shell are IO, and we need to do
+//! non-blocking IO because Bun is a JS runtime.
+//!
+//! So what do we do? Instead of iteratively walking the AST like in a traditional
+//! tree-walking interpreter, we're also going to build up a tree of state-machines
+//! (an AST node becomes a state-machine node), so we can suspend and resume
+//! execution without blocking the main thread.
+//!
+//! We'll also need to do things in continuation-passing style, see `Yield.zig` for
+//! more on that.
+//!
+//! Once all these pieces come together, this ends up being a:
+//! "state-machine based [tree-walking], [trampoline]-driven [continuation-passing style] interpreter"
+//!
+//! [tree-walking]: https://en.wikipedia.org/wiki/Interpreter_(computing)#Abstract_syntax_tree_interpreters
+//! [trampoline]:   https://en.wikipedia.org/wiki/Trampoline_(computing)
+//! [continuation-passing style]: https://en.wikipedia.org/wiki/Continuation-passing_style
 //!
 //! # Memory management
-//! Almost all allocations are go through the `AllocationScope` allocator. This lets us track
+//!
+//! Almost all allocations go through the `AllocationScope` allocator. This
+//! trackd memory allocations and frees in debug builds (or builds with asan
+//! enabled) and helps us catch memory leaks.
+//!
+//! The underlying parent allocator that every `AllocationScope` uses in the
+//! shell is `bun.default_allocator`. This means in builds of Bun which do not
+//! have `AllocationScope` enabled, every allocation just goes straight through
+//! to `bun.default_allocator`.
+//!
+//! Usually every state machine node ends up creating a new allocation scope,
+//! so an `AllocationScope` is stored in the base header struct (see `Base.zig`)
+//! that all state-machine nodes include in their layout.
+//!
+//! You will often see `Base.initWithNewAllocScope` to create a new state machine node
+//! and allocation scope.
+//!
+//! Sometimes it is necessary to "leak" an allocation from its scope. For
+//! example, argument expansion happens in an allocation scope inside
+//! `Expansion.zig`.
+//!
+//! But the string that is expanded may end up becoming the key/value of an
+//! environment variable, which we internally use the reference counted `EnvStr`
+//! for. When we turn it into an `EnvStr`, the reference counting scheme is
+//! responsible for managing the memory so we can call
+//! `allocScope.leakSlice(str)` to tell it not to track the allocation anymore
+//! and let `EnvStr` handle it.
 const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
@@ -229,7 +278,7 @@ pub const Interpreter = struct {
     /// This should be allocated using the arena
     jsobjs: []JSValue,
 
-    root_shell: ShellState,
+    root_shell: ShellExecEnv,
     root_io: IO,
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -250,7 +299,7 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
-    __alloc_scope: if (bun.Environment.isDebug) bun.AllocationScope else void,
+    __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
 
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
@@ -272,12 +321,12 @@ pub const Interpreter = struct {
 
     /// During execution, the shell has an "environment" or "context". This
     /// contains important details like environment variables, cwd, etc. Every
-    /// state node is given a `*ShellState` which is stored in its header (see
+    /// state node is given a `*ShellExecEnv` which is stored in its header (see
     /// `states/Base.zig`).
     ///
     /// Certain state nodes like subshells, pipelines, and cmd substitutions
-    /// will duplicate their `*ShellState` so that they can make modifications
-    /// without affecting their parent `ShellState`. This is done in the
+    /// will duplicate their `*ShellExecEnv` so that they can make modifications
+    /// without affecting their parent `ShellExecEnv`. This is done in the
     /// `.dupeForSubshell` function.
     ///
     /// For example:
@@ -291,8 +340,10 @@ pub const Interpreter = struct {
     /// Note that stdin/stdout/stderr is also considered to be part of the
     /// environment/context, but we keep that in a separate struct called `IO`. We do
     /// this because stdin/stdout/stderr changes a lot and we don't want to copy
-    /// this `ShellState` struct too much.
-    pub const ShellState = struct {
+    /// this `ShellExecEnv` struct too much.
+    ///
+    /// More info here: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_12
+    pub const ShellExecEnv = struct {
         kind: Kind = .normal,
 
         /// This is the buffered stdout/stderr that captures the entire
@@ -323,7 +374,7 @@ pub const Interpreter = struct {
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
-        __alloc_scope: if (bun.Environment.isDebug) *bun.AllocationScope else void,
+        __alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
 
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
@@ -336,56 +387,56 @@ pub const Interpreter = struct {
             pipeline,
         };
 
-        pub fn allocator(this: *ShellState) std.mem.Allocator {
-            if (comptime bun.Environment.isDebug) return this.__alloc_scope.allocator();
+        pub fn allocator(this: *ShellExecEnv) std.mem.Allocator {
+            if (comptime bun.Environment.enableAllocScopes) return this.__alloc_scope.allocator();
             return bun.default_allocator;
         }
 
-        pub fn buffered_stdout(this: *ShellState) *bun.ByteList {
+        pub fn buffered_stdout(this: *ShellExecEnv) *bun.ByteList {
             return switch (this._buffered_stdout) {
                 .owned => &this._buffered_stdout.owned,
                 .borrowed => this._buffered_stdout.borrowed,
             };
         }
 
-        pub fn buffered_stderr(this: *ShellState) *bun.ByteList {
+        pub fn buffered_stderr(this: *ShellExecEnv) *bun.ByteList {
             return switch (this._buffered_stderr) {
                 .owned => &this._buffered_stderr.owned,
                 .borrowed => this._buffered_stderr.borrowed,
             };
         }
 
-        pub inline fn cwdZ(this: *ShellState) [:0]const u8 {
+        pub inline fn cwdZ(this: *ShellExecEnv) [:0]const u8 {
             if (this.__cwd.items.len == 0) return "";
             return this.__cwd.items[0..this.__cwd.items.len -| 1 :0];
         }
 
-        pub inline fn prevCwdZ(this: *ShellState) [:0]const u8 {
+        pub inline fn prevCwdZ(this: *ShellExecEnv) [:0]const u8 {
             if (this.__prev_cwd.items.len == 0) return "";
             return this.__prev_cwd.items[0..this.__prev_cwd.items.len -| 1 :0];
         }
 
-        pub inline fn prevCwd(this: *ShellState) []const u8 {
+        pub inline fn prevCwd(this: *ShellExecEnv) []const u8 {
             const prevcwdz = this.prevCwdZ();
             return prevcwdz[0..prevcwdz.len];
         }
 
-        pub inline fn cwd(this: *ShellState) []const u8 {
+        pub inline fn cwd(this: *ShellExecEnv) []const u8 {
             const cwdz = this.cwdZ();
             return cwdz[0..cwdz.len];
         }
 
-        pub fn deinit(this: *ShellState) void {
+        pub fn deinit(this: *ShellExecEnv) void {
             this.deinitImpl(true, true);
         }
 
         /// Doesn't deref `this.io`
         ///
         /// If called by interpreter we have to:
-        /// 1. not free this *ShellState, because its on a field on the interpreter
+        /// 1. not free this *ShellExecEnv, because its on a field on the interpreter
         /// 2. don't free buffered_stdout and buffered_stderr, because that is used for output
-        fn deinitImpl(this: *ShellState, comptime destroy_this: bool, comptime free_buffered_io: bool) void {
-            log("[ShellState] deinit {x}", .{@intFromPtr(this)});
+        fn deinitImpl(this: *ShellExecEnv, comptime destroy_this: bool, comptime free_buffered_io: bool) void {
+            log("[ShellExecEnv] deinit {x}", .{@intFromPtr(this)});
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
@@ -407,13 +458,13 @@ pub const Interpreter = struct {
         }
 
         pub fn dupeForSubshell(
-            this: *ShellState,
-            alloc_scope: if (bun.Environment.isDebug) *bun.AllocationScope else void,
+            this: *ShellExecEnv,
+            alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
             alloc: Allocator,
             io: IO,
             kind: Kind,
-        ) Maybe(*ShellState) {
-            const duped = alloc.create(ShellState) catch bun.outOfMemory();
+        ) Maybe(*ShellExecEnv) {
+            const duped = alloc.create(ShellExecEnv) catch bun.outOfMemory();
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
                 .err => |err| return .{ .err = err },
@@ -462,7 +513,8 @@ pub const Interpreter = struct {
             return .{ .result = duped };
         }
 
-        pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
+        /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it before handing it to this function.
+        pub fn assignVar(this: *ShellExecEnv, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
             _ = interp; // autofix
             switch (assign_ctx) {
                 .cmd => this.cmd_local_env.insert(label, value),
@@ -471,15 +523,15 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn changePrevCwd(self: *ShellState, interp: *ThisInterpreter) Maybe(void) {
+        pub fn changePrevCwd(self: *ShellExecEnv, interp: *ThisInterpreter) Maybe(void) {
             return self.changeCwd(interp, self.prevCwdZ());
         }
 
-        pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+        pub fn changeCwd(this: *ShellExecEnv, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
             return this.changeCwdImpl(interp, new_cwd_, false);
         }
 
-        pub fn changeCwdImpl(this: *ShellState, _: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
+        pub fn changeCwdImpl(this: *ShellExecEnv, _: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
             if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
             }
@@ -553,7 +605,7 @@ pub const Interpreter = struct {
             return Maybe(void).success;
         }
 
-        pub fn getHomedir(self: *ShellState) EnvStr {
+        pub fn getHomedir(self: *ShellExecEnv) EnvStr {
             const env_var: ?EnvStr = brk: {
                 const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
                 break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
@@ -562,7 +614,7 @@ pub const Interpreter = struct {
         }
 
         pub fn writeFailingErrorFmt(
-            this: *ShellState,
+            this: *ShellExecEnv,
             ctx: anytype,
             enqueueCb: fn (c: @TypeOf(ctx)) void,
             comptime fmt: []const u8,
@@ -809,7 +861,7 @@ pub const Interpreter = struct {
             .allocator = allocator,
             .jsobjs = jsobjs,
 
-            .root_shell = ShellState{
+            .root_shell = ShellExecEnv{
                 .shell_env = EnvMap.init(allocator),
                 .cmd_local_env = EnvMap.init(allocator),
                 .export_env = export_env,
@@ -834,7 +886,7 @@ pub const Interpreter = struct {
             },
 
             .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
-            .__alloc_scope = if (bun.Environment.isDebug) bun.AllocationScope.init(allocator) else {},
+            .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
 
@@ -842,7 +894,7 @@ pub const Interpreter = struct {
             if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
 
-        interpreter.root_shell.__alloc_scope = if (bun.Environment.isDebug) &interpreter.__alloc_scope else {};
+        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
 
         return .{ .result = interpreter };
     }
@@ -1373,8 +1425,8 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             return Type.ChildPtr;
         }
 
-        pub fn scopedAllocator(this: @This()) if (bun.Environment.isDebug) *bun.AllocationScope else void {
-            if (comptime !bun.Environment.isDebug) return;
+        pub fn scopedAllocator(this: @This()) if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void {
+            if (comptime !bun.Environment.enableAllocScopes) return;
 
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
@@ -1399,7 +1451,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                     Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
                     if (comptime Ty == Interpreter) {
-                        if (bun.Environment.isDebug) return casted.__alloc_scope.allocator();
+                        if (bun.Environment.enableAllocScopes) return casted.__alloc_scope.allocator();
                         return bun.default_allocator;
                     }
                     return casted.base.allocator();
@@ -1409,14 +1461,14 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn create(this: @This(), comptime Ty: type) *Ty {
-            if (comptime bun.Environment.isDebug) {
+            if (comptime bun.Environment.enableAllocScopes) {
                 return this.allocator().create(Ty) catch bun.outOfMemory();
             }
             return bun.default_allocator.create(Ty) catch bun.outOfMemory();
         }
 
         pub fn destroy(this: @This(), ptr: anytype) void {
-            if (comptime bun.Environment.isDebug) {
+            if (comptime bun.Environment.enableAllocScopes) {
                 this.allocator().destroy(ptr);
             } else {
                 bun.default_allocator.destroy(ptr);

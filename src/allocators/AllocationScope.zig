@@ -2,7 +2,7 @@
 //! It also allows measuring how much memory a scope has allocated.
 const AllocationScope = @This();
 
-pub const enabled = bun.Environment.isDebug;
+pub const enabled = bun.Environment.enableAllocScopes;
 
 parent: Allocator,
 state: if (enabled) struct {
@@ -196,7 +196,7 @@ pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     if (scope.state.allocations.getPtr(cast_ptr)) |owned| {
-        Output.debugWarn("Pointer allocated here:");
+        Output.warn("Pointer allocated here:");
         bun.crash_handler.dumpStackTrace(owned.allocated_at.trace(), trace_limits, trace_limits);
     }
     @panic("this pointer was owned by the allocation scope when it was not supposed to be");

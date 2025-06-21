@@ -26,7 +26,7 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Stmt,
     parent: anytype,
     io: IO,
@@ -36,7 +36,7 @@ pub fn init(
         else => ParentPtr.init(parent),
     };
     var script = parent_ptr.create(Stmt);
-    script.base = State.init(.stmt, interpreter, shell_state);
+    script.base = State.initWithNewAllocScope(.stmt, interpreter, shell_state);
     script.node = node;
     script.parent = parent_ptr;
     script.idx = 0;
@@ -130,7 +130,7 @@ pub fn deinit(this: *Stmt) void {
     if (this.currently_executing) |child| {
         child.deinit();
     }
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -141,7 +141,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

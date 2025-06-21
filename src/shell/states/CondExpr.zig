@@ -62,14 +62,14 @@ pub const ChildPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.CondExpr,
     parent: ParentPtr,
     io: IO,
 ) *CondExpr {
     const condexpr = parent.create(CondExpr);
     condexpr.* = .{
-        .base = State.init(.condexpr, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.condexpr, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -216,7 +216,7 @@ pub fn deinit(this: *CondExpr) void {
         this.base.allocator().free(item);
     }
     this.args.deinit();
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -276,7 +276,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

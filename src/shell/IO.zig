@@ -89,7 +89,7 @@ pub const OutKind = union(enum) {
     /// Discards output
     ignore,
 
-    // fn dupeForSubshell(this: *ShellState,
+    // fn dupeForSubshell(this: *ShellExecEnv,
     pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (this) {
             .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),

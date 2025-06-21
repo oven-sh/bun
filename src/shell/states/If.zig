@@ -40,14 +40,14 @@ pub fn format(this: *const If, comptime _: []const u8, _: std.fmt.FormatOptions,
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.If,
     parent: ParentPtr,
     io: IO,
 ) *If {
     const if_stmt = parent.create(If);
     if_stmt.* = .{
-        .base = State.init(.if_clause, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.if_clause, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -151,7 +151,7 @@ pub fn next(this: *If) Yield {
 pub fn deinit(this: *If) void {
     log("{} deinit", .{this});
     this.io.deref();
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -191,7 +191,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

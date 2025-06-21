@@ -32,7 +32,7 @@ pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptio
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Expr,
     parent: ParentPtr,
     io: IO,
@@ -40,7 +40,7 @@ pub fn init(
     interpreter.async_commands_executing += 1;
     const async_cmd = parent.create(Async);
     async_cmd.* = .{
-        .base = State.init(.@"async", interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.@"async", interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -164,7 +164,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

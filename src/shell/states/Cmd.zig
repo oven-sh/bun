@@ -229,14 +229,14 @@ pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) Yi
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Cmd,
     parent: ParentPtr,
     io: IO,
 ) *Cmd {
     var cmd = parent.create(Cmd);
     cmd.* = .{
-        .base = State.init(.cmd, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.cmd, interpreter, shell_state),
         .node = node,
         .parent = parent,
 
@@ -735,7 +735,7 @@ pub fn deinit(this: *Cmd) void {
     }
 
     this.io.deref();
-    this.base.deinit();
+    this.base.endScope();
     this.parent.destroy(this);
 }
 
@@ -807,7 +807,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

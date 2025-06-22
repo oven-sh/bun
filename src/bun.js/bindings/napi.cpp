@@ -1729,9 +1729,21 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         }
 
         newTarget = callFrame->newTarget();
-        auto* subclass = prototype->subclass(globalObject, asObject(newTarget));
+        JSObject* thisValue;
+        // Match the behavior from
+        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/ObjectConstructor.cpp#L118-L145
+        if (newTarget && newTarget != napi) {
+            JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
+            RETURN_IF_EXCEPTION(scope, {});
+            Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
+            Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
+            RETURN_IF_EXCEPTION(scope, {});
+            thisValue = constructEmptyObject(vm, objectStructure);
+        } else {
+            thisValue = prototype->subclass(globalObject, asObject(newTarget));
+        }
         RETURN_IF_EXCEPTION(scope, {});
-        callFrame->setThisValue(subclass);
+        callFrame->setThisValue(thisValue);
     }
 
     NAPICallFrame frame(vm, globalObject, callFrame, napi->dataPtr(), newTarget);

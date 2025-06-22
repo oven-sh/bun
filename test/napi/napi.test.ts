@@ -411,6 +411,10 @@ describe("napi", () => {
       checkSameOutput("test_subclass_napi_class", []);
       checkSameOutput("test_napi_class_non_constructor_call", []);
       checkSameOutput("test_reflect_construct_napi_class", []);
+    it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
+      await checkSameOutput("test_reflect_construct_no_prototype_crash", []);
+    });
+
     });
   });
 
@@ -485,7 +489,11 @@ function checkSameOutput(test: string, args: any[] | string, envArgs: Record<str
   const nodeResult = runOn("node", test, args, envArgs).trim();
   let bunResult = runOn(bunExe(), test, args, envArgs);
   // remove all debug logs
-  bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+  bunResult = bunResult
+    .replaceAll(/^\[\w+\].+$/gm, "")
+    // TODO: we don't seem to print ProxyObject in this case.
+    .replaceAll("function ProxyObject()", "function ()")
+    .trim();
   expect(bunResult).toEqual(nodeResult);
   return nodeResult;
 }

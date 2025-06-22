@@ -1263,8 +1263,26 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
 
     temp_buf[0] = 0;
 
+    var current_volume_len: usize = 0;
+
     for (parts) |part| {
         if (part.len == 0) continue;
+
+        if (platform == .windows or platform == .loose or platform == .nt) {
+            const vol_len = windowsVolumeNameLenT(T, part)[0];
+            if (vol_len > 0) {
+                if (current_volume_len > 0 and
+                    !strings.eqlLong(temp_buf[0..current_volume_len], part[0..vol_len], true))
+                {
+                    written = 0;
+                }
+                current_volume_len = vol_len;
+            } else if (std.fs.path.isAbsoluteWindowsT(T, part)) {
+                written = 0;
+            }
+        } else if (platform.isAbsoluteT(T, part)) {
+            written = 0;
+        }
 
         if (written > 0) {
             temp_buf[written] = platform.separator();

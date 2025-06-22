@@ -113,6 +113,7 @@ describe("path.join", () => {
         [["c:.", "file"], "c:file"],
         [["c:", "/"], "c:\\"],
         [["c:", "file"], "c:\\file"],
+        [["c:\\foo", "d:\\bar"], "c:\\foo\\d:\\bar"],
       ]),
     ]);
     joinTests.forEach(test => {

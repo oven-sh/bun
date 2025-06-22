@@ -521,8 +521,8 @@ async function runOn(executable: string, test: string, args: any[] | string, env
     stdin: "inherit",
   });
   const [stdout, stderr, result] = await Promise.all([
-    Bun.readableStreamToText(exec.stdout),
-    Bun.readableStreamToText(exec.stderr),
+    new Response(exec.stdout).text(),
+    new Response(exec.stderr).text(),
     exec.exited,
   ]);
   const errs = stderr.toString();

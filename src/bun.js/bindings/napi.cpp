@@ -2528,7 +2528,7 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     }
 
     std::span<uint64_t> writable_words(words, *word_count);
-    *sign_bit = (int)bigInt->sign() != 0;
+    *sign_bit = static_cast<int>(bigInt->sign());
     *word_count = bigInt->toWordsArray(writable_words);
     ensureStillAliveHere(bigInt);
     NAPI_RETURN_SUCCESS(env);

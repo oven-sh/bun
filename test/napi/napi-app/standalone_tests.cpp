@@ -109,6 +109,9 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
 
   NODE_API_CALL(env,
                 napi_get_value_string_utf8(env, string_js, buf, len, &copied));
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   std::cout << "Chars to copy: " << len << std::endl;
   std::cout << "Copied chars: " << copied << std::endl;
@@ -118,6 +121,7 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   }
   std::cout << std::endl;
   std::cout << "Value str: " << buf << std::endl;
+
   return ok(env);
 }
 
@@ -177,8 +181,7 @@ test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
   run_gc(info);
 
 #ifndef _WIN32
-  // Set stdout to fully buffered to collect all output
-  setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
+  BlockingStdoutScope stdout_scope;
 #endif
 
   for (size_t j = 0; j < num_small_ints; j++) {
@@ -193,14 +196,6 @@ test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
                     std::all_of(words.begin(), words.end(),
                                 [j](const uint64_t &w) { return w == j + 1; }));
   }
-
-  // Flush all buffered output at once
-  fflush(stdout);
-
-#ifndef _WIN32
-  // Reset to line buffered
-  setvbuf(stdout, nullptr, _IOLBF, 0);
-#endif
 
   delete[] small_ints;
   return ok(env);
@@ -400,6 +395,10 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_extended_error_info *error;
 
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   // this function is implemented in C++
   // error because the result pointer is null
   printf("erroneous napi_create_double returned code %d\n",
@@ -450,6 +449,11 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   // start at 1 is intentional, since argument 0 is the callback to run GC
   // passed to every function
   // perform test on all arguments
@@ -478,6 +482,10 @@ static napi_value bigint_to_i64(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
   // start at 1 is intentional, since argument 0 is the callback to run GC
   // passed to every function
   // perform test on all arguments
@@ -506,6 +514,10 @@ static napi_value bigint_to_u64(const Napi::CallbackInfo &info) {
 
 static napi_value bigint_to_64_null(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
 
   napi_value bigint;
   NODE_API_CALL(env, napi_create_bigint_int64(env, 5, &bigint));

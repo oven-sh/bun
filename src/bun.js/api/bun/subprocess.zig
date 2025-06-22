@@ -1021,6 +1021,7 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
+
         this.reader.setParent(this);
         return this;
     }
@@ -1047,6 +1048,9 @@ pub const PipeReader = struct {
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.socket);
                     this.reader.flags.socket = true;
+                    this.reader.flags.nonblocking = true;
+                    this.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
                 }
 
                 return .{ .result = {} };

@@ -860,8 +860,7 @@ describe("bun test", () => {
       });
 
       cases.forEach(c => {
-        const expected = `${c.a}+${c.b}=${c.expected} [` +
-          `${c[1]} ${c.a1b2} ${c.MixedCase}  ${c.dup} ${c.dup}]`;
+        const expected = `${c.a}+${c.b}=${c.expected} [` + `${c[1]} ${c.a1b2} ${c.MixedCase}  ${c.dup} ${c.dup}]`;
         expect(stderr).toContain(expected);
       });
     });

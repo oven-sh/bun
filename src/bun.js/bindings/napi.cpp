@@ -27,6 +27,7 @@
 #include <wtf/text/StringView.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
+#include <span>
 #include "BufferEncodingType.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
@@ -2461,9 +2462,10 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     *result = jsValue.toBigInt64(toJS(env));
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
-    uint64_t digit = bigint->length() > 0 ? bigint->digit(0) : 0;
+    auto length = bigint->length();
+    uint64_t digit = length > 0 ? bigint->digit(0) : 0;
 
-    if (bigint->length() > 1) {
+    if (length > 1) {
         *lossless = false;
     } else if (bigint->sign()) {
         // negative
@@ -2519,21 +2521,16 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
 
-    size_t available_words = *word_count;
-    *word_count = bigInt->length();
-
     // Return ok in this case
     if (sign_bit == nullptr && words == nullptr) {
+        *word_count = bigInt->length();
         NAPI_RETURN_SUCCESS(env);
     }
 
-    *sign_bit = (int)bigInt->sign();
-
-    size_t len = *word_count;
-    for (size_t i = 0; i < available_words && i < len; i++) {
-        words[i] = bigInt->digit(i);
-    }
-
+    std::span<uint64_t> writable_words(words, *word_count);
+    *sign_bit = (int)bigInt->sign() != 0;
+    *word_count = bigInt->toWordsArray(writable_words);
+    ensureStillAliveHere(bigInt);
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2608,6 +2605,30 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" napi_status napi_create_bigint_uint64(napi_env env, uint64_t value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    auto* globalObject = toJS(env);
+    auto* bigint = JSBigInt::createFrom(globalObject, value);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_pending_exception));
+    *result = toNapi(bigint, globalObject);
+    ensureStillAliveHere(bigint);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_create_bigint_int64(napi_env env, int64_t value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    auto* globalObject = toJS(env);
+    auto* bigint = JSBigInt::createFrom(globalObject, value);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_pending_exception));
+    *result = toNapi(bigint, globalObject);
+    ensureStillAliveHere(bigint);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_bigint_words(napi_env env,
     int sign_bit,
     size_t word_count,
@@ -2633,34 +2654,16 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     }
 
-    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
-    // passed an array containing leading zeroes. so we have to cut those off.
-    while (word_count > 0 && words[word_count - 1] == 0) {
-        word_count--;
-    }
-
-    if (word_count == 0) {
-        auto* bigint = JSBigInt::createZero(globalObject);
-        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-        *result = toNapi(bigint, globalObject);
-        return napi_set_last_error(env, napi_ok);
-    }
+    std::span<const uint64_t> words_span(words, word_count);
 
     // throws RangeError if size is larger than JSC's limit
-    auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
+    auto* bigint = JSBigInt::createFromWords(globalObject, words_span, sign_bit != 0);
     RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     ASSERT(bigint);
 
-    bigint->setSign(sign_bit != 0);
-
-    const uint64_t* current_word = words;
-    // TODO: add fast path that uses memcpy here instead of setDigit
-    // we need to add this to JSC. V8 has this optimization
-    for (size_t i = 0; i < word_count; i++) {
-        bigint->setDigit(i, *current_word++);
-    }
-
     *result = toNapi(bigint, globalObject);
+
+    ensureStillAliveHere(bigint);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -2689,7 +2692,9 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
         // TODO handle empty string?
     }
 
-    *result = toNapi(JSC::Symbol::create(vm), globalObject);
+    auto* symbol = JSC::Symbol::create(vm);
+    *result = toNapi(symbol, globalObject);
+    ensureStillAliveHere(symbol);
     NAPI_RETURN_SUCCESS(env);
 }
 

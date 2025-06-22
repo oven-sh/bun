@@ -163,14 +163,23 @@ test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
 
   auto *small_ints = new napi_value[num_small_ints];
 
-  for (size_t i = 0; i < num_small_ints; i++) {
-    std::array<uint64_t, small_int_size> words;
-    words.fill(i + 1);
-    NODE_API_CALL(env, napi_create_bigint_words(env, 0, small_int_size,
-                                                words.data(), &small_ints[i]));
+  for (size_t i = 0, small_int_index = 1; i < num_small_ints;
+       i++, small_int_index++) {
+    uint64_t words[small_int_size];
+    for (size_t j = 0; j < small_int_size; j++) {
+      words[j] = small_int_index;
+    }
+
+    NODE_API_CALL(env, napi_create_bigint_words(env, 0, small_int_size, words,
+                                                &small_ints[i]));
   }
 
   run_gc(info);
+
+#ifndef _WIN32
+  // Set stdout to fully buffered to collect all output
+  setvbuf(stdout, nullptr, _IOFBF, BUFSIZ);
+#endif
 
   for (size_t j = 0; j < num_small_ints; j++) {
     std::array<uint64_t, small_int_size> words;
@@ -184,6 +193,14 @@ test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
                     std::all_of(words.begin(), words.end(),
                                 [j](const uint64_t &w) { return w == j + 1; }));
   }
+
+  // Flush all buffered output at once
+  fflush(stdout);
+
+#ifndef _WIN32
+  // Reset to line buffered
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
 
   delete[] small_ints;
   return ok(env);
@@ -370,7 +387,8 @@ static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
 
   bool is_exception_pending;
   NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
-  printf("napi_is_exception_pending -> %s\n", is_exception_pending ? "true" : "false");
+  printf("napi_is_exception_pending -> %s\n",
+         is_exception_pending ? "true" : "false");
 
   return ok(env);
 }

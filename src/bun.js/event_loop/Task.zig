@@ -223,7 +223,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(bun.api.napi.napi_async_work)) => {
                 const transform_task: *bun.api.napi.napi_async_work = task.get(bun.api.napi.napi_async_work).?;
-                transform_task.*.runFromJS();
+                transform_task.runFromJS(virtual_machine, global);
             },
             @field(Task.Tag, @typeName(ThreadSafeFunction)) => {
                 var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);

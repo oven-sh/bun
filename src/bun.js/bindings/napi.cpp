@@ -285,14 +285,14 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
 
 class NAPICallFrame {
 public:
-    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
-        : NAPICallFrame(globalObject, callFrame, dataPtr)
+    NAPICallFrame(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
+        : NAPICallFrame(vm, globalObject, callFrame, dataPtr)
     {
         m_storedNewTarget = storedNewTarget;
         m_isConstructorCall = !m_storedNewTarget.isEmpty();
     }
 
-    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
+    NAPICallFrame(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
         : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
     {
@@ -302,7 +302,7 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            auto scope = DECLARE_THROW_SCOPE(vm);
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for
@@ -1717,7 +1717,8 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSValue newTarget;
 
     if constexpr (ConstructCall) {
-        NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
+        auto prototypeValue = napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype);
+        NapiPrototype* prototype = prototypeValue ? JSC::jsDynamicCast<NapiPrototype*>(prototypeValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!prototype) {
@@ -1731,7 +1732,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         callFrame->setThisValue(subclass);
     }
 
-    NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
+    NAPICallFrame frame(vm, globalObject, callFrame, napi->dataPtr(), newTarget);
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
@@ -2784,8 +2785,9 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+    JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
-    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    auto* existing_tag = napiTypeTagValue ? jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue) : nullptr;
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
@@ -2805,7 +2807,8 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
 
     bool match = false;
-    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
+    auto* found_tag = napiTypeTagValue ? jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue) : nullptr;
     if (found_tag && found_tag->matches(*type_tag)) {
         match = true;
     }

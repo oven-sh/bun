@@ -1543,14 +1543,12 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         }
     }
 
+    // We won't be sending any more data.
+    // But we might still have data to be read.
+    // So don't cancel reading from stdout or stderr
+    // and DO close stdin.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
-    }
-    if (this.stdout == .pipe) {
-        this.stdout.pipe.close();
-    }
-    if (this.stderr == .pipe) {
-        this.stderr.pipe.close();
     }
 
     if (existing_stdin_value != .zero) {

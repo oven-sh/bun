@@ -92,6 +92,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, FetchHeaders&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, FetchHeaders* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<FetchHeaders>&&);
 inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<FetchHeaders>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
+JSC::JSValue toJSNewlyConstructed(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<FetchHeaders>&&);
+inline JSC::JSValue toJSNewlyConstructed(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<FetchHeaders>&& impl) { return impl ? toJSNewlyConstructed(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
     using WrapperClass = JSFetchHeaders;

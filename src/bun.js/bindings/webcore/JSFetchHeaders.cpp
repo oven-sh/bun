@@ -131,6 +131,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 
+    if (!argument0.value() || argument0.value().isUndefined()) {
+        auto object = FetchHeaders::create();
+        auto jsValue = toJSNewlyConstructed(*lexicalGlobalObject, *castedThis->globalObject(), WTFMove(object));
+        setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSValue::encode(jsValue);
+    }
+
     auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
 
     if (argument0.value() && !argument0.value().isUndefined()) {
@@ -760,6 +768,11 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
+    return createWrapper<FetchHeaders>(globalObject, WTFMove(impl));
+}
+
+JSC::JSValue toJSNewlyConstructed(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
+{
     return createWrapper<FetchHeaders>(globalObject, WTFMove(impl));
 }
 

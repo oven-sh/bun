@@ -41,9 +41,9 @@ describe("yes - event loop task processing", async () => {
 
   TestBuilder.command`timeout 0.1 yes`
     .exitCode(124)
-    .stdout((stdout) => {
+    .stdout(stdout => {
       expect(stdout.length).toBeGreaterThan(0);
-      expect(stdout.split('\n').filter(line => line === 'y').length).toBeGreaterThan(0);
+      expect(stdout.split("\n").filter(line => line === "y").length).toBeGreaterThan(0);
     })
     .stderr("")
     .runAsTest("yes with timeout - tests YesTask cancellation in event loop");

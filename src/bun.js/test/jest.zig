@@ -1942,8 +1942,36 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     var args_idx: usize = 0;
     var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
 
+    const object_arg = if (function_args.len == 1 and function_args[0] != .zero and function_args[0].jsType().isObject())
+        function_args[0]
+    else
+        JSValue{ .zero = {} };
+
     while (idx < label.len) {
         const char = label[idx];
+        if (char == '$' and object_arg != .zero) {
+            var start = idx + 1;
+            while (start < label.len) {
+                const c = label[start];
+                if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') {
+                    start += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if (start > idx + 1) {
+                const key = label[idx + 1 .. start];
+                if (try object_arg.get(globalThis, key)) |value| {
+                    const owned_slice = try value.toSliceOrNull(globalThis);
+                    defer owned_slice.deinit();
+                    list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
+                }
+                idx = start;
+                continue;
+            }
+        }
+
         if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
 

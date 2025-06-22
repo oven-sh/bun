@@ -840,6 +840,31 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
     });
+
+    test("substitutes object placeholders", () => {
+      const cases = [
+        { a: 1, b: 2, expected: 3, 1: "one", a1b2: "alpha", MixedCase: "X", dup: "A" },
+        { a: 2, b: 3, expected: 5, 1: "two", a1b2: "beta", MixedCase: "Y", dup: "B" },
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})
+            ("$a+$b=$expected [$1 $a1b2 $MixedCase $missing $dup $dup]", data => {
+              expect(data.a + data.b).toBe(data.expected);
+            });
+        `,
+      });
+
+      cases.forEach(c => {
+        const expected = `${c.a}+${c.b}=${c.expected} [` +
+          `${c[1]} ${c.a1b2} ${c.MixedCase}  ${c.dup} ${c.dup}]`;
+        expect(stderr).toContain(expected);
+      });
+    });
     test("check formatting for %#", () => {
       const numbers = [
         [1, 2, 3],

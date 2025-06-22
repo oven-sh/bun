@@ -1717,9 +1717,11 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSValue newTarget;
 
     if constexpr (ConstructCall) {
-        auto prototypeValue = napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype);
-        NapiPrototype* prototype = prototypeValue ? JSC::jsDynamicCast<NapiPrototype*>(prototypeValue) : nullptr;
+        // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
+        auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, {});
+        // Calling jsDynamicCast on a JSValue that is zero is undefined behavior. If the property doesn't exist, it returns a JSValue of zero.
+        NapiPrototype* prototype = prototypeValue ? JSC::jsDynamicCast<NapiPrototype*>(prototypeValue) : nullptr;
 
         if (!prototype) {
             JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));

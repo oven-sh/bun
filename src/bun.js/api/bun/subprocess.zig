@@ -1559,6 +1559,15 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
     }
 
+    // This matches Node.js behavior. Node calls resume() on the streams.
+    if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+        this.stdout.pipe.reader.read();
+    }
+
+    if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+        this.stderr.pipe.reader.read();
+    }
+
     if (stdin) |pipe| {
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
@@ -2435,6 +2444,13 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
+    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
+
     if (comptime !is_sync) {
         bun.debugAssert(out != .zero);
 
@@ -2490,12 +2506,6 @@ pub fn spawnMaybeSync(
     }
 
     should_close_memfd = false;
-
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
 
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener

@@ -62,8 +62,17 @@ async function build(
   const build = spawn({
     cmd:
       runtime == Runtime.bun
-        ? [bunExe(), "x", "--bun", "node-gyp", "rebuild", buildMode == BuildMode.debug ? "--debug" : "--release"]
-        : [bunExe(), "x", "node-gyp", "rebuild", "--release"], // for node.js we don't bother with debug mode
+        ? [
+            bunExe(),
+            "x",
+            "--bun",
+            "node-gyp",
+            "rebuild",
+            buildMode == BuildMode.debug ? "--debug" : "--release",
+            "-j",
+            "max",
+          ]
+        : [bunExe(), "x", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",

@@ -643,11 +643,11 @@ pub const StandaloneModuleGraph = struct {
             }
             // this should be done before embedding the content because rescle sanitizes the file
             if (inject_options.windows_icon) |icon_utf8| {
-                const tempfile_buf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(tempfile_buf);
+                const tempfile_buf = bun.WPathBufferPool.get();
+                defer bun.WPathBufferPool.put(tempfile_buf);
                 const tempfile = bun.strings.toWPathNormalized(tempfile_buf, zname);
-                const icon_buf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(icon_buf);
+                const icon_buf = bun.WPathBufferPool.get();
+                defer bun.WPathBufferPool.put(icon_buf);
                 const icon = bun.strings.toWPathNormalized(icon_buf, icon_utf8);
 
                 // Close the file descriptor temporarily to avoid sharing conflicts

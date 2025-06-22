@@ -70,7 +70,8 @@ pub noinline fn computeChunks(
         }
 
         if (css_asts[source_index] != null) {
-            const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
+            const order_temp = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
+            const order = order_temp.clone(this.allocator) catch bun.outOfMemory();
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             const hash_to_use = if (!this.options.css_chunking)
@@ -133,7 +134,8 @@ pub noinline fn computeChunks(
             // algorithm to determine the final CSS file order for the chunk.
             const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
             if (css_source_indices.len > 0) {
-                const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
+                const order_temp = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
+                const order = order_temp.clone(this.allocator) catch bun.outOfMemory();
 
                 const use_content_based_key = css_chunking or has_server_html_imports;
                 const hash_to_use = if (!use_content_based_key)

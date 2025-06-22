@@ -274,4 +274,15 @@ describe("bundler", () => {
     run: true,
     capture: ["1 /* Value */", "1 /* Value */", "1 /* Value */"],
   });
+
+  // https://github.com/oven-sh/bun/issues/20278
+  itBundled("regression/EntryPointAlsoImported#20278", {
+    files: {
+      "/style.css": `body { color: red }`,
+      "/main.ts": `import './style.css';\nconsole.log('done');`,
+    },
+    entryPoints: ["/style.css", "/main.ts"],
+    outdir: "/out",
+    run: { file: "/out/main.js" },
+  });
 });

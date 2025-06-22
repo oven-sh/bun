@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
-import path from "path";
 import { isWindows } from "harness";
+import path from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {

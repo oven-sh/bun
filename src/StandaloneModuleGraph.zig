@@ -643,10 +643,12 @@ pub const StandaloneModuleGraph = struct {
             }
             // this should be done before embedding the content because rescle sanitizes the file
             if (inject_options.windows_icon) |icon_utf8| {
-                var normalized_buf: bun.OSPathBuffer = undefined;
-                const tempfile = bun.strings.toWPathNormalized(&normalized_buf, zname);
-                var icon_buf: bun.OSPathBuffer = undefined;
-                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
+                const normalized_buf = bun.PathBufferPool.get();
+                defer Bun.PathBufferPool.put(normalized_buf);
+                const tempfile = bun.strings.toWPathNormalized(normalized_buf, zname);
+                const icon_buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(icon_buf);
+                const icon = bun.strings.toWPathNormalized(icon_buf, icon_utf8);
 
                 // Close the file descriptor temporarily to avoid sharing conflicts
                 cloned_executable_fd.close();

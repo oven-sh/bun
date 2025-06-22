@@ -183,7 +183,13 @@ function ClientRequest(input, options, cb) {
   };
 
   this.flushHeaders = function () {
-    send();
+    if (!fetching) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, {
+        once: true,
+      });
+      startFetch();
+    }
   };
 
   this.destroy = function (err?: Error) {

@@ -1,4 +1,4 @@
-import { tempDirWithFiles, isWindows } from "harness";
+import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 

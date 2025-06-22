@@ -2106,7 +2106,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         JSValue target = object;
         JSValue fn = JSValue();
         auto* function = jsDynamicCast<JSC::JSFunction*>(object);
-        if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
+        if (function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
             fn = object;
             target = jsUndefined();
         } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {

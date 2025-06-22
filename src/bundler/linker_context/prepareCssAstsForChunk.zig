@@ -159,7 +159,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                         // TODO: we are doing simple version rn, only @import
                         for (ast.rules.v.items, 0..) |*rule, ruleidx| {
                             // if ((rule.* == .import and import_records[source_index.get()].at(rule.import.import_record_idx).is_internal) or rule.* == .ignored) {} else {
-                            if (rule.* == .import or rule.* == .ignored) {} else {
+                            if (rule.* == .import or rule.* == .layer_statement or rule.* == .ignored) {} else {
                                 // It's okay to do this because AST is allocated into arena
                                 const reslice = ast.rules.v.items[ruleidx..];
                                 ast.rules.v = .{

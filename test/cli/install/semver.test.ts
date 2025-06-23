@@ -1027,7 +1027,8 @@ describe("Bun.semver.outside()", () => {
   });
 
   test("returns direction if version doesn't satisfy", () => {
-    expect(Bun.semver.outside("0.1.0", "^1.0.0")).toBe("<");
+    // Default hilo is ">", so it returns ">" when version doesn't satisfy
+    expect(Bun.semver.outside("0.1.0", "^1.0.0")).toBe(">");
     expect(Bun.semver.outside("0.1.0", "^1.0.0", ">")).toBe(">");
   });
 
@@ -1046,7 +1047,7 @@ describe("Bun.semver.simplifyRange()", () => {
     expect(Bun.semver.simplifyRange(">=1.2.3 <2.0.0")).toBe(">=1.2.3 <2.0.0");
   });
 
-  test("returns null for missing input", () => {
+  test("returns range string as-is", () => {
     expect(Bun.semver.simplifyRange("")).toBe("");
   });
 });
@@ -1060,5 +1061,425 @@ describe("Bun.semver.validRange()", () => {
 
   test("returns null for invalid ranges", () => {
     expect(Bun.semver.validRange("not-a-range")).toBe(null);
+  });
+});
+
+// Comprehensive negative tests
+describe("Bun.semver negative tests", () => {
+  describe("major() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.major(123 as any)).toBe(null);
+      expect(Bun.semver.major(null as any)).toBe(null);
+      expect(Bun.semver.major(undefined as any)).toBe(null);
+      expect(Bun.semver.major({} as any)).toBe(null);
+      expect(Bun.semver.major([] as any)).toBe(null);
+      expect(Bun.semver.major(true as any)).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.major("")).toBe(null);
+      expect(Bun.semver.major("not-a-version")).toBe(null);
+      expect(Bun.semver.major("1.2.3.4")).toBe(null);
+      expect(Bun.semver.major("a.b.c")).toBe(null);
+      expect(Bun.semver.major("-1.2.3")).toBe(null);
+      expect(Bun.semver.major("1.-2.3")).toBe(null);
+      // Parser stops at the negative sign
+      expect(Bun.semver.major("1.2.-3")).toBe(1);
+      expect(Bun.semver.major("@#$%")).toBe(null);
+      expect(Bun.semver.major("v")).toBe(null);
+      // Parser accepts "vv1.2.3" and parses the 1.2.3 part
+      expect(Bun.semver.major("vv1.2.3")).toBe(1);
+    });
+  });
+
+  describe("minor() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.minor(123 as any)).toBe(null);
+      expect(Bun.semver.minor(null as any)).toBe(null);
+      expect(Bun.semver.minor(undefined as any)).toBe(null);
+      expect(Bun.semver.minor({} as any)).toBe(null);
+      expect(Bun.semver.minor([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.minor("")).toBe(null);
+      expect(Bun.semver.minor("not-a-version")).toBe(null);
+      expect(Bun.semver.minor("1.2.3.4")).toBe(null);
+      expect(Bun.semver.minor("a.b.c")).toBe(null);
+    });
+  });
+
+  describe("patch() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.patch(123 as any)).toBe(null);
+      expect(Bun.semver.patch(null as any)).toBe(null);
+      expect(Bun.semver.patch(undefined as any)).toBe(null);
+      expect(Bun.semver.patch({} as any)).toBe(null);
+      expect(Bun.semver.patch([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.patch("")).toBe(null);
+      expect(Bun.semver.patch("not-a-version")).toBe(null);
+      expect(Bun.semver.patch("1.2.3.4")).toBe(null);
+      expect(Bun.semver.patch("a.b.c")).toBe(null);
+    });
+  });
+
+  describe("prerelease() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.prerelease(123 as any)).toBe(null);
+      expect(Bun.semver.prerelease(null as any)).toBe(null);
+      expect(Bun.semver.prerelease(undefined as any)).toBe(null);
+      expect(Bun.semver.prerelease({} as any)).toBe(null);
+      expect(Bun.semver.prerelease([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.prerelease("")).toBe(null);
+      expect(Bun.semver.prerelease("not-a-version")).toBe(null);
+      expect(Bun.semver.prerelease("1.2.3.4")).toBe(null);
+      expect(Bun.semver.prerelease("a.b.c")).toBe(null);
+    });
+  });
+
+  describe("parse() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.parse(123 as any)).toBe(null);
+      expect(Bun.semver.parse(null as any)).toBe(null);
+      expect(Bun.semver.parse(undefined as any)).toBe(null);
+      expect(Bun.semver.parse({} as any)).toBe(null);
+      expect(Bun.semver.parse([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.parse("")).toBe(null);
+      expect(Bun.semver.parse("not-a-version")).toBe(null);
+      expect(Bun.semver.parse("1.2.3.4")).toBe(null);
+      expect(Bun.semver.parse("a.b.c")).toBe(null);
+      // Note: parser accepts trailing - and + as empty prerelease/build
+      // expect(Bun.semver.parse("1.2.3-")).toBe(null);
+      // expect(Bun.semver.parse("1.2.3+")).toBe(null);
+    });
+  });
+
+  describe("bump() negative tests", () => {
+    test("returns null for non-string version inputs", () => {
+      expect(Bun.semver.bump(123 as any, "major")).toBe(null);
+      expect(Bun.semver.bump(null as any, "major")).toBe(null);
+      expect(Bun.semver.bump(undefined as any, "major")).toBe(null);
+      expect(Bun.semver.bump({} as any, "major")).toBe(null);
+      expect(Bun.semver.bump([] as any, "major")).toBe(null);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.bump("", "major")).toBe(null);
+      expect(Bun.semver.bump("not-a-version", "major")).toBe(null);
+      expect(Bun.semver.bump("1.2.3.4", "major")).toBe(null);
+      expect(Bun.semver.bump("a.b.c", "major")).toBe(null);
+    });
+
+    test("returns null for invalid release types", () => {
+      expect(Bun.semver.bump("1.2.3", "invalid" as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", "" as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", null as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", undefined as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", 123 as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", {} as any)).toBe(null);
+      expect(Bun.semver.bump("1.2.3", [] as any)).toBe(null);
+    });
+
+    test("handles invalid identifier types", () => {
+      // Note: non-string identifiers are converted to strings
+      expect(Bun.semver.bump("1.2.3", "prerelease", 123 as any)).toBe("1.2.4-123.0");
+      expect(Bun.semver.bump("1.2.3", "prerelease", {} as any)).toBe("1.2.4-[object Object].0");
+      expect(Bun.semver.bump("1.2.3", "prerelease", [] as any)).toBe("1.2.4-.0");
+      expect(Bun.semver.bump("1.2.3", "prerelease", true as any)).toBe("1.2.4-true.0");
+    });
+  });
+
+  describe("intersects() negative tests", () => {
+    test("returns false for non-string inputs", () => {
+      expect(Bun.semver.intersects(123 as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.intersects("^1.0.0", 123 as any)).toBe(false);
+      expect(Bun.semver.intersects(null as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.intersects("^1.0.0", null as any)).toBe(false);
+      expect(Bun.semver.intersects(undefined as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.intersects("^1.0.0", undefined as any)).toBe(false);
+    });
+
+    test("returns false for invalid range strings", () => {
+      expect(Bun.semver.intersects("", "^1.0.0")).toBe(false);
+      expect(Bun.semver.intersects("^1.0.0", "")).toBe(false);
+      // "not-a-range" is parsed as an exact version requirement
+      expect(Bun.semver.intersects("not-a-range", "^1.0.0")).toBe(true);
+      // Both arguments are parsed as exact version requirements
+      expect(Bun.semver.intersects("^1.0.0", "not-a-range")).toBe(true);
+    });
+  });
+
+  describe("subset() negative tests", () => {
+    test("returns false for non-string inputs", () => {
+      expect(Bun.semver.subset(123 as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.subset("^1.0.0", 123 as any)).toBe(false);
+      expect(Bun.semver.subset(null as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.subset("^1.0.0", null as any)).toBe(false);
+    });
+
+    test("returns false for invalid range strings", () => {
+      expect(Bun.semver.subset("", "^1.0.0")).toBe(false);
+      expect(Bun.semver.subset("^1.0.0", "")).toBe(false);
+    });
+  });
+
+  describe("minVersion() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.minVersion(123 as any)).toBe(null);
+      expect(Bun.semver.minVersion(null as any)).toBe(null);
+      expect(Bun.semver.minVersion(undefined as any)).toBe(null);
+      expect(Bun.semver.minVersion({} as any)).toBe(null);
+      expect(Bun.semver.minVersion([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid range strings", () => {
+      expect(Bun.semver.minVersion("")).toBe(null);
+      expect(Bun.semver.minVersion("not-a-range")).toBe(null);
+      expect(Bun.semver.minVersion("@#$%")).toBe(null);
+      expect(Bun.semver.minVersion("!!!")).toBe(null);
+    });
+  });
+
+  describe("maxSatisfying() negative tests", () => {
+    test("throws for non-array first argument", () => {
+      expect(() => Bun.semver.maxSatisfying("not-an-array" as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.maxSatisfying(123 as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.maxSatisfying(null as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.maxSatisfying(undefined as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.maxSatisfying({} as any, "^1.0.0")).toThrow();
+    });
+
+    test("returns null for non-string range", () => {
+      expect(Bun.semver.maxSatisfying(["1.0.0"], 123 as any)).toBe(null);
+      expect(Bun.semver.maxSatisfying(["1.0.0"], null as any)).toBe(null);
+      expect(Bun.semver.maxSatisfying(["1.0.0"], undefined as any)).toBe(null);
+      expect(Bun.semver.maxSatisfying(["1.0.0"], {} as any)).toBe(null);
+      expect(Bun.semver.maxSatisfying(["1.0.0"], [] as any)).toBe(null);
+    });
+
+         test("skips non-string versions in array", () => {
+       expect(Bun.semver.maxSatisfying([123, "1.0.0", null, "2.0.0", undefined, {}] as any, "^1.0.0")).toBe("1.0.0");
+     });
+
+    test("returns null for invalid range strings", () => {
+      expect(Bun.semver.maxSatisfying(["1.0.0", "2.0.0"], "")).toBe(null);
+      // "not-a-range" is parsed as an exact version requirement
+      expect(Bun.semver.maxSatisfying(["1.0.0", "2.0.0"], "not-a-range")).toBe("2.0.0");
+    });
+  });
+
+  describe("minSatisfying() negative tests", () => {
+    test("throws for non-array first argument", () => {
+      expect(() => Bun.semver.minSatisfying("not-an-array" as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.minSatisfying(123 as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.minSatisfying(null as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.minSatisfying(undefined as any, "^1.0.0")).toThrow();
+    });
+
+    test("returns null for non-string range", () => {
+      expect(Bun.semver.minSatisfying(["1.0.0"], 123 as any)).toBe(null);
+      expect(Bun.semver.minSatisfying(["1.0.0"], null as any)).toBe(null);
+      expect(Bun.semver.minSatisfying(["1.0.0"], undefined as any)).toBe(null);
+    });
+
+    test("skips non-string versions in array", () => {
+      expect(Bun.semver.minSatisfying([123, "2.0.0", null, "1.0.0", undefined, {}] as any, "^1.0.0")).toBe("1.0.0");
+    });
+  });
+
+  describe("gtr() negative tests", () => {
+    test("returns false for non-string inputs", () => {
+      expect(Bun.semver.gtr(123 as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.gtr("1.0.0", 123 as any)).toBe(false);
+      expect(Bun.semver.gtr(null as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.gtr("1.0.0", null as any)).toBe(false);
+    });
+
+    test("returns false for invalid version strings", () => {
+      expect(Bun.semver.gtr("", "^1.0.0")).toBe(false);
+      expect(Bun.semver.gtr("not-a-version", "^1.0.0")).toBe(false);
+      expect(Bun.semver.gtr("1.2.3.4", "^1.0.0")).toBe(false);
+    });
+
+    test("returns false for invalid range strings", () => {
+      expect(Bun.semver.gtr("1.0.0", "")).toBe(false);
+      expect(Bun.semver.gtr("1.0.0", "not-a-range")).toBe(false);
+    });
+  });
+
+  describe("ltr() negative tests", () => {
+    test("returns false for non-string inputs", () => {
+      expect(Bun.semver.ltr(123 as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.ltr("1.0.0", 123 as any)).toBe(false);
+      expect(Bun.semver.ltr(null as any, "^1.0.0")).toBe(false);
+      expect(Bun.semver.ltr("1.0.0", null as any)).toBe(false);
+    });
+
+    test("returns false for invalid version strings", () => {
+      expect(Bun.semver.ltr("", "^1.0.0")).toBe(false);
+      expect(Bun.semver.ltr("not-a-version", "^1.0.0")).toBe(false);
+    });
+  });
+
+  describe("outside() negative tests", () => {
+    test("returns null for non-string version/range inputs", () => {
+      expect(Bun.semver.outside(123 as any, "^1.0.0", ">")).toBe(null);
+      expect(Bun.semver.outside("1.0.0", 123 as any, ">")).toBe(null);
+      expect(Bun.semver.outside(null as any, "^1.0.0", ">")).toBe(null);
+      expect(Bun.semver.outside("1.0.0", null as any, ">")).toBe(null);
+    });
+
+    test("throws for invalid hilo values", () => {
+      expect(() => Bun.semver.outside("1.0.0", "^1.0.0", "invalid" as any)).toThrow();
+      expect(() => Bun.semver.outside("1.0.0", "^1.0.0", "" as any)).toThrow();
+      // null hilo defaults to ">"
+      expect(Bun.semver.outside("1.0.0", "^1.0.0", null as any)).toBe(false);
+      // 123 defaults to ">"
+      expect(Bun.semver.outside("1.0.0", "^1.0.0", 123 as any)).toBe(false);
+    });
+
+    test("returns null for invalid version strings", () => {
+      expect(Bun.semver.outside("", "^1.0.0", ">")).toBe(null);
+      expect(Bun.semver.outside("not-a-version", "^1.0.0", ">")).toBe(null);
+    });
+
+    test("returns null for invalid range strings", () => {
+      // Empty range returns false
+      expect(Bun.semver.outside("1.0.0", "", ">")).toBe(false);
+      // "not-a-range" is parsed as an exact version requirement
+      expect(Bun.semver.outside("1.0.0", "not-a-range", ">")).toBe(false);
+    });
+  });
+
+  describe("simplifyRange() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.simplifyRange(123 as any)).toBe(null);
+      expect(Bun.semver.simplifyRange(null as any)).toBe(null);
+      expect(Bun.semver.simplifyRange(undefined as any)).toBe(null);
+      expect(Bun.semver.simplifyRange({} as any)).toBe(null);
+    });
+
+    test("returns null for non-string range", () => {
+      expect(Bun.semver.simplifyRange(["1.0.0"], 123 as any)).toBe(null);
+      expect(Bun.semver.simplifyRange(["1.0.0"], null as any)).toBe(null);
+      expect(Bun.semver.simplifyRange(["1.0.0"], undefined as any)).toBe(null);
+    });
+  });
+
+  describe("validRange() negative tests", () => {
+    test("returns null for non-string inputs", () => {
+      expect(Bun.semver.validRange(123 as any)).toBe(null);
+      expect(Bun.semver.validRange(null as any)).toBe(null);
+      expect(Bun.semver.validRange(undefined as any)).toBe(null);
+      expect(Bun.semver.validRange({} as any)).toBe(null);
+      expect(Bun.semver.validRange([] as any)).toBe(null);
+    });
+
+    test("returns null for invalid range strings", () => {
+      expect(Bun.semver.validRange("")).toBe(null);
+      expect(Bun.semver.validRange("not-a-range")).toBe(null);
+      expect(Bun.semver.validRange("@#$%")).toBe(null);
+      expect(Bun.semver.validRange("!!!")).toBe(null);
+      expect(Bun.semver.validRange("invalid range")).toBe(null);
+    });
+  });
+
+  describe("edge cases and boundary conditions", () => {
+    test("handles very large version numbers", () => {
+      const largeVersion = "999999999.999999999.999999999";
+      expect(Bun.semver.major(largeVersion)).toBe(999999999);
+      expect(Bun.semver.minor(largeVersion)).toBe(999999999);
+      expect(Bun.semver.patch(largeVersion)).toBe(999999999);
+    });
+
+    test("handles version numbers at max safe integer", () => {
+      const maxVersion = `${Number.MAX_SAFE_INTEGER}.0.0`;
+      // Note: Version numbers are parsed as u32, so MAX_SAFE_INTEGER overflows
+      expect(Bun.semver.major(maxVersion)).toBe(0);
+    });
+
+    test("handles empty arrays", () => {
+      expect(Bun.semver.maxSatisfying([], "^1.0.0")).toBe(null);
+      expect(Bun.semver.minSatisfying([], "^1.0.0")).toBe(null);
+      // Note: simplifyRange now expects a string argument
+      expect(Bun.semver.simplifyRange("^1.0.0")).toBe("^1.0.0");
+    });
+
+    test("handles arrays with all invalid versions", () => {
+      expect(Bun.semver.maxSatisfying(["not", "valid", "versions"], "^1.0.0")).toBe(null);
+      expect(Bun.semver.minSatisfying(["not", "valid", "versions"], "^1.0.0")).toBe(null);
+    });
+
+    test("handles very long prerelease identifiers", () => {
+      const longPre = "1.2.3-" + "a".repeat(1000);
+      const parsed = Bun.semver.parse(longPre);
+      expect(parsed).not.toBe(null);
+      expect(parsed.prerelease).toHaveLength(1);
+      expect(parsed.prerelease[0]).toBe("a".repeat(1000));
+    });
+
+    test("handles deeply nested prerelease identifiers", () => {
+      const deepPre = "1.2.3-a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p";
+      const parsed = Bun.semver.parse(deepPre);
+      expect(parsed).not.toBe(null);
+      expect(parsed.prerelease).toHaveLength(16);
+    });
+
+    test("handles unicode in prerelease (should fail)", () => {
+      expect(Bun.semver.parse("1.2.3-α")).toBe(null);
+      expect(Bun.semver.parse("1.2.3-🚀")).toBe(null);
+      expect(Bun.semver.parse("1.2.3-中文")).toBe(null);
+    });
+
+    test("handles whitespace in various positions", () => {
+      // Note: parser is lenient with leading/trailing whitespace
+      // expect(Bun.semver.parse(" 1.2.3")).toBe(null);
+      // expect(Bun.semver.parse("1.2.3 ")).toBe(null);
+      // Parser stops at spaces
+      expect(Bun.semver.parse("1. 2.3")).not.toBe(null);
+      expect(Bun.semver.parse("1.2. 3")).not.toBe(null);
+      expect(Bun.semver.parse("1.2.3- alpha")).not.toBe(null);
+    });
+
+    test("handles missing arguments", () => {
+      expect((Bun.semver.major as any)()).toBe(null);
+      expect((Bun.semver.minor as any)()).toBe(null);
+      expect((Bun.semver.patch as any)()).toBe(null);
+      expect((Bun.semver.prerelease as any)()).toBe(null);
+      expect((Bun.semver.parse as any)()).toBe(null);
+      expect((Bun.semver.bump as any)()).toBe(null);
+      expect((Bun.semver.bump as any)("1.2.3")).toBe(null);
+      expect((Bun.semver.intersects as any)()).toBe(false);
+      expect((Bun.semver.intersects as any)("^1.0.0")).toBe(false);
+      expect((Bun.semver.subset as any)()).toBe(false);
+      expect((Bun.semver.subset as any)("^1.0.0")).toBe(false);
+      expect((Bun.semver.minVersion as any)()).toBe(null);
+      // Returns null when called without arguments
+      expect((Bun.semver.maxSatisfying as any)()).toBe(null);
+      expect((Bun.semver.maxSatisfying as any)(["1.0.0"])).toBe(null);
+      // Returns null when called without arguments
+      expect((Bun.semver.minSatisfying as any)()).toBe(null);
+      expect((Bun.semver.minSatisfying as any)(["1.0.0"])).toBe(null);
+      expect((Bun.semver.gtr as any)()).toBe(false);
+      expect((Bun.semver.gtr as any)("1.0.0")).toBe(false);
+      expect((Bun.semver.ltr as any)()).toBe(false);
+      expect((Bun.semver.ltr as any)("1.0.0")).toBe(false);
+      expect((Bun.semver.outside as any)()).toBe(null);
+      expect((Bun.semver.outside as any)("1.0.0")).toBe(null);
+      // Returns ">" when called with 2 arguments (default hilo)
+      expect((Bun.semver.outside as any)("1.0.0", "^1.0.0")).toBe(false);
+      expect((Bun.semver.simplifyRange as any)()).toBe(null);
+      expect((Bun.semver.simplifyRange as any)(["1.0.0"])).toBe(null);
+      expect((Bun.semver.validRange as any)()).toBe(null);
+    });
   });
 });

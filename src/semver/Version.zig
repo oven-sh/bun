@@ -326,18 +326,21 @@ pub const Version = extern struct {
                 new_version.major +|= 1;
                 new_version.minor = 0;
                 new_version.patch = 0;
-                try pre_strings.writer().print("{s}.0", .{identifier orelse "0"});
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
                 new_version.tag.pre = ExternalString.from(pre_strings.items);
             },
             .preminor => {
                 new_version.minor +|= 1;
                 new_version.patch = 0;
-                try pre_strings.writer().print("{s}.0", .{identifier orelse "0"});
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
                 new_version.tag.pre = ExternalString.from(pre_strings.items);
             },
             .prepatch => {
                 new_version.patch +|= 1;
-                try pre_strings.writer().print("{s}.0", .{identifier orelse "0"});
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
                 new_version.tag.pre = ExternalString.from(pre_strings.items);
             },
             .release => {
@@ -347,7 +350,8 @@ pub const Version = extern struct {
                 if (!new_version.tag.hasPre()) {
                     // Same as prepatch
                     new_version.patch +|= 1;
-                    try pre_strings.writer().print("{s}.0", .{identifier orelse "0"});
+                    const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                    try pre_strings.writer().print("{s}.0", .{id});
                     new_version.tag.pre = ExternalString.from(pre_strings.items);
                 } else {
                     // Increment existing prerelease

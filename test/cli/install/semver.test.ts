@@ -1178,7 +1178,7 @@ describe("Bun.semver negative tests", () => {
       // Note: non-string identifiers are converted to strings
       expect(Bun.semver.bump("1.2.3", "prerelease", 123 as any)).toBe("1.2.4-123.0");
       expect(Bun.semver.bump("1.2.3", "prerelease", {} as any)).toBe("1.2.4-[object Object].0");
-      expect(Bun.semver.bump("1.2.3", "prerelease", [] as any)).toBe("1.2.4-.0");
+      expect(Bun.semver.bump("1.2.3", "prerelease", [] as any)).toBe("1.2.4-0.0");
       expect(Bun.semver.bump("1.2.3", "prerelease", true as any)).toBe("1.2.4-true.0");
     });
   });

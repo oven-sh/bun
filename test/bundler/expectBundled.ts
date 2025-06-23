@@ -832,7 +832,7 @@ function expectBundled(
         if (value === undefined) {
           delete bundlerEnv[key];
         } else if (typeof value === "string") {
-          bundlerEnv[key] = value.replaceAll("{{root}}", root.replaceAll("\\", "\\\\"));
+          bundlerEnv[key] = value.replaceAll("{{root}}", root);
         }
       }
 

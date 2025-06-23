@@ -184,7 +184,7 @@ function ClientRequest(input, options, cb) {
 
   this.flushHeaders = function () {
     if (!fetching) {
-      this[kAbortController] = new AbortController();
+      this[kAbortController] ??= new AbortController();
       this[kAbortController].signal.addEventListener("abort", onAbort, {
         once: true,
       });
@@ -549,7 +549,7 @@ function ClientRequest(input, options, cb) {
 
   const send = () => {
     this.finished = true;
-    this[kAbortController] = new AbortController();
+    this[kAbortController] ??= new AbortController();
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];

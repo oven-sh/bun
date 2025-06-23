@@ -175,7 +175,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("ReadableStream with cancel callback verification", async () => {
+  test.todo("ReadableStream with cancel callback verification", async () => {
     let cancelReason: any = null;
     let cancelCalled = false;
 

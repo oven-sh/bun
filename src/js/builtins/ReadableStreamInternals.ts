@@ -1210,6 +1210,7 @@ export function onCloseDirectStream(reason) {
 
 export function onFlushDirectStream() {
   var stream = this.$controlledReadableStream;
+  if (!stream) return;
   var reader = $getByIdDirectPrivate(stream, "reader");
   if (!reader || !$isReadableStreamDefaultReader(reader)) {
     return;

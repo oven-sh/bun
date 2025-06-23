@@ -355,15 +355,15 @@ pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConf
     this.wrapper.?.start();
 }
 
-pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8, is_end: bool) i32 {
-    log("encodeAndWrite (len: {} - is_end: {})", .{ data.len, is_end });
+pub fn encodeAndWrite(this: *UpgradedDuplex, data: []const u8) i32 {
+    log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
         return @as(i32, @intCast(wrapper.writeData(data) catch 0));
     }
     return 0;
 }
 
-pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8, _: bool) i32 {
+pub fn rawWrite(this: *UpgradedDuplex, encoded_data: []const u8) i32 {
     this.internalWrite(encoded_data);
     return @intCast(encoded_data.len);
 }

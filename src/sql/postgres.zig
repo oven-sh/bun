@@ -1543,7 +1543,7 @@ pub const PostgresSQLConnection = struct {
     pub fn flushData(this: *PostgresSQLConnection) void {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return;
-        const wrote = this.socket.write(chunk, false);
+        const wrote = this.socket.write(chunk);
         if (wrote > 0) {
             SocketMonitor.write(chunk[0..@intCast(wrote)]);
             this.write_buffer.consume(@intCast(wrote));
@@ -1623,7 +1623,7 @@ pub const PostgresSQLConnection = struct {
             0x04, 0xD2, 0x16, 0x2F, // SSL request code
         };
 
-        const written = socket.write(ssl_request[offset..], false);
+        const written = socket.write(ssl_request[offset..]);
         if (written > 0) {
             this.tls_status = .{
                 .message_sent = offset + @as(u8, @intCast(written)),

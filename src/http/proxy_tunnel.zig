@@ -193,8 +193,8 @@ pub const ProxyTunnel = struct {
     pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         if (this.proxy_tunnel) |proxy| {
             const written = switch (proxy.socket) {
-                .ssl => |socket| socket.write(encoded_data, false),
-                .tcp => |socket| socket.write(encoded_data, false),
+                .ssl => |socket| socket.write(encoded_data),
+                .tcp => |socket| socket.write(encoded_data),
                 .none => 0,
             };
             const pending = encoded_data[@intCast(written)..];
@@ -291,7 +291,7 @@ pub const ProxyTunnel = struct {
         if (encoded_data.len == 0) {
             return;
         }
-        const written = socket.write(encoded_data, true);
+        const written = socket.write(encoded_data);
         if (written == encoded_data.len) {
             this.write_buffer.reset();
         } else {

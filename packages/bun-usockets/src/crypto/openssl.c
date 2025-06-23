@@ -52,10 +52,6 @@ struct loop_ssl_data {
   unsigned int ssl_read_input_offset;
 
   struct us_socket_t *ssl_socket;
-
-  int last_write_was_msg_more;
-  int msg_more;
-
   BIO *shared_rbio;
   BIO *shared_wbio;
   BIO_METHOD *shared_biom;
@@ -139,10 +135,7 @@ int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)BIO_get_data(bio);
 
-  loop_ssl_data->last_write_was_msg_more =
-      loop_ssl_data->msg_more || length == 16413;
-  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length,
-                                loop_ssl_data->last_write_was_msg_more);
+  int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -192,7 +185,6 @@ struct loop_ssl_data * us_internal_set_loop_ssl_data(struct us_internal_ssl_sock
   loop_ssl_data->ssl_read_input_length = 0;
   loop_ssl_data->ssl_read_input_offset = 0;
   loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = 0;
   return loop_ssl_data;
 }
 
@@ -665,8 +657,6 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
         us_calloc(1, sizeof(struct loop_ssl_data));
     loop_ssl_data->ssl_read_input_length = 0;
     loop_ssl_data->ssl_read_input_offset = 0;
-    loop_ssl_data->last_write_was_msg_more = 0;
-    loop_ssl_data->msg_more = 0;
 
     loop_ssl_data->ssl_read_output =
         us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
@@ -1741,17 +1731,16 @@ us_internal_ssl_socket_get_native_handle(struct us_internal_ssl_socket_t *s) {
 }
 
 int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
-                                     const char *data, int length,
-                                     int msg_more) {
+                                     const char *data, int length) {
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return 0;
   }
-  return us_socket_write(0, &s->s, data, length, msg_more);
+  return us_socket_write(0, &s->s, data, length);
 }
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
-                                 const char *data, int length, int msg_more) {
+                                 const char *data, int length) {
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
     return 0;
@@ -1772,14 +1761,8 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_read_input_length = 0;
 
   loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = msg_more;
-  loop_ssl_data->last_write_was_msg_more = 0;
 
   int written = SSL_write(s->ssl, data, length);
-  loop_ssl_data->msg_more = 0;
-  if (loop_ssl_data->last_write_was_msg_more && !msg_more) {
-    us_socket_flush(0, &s->s);
-  }
 
   if (written > 0) {
     return written;
@@ -1836,7 +1819,6 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
     // on_data and checked in the BIO
     loop_ssl_data->ssl_socket = &s->s;
 
-    loop_ssl_data->msg_more = 0;
     // sets SSL_SENT_SHUTDOWN and waits for the other side to do the same
     int ret = SSL_shutdown(s->ssl);
 

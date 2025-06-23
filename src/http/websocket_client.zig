@@ -598,7 +598,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
                 // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-                const wrote = socket.write(bytes, false);
+                const wrote = socket.write(bytes);
                 const expected = @as(c_int, @intCast(bytes.len));
                 if (wrote == expected) {
                     return true;
@@ -650,7 +650,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed()) {
                 return false;
             }
-            const wrote = this.tcp.write(out_buf, false);
+            const wrote = this.tcp.write(out_buf);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return false;

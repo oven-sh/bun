@@ -4896,15 +4896,7 @@ declare module "bun" {
      */
     function intersects(range1: StringLike, range2: StringLike): boolean;
     
-    /**
-     * Returns true if the sub range is entirely contained within the super range.
-     */
-    function subset(sub: StringLike, dom: StringLike): boolean;
-    
-    /**
-     * Returns the minimum version that can satisfy the given range, or null if none.
-     */
-    function minVersion(range: StringLike): string | null;
+
     
     /**
      * Returns the highest version in the list that satisfies the range, or null if none of them do.
@@ -4916,21 +4908,7 @@ declare module "bun" {
      */
     function minSatisfying(versions: StringLike[], range: StringLike): string | null;
     
-    /**
-     * Returns true if version is greater than all the versions possible in the range.
-     */
-    function gtr(version: StringLike, range: StringLike): boolean;
-    
-    /**
-     * Returns true if version is less than all the versions possible in the range.
-     */
-    function ltr(version: StringLike, range: StringLike): boolean;
-    
-    /**
-     * Determines if version is outside the bounds of the range in either the high or low direction.
-     * The hilo argument must be either the string '>' or '<'. (This is the function called by gtr and ltr.)
-     */
-    function outside(version: StringLike, range: StringLike, hilo?: "<" | ">"): string | false;
+
     
     /**
      * Returns a simplified range expression that matches the same items in the versions list as the input range.

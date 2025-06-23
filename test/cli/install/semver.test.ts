@@ -976,31 +976,7 @@ describe("Bun.semver.intersects()", () => {
   });
 });
 
-describe("Bun.semver.subset()", () => {
-  test("returns true for any subset check", () => {
-    // Note: Simplified implementation always returns true
-    expect(Bun.semver.subset("^1.2.0", "^1.0.0")).toBe(true);
-    expect(Bun.semver.subset("~1.2.3", "^1.2.0")).toBe(true);
-    expect(Bun.semver.subset("1.2.3", "^1.0.0")).toBe(true);
-  });
-});
 
-describe("Bun.semver.minVersion()", () => {
-  test("returns exact version for exact ranges", () => {
-    expect(Bun.semver.minVersion("1.2.3")).toBe("1.2.3");
-    expect(Bun.semver.minVersion("=1.2.3")).toBe("1.2.3");
-  });
-
-  test("returns 0.0.0 for other ranges", () => {
-    expect(Bun.semver.minVersion("^1.0.0")).toBe("0.0.0");
-    expect(Bun.semver.minVersion("~1.2.0")).toBe("0.0.0");
-    expect(Bun.semver.minVersion(">=1.0.0")).toBe("0.0.0");
-  });
-
-  test("returns null for invalid ranges", () => {
-    expect(Bun.semver.minVersion("not-a-range")).toBe(null);
-  });
-});
 
 describe("Bun.semver.maxSatisfying()", () => {
   test("finds the highest satisfying version", () => {
@@ -1038,48 +1014,7 @@ describe("Bun.semver.minSatisfying()", () => {
   });
 });
 
-describe("Bun.semver.gtr()", () => {
-  test("always returns false in simplified implementation", () => {
-    expect(Bun.semver.gtr("2.0.0", "^1.0.0")).toBe(false);
-    expect(Bun.semver.gtr("1.0.0", "<1.0.0")).toBe(false);
-  });
 
-  test("returns false for invalid versions", () => {
-    expect(Bun.semver.gtr("invalid", "^1.0.0")).toBe(false);
-  });
-});
-
-describe("Bun.semver.ltr()", () => {
-  test("always returns false in simplified implementation", () => {
-    expect(Bun.semver.ltr("0.1.0", "^1.0.0")).toBe(false);
-    expect(Bun.semver.ltr("2.0.0", ">2.0.0")).toBe(false);
-  });
-
-  test("returns false for invalid versions", () => {
-    expect(Bun.semver.ltr("invalid", "^1.0.0")).toBe(false);
-  });
-});
-
-describe("Bun.semver.outside()", () => {
-  test("returns false if version satisfies range", () => {
-    expect(Bun.semver.outside("1.2.0", "^1.0.0")).toBe(false);
-    expect(Bun.semver.outside("1.2.0", "^1.0.0", "<")).toBe(false);
-  });
-
-  test("returns direction if version doesn't satisfy", () => {
-    // Default hilo is ">", so it returns ">" when version doesn't satisfy
-    expect(Bun.semver.outside("0.1.0", "^1.0.0")).toBe(">");
-    expect(Bun.semver.outside("0.1.0", "^1.0.0", ">")).toBe(">");
-  });
-
-  test("throws for invalid hilo argument", () => {
-    expect(() => Bun.semver.outside("1.0.0", "^1.0.0", "invalid" as any)).toThrow("Third argument must be '<' or '>'");
-  });
-
-  test("returns null for invalid version", () => {
-    expect(Bun.semver.outside("invalid", "^1.0.0")).toBe(null);
-  });
-});
 
 describe("Bun.semver.simplifyRange()", () => {
   test("simplifies OR'd exact versions to tilde range", () => {
@@ -1270,36 +1205,7 @@ describe("Bun.semver negative tests", () => {
     });
   });
 
-  describe("subset() negative tests", () => {
-    test("returns false for non-string inputs", () => {
-      expect(Bun.semver.subset(123 as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.subset("^1.0.0", 123 as any)).toBe(false);
-      expect(Bun.semver.subset(null as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.subset("^1.0.0", null as any)).toBe(false);
-    });
 
-    test("returns false for invalid range strings", () => {
-      expect(Bun.semver.subset("", "^1.0.0")).toBe(false);
-      expect(Bun.semver.subset("^1.0.0", "")).toBe(false);
-    });
-  });
-
-  describe("minVersion() negative tests", () => {
-    test("returns null for non-string inputs", () => {
-      expect(Bun.semver.minVersion(123 as any)).toBe(null);
-      expect(Bun.semver.minVersion(null as any)).toBe(null);
-      expect(Bun.semver.minVersion(undefined as any)).toBe(null);
-      expect(Bun.semver.minVersion({} as any)).toBe(null);
-      expect(Bun.semver.minVersion([] as any)).toBe(null);
-    });
-
-    test("returns null for invalid range strings", () => {
-      expect(Bun.semver.minVersion("")).toBe(null);
-      expect(Bun.semver.minVersion("not-a-range")).toBe(null);
-      expect(Bun.semver.minVersion("@#$%")).toBe(null);
-      expect(Bun.semver.minVersion("!!!")).toBe(null);
-    });
-  });
 
   describe("maxSatisfying() negative tests", () => {
     test("throws for non-array first argument", () => {
@@ -1348,69 +1254,7 @@ describe("Bun.semver negative tests", () => {
     });
   });
 
-  describe("gtr() negative tests", () => {
-    test("returns false for non-string inputs", () => {
-      expect(Bun.semver.gtr(123 as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.gtr("1.0.0", 123 as any)).toBe(false);
-      expect(Bun.semver.gtr(null as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.gtr("1.0.0", null as any)).toBe(false);
-    });
 
-    test("returns false for invalid version strings", () => {
-      expect(Bun.semver.gtr("", "^1.0.0")).toBe(false);
-      expect(Bun.semver.gtr("not-a-version", "^1.0.0")).toBe(false);
-      expect(Bun.semver.gtr("1.2.3.4", "^1.0.0")).toBe(false);
-    });
-
-    test("returns false for invalid range strings", () => {
-      expect(Bun.semver.gtr("1.0.0", "")).toBe(false);
-      expect(Bun.semver.gtr("1.0.0", "not-a-range")).toBe(false);
-    });
-  });
-
-  describe("ltr() negative tests", () => {
-    test("returns false for non-string inputs", () => {
-      expect(Bun.semver.ltr(123 as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.ltr("1.0.0", 123 as any)).toBe(false);
-      expect(Bun.semver.ltr(null as any, "^1.0.0")).toBe(false);
-      expect(Bun.semver.ltr("1.0.0", null as any)).toBe(false);
-    });
-
-    test("returns false for invalid version strings", () => {
-      expect(Bun.semver.ltr("", "^1.0.0")).toBe(false);
-      expect(Bun.semver.ltr("not-a-version", "^1.0.0")).toBe(false);
-    });
-  });
-
-  describe("outside() negative tests", () => {
-    test("returns null for non-string version/range inputs", () => {
-      expect(Bun.semver.outside(123 as any, "^1.0.0", ">")).toBe(null);
-      expect(Bun.semver.outside("1.0.0", 123 as any, ">")).toBe(null);
-      expect(Bun.semver.outside(null as any, "^1.0.0", ">")).toBe(null);
-      expect(Bun.semver.outside("1.0.0", null as any, ">")).toBe(null);
-    });
-
-    test("throws for invalid hilo values", () => {
-      expect(() => Bun.semver.outside("1.0.0", "^1.0.0", "invalid" as any)).toThrow();
-      expect(() => Bun.semver.outside("1.0.0", "^1.0.0", "" as any)).toThrow();
-      // null hilo defaults to ">"
-      expect(Bun.semver.outside("1.0.0", "^1.0.0", null as any)).toBe(false);
-      // 123 defaults to ">"
-      expect(Bun.semver.outside("1.0.0", "^1.0.0", 123 as any)).toBe(false);
-    });
-
-    test("returns null for invalid version strings", () => {
-      expect(Bun.semver.outside("", "^1.0.0", ">")).toBe(null);
-      expect(Bun.semver.outside("not-a-version", "^1.0.0", ">")).toBe(null);
-    });
-
-    test("returns null for invalid range strings", () => {
-      // Empty range returns false
-      expect(Bun.semver.outside("1.0.0", "", ">")).toBe(false);
-      // "not-a-range" is parsed as an exact version requirement
-      expect(Bun.semver.outside("1.0.0", "not-a-range", ">")).toBe(false);
-    });
-  });
 
   describe("simplifyRange() negative tests", () => {
     test("throws for non-array first argument", () => {
@@ -1520,23 +1364,12 @@ describe("Bun.semver negative tests", () => {
       expect((Bun.semver.bump as any)("1.2.3")).toBe(null);
       expect((Bun.semver.intersects as any)()).toBe(false);
       expect((Bun.semver.intersects as any)("^1.0.0")).toBe(false);
-      expect((Bun.semver.subset as any)()).toBe(false);
-      expect((Bun.semver.subset as any)("^1.0.0")).toBe(false);
-      expect((Bun.semver.minVersion as any)()).toBe(null);
       // Returns null when called without arguments
       expect((Bun.semver.maxSatisfying as any)()).toBe(null);
       expect((Bun.semver.maxSatisfying as any)(["1.0.0"])).toBe(null);
       // Returns null when called without arguments
       expect((Bun.semver.minSatisfying as any)()).toBe(null);
       expect((Bun.semver.minSatisfying as any)(["1.0.0"])).toBe(null);
-      expect((Bun.semver.gtr as any)()).toBe(false);
-      expect((Bun.semver.gtr as any)("1.0.0")).toBe(false);
-      expect((Bun.semver.ltr as any)()).toBe(false);
-      expect((Bun.semver.ltr as any)("1.0.0")).toBe(false);
-      expect((Bun.semver.outside as any)()).toBe(null);
-      expect((Bun.semver.outside as any)("1.0.0")).toBe(null);
-      // Returns ">" when called with 2 arguments (default hilo)
-      expect((Bun.semver.outside as any)("1.0.0", "^1.0.0")).toBe(false);
       expect((Bun.semver.simplifyRange as any)()).toBe(null);
       expect((Bun.semver.simplifyRange as any)(["1.0.0"])).toBe(null);
       expect((Bun.semver.validRange as any)()).toBe(null);

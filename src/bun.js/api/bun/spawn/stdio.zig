@@ -417,22 +417,22 @@ pub const Stdio = union(enum) {
                 out_stdio.* = .{ .readable_stream = stream };
                 return;
             }
+        }
 
-            if (value.asArrayBuffer(globalThis)) |array_buffer| {
-                // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-                if (array_buffer.byteSlice().len == 0) {
-                    out_stdio.* = .{ .ignore = {} };
-                    return;
-                }
-
-                out_stdio.* = .{
-                    .array_buffer = JSC.ArrayBuffer.Strong{
-                        .array_buffer = array_buffer,
-                        .held = .create(array_buffer.value, globalThis),
-                    },
-                };
+        if (value.asArrayBuffer(globalThis)) |array_buffer| {
+            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+            if (array_buffer.byteSlice().len == 0) {
+                out_stdio.* = .{ .ignore = {} };
                 return;
             }
+
+            out_stdio.* = .{
+                .array_buffer = JSC.ArrayBuffer.Strong{
+                    .array_buffer = array_buffer,
+                    .held = .create(array_buffer.value, globalThis),
+                },
+            };
+            return;
         }
 
         return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});

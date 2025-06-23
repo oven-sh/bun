@@ -1,3 +1,14 @@
+/**
+ * Edge case tests for spawn with ReadableStream stdin.
+ *
+ * **IMPORTANT**: Many of these tests use `await` in ReadableStream constructors
+ * (e.g., `await Bun.sleep(0)`, `await 42`) to prevent Bun from optimizing
+ * the ReadableStream into a Blob. When a ReadableStream is synchronous and
+ * contains only string/buffer data, Bun may normalize it to a Blob for
+ * performance reasons. The `await` ensures the stream remains truly streaming
+ * and tests the actual ReadableStream code paths in spawn.
+ */
+
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -412,7 +423,9 @@ describe("spawn stdin ReadableStream edge cases", () => {
 
   test("ReadableStream with alternating data types", async () => {
     const stream = new ReadableStream({
-      start(controller) {
+      async pull(controller) {
+        await Bun.sleep(0);
+
         // Alternate between strings and Uint8Arrays
         controller.enqueue("string1 ");
         controller.enqueue(new TextEncoder().encode("binary1 "));
@@ -422,7 +435,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",

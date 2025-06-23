@@ -312,8 +312,15 @@ pub const Stdio = union(enum) {
                     return globalThis.throwInvalidArguments("ReadableStream cannot be used in sync mode", .{});
                 }
 
-                if (i > 0) {
-                    return globalThis.throwInvalidArguments("ReadableStream cannot be used for stdout/stderr", .{});
+                switch (i) {
+                    0 => {},
+                    1 => {
+                        return globalThis.throwInvalidArguments("ReadableStream cannot be used for stdout yet. For now, do .stdout", .{});
+                    },
+                    2 => {
+                        return globalThis.throwInvalidArguments("ReadableStream cannot be used for stderr yet. For now, do .stderr", .{});
+                    },
+                    else => unreachable,
                 }
 
                 const stream_value = body.toReadableStream(globalThis);
@@ -400,23 +407,30 @@ pub const Stdio = union(enum) {
             return extractBodyValue(out_stdio, globalThis, i, req.getBodyValue(), is_sync);
         } else if (value.as(JSC.WebCore.Response)) |res| {
             return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
-        } else if (i == 0) {
-            if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
-                var stream = stream_;
-                if (stream.toAnyBlob(globalThis)) |blob| {
-                    return out_stdio.extractBlob(globalThis, blob, i);
-                }
+        }
 
-                if (is_sync) {
-                    return globalThis.throwInvalidArguments("'stdin' ReadableStream cannot be used in sync mode", .{});
-                }
-
-                if (stream.isDisturbed(globalThis)) {
-                    return globalThis.ERR(.INVALID_STATE, "'stdin' ReadableStream has already been used", .{}).throw();
-                }
-                out_stdio.* = .{ .readable_stream = stream };
-                return;
+        if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
+            var stream = stream_;
+            if (stream.toAnyBlob(globalThis)) |blob| {
+                return out_stdio.extractBlob(globalThis, blob, i);
             }
+
+            const name: []const u8 = switch (i) {
+                0 => "stdin",
+                1 => "stdout",
+                2 => "stderr",
+                else => unreachable,
+            };
+
+            if (is_sync) {
+                return globalThis.throwInvalidArguments("'{s}' ReadableStream cannot be used in sync mode", .{name});
+            }
+
+            if (stream.isDisturbed(globalThis)) {
+                return globalThis.ERR(.INVALID_STATE, "'{s}' ReadableStream has already been used", .{name}).throw();
+            }
+            out_stdio.* = .{ .readable_stream = stream };
+            return;
         }
 
         if (value.asArrayBuffer(globalThis)) |array_buffer| {

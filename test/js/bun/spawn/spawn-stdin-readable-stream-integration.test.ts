@@ -25,14 +25,14 @@ describe("spawn stdin ReadableStream integration", () => {
   });
 
   test("piping HTTP response to process", async () => {
-    // Simulate an HTTP response stream
-    const responseStream = new ReadableStream({
-      async pull(controller) {
-        await Bun.sleep(1);
-        controller.enqueue("Line 1\n");
-        controller.enqueue("Line 2\n");
-        controller.enqueue("Line 3\n");
-        controller.close();
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(async function* () {
+          yield "Line 1\n";
+          yield "Line 2\n";
+          yield "Line 3\n";
+        });
       },
     });
 
@@ -41,21 +41,21 @@ describe("spawn stdin ReadableStream integration", () => {
       cmd: [
         bunExe(),
         "-e",
-        `let count = 0;
-         const readline = require('readline');
-         const rl = readline.createInterface({
-           input: process.stdin,
-           output: process.stdout,
-           terminal: false
-         });
-         rl.on('line', () => count++);
-         rl.on('close', () => console.log(count));`,
+        /*js*/ `
+        let count = 0;
+           const readline = require('readline');
+           const rl = readline.createInterface({
+             input: process.stdin,
+             output: process.stdout,
+             terminal: false
+           });
+           rl.on('line', () => count++);
+           rl.on('close', () => console.log(count));`,
       ],
-      stdin: responseStream,
+      stdin: await fetch(server.url),
       stdout: "pipe",
       env: bunEnv,
     });
-
     const output = await new Response(proc.stdout).text();
     expect(parseInt(output.trim())).toBe(3);
   });

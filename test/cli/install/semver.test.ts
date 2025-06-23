@@ -903,36 +903,76 @@ describe("Bun.semver.bump()", () => {
 });
 
 describe("Bun.semver.intersects()", () => {
-  test("simple intersecting ranges", () => {
-    expect(Bun.semver.intersects("^1.0.0", "1.2.0")).toBe(true);
+  test("returns true for overlapping ranges", () => {
     expect(Bun.semver.intersects("^1.0.0", "^1.2.0")).toBe(true);
-    expect(Bun.semver.intersects("~1.2.0", "1.2.5")).toBe(true);
-    expect(Bun.semver.intersects(">=1.0.0", "<2.0.0")).toBe(true);
+    expect(Bun.semver.intersects(">=1.0.0", ">=1.5.0")).toBe(true);
+    expect(Bun.semver.intersects("1.x", "1.2.x")).toBe(true);
+    expect(Bun.semver.intersects("~1.2.3", "^1.0.0")).toBe(true);
   });
 
-  test("non-intersecting ranges", () => {
-    expect(Bun.semver.intersects("^1.0.0", "^2.0.0")).toBe(true); // Note: simplified implementation returns true
-    expect(Bun.semver.intersects("<1.0.0", ">=2.0.0")).toBe(true); // Note: simplified implementation returns true
+  test("returns false for non-overlapping ranges", () => {
+    expect(Bun.semver.intersects("^1.0.0", "^2.0.0")).toBe(false);
+    expect(Bun.semver.intersects("<1.0.0", ">=2.0.0")).toBe(false);
+    expect(Bun.semver.intersects("1.0.0", "2.0.0")).toBe(false);
+    expect(Bun.semver.intersects("~1.2.3", "~1.3.0")).toBe(false);
   });
 
-  test("exact versions", () => {
+  test("returns true for exact version matches", () => {
     expect(Bun.semver.intersects("1.2.3", "1.2.3")).toBe(true);
+    expect(Bun.semver.intersects("=1.2.3", "1.2.3")).toBe(true);
+  });
+
+  test("returns false for exact version mismatches", () => {
     expect(Bun.semver.intersects("1.2.3", "1.2.4")).toBe(false);
+    expect(Bun.semver.intersects("=1.2.3", "=1.2.4")).toBe(false);
   });
 
-  test("complex ranges", () => {
-    expect(Bun.semver.intersects("^1.0.0 || ^2.0.0", "1.5.0")).toBe(true);
-    expect(Bun.semver.intersects(">=1.0.0 <2.0.0 || >=3.0.0 <4.0.0", "1.5.0 || 3.5.0")).toBe(true);
+  test("handles complex ranges", () => {
+    expect(Bun.semver.intersects(">=1.2.3 <2.0.0", "^1.5.0")).toBe(true);
+    expect(Bun.semver.intersects(">=1.0.0 <1.5.0", ">=1.4.0 <2.0.0")).toBe(true);
+    expect(Bun.semver.intersects(">=1.0.0 <1.5.0", ">=1.5.0 <2.0.0")).toBe(false);
   });
 
-  test("wildcard ranges", () => {
+  test("handles OR'd ranges", () => {
+    expect(Bun.semver.intersects("^1.0.0 || ^2.0.0", "^1.5.0")).toBe(true);
+    expect(Bun.semver.intersects("^1.0.0 || ^2.0.0", "^2.5.0")).toBe(true);
+    expect(Bun.semver.intersects("^1.0.0 || ^2.0.0", "^3.0.0")).toBe(false);
+  });
+
+  test("handles wildcard ranges", () => {
     expect(Bun.semver.intersects("*", "1.2.3")).toBe(true);
-    expect(Bun.semver.intersects("1.x", "1.2.3")).toBe(true);
+    expect(Bun.semver.intersects("1.*", "1.2.3")).toBe(true);
+    expect(Bun.semver.intersects("1.2.*", "1.2.3")).toBe(true);
+    expect(Bun.semver.intersects("2.*", "1.2.3")).toBe(false);
   });
 
-  test("returns true for any range", () => {
-    // Note: Our simplified implementation always returns true for intersections
-    expect(Bun.semver.intersects("*", "1.0.0")).toBe(true);
+  test("handles hyphen ranges", () => {
+    expect(Bun.semver.intersects("1.0.0 - 2.0.0", "1.5.0")).toBe(true);
+    expect(Bun.semver.intersects("1.0.0 - 2.0.0", "0.5.0")).toBe(false);
+    expect(Bun.semver.intersects("1.0.0 - 2.0.0", "2.5.0")).toBe(false);
+  });
+
+  test("handles empty ranges", () => {
+    expect(Bun.semver.intersects("", "")).toBe(false);
+    expect(Bun.semver.intersects("", "1.0.0")).toBe(false);
+    expect(Bun.semver.intersects("1.0.0", "")).toBe(false);
+  });
+
+  test("handles boundary cases", () => {
+    expect(Bun.semver.intersects(">1.0.0", ">=1.0.0")).toBe(true);
+    expect(Bun.semver.intersects(">1.0.0", "1.0.0")).toBe(false);
+    expect(Bun.semver.intersects(">=1.0.0", "1.0.0")).toBe(true);
+    expect(Bun.semver.intersects("<2.0.0", "<=2.0.0")).toBe(true);
+    expect(Bun.semver.intersects("<2.0.0", "2.0.0")).toBe(false);
+    expect(Bun.semver.intersects("<=2.0.0", "2.0.0")).toBe(true);
+  });
+
+  // Existing simplified test
+  test("returns true for most cases (simplified)", () => {
+    // Note: "not-a-range" is parsed as an exact version requirement
+    expect(Bun.semver.intersects("^1.0.0", "not-a-range")).toBe(true);
+    // Both arguments are parsed as exact version requirements
+    expect(Bun.semver.intersects("not-a-range", "^1.0.0")).toBe(true);
   });
 });
 

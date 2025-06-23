@@ -247,26 +247,126 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
 }
 
 pub fn intersects(range1: Range, range2: Range, range1_buf: string, range2_buf: string) bool {
-    // Two ranges intersect if there's any version that satisfies both
-    // This is a simplified implementation - a full implementation would compute actual intersection
-    
-    _ = range1_buf;
-    _ = range2_buf;
     
     // If either range has no constraints, they intersect
     if (!range1.hasLeft() or !range2.hasLeft()) {
         return true;
     }
     
-    // Check some common cases
-    // If both are exact versions, they intersect only if equal
+    // Special case: if either range accepts any version (>= 0.0.0), they intersect
+    if (range1.anyRangeSatisfies() or range2.anyRangeSatisfies()) {
+        return true;
+    }
+    
+    // For two ranges to intersect, there must exist at least one version that satisfies both
+    // We need to check if the ranges overlap by examining their bounds
+    
+    // First, let's handle exact version matches (single comparator with op == eql)
     if (range1.left.op == .eql and !range1.hasRight() and range2.left.op == .eql and !range2.hasRight()) {
+        // Both are exact versions, they only intersect if they're the same
         return range1.left.version.eql(range2.left.version);
     }
     
-    // For other cases, we'd need to compute the actual intersection
-    // For now, return true as a conservative estimate
-    // A proper implementation would compute the min/max bounds and check if they overlap
+    // If one is an exact version and the other is a range, check if the exact version satisfies the range
+    if (range1.left.op == .eql and !range1.hasRight()) {
+        // range1 is an exact version, check if it satisfies range2
+        return range2.satisfies(range1.left.version, range2_buf, range1_buf);
+    }
+    if (range2.left.op == .eql and !range2.hasRight()) {
+        // range2 is an exact version, check if it satisfies range1
+        return range1.satisfies(range2.left.version, range1_buf, range2_buf);
+    }
+    
+    // Now handle general ranges
+    // Two ranges intersect if their intervals overlap
+    // We need to find the effective lower and upper bounds of each range
+    
+    // For range1
+    var r1_has_lower = false;
+    var r1_lower_version: Version = undefined;
+    var r1_lower_inclusive = false;
+    var r1_has_upper = false;
+    var r1_upper_version: Version = undefined;
+    var r1_upper_inclusive = false;
+    
+    if (range1.left.op == .gte or range1.left.op == .gt) {
+        r1_has_lower = true;
+        r1_lower_version = range1.left.version;
+        r1_lower_inclusive = (range1.left.op == .gte);
+    }
+    
+    if (range1.hasRight()) {
+        if (range1.right.op == .lte or range1.right.op == .lt) {
+            r1_has_upper = true;
+            r1_upper_version = range1.right.version;
+            r1_upper_inclusive = (range1.right.op == .lte);
+        }
+    } else if (range1.left.op == .lte or range1.left.op == .lt) {
+        // Single comparator with upper bound
+        r1_has_upper = true;
+        r1_upper_version = range1.left.version;
+        r1_upper_inclusive = (range1.left.op == .lte);
+    }
+    
+    // For range2
+    var r2_has_lower = false;
+    var r2_lower_version: Version = undefined;
+    var r2_lower_inclusive = false;
+    var r2_has_upper = false;
+    var r2_upper_version: Version = undefined;
+    var r2_upper_inclusive = false;
+    
+    if (range2.left.op == .gte or range2.left.op == .gt) {
+        r2_has_lower = true;
+        r2_lower_version = range2.left.version;
+        r2_lower_inclusive = (range2.left.op == .gte);
+    }
+    
+    if (range2.hasRight()) {
+        if (range2.right.op == .lte or range2.right.op == .lt) {
+            r2_has_upper = true;
+            r2_upper_version = range2.right.version;
+            r2_upper_inclusive = (range2.right.op == .lte);
+        }
+    } else if (range2.left.op == .lte or range2.left.op == .lt) {
+        // Single comparator with upper bound
+        r2_has_upper = true;
+        r2_upper_version = range2.left.version;
+        r2_upper_inclusive = (range2.left.op == .lte);
+    }
+    
+    // Check if the ranges overlap
+    // Case 1: Both have lower and upper bounds
+    if (r1_has_lower and r1_has_upper and r2_has_lower and r2_has_upper) {
+        // Check if r1's upper is below r2's lower
+        const r1_upper_vs_r2_lower = r1_upper_version.orderWithoutBuild(r2_lower_version, "", "");
+        if (r1_upper_vs_r2_lower == .lt) return false;
+        if (r1_upper_vs_r2_lower == .eq and (!r1_upper_inclusive or !r2_lower_inclusive)) return false;
+        
+        // Check if r2's upper is below r1's lower
+        const r2_upper_vs_r1_lower = r2_upper_version.orderWithoutBuild(r1_lower_version, "", "");
+        if (r2_upper_vs_r1_lower == .lt) return false;
+        if (r2_upper_vs_r1_lower == .eq and (!r2_upper_inclusive or !r1_lower_inclusive)) return false;
+        
+        return true;
+    }
+    
+    // Case 2: One or both ranges are unbounded on one side
+    if (r1_has_lower and r2_has_upper) {
+        // Check if r2's upper is below r1's lower
+        const order = r2_upper_version.orderWithoutBuild(r1_lower_version, "", "");
+        if (order == .lt) return false;
+        if (order == .eq and (!r2_upper_inclusive or !r1_lower_inclusive)) return false;
+    }
+    
+    if (r2_has_lower and r1_has_upper) {
+        // Check if r1's upper is below r2's lower
+        const order = r1_upper_version.orderWithoutBuild(r2_lower_version, "", "");
+        if (order == .lt) return false;
+        if (order == .eq and (!r1_upper_inclusive or !r2_lower_inclusive)) return false;
+    }
+    
+    // If we get here, the ranges intersect
     return true;
 }
 

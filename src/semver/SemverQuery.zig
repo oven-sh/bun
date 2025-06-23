@@ -99,12 +99,22 @@ pub const List = struct {
     }
 
     pub fn intersects(list1: *const List, list2: *const List, list1_buf: string, list2_buf: string) bool {
-        // Two lists (ANDed queries) intersect if all their queries can be satisfied by some version
-        // For now, simplified implementation that checks if any version satisfies both
-        // This is a basic implementation - a more sophisticated one would compute actual range intersection
+        // Two lists intersect if their ANDed queries can be satisfied by some version
+        // This is an OR operation - if any of the ORed items intersect, the lists intersect
         
-        // Check if list1's range can satisfy any part of list2's range
-        return list1.head.intersects(&list2.head, list1_buf, list2_buf);
+        var l1 = list1;
+        while (true) {
+            var l2 = list2;
+            while (true) {
+                if (l1.head.intersects(&l2.head, list1_buf, list2_buf)) {
+                    return true;
+                }
+                l2 = l2.next orelse break;
+            }
+            l1 = l1.next orelse break;
+        }
+        
+        return false;
     }
 
     pub fn eql(lhs: *const List, rhs: *const List) bool {
@@ -369,10 +379,109 @@ pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, ve
 
 pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string, query2_buf: string) bool {
     // Two queries (ANDed ranges) intersect if there exists any version that satisfies both
-    // For now, simplified check - proper implementation would compute range intersection
-    return query1.range.intersects(query2.range, query1_buf, query2_buf) and 
-           (query1.next == null or query2.next == null or 
-            (query1.next.?.intersects(query2.next.?, query1_buf, query2_buf)));
+    // We need to check if ALL constraints from both queries can be satisfied simultaneously
+    
+    // Collect all ranges from both queries
+    var all_ranges = std.ArrayList(Range).init(bun.default_allocator);
+    defer all_ranges.deinit();
+    
+    // Add all ranges from query1
+    var q1: ?*const Query = query1;
+    while (q1) |q| {
+        all_ranges.append(q.range) catch return false;
+        q1 = q.next;
+    }
+    
+    // Add all ranges from query2
+    var q2: ?*const Query = query2;
+    while (q2) |q| {
+        all_ranges.append(q.range) catch return false;
+        q2 = q.next;
+    }
+    
+    // Now check if all these ranges can be satisfied simultaneously
+    // This means we need to find if there's a non-empty intersection of all ranges
+    
+    // Find the effective lower and upper bounds from all ranges
+    var has_lower = false;
+    var lower_version: Version = undefined;
+    var lower_inclusive = false;
+    var has_upper = false;
+    var upper_version: Version = undefined;
+    var upper_inclusive = false;
+    
+    for (all_ranges.items) |range| {
+        // Process lower bounds
+        if (range.hasLeft()) {
+            if (range.left.op == .gte or range.left.op == .gt) {
+                if (!has_lower) {
+                    has_lower = true;
+                    lower_version = range.left.version;
+                    lower_inclusive = (range.left.op == .gte);
+                } else {
+                    // Take the maximum of the lower bounds
+                    const order = range.left.version.orderWithoutBuild(lower_version, "", "");
+                    if (order == .gt or (order == .eq and range.left.op == .gt and lower_inclusive)) {
+                        lower_version = range.left.version;
+                        lower_inclusive = (range.left.op == .gte);
+                    }
+                }
+            } else if (range.left.op == .eql and !range.hasRight()) {
+                // Exact version constraint
+                const exact_version = range.left.version;
+                
+                // Check if this exact version satisfies all other constraints
+                for (all_ranges.items) |other_range| {
+                    if (!other_range.satisfies(exact_version, query1_buf, query2_buf)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        
+        // Process upper bounds
+        if (range.hasRight()) {
+            if (range.right.op == .lte or range.right.op == .lt) {
+                if (!has_upper) {
+                    has_upper = true;
+                    upper_version = range.right.version;
+                    upper_inclusive = (range.right.op == .lte);
+                } else {
+                    // Take the minimum of the upper bounds
+                    const order = range.right.version.orderWithoutBuild(upper_version, "", "");
+                    if (order == .lt or (order == .eq and range.right.op == .lt and upper_inclusive)) {
+                        upper_version = range.right.version;
+                        upper_inclusive = (range.right.op == .lte);
+                    }
+                }
+            }
+        } else if (range.hasLeft() and (range.left.op == .lte or range.left.op == .lt)) {
+            // Single upper bound constraint
+            if (!has_upper) {
+                has_upper = true;
+                upper_version = range.left.version;
+                upper_inclusive = (range.left.op == .lte);
+            } else {
+                // Take the minimum of the upper bounds
+                const order = range.left.version.orderWithoutBuild(upper_version, "", "");
+                if (order == .lt or (order == .eq and range.left.op == .lt and upper_inclusive)) {
+                    upper_version = range.left.version;
+                    upper_inclusive = (range.left.op == .lte);
+                }
+            }
+        }
+    }
+    
+    // Check if the effective range is valid
+    if (has_lower and has_upper) {
+        const order = lower_version.orderWithoutBuild(upper_version, "", "");
+        if (order == .gt) return false;
+        if (order == .eq and (!lower_inclusive or !upper_inclusive)) return false;
+    }
+    
+    // If we get here, the ranges can intersect
+    return true;
 }
 
 pub const Token = struct {

@@ -23,6 +23,7 @@ pub const Stdio = union(enum) {
     memfd: bun.FileDescriptor,
     pipe,
     ipc,
+    readable_stream: JSC.WebCore.ReadableStream,
 
     const log = bun.sys.syslog;
 
@@ -77,6 +78,9 @@ pub const Stdio = union(enum) {
             },
             .memfd => |fd| {
                 fd.close();
+            },
+            .readable_stream => {
+                // ReadableStream cleanup is handled by the subprocess
             },
             else => {},
         }
@@ -191,7 +195,7 @@ pub const Stdio = union(enum) {
                     break :brk .{ .buffer = {} };
                 },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
-                .capture, .pipe, .array_buffer => .{ .buffer = {} },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = {} },
                 .ipc => .{ .ipc = {} },
                 .fd => |fd| .{ .pipe = fd },
                 .memfd => |fd| .{ .pipe = fd },
@@ -244,7 +248,7 @@ pub const Stdio = union(enum) {
                     break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                 },
                 .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-                .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -277,7 +281,7 @@ pub const Stdio = union(enum) {
 
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
-            .capture, .array_buffer, .blob, .pipe => true,
+            .capture, .array_buffer, .blob, .pipe, .readable_stream => true,
             .ipc => Environment.isWindows,
             else => false,
         };
@@ -351,27 +355,13 @@ pub const Stdio = union(enum) {
         } else if (value.as(JSC.WebCore.Response)) |req| {
             req.getBodyValue().toBlobIfPossible();
             return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
-        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
-            var req = req_const;
-            if (i == 0) {
-                if (req.toAnyBlob(globalThis)) |blob| {
-                    return out_stdio.extractBlob(globalThis, blob, i);
+        } else if (i == 0) {
+            if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream| {
+                if (stream.isDisturbed(globalThis)) {
+                    return globalThis.throwInvalidArguments("stdin ReadableStream is already disturbed", .{});
                 }
-
-                switch (req.ptr) {
-                    .File, .Blob => {
-                        globalThis.throwTODO("Support fd/blob backed ReadableStream in spawn stdin. See https://github.com/oven-sh/bun/issues/8049") catch {};
-                        return error.JSError;
-                    },
-                    .Direct, .JavaScript, .Bytes => {
-                        // out_stdio.* = .{ .connect = req };
-                        globalThis.throwTODO("Re-enable ReadableStream support in spawn stdin. ") catch {};
-                        return error.JSError;
-                    },
-                    .Invalid => {
-                        return globalThis.throwInvalidArguments("ReadableStream is in invalid state.", .{});
-                    },
-                }
+                out_stdio.* = .{ .readable_stream = stream };
+                return;
             }
         } else if (value.asArrayBuffer(globalThis)) |array_buffer| {
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer

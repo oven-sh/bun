@@ -1,0 +1,586 @@
+import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
+import { expectMaxObjectTypeCount, getMaxFD } from "harness";
+
+describe("spawn stdin ReadableStream", () => {
+  test("basic ReadableStream as stdin", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("hello from stream");
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("hello from stream");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with multiple chunks", async () => {
+    const chunks = ["chunk1\n", "chunk2\n", "chunk3\n"];
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(chunk);
+        }
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe(chunks.join(""));
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with Uint8Array chunks", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("binary "));
+        controller.enqueue(encoder.encode("data "));
+        controller.enqueue(encoder.encode("stream"));
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("binary data stream");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with delays between chunks", async () => {
+    const stream = new ReadableStream({
+      async start(controller) {
+        controller.enqueue("first\n");
+        await Bun.sleep(50);
+        controller.enqueue("second\n");
+        await Bun.sleep(50);
+        controller.enqueue("third\n");
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("first\nsecond\nthird\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with pull method", async () => {
+    let pullCount = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        pullCount++;
+        if (pullCount <= 3) {
+          controller.enqueue(`pull ${pullCount}\n`);
+        } else {
+          controller.close();
+        }
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("pull 1\npull 2\npull 3\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with async pull and delays", async () => {
+    let pullCount = 0;
+    const stream = new ReadableStream({
+      async pull(controller) {
+        pullCount++;
+        if (pullCount <= 3) {
+          await Bun.sleep(30);
+          controller.enqueue(`async pull ${pullCount}\n`);
+        } else {
+          controller.close();
+        }
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("async pull 1\nasync pull 2\nasync pull 3\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with large data", async () => {
+    const largeData = "x".repeat(1024 * 1024); // 1MB
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(largeData);
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe(largeData);
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with very large chunked data", async () => {
+    const chunkSize = 64 * 1024; // 64KB chunks
+    const numChunks = 16; // 1MB total
+    let pushedChunks = 0;
+
+    const stream = new ReadableStream({
+      pull(controller) {
+        if (pushedChunks < numChunks) {
+          controller.enqueue("x".repeat(chunkSize));
+          pushedChunks++;
+        } else {
+          controller.close();
+        }
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text.length).toBe(chunkSize * numChunks);
+    expect(text).toBe("x".repeat(chunkSize * numChunks));
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream cancellation when process exits early", async () => {
+    let cancelled = false;
+    let chunksEnqueued = 0;
+
+    const stream = new ReadableStream({
+      async pull(controller) {
+        // Keep enqueueing data slowly
+        await Bun.sleep(50);
+        chunksEnqueued++;
+        controller.enqueue(`chunk ${chunksEnqueued}\n`);
+      },
+      cancel(reason) {
+        cancelled = true;
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["head", "-n", "2"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    // Give some time for cancellation to happen
+    await Bun.sleep(100);
+
+    expect(cancelled).toBe(true);
+    expect(chunksEnqueued).toBeGreaterThanOrEqual(2);
+    // head -n 2 should only output 2 lines
+    expect(text.trim().split("\n").length).toBe(2);
+  });
+
+  test("ReadableStream error handling", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("before error\n");
+        controller.error(new Error("Stream error"));
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    // Process should receive data before the error
+    expect(text).toBe("before error\n");
+
+    // Process should exit normally (the stream error happens after data is sent)
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with process that exits immediately", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream({
+      start(controller) {
+        // Enqueue a lot of data
+        for (let i = 0; i < 1000; i++) {
+          controller.enqueue(`line ${i}\n`);
+        }
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["true"], // exits immediately
+      stdin: stream,
+    });
+
+    expect(await proc.exited).toBe(0);
+
+    // Give time for any pending operations
+    await Bun.sleep(50);
+
+    // The stream might be cancelled since the process exits before reading
+    // This is implementation-dependent behavior
+  });
+
+  test("ReadableStream with process that fails", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("data for failing process\n");
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["sh", "-c", "exit 1"],
+      stdin: stream,
+    });
+
+    expect(await proc.exited).toBe(1);
+  });
+
+  test("already disturbed ReadableStream throws error", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("data");
+        controller.close();
+      },
+    });
+
+    // Disturb the stream by getting a reader
+    const reader = stream.getReader();
+    reader.releaseLock();
+
+    expect(() => {
+      spawn({
+        cmd: ["cat"],
+        stdin: stream,
+      });
+    }).toThrow("stdin ReadableStream is already disturbed");
+  });
+
+  test("ReadableStream with abort signal", async () => {
+    const controller = new AbortController();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("data before abort\n");
+      },
+      pull(controller) {
+        // Keep the stream open
+        controller.enqueue("more data\n");
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+      signal: controller.signal,
+    });
+
+    // Give it some time to start
+    await Bun.sleep(50);
+
+    // Abort the process
+    controller.abort();
+
+    try {
+      await proc.exited;
+    } catch (e) {
+      // Process was aborted
+    }
+
+    // The process should have been killed
+    expect(proc.killed).toBe(true);
+  });
+
+  test("ReadableStream with backpressure", async () => {
+    let pullCalls = 0;
+    let totalBytesEnqueued = 0;
+    const chunkSize = 64 * 1024; // 64KB chunks
+
+    const stream = new ReadableStream({
+      pull(controller) {
+        pullCalls++;
+        if (totalBytesEnqueued < 1024 * 1024 * 2) {
+          // 2MB total
+          const chunk = "x".repeat(chunkSize);
+          controller.enqueue(chunk);
+          totalBytesEnqueued += chunk.length;
+        } else {
+          controller.close();
+        }
+      },
+    });
+
+    // Use a slow reader to create backpressure
+    const proc = spawn({
+      cmd: ["sh", "-c", 'while IFS= read -r line; do echo "$line"; sleep 0.01; done'],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const startTime = Date.now();
+    let outputLength = 0;
+
+    const reader = proc.stdout.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          outputLength += value.length;
+          // Break after some data to not wait forever
+          if (outputLength > chunkSize * 2) break;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    proc.kill();
+    await proc.exited;
+
+    // The pull method should have been called multiple times due to backpressure
+    expect(pullCalls).toBeGreaterThan(1);
+  });
+
+  test("ReadableStream with multiple processes", async () => {
+    const stream1 = new ReadableStream({
+      start(controller) {
+        controller.enqueue("stream1 data");
+        controller.close();
+      },
+    });
+
+    const stream2 = new ReadableStream({
+      start(controller) {
+        controller.enqueue("stream2 data");
+        controller.close();
+      },
+    });
+
+    const proc1 = spawn({
+      cmd: ["cat"],
+      stdin: stream1,
+      stdout: "pipe",
+    });
+
+    const proc2 = spawn({
+      cmd: ["cat"],
+      stdin: stream2,
+      stdout: "pipe",
+    });
+
+    const [text1, text2] = await Promise.all([new Response(proc1.stdout).text(), new Response(proc2.stdout).text()]);
+
+    expect(text1).toBe("stream1 data");
+    expect(text2).toBe("stream2 data");
+    expect(await proc1.exited).toBe(0);
+    expect(await proc2.exited).toBe(0);
+  });
+
+  test("ReadableStream file descriptor cleanup", async () => {
+    const maxFD = getMaxFD();
+    const iterations = 10;
+
+    for (let i = 0; i < iterations; i++) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(`iteration ${i}\n`);
+          controller.close();
+        },
+      });
+
+      const proc = spawn({
+        cmd: ["cat"],
+        stdin: stream,
+        stdout: "pipe",
+      });
+
+      const text = await new Response(proc.stdout).text();
+      expect(text).toBe(`iteration ${i}\n`);
+      expect(await proc.exited).toBe(0);
+    }
+
+    // Force garbage collection
+    Bun.gc(true);
+    await Bun.sleep(50);
+
+    // Check that we didn't leak file descriptors
+    const newMaxFD = getMaxFD();
+    expect(newMaxFD).toBeLessThanOrEqual(maxFD + 10); // Allow some variance
+  });
+
+  test("ReadableStream with empty stream", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        // Close immediately without enqueueing anything
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with null bytes", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([72, 101, 108, 108, 111, 0, 87, 111, 114, 108, 100])); // "Hello\0World"
+        controller.close();
+      },
+    });
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream,
+      stdout: "pipe",
+    });
+
+    const buffer = await new Response(proc.stdout).arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    expect(bytes).toEqual(new Uint8Array([72, 101, 108, 108, 111, 0, 87, 111, 114, 108, 100]));
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with transform stream", async () => {
+    // Create a transform stream that uppercases text
+    const upperCaseTransform = new TransformStream({
+      transform(chunk, controller) {
+        controller.enqueue(chunk.toUpperCase());
+      },
+    });
+
+    const originalStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("hello ");
+        controller.enqueue("world");
+        controller.close();
+      },
+    });
+
+    const transformedStream = originalStream.pipeThrough(upperCaseTransform);
+
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: transformedStream,
+      stdout: "pipe",
+    });
+
+    const text = await new Response(proc.stdout).text();
+    expect(text).toBe("HELLO WORLD");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream with tee", async () => {
+    const originalStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("shared data");
+        controller.close();
+      },
+    });
+
+    const [stream1, stream2] = originalStream.tee();
+
+    // Use the first branch for the process
+    const proc = spawn({
+      cmd: ["cat"],
+      stdin: stream1,
+      stdout: "pipe",
+    });
+
+    // Read from the second branch independently
+    const text2 = await new Response(stream2).text();
+
+    const text1 = await new Response(proc.stdout).text();
+    expect(text1).toBe("shared data");
+    expect(text2).toBe("shared data");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("ReadableStream object type count", async () => {
+    const iterations = 5;
+
+    for (let i = 0; i < iterations; i++) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(`iteration ${i}`);
+          controller.close();
+        },
+      });
+
+      const proc = spawn({
+        cmd: ["cat"],
+        stdin: stream,
+        stdout: "pipe",
+      });
+
+      await new Response(proc.stdout).text();
+      await proc.exited;
+    }
+
+    // Force cleanup
+    Bun.gc(true);
+    await Bun.sleep(100);
+
+    // Check that we're not leaking objects
+    await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
+    await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+  });
+});

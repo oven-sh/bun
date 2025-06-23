@@ -790,7 +790,7 @@ export function assignStreamIntoResumableSink(stream, sink) {
         readableStreamController = undefined;
       }
 
-      if (!error && streamState !== $streamClosed && streamState !== $streamErrored) {
+      if (stream && !error && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;
@@ -968,7 +968,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         readableStreamController = undefined;
       }
 
-      if (!didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
+      if (stream && !didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;

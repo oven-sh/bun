@@ -1398,7 +1398,7 @@ node_api_create_external_string_utf16(napi_env env,
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
 
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         NAPI_LOG("utf16 string finalizer");
         env->doFinalizer(finalize_callback, str, hint);
     });

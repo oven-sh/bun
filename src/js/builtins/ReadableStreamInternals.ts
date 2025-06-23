@@ -774,8 +774,8 @@ export function assignStreamIntoResumableSink(stream, sink) {
       reader = undefined;
     }
     sink = undefined;
-    var streamState = $getByIdDirectPrivate(stream, "state");
     if (stream) {
+      var streamState = $getByIdDirectPrivate(stream, "state");
       // make it easy for this to be GC'd
       // but don't do property transitions
       var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
@@ -798,7 +798,7 @@ export function assignStreamIntoResumableSink(stream, sink) {
   }
   function endSink(...args: any[]) {
     try {
-      sink.end(...args);
+      sink?.end(...args);
     } catch {} // should never throw
     releaseReader();
   }
@@ -848,9 +848,10 @@ export function assignStreamIntoResumableSink(stream, sink) {
     }
 
     function cancelStream(reason: Error | null) {
+      if (closed) return;
       let wasClosed = closed;
       closed = true;
-      if (!error && !wasClosed && stream.$state !== $streamClosed) {
+      if (stream && !error && !wasClosed && stream.$state !== $streamClosed) {
         $readableStreamCancel(stream, reason);
       }
       releaseReader();

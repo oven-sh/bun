@@ -747,8 +747,6 @@ pub const StandaloneModuleGraph = struct {
                 if (comptime !Environment.isWindows) {
                     _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
-
-                return cloned_executable_fd;
             },
         }
 

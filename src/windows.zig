@@ -3648,10 +3648,10 @@ pub const Subsystem = enum(u16) {
 
 pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
     comptime bun.assert(bun.Environment.isWindows);
-    if (bun.windows.SetFilePointerEx(fd.handle.cast(), pe_header_offset_location, null, std.os.windows.FILE_BEGIN) == 0)
+    if (kernel32.SetFilePointerEx(fd.handle.cast(), pe_header_offset_location, null, std.os.windows.FILE_BEGIN) == 0)
         return error.Win32Error;
     const offset = try fd.reader().readInt(u32, .little);
-    if (bun.windows.SetFilePointerEx(fd.handle.cast(), offset + subsystem_offset, null, std.os.windows.FILE_BEGIN) == 0)
+    if (kernel32.SetFilePointerEx(fd.handle.cast(), offset + subsystem_offset, null, std.os.windows.FILE_BEGIN) == 0)
         return error.Win32Error;
     try fd.writer().writeInt(u16, @intFromEnum(subsystem), .little);
 }

@@ -4933,9 +4933,19 @@ declare module "bun" {
     function outside(version: StringLike, range: StringLike, hilo?: "<" | ">"): string | false;
     
     /**
-     * Returns a simplified range expression that matches the same items as the input range.
+     * Returns a simplified range expression that matches the same items in the versions list as the input range.
+     * 
+     * @param versions Array of versions to match
+     * @param range The range to simplify
+     * @returns The simplified range, or the original if it can't be simplified
+     * 
+     * @example
+     * ```ts
+     * Bun.semver.simplifyRange(["1.0.0", "1.0.1", "1.0.2"], "1.0.0 || 1.0.1 || 1.0.2"); // "~1.0.0"
+     * Bun.semver.simplifyRange(["1.0.0", "1.1.0", "1.2.0"], "1.0.0 || 1.1.0 || 1.2.0"); // "^1.0.0"
+     * ```
      */
-    function simplifyRange(range: StringLike): string | null;
+    function simplifyRange(versions: StringLike[], range: StringLike): string | null;
     
     /**
      * Returns the valid range string, or null if it's not valid.

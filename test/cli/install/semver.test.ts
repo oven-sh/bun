@@ -1082,13 +1082,25 @@ describe("Bun.semver.outside()", () => {
 });
 
 describe("Bun.semver.simplifyRange()", () => {
-  test("returns input range unchanged", () => {
-    expect(Bun.semver.simplifyRange("^1.0.0 || ^2.0.0")).toBe("^1.0.0 || ^2.0.0");
-    expect(Bun.semver.simplifyRange(">=1.2.3 <2.0.0")).toBe(">=1.2.3 <2.0.0");
+  test("simplifies OR'd exact versions to tilde range", () => {
+    expect(Bun.semver.simplifyRange(["1.0.0", "1.0.1", "1.0.2"], "1.0.0 || 1.0.1 || 1.0.2")).toBe("~1.0.0");
   });
 
-  test("returns range string as-is", () => {
-    expect(Bun.semver.simplifyRange("")).toBe("");
+  test("simplifies OR'd minor versions to caret range", () => {
+    expect(Bun.semver.simplifyRange(["1.0.0", "1.1.0", "1.2.0"], "1.0.0 || 1.1.0 || 1.2.0")).toBe("^1.0.0");
+  });
+
+  test("returns original range if can't simplify", () => {
+    expect(Bun.semver.simplifyRange(["1.0.0", "2.0.0", "3.0.0"], "1.0.0 || 2.0.0 || 3.0.0")).toBe("1.0.0 || 2.0.0 || 3.0.0");
+  });
+
+  test("returns original range if already simple", () => {
+    expect(Bun.semver.simplifyRange(["1.0.0", "1.0.1", "1.0.2"], "^1.0.0")).toBe("^1.0.0");
+  });
+
+  test("simplifies to range format when appropriate", () => {
+    const versions = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4"];
+    expect(Bun.semver.simplifyRange(versions, "1.0.0 || 1.0.1 || 1.0.2 || 1.0.3 || 1.0.4")).toBe("~1.0.0");
   });
 });
 
@@ -1401,17 +1413,25 @@ describe("Bun.semver negative tests", () => {
   });
 
   describe("simplifyRange() negative tests", () => {
-    test("returns null for non-string inputs", () => {
-      expect(Bun.semver.simplifyRange(123 as any)).toBe(null);
-      expect(Bun.semver.simplifyRange(null as any)).toBe(null);
-      expect(Bun.semver.simplifyRange(undefined as any)).toBe(null);
-      expect(Bun.semver.simplifyRange({} as any)).toBe(null);
+    test("throws for non-array first argument", () => {
+      expect(() => Bun.semver.simplifyRange("not-an-array" as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.simplifyRange(123 as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.simplifyRange(null as any, "^1.0.0")).toThrow();
+      expect(() => Bun.semver.simplifyRange(undefined as any, "^1.0.0")).toThrow();
     });
 
     test("returns null for non-string range", () => {
       expect(Bun.semver.simplifyRange(["1.0.0"], 123 as any)).toBe(null);
       expect(Bun.semver.simplifyRange(["1.0.0"], null as any)).toBe(null);
       expect(Bun.semver.simplifyRange(["1.0.0"], undefined as any)).toBe(null);
+    });
+
+    test("returns original range for empty version array", () => {
+      expect(Bun.semver.simplifyRange([], "^1.0.0")).toBe("^1.0.0");
+    });
+
+    test("handles invalid versions in array", () => {
+      expect(Bun.semver.simplifyRange(["invalid", "1.0.0", "not-a-version"], "^1.0.0")).toBe("^1.0.0");
     });
   });
 
@@ -1450,8 +1470,8 @@ describe("Bun.semver negative tests", () => {
     test("handles empty arrays", () => {
       expect(Bun.semver.maxSatisfying([], "^1.0.0")).toBe(null);
       expect(Bun.semver.minSatisfying([], "^1.0.0")).toBe(null);
-      // Note: simplifyRange now expects a string argument
-      expect(Bun.semver.simplifyRange("^1.0.0")).toBe("^1.0.0");
+      // Note: simplifyRange now expects two arguments: versions array and range
+      expect(Bun.semver.simplifyRange([], "^1.0.0")).toBe("^1.0.0");
     });
 
     test("handles arrays with all invalid versions", () => {

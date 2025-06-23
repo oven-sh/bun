@@ -291,23 +291,8 @@ void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg
         *this_arg = ::toNapi(m_callFrame->thisValue(), globalObject);
     }
 
-    NAPICallFrame(JSC::VM & vm, JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame, void* dataPtr)
-        : m_callFrame(callFrame)
-        , m_dataPtr(dataPtr)
-    {
-        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
-        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
-        // `this` to an object.
-        // TODO change to global? or find another way to avoid JSGlobalProxy
-        JSC::JSObject* jscThis = globalObject->globalThis();
-        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            jscThis = m_callFrame->thisValue().toObject(globalObject);
-            // https://tc39.es/ecma262/#sec-toobject
-            // toObject only throws for undefined and null, which we checked for
-            scope.assertNoException();
-        }
-        m_callFrame->setThisValue(jscThis);
+    if (data != nullptr) {
+        *data = dataPtr();
     }
 
     size_t maxArgc = 0;

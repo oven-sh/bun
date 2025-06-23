@@ -1,10 +1,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { isPosix, tempDirWithFiles } from "harness";
-import { mkdirSync, writeFileSync } from "node:fs";
-import path from "path";
-import { createTestBuilder, sortedShellOutput } from "../util";
-import * as fs from "node:fs/promises";
+import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 const fileExists = async (path: string): Promise<boolean> =>

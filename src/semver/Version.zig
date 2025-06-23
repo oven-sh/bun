@@ -671,7 +671,7 @@ pub const Version = extern struct {
                 return lhs.orderPre(rhs, lhs_buf, rhs_buf);
             }
 
-            const pre_order = lhs.orderPre(rhs, lhs_buf, rhs_buf);
+            const pre_order = lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
             if (pre_order != .eq) return pre_order;
 
             return lhs.build.order(&rhs.build, lhs_buf, rhs_buf);
@@ -736,7 +736,6 @@ pub const Version = extern struct {
             self: Tag,
             is_pre: bool,
             globalThis: *JSC.JSGlobalObject,
-            allocator: std.mem.Allocator,
             buf: []const u8,
         ) bun.JSError!JSC.JSValue {
             const tag_str = if (is_pre) self.pre.slice(buf) else self.build.slice(buf);
@@ -744,22 +743,19 @@ pub const Version = extern struct {
                 return JSC.JSValue.null;
             }
             
-            var list = std.ArrayList(JSC.JSValue).init(allocator);
-            defer list.deinit();
+            const array = try JSC.JSValue.createEmptyArray(globalThis, 0);
 
             var it = strings.split(tag_str, ".");
+            var i: u32 = 0;
             while (it.next()) |part| {
                 if (std.fmt.parseUnsigned(u64, part, 10) catch null) |num| {
-                    try list.append(JSC.jsNumber(@as(f64, @floatFromInt(num))));
+                    array.putIndex(globalThis, @intCast(i), JSC.jsNumber(@as(f64, @floatFromInt(num))));
                 } else {
-                    try list.append(bun.String.createUTF8ForJS(globalThis, part));
+                    array.putIndex(globalThis, @intCast(i), bun.String.createUTF8ForJS(globalThis, part));
                 }
+                i += 1;
             }
 
-            const array = try JSC.JSValue.createEmptyArray(globalThis, list.items.len);
-            for (list.items, 0..) |item, i| {
-                array.putIndex(globalThis, @intCast(i), item);
-            }
             return array;
         }
 

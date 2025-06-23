@@ -341,7 +341,7 @@ pub fn prerelease(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
         return JSC.JSValue.null;
     }
 
-    return try version.tag.toComponentsArray(true, globalThis, allocator, version_slice.slice());
+    return try version.tag.toComponentsArray(true, globalThis, version_slice.slice());
 }
 
 pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -380,14 +380,14 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
 
     // Handle prerelease
     if (version.tag.hasPre()) {
-        obj.put(globalThis, JSC.ZigString.static("prerelease"), try version.tag.toComponentsArray(true, globalThis, allocator, version_slice.slice()));
+        obj.put(globalThis, JSC.ZigString.static("prerelease"), try version.tag.toComponentsArray(true, globalThis, version_slice.slice()));
     } else {
         obj.put(globalThis, JSC.ZigString.static("prerelease"), JSC.JSValue.null);
     }
 
     // Handle build
     if (version.tag.hasBuild()) {
-        obj.put(globalThis, JSC.ZigString.static("build"), try version.tag.toComponentsArray(false, globalThis, allocator, version_slice.slice()));
+        obj.put(globalThis, JSC.ZigString.static("build"), try version.tag.toComponentsArray(false, globalThis, version_slice.slice()));
     } else {
         obj.put(globalThis, JSC.ZigString.static("build"), JSC.JSValue.null);
     }
@@ -411,7 +411,7 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
     obj.put(globalThis, JSC.ZigString.static("version"), bun.String.createUTF8ForJS(globalThis, version_str.items));
 
     // Store raw input
-    obj.put(globalThis, JSC.ZigString.static("raw"), bun.String.createUTF8ForJS(globalThis, version_slice.slice()));
+    obj.put(globalThis, JSC.ZigString.static("raw"), arguments[0]);
 
     return obj;
 }
@@ -448,15 +448,15 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
 
     const release_type = Version.ReleaseType.fromString(release_slice.slice()) orelse return JSC.JSValue.null;
 
-    var identifier: ?[]const u8 = null;
+    var identifier_slice: JSC.ZigString.Slice = .empty;
+    defer identifier_slice.deinit();
+    
     if (arguments.len > 2 and !arguments[2].isUndefinedOrNull()) {
         const id_str = try arguments[2].toJSString(globalThis);
-        const id_slice = id_str.toSlice(globalThis, allocator);
-        defer id_slice.deinit();
-        identifier = id_slice.slice();
+        identifier_slice = id_str.toSlice(globalThis, allocator);
     }
 
-    const new_version_str = (parse_result.version.min().bump(allocator, release_type, identifier, version_slice.slice()) catch return JSC.JSValue.null);
+    const new_version_str = parse_result.version.min().bump(allocator, release_type, identifier_slice.slice(), version_slice.slice()) catch return JSC.JSValue.null;
     defer allocator.free(new_version_str);
     
     return bun.String.createUTF8ForJS(globalThis, new_version_str);
@@ -468,7 +468,7 @@ pub fn intersects(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) return JSC.jsBoolean(false);
 
     // Check if both arguments are strings

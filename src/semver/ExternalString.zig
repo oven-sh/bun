@@ -16,7 +16,7 @@ pub const ExternalString = extern struct {
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
             .value = String.init(in, in),
-            .hash = @as(u32, @truncate(bun.hash(in))),
+            .hash = bun.Wyhash11.hash(0, in),
         };
     }
 

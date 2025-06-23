@@ -246,7 +246,7 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     return true;
 }
 
-pub fn intersects(range1: Range, range2: Range, range1_buf: string, range2_buf: string) bool {
+pub fn intersects(range1: *const Range, range2: *const Range, range1_buf: string, range2_buf: string) bool {
     
     // If either range has no constraints, they intersect
     if (!range1.hasLeft() or !range2.hasLeft()) {

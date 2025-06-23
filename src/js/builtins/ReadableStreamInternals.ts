@@ -959,8 +959,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       reader = undefined;
     }
     sink = undefined;
-    var streamState = $getByIdDirectPrivate(stream, "state");
     if (stream) {
+      var streamState = $getByIdDirectPrivate(stream, "state");
       // make it easy for this to be GC'd
       // but don't do property transitions
       var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");

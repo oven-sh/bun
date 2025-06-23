@@ -214,8 +214,20 @@ pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_add
 
 /// Call when the pointer from `trackExternalAllocation` is freed.
 /// Returns true if the free was invalid.
-pub fn trackExternalFree(scope: *AllocationScope, ptr: []const u8, ret_addr: ?usize) bool {
+pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usize) bool {
     if (!enabled) return;
+    const ptr: []const u8 = switch (@typeInfo(@TypeOf(slice))) {
+        .pointer => |p| switch (p.size) {
+            .slice => brk: {
+                if (p.child != u8) @compileError("This function only supports []u8 or [:sentinel]u8 types, you passed in: " ++ @typeName(@TypeOf(slice)));
+                if (p.sentinel_ptr == null) break :brk slice;
+                // Ensure we include the sentinel value
+                break :brk slice[0 .. slice.len + 1];
+            },
+            else => @compileError("This function only supports []u8 or [:sentinel]u8 types, you passed in: " ++ @typeName(@TypeOf(slice))),
+        },
+        else => @compileError("This function only supports []u8 or [:sentinel]u8 types, you passed in: " ++ @typeName(@TypeOf(slice))),
+    };
     // Empty slice usually means invalid pointer
     if (ptr.len == 0) return false;
     scope.state.mutex.lock();

@@ -1468,18 +1468,23 @@ pub const NetworkSink = struct {
         return .{ .result = {} };
     }
     pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
-        if (this.done) {
-            return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
-        }
+        // still waiting for more data tobe flushed
         if (this.flushPromise.hasValue()) {
             return .{ .result = this.flushPromise.value() };
         }
 
+        // nothing todo here
+        if (this.done) {    
+            return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+        }
+        // flush more
         const flushed = this.internalFlush() catch 0;
         if (this.backPressureSize > 0) {
+            // we have backpressure, we need to wait for the next flush
             this.flushPromise = JSC.JSPromise.Strong.init(globalThis);
             return .{ .result = this.flushPromise.value() };
         }
+        // we are done flushing no backpressure
         return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(flushed)) };
     }
     pub fn finalizeAndDestroy(this: *@This()) void {

@@ -26,13 +26,6 @@ Before we go further, we need to go to the [Discord developer portal](https://di
 
 Once complete, you'll be presented with your bot's _private key_. Let's add this to a file called `.env.local`. Bun automatically reads this file and loads it into `process.env`.
 
-{% callout %}
-This is an example token that has already been invalidated.
-{% /callout %}
-
-```txt#.env.local
-DISCORD_TOKEN=NzkyNzE1NDU0MTk2MDg4ODQy.X-hvzA.Ovy4MCQywSkoMRRclStW4xAYK7I
-```
 
 ---
 

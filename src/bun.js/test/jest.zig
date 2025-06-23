@@ -1945,7 +1945,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const object_arg = if (function_args.len == 1 and function_args[0] != .zero and function_args[0].jsType().isObject())
         function_args[0]
     else
-        JSValue{ .zero = {} };
+        JSValue.zero;
 
     while (idx < label.len) {
         const char = label[idx];

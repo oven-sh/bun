@@ -8,7 +8,7 @@ pub fn beginScope(alloc: std.mem.Allocator) AllocScope {
     if (comptime bun.Environment.enableAllocScopes) {
         return .{ .__scope = bun.AllocationScope.init(alloc) };
     }
-    return .{};
+    return .{ .__scope = {} };
 }
 
 pub fn endScope(this: *AllocScope) void {

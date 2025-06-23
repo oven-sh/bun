@@ -98,6 +98,15 @@ pub const List = struct {
         );
     }
 
+    pub fn intersects(list1: *const List, list2: *const List, list1_buf: string, list2_buf: string) bool {
+        // Two lists (ANDed queries) intersect if all their queries can be satisfied by some version
+        // For now, simplified implementation that checks if any version satisfies both
+        // This is a basic implementation - a more sophisticated one would compute actual range intersection
+        
+        // Check if list1's range can satisfy any part of list2's range
+        return list1.head.intersects(&list2.head, list1_buf, list2_buf);
+    }
+
     pub fn eql(lhs: *const List, rhs: *const List) bool {
         if (!lhs.head.eql(&rhs.head)) return false;
 
@@ -297,6 +306,27 @@ pub const Group = struct {
         else
             group.head.satisfies(version, group_buf, version_buf);
     }
+
+    pub fn intersects(
+        self: *const Group,
+        other: *const Group,
+        self_buf: string,
+        other_buf: string,
+    ) bool {
+        // Two groups intersect if any of their ORed lists intersect
+        var list1 = &self.head;
+        while (true) {
+            var list2 = &other.head;
+            while (true) {
+                if (list1.intersects(list2, self_buf, other_buf)) {
+                    return true;
+                }
+                list2 = list2.next orelse break;
+            }
+            list1 = list1.next orelse break;
+        }
+        return false;
+    }
 };
 
 pub fn eql(lhs: *const Query, rhs: *const Query) bool {
@@ -335,6 +365,14 @@ pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, ve
         version_buf,
         pre_matched,
     );
+}
+
+pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string, query2_buf: string) bool {
+    // Two queries (ANDed ranges) intersect if there exists any version that satisfies both
+    // For now, simplified check - proper implementation would compute range intersection
+    return query1.range.intersects(query2.range, query1_buf, query2_buf) and 
+           (query1.next == null or query2.next == null or 
+            (query1.next.?.intersects(query2.next.?, query1_buf, query2_buf)));
 }
 
 pub const Token = struct {

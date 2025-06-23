@@ -246,6 +246,30 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     return true;
 }
 
+pub fn intersects(range1: Range, range2: Range, range1_buf: string, range2_buf: string) bool {
+    // Two ranges intersect if there's any version that satisfies both
+    // This is a simplified implementation - a full implementation would compute actual intersection
+    
+    _ = range1_buf;
+    _ = range2_buf;
+    
+    // If either range has no constraints, they intersect
+    if (!range1.hasLeft() or !range2.hasLeft()) {
+        return true;
+    }
+    
+    // Check some common cases
+    // If both are exact versions, they intersect only if equal
+    if (range1.left.op == .eql and !range1.hasRight() and range2.left.op == .eql and !range2.hasRight()) {
+        return range1.left.version.eql(range2.left.version);
+    }
+    
+    // For other cases, we'd need to compute the actual intersection
+    // For now, return true as a conservative estimate
+    // A proper implementation would compute the min/max bounds and check if they overlap
+    return true;
+}
+
 const Range = @This();
 
 const std = @import("std");

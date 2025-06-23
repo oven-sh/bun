@@ -365,14 +365,14 @@ pub const Version = extern struct {
                     
                     if (last_dot) |dot_pos| {
                         const last_part = existing_pre[dot_pos + 1 ..];
-                        if (std.fmt.parseUnsigned(u64, last_part, 10)) |num| {
+                        if (std.fmt.parseUnsigned(u64, last_part, 10) catch null) |num| {
                             try pre_strings.writer().print("{s}.{d}", .{ existing_pre[0..dot_pos], num + 1 });
                         } else {
                             try pre_strings.writer().print("{s}.0", .{existing_pre});
                         }
                     } else {
                         // No dots, check if the whole thing is numeric
-                        if (std.fmt.parseUnsigned(u64, existing_pre, 10)) |num| {
+                        if (std.fmt.parseUnsigned(u64, existing_pre, 10) catch null) |num| {
                             try pre_strings.writer().print("{d}", .{num + 1});
                         } else {
                             try pre_strings.writer().print("{s}.0", .{existing_pre});
@@ -750,13 +750,17 @@ pub const Version = extern struct {
             var it = strings.split(tag_str, ".");
             while (it.next()) |part| {
                 if (std.fmt.parseUnsigned(u64, part, 10) catch null) |num| {
-                    try list.append(JSC.jsNumber(@floatFromInt(num)));
+                    try list.append(JSC.jsNumber(@as(f64, @floatFromInt(num))));
                 } else {
                     try list.append(bun.String.createUTF8ForJS(globalThis, part));
                 }
             }
 
-            return JSC.JSValue.createArrayFromElements(globalThis, list.items);
+            const array = try JSC.JSValue.createEmptyArray(globalThis, list.items.len);
+            for (list.items, 0..) |item, i| {
+                array.putIndex(globalThis, @intCast(i), item);
+            }
+            return array;
         }
 
         pub fn eql(lhs: Tag, rhs: Tag) bool {

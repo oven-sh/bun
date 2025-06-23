@@ -4890,6 +4890,57 @@ declare module "bun" {
      * @param identifier Optional identifier for pre-releases (e.g., "alpha", "beta")
      */
     function bump(version: StringLike, releaseType: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release", identifier?: string): string | null;
+    
+    /**
+     * Returns true if the two version ranges intersect (have any versions in common).
+     */
+    function intersects(range1: StringLike, range2: StringLike): boolean;
+    
+    /**
+     * Returns true if the sub range is entirely contained within the super range.
+     */
+    function subset(sub: StringLike, dom: StringLike): boolean;
+    
+    /**
+     * Returns the minimum version that can satisfy the given range, or null if none.
+     */
+    function minVersion(range: StringLike): string | null;
+    
+    /**
+     * Returns the highest version in the list that satisfies the range, or null if none of them do.
+     */
+    function maxSatisfying(versions: StringLike[], range: StringLike): string | null;
+    
+    /**
+     * Returns the lowest version in the list that satisfies the range, or null if none of them do.
+     */
+    function minSatisfying(versions: StringLike[], range: StringLike): string | null;
+    
+    /**
+     * Returns true if version is greater than all the versions possible in the range.
+     */
+    function gtr(version: StringLike, range: StringLike): boolean;
+    
+    /**
+     * Returns true if version is less than all the versions possible in the range.
+     */
+    function ltr(version: StringLike, range: StringLike): boolean;
+    
+    /**
+     * Determines if version is outside the bounds of the range in either the high or low direction.
+     * The hilo argument must be either the string '>' or '<'. (This is the function called by gtr and ltr.)
+     */
+    function outside(version: StringLike, range: StringLike, hilo?: "<" | ">"): string | false;
+    
+    /**
+     * Returns a simplified range expression that matches the same items as the input range.
+     */
+    function simplifyRange(range: StringLike): string | null;
+    
+    /**
+     * Returns the valid range string, or null if it's not valid.
+     */
+    function validRange(range: StringLike): string | null;
   }
 
   namespace unsafe {

@@ -235,7 +235,7 @@ describe("bunshell ls", () => {
       await TestBuilder.command`ls nonexistent1 nonexistent2`
         .exitCode(1)
         .stderr(s => {
-          expect(s).toContain("nonexistent1: No such file or   directory");
+          expect(s).toContain("nonexistent1: No such file or directory");
           expect(s).toContain("nonexistent2: No such file or directory");
         })
         .ensureTempDir()

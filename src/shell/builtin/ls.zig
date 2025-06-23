@@ -57,9 +57,19 @@ fn next(this: *Ls) Yield {
 
                 const cwd = this.bltn().cwd;
                 if (paths) |p| {
+                    const print_directory = p.len > 1;
                     for (p) |path_raw| {
                         const path = this.alloc_scope.allocator().dupeZ(u8, path_raw[0..std.mem.len(path_raw) :0]) catch bun.outOfMemory();
-                        var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, true, this.bltn().eventLoop());
+                        var task = ShellLsTask.create(
+                            this,
+                            this.opts,
+                            &this.state.exec.task_count,
+                            cwd,
+                            path,
+                            true,
+                            this.bltn().eventLoop(),
+                        );
+                        task.print_directory = print_directory;
                         task.schedule();
                     }
                 } else {
@@ -140,7 +150,7 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
                 break :error_string this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
             }
             var err = err_ptr.*;
-            err.deinitWithAllocator(this.alloc_scope.allocator());
+            defer err.deinitWithAllocator(this.alloc_scope.allocator());
             break :error_string this.bltn().taskErrorToString(.ls, err);
         };
         task.err = null;
@@ -203,7 +213,7 @@ pub const ShellLsTask = struct {
     ls: *Ls,
     opts: Opts,
 
-    is_root: bool = true,
+    print_directory: bool = false,
     owned_string: bool,
     task_count: *std.atomic.Value(usize),
 
@@ -266,7 +276,7 @@ pub const ShellLsTask = struct {
 
         var subtask = @This().create(this.ls, this.opts, this.task_count, this.cwd, new_path, true, this.event_loop);
         _ = this.task_count.fetchAdd(1, .monotonic);
-        subtask.is_root = false;
+        subtask.print_directory = true;
         subtask.schedule();
     }
 
@@ -308,13 +318,18 @@ pub const ShellLsTask = struct {
         }
 
         if (!this.opts.list_directories) {
-            if (!this.is_root) {
+            if (this.print_directory) {
                 const writer = this.output.writer();
                 std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
             }
 
             var iterator = DirIterator.iterate(fd.stdDir(), .u8);
             var entry = iterator.next();
+
+            // If `-a` is used, "." and ".." should show up as results. However,
+            // our `DirIterator` abstraction skips them, so let's just add them
+            // now.
+            this.addDotEntriesIfNeeded();
 
             while (switch (entry) {
                 .err => |e| {
@@ -339,9 +354,15 @@ pub const ShellLsTask = struct {
 
     fn shouldSkipEntry(this: *@This(), name: [:0]const u8) bool {
         if (this.opts.show_all) return false;
+
+        // Show all directory entries whose name begin with a dot (`.`), EXCEPT
+        // `.` and `..`
         if (this.opts.show_almost_all) {
-            if (bun.strings.eqlComptime(name[0..1], ".") or bun.strings.eqlComptime(name[0..2], "..")) return true;
+            if (bun.strings.eqlComptime(name, ".") or bun.strings.eqlComptime(name, "..")) return true;
+        } else {
+            if (bun.strings.startsWith(name, ".")) return true;
         }
+
         return false;
     }
 
@@ -355,7 +376,15 @@ pub const ShellLsTask = struct {
         this.output.append('\n') catch bun.outOfMemory();
     }
 
+    fn addDotEntriesIfNeeded(this: *@This()) void {
+        // `.addEntry()` already checks will check if we can add "." and ".." to
+        // the result
+        this.addEntry(".");
+        this.addEntry("..");
+    }
+
     fn errorWithPath(this: *@This(), err: Syscall.Error, path: [:0]const u8) Syscall.Error {
+        debug("Ls(0x{x}).errorWithPath({s})", .{ @intFromPtr(this), path });
         return err.withPath(this.ls.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
     }
 
@@ -404,8 +433,9 @@ const Opts = struct {
     show_all: bool = false,
 
     /// `-A`, `--almost-all`
-    /// Do not list implied . and ..
-    show_almost_all: bool = true,
+    /// Include directory entries whose names begin with a dot (‘.’) except for
+    /// `.` and `..`
+    show_almost_all: bool = false,
 
     /// `--author`
     /// With -l, print the author of each file
@@ -669,7 +699,7 @@ pub fn parseFlags(this: *Ls) Result(?[]const [*:0]const u8, Opts.ParseError) {
         }
     }
 
-    return .{ .err = .show_usage };
+    return .{ .ok = null };
 }
 
 pub fn parseFlag(this: *Ls, flag: []const u8) union(enum) { continue_parsing, done, illegal_option: []const u8 } {

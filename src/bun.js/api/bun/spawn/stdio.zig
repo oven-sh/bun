@@ -401,7 +401,12 @@ pub const Stdio = union(enum) {
         } else if (value.as(JSC.WebCore.Response)) |res| {
             return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
         } else if (i == 0) {
-            if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream| {
+            if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {
+                var stream = stream_;
+                if (stream.toAnyBlob(globalThis)) |blob| {
+                    return out_stdio.extractBlob(globalThis, blob, i);
+                }
+
                 if (is_sync) {
                     return globalThis.throwInvalidArguments("'stdin' ReadableStream cannot be used in sync mode", .{});
                 }

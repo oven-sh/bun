@@ -18,9 +18,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -50,11 +51,25 @@ describe("spawn stdin ReadableStream edge cases", () => {
       },
     });
 
-    // Use a command that exits quickly
+    // Use a command that exits quickly after reading one line
     const proc = spawn({
-      cmd: ["sh", "-c", "head -n 1"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `const readline = require('readline');
+         const rl = readline.createInterface({
+           input: process.stdin,
+           output: process.stdout,
+           terminal: false
+         });
+         rl.on('line', (line) => {
+           console.log(line);
+           process.exit(0);
+         });`,
+      ],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -87,9 +102,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -180,9 +196,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
 
     // Kill the process after some data
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     // Wait a bit then kill
@@ -220,9 +237,22 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["wc", "-l"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `let count = 0;
+         const readline = require('readline');
+         const rl = readline.createInterface({
+           input: process.stdin,
+           output: process.stdout,
+           terminal: false
+         });
+         rl.on('line', () => count++);
+         rl.on('close', () => console.log(count));`,
+      ],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -246,9 +276,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -269,9 +300,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
 
     // First use
     const proc1 = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text1 = await new Response(proc1.stdout).text();
@@ -281,8 +313,9 @@ describe("spawn stdin ReadableStream edge cases", () => {
     // Second use should fail
     expect(() => {
       spawn({
-        cmd: ["cat"],
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
         stdin: stream,
+        env: bunEnv,
       });
     }).toThrow();
   });
@@ -304,9 +337,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const buffer = await new Response(proc.stdout).arrayBuffer();
@@ -359,9 +393,16 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["wc", "-c"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `let count = 0;
+         process.stdin.on('data', (chunk) => count += chunk.length);
+         process.stdin.on('end', () => console.log(count));`,
+      ],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -382,9 +423,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -410,9 +452,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
       });
 
       const proc = spawn({
-        cmd: ["cat"],
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
         stdin: stream,
         ...config,
+        env: bunEnv,
       });
 
       const stdout = await new Response(proc.stdout).text();

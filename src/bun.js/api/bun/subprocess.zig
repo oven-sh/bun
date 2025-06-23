@@ -1361,7 +1361,13 @@ const Writable = union(enum) {
                 subprocess.flags.deref_on_stdin_destroyed = true;
 
                 if (stdio.* == .readable_stream) {
-                    promise_for_stream.* = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                    const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                    if (assign_result.toError()) |err| {
+                        pipe.deref();
+                        subprocess.deref();
+                        return event_loop.global.throwValue(err);
+                    }
+                    promise_for_stream.* = assign_result;
                 }
 
                 return Writable{
@@ -2045,7 +2051,7 @@ pub fn spawnMaybeSync(
                         var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
                         while (try stdio_iter.next()) |value| : (i += 1) {
-                            try stdio[i].extract(globalThis, i, value);
+                            try stdio[i].extract(globalThis, i, value, is_sync);
                             if (i == 2)
                                 break;
                         }
@@ -2053,7 +2059,7 @@ pub fn spawnMaybeSync(
 
                         while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
-                            try new_item.extract(globalThis, i, value);
+                            try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {
                                 .result => |opt| opt,
@@ -2072,15 +2078,15 @@ pub fn spawnMaybeSync(
                 }
             } else {
                 if (try args.get(globalThis, "stdin")) |value| {
-                    try stdio[0].extract(globalThis, 0, value);
+                    try stdio[0].extract(globalThis, 0, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stderr")) |value| {
-                    try stdio[2].extract(globalThis, 2, value);
+                    try stdio[2].extract(globalThis, 2, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stdout")) |value| {
-                    try stdio[1].extract(globalThis, 1, value);
+                    try stdio[1].extract(globalThis, 1, value, is_sync);
                 }
             }
 
@@ -2404,10 +2410,22 @@ pub fn spawnMaybeSync(
 
     promise_for_stream.ensureStillAlive();
 
+    if (promise_for_stream != .zero and !globalThis.hasException()) {
+        if (promise_for_stream.toError()) |err| {
+            _ = globalThis.throwValue(err) catch {};
+        }
+    }
+
     if (globalThis.hasException()) {
-        subprocess.deref();
+        const err = globalThis.takeException(error.JSError);
+        // Ensure we kill the process so we don't leave things in an unexpected state.
         _ = subprocess.tryKill(subprocess.killSignal);
-        return globalThis.throwValue(globalThis.takeError(error.JSError));
+
+        if (globalThis.hasException()) {
+            return error.JSError;
+        }
+
+        return globalThis.throwValue(err);
     }
 
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;

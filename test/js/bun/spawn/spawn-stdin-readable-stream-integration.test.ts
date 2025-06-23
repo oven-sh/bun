@@ -1,5 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("spawn stdin ReadableStream integration", () => {
   test("example from documentation", async () => {
@@ -12,8 +13,10 @@ describe("spawn stdin ReadableStream integration", () => {
     });
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
+      stdout: "pipe",
+      env: bunEnv,
     });
 
     const text = await new Response(proc.stdout).text();
@@ -33,11 +36,24 @@ describe("spawn stdin ReadableStream integration", () => {
       },
     });
 
-    // Count lines using wc -l
+    // Count lines using Bun subprocess
     const proc = spawn({
-      cmd: ["wc", "-l"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `let count = 0;
+         const readline = require('readline');
+         const rl = readline.createInterface({
+           input: process.stdin,
+           output: process.stdout,
+           terminal: false
+         });
+         rl.on('line', () => count++);
+         rl.on('close', () => console.log(count));`,
+      ],
       stdin: responseStream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const output = await new Response(proc.stdout).text();
@@ -67,9 +83,10 @@ describe("spawn stdin ReadableStream integration", () => {
     const transformedStream = dataStream.pipeThrough(upperCaseTransform);
 
     const proc = spawn({
-      cmd: ["cat"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: transformedStream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const result = await new Response(proc.stdout).text();
@@ -94,21 +111,15 @@ describe("spawn stdin ReadableStream integration", () => {
       },
     });
 
-    // Process the stream (e.g., compress it)
+    // Process the stream (just echo it for cross-platform compatibility)
     const proc = spawn({
-      cmd: ["gzip"],
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: fileStream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
-    // Decompress to verify
-    const decompress = spawn({
-      cmd: ["gunzip"],
-      stdin: proc.stdout,
-      stdout: "pipe",
-    });
-
-    const result = await new Response(decompress.stdout).text();
+    const result = await new Response(proc.stdout).text();
     const lines = result.trim().split("\n");
     expect(lines.length).toBe(numChunks);
     expect(lines[0]).toStartWith("Chunk 0:");
@@ -136,11 +147,28 @@ describe("spawn stdin ReadableStream integration", () => {
       },
     });
 
-    // Process the CSV data
+    // Process the CSV data using Bun
     const proc = spawn({
-      cmd: ["awk", "-F,", "{ sum += $2; count++ } END { print sum/count }"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `let sum = 0, count = 0;
+         const readline = require('readline');
+         const rl = readline.createInterface({
+           input: process.stdin,
+           output: process.stdout,
+           terminal: false
+         });
+         rl.on('line', (line) => {
+           const [_, value] = line.split(',');
+           sum += parseFloat(value);
+           count++;
+         });
+         rl.on('close', () => console.log(sum / count));`,
+      ],
       stdin: dataStream,
       stdout: "pipe",
+      env: bunEnv,
     });
 
     const avgStr = await new Response(proc.stdout).text();

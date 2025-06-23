@@ -285,7 +285,6 @@ The high-level optimizations are made possible by a robust and carefully designe
 The entire native architecture is built upon a set of generic, powerful Zig primitives that define the contracts for data flow.
 
 - **`streams.Result` Union:** This is the universal data-carrying type for all native stream reads. Its variants are not just data containers; they are crucial signals from the source to the sink.
-
   - `owned: bun.ByteList`: Represents a heap-allocated buffer. The receiver is now responsible for freeing this memory. This is used when data must outlive the current scope.
   - `temporary: bun.ByteList`: A borrowed, read-only view into a source's internal buffer. This is the key to **zero-copy reads**, as the sink can process the data without taking ownership or performing a copy. It is only valid for the duration of the function call.
   - `owned_and_done` / `temporary_and_done`: These variants bundle the final data chunk with the end-of-stream signal. This is a critical latency optimization, as it collapses two distinct events (data and close) into one, saving an I/O round trip.
@@ -305,7 +304,6 @@ The `HTTPServerWritable` struct (instantiated as `HTTPSResponseSink` in `streams
 - **Intelligent Write Buffering:** The `write` method (`writeBytes`, `writeLatin1`, etc.) does not immediately issue a `write` syscall. It appends the incoming `streams.Result` slice to its internal `buffer: bun.ByteList`. This coalesces multiple small, high-frequency writes (common in streaming LLM responses or SSE) into a single, larger, more efficient syscall.
 
 - **Backpressure Logic (`send` method):** The `send` method attempts to write the buffer to the underlying `uWebSockets` socket.
-
   - It uses the optimized `res.tryEnd()` for the final chunk.
   - If `res.write()` or `res.tryEnd()` returns a "backpressure" signal, the sink immediately sets `this.has_backpressure = true` and registers an `onWritable` callback.
   - The `onWritable` callback is triggered by the OS/`uWebSockets` when the socket can accept more data. It clears the backpressure flag, attempts to send the rest of the buffered data, and then signals `ready()` back to the source stream via its `streams.Signal`. This creates a tight, efficient, native backpressure loop.

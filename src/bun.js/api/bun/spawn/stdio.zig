@@ -287,7 +287,54 @@ pub const Stdio = union(enum) {
         };
     }
 
-    pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue) bun.JSError!void {
+    fn extractBodyValue(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, body: *JSC.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
+        body.toBlobIfPossible();
+
+        if (body.tryUseAsAnyBlob()) |blob| {
+            return out_stdio.extractBlob(globalThis, blob, i);
+        }
+
+        switch (body.*) {
+            .Null, .Empty => {
+                out_stdio.* = .{ .ignore = {} };
+                return;
+            },
+            .Used => {
+                return globalThis.ERR(.BODY_ALREADY_USED, "Body already used", .{}).throw();
+            },
+            .Error => {
+                return globalThis.throwValue(body.Error.toJS(globalThis));
+            },
+
+            .Blob, .WTFStringImpl, .InternalBlob => unreachable, // handled above.
+            .Locked => {
+                if (is_sync) {
+                    return globalThis.throwInvalidArguments("ReadableStream cannot be used in sync mode", .{});
+                }
+
+                if (i > 0) {
+                    return globalThis.throwInvalidArguments("ReadableStream cannot be used for stdout/stderr", .{});
+                }
+
+                const stream_value = body.toReadableStream(globalThis);
+                if (globalThis.hasException()) {
+                    return error.JSError;
+                }
+
+                const stream = JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
+
+                if (stream.isDisturbed(globalThis)) {
+                    return globalThis.ERR(.BODY_ALREADY_USED, "ReadableStream has already been used", .{}).throw();
+                }
+
+                out_stdio.* = .{ .readable_stream = stream };
+            },
+        }
+
+        return;
+    }
+
+    pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue, is_sync: bool) bun.JSError!void {
         if (value == .zero) return;
         if (value.isUndefined()) return;
         if (value.isNull()) {
@@ -350,15 +397,17 @@ pub const Stdio = union(enum) {
         } else if (value.as(JSC.WebCore.Blob)) |blob| {
             return out_stdio.extractBlob(globalThis, .{ .Blob = blob.dupe() }, i);
         } else if (value.as(JSC.WebCore.Request)) |req| {
-            req.getBodyValue().toBlobIfPossible();
-            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
-        } else if (value.as(JSC.WebCore.Response)) |req| {
-            req.getBodyValue().toBlobIfPossible();
-            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
+            return extractBodyValue(out_stdio, globalThis, i, req.getBodyValue(), is_sync);
+        } else if (value.as(JSC.WebCore.Response)) |res| {
+            return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
         } else if (i == 0) {
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |stream| {
+                if (is_sync) {
+                    return globalThis.throwInvalidArguments("'stdin' ReadableStream cannot be used in sync mode", .{});
+                }
+
                 if (stream.isDisturbed(globalThis)) {
-                    return globalThis.throwInvalidArguments("stdin ReadableStream is already disturbed", .{});
+                    return globalThis.ERR(.INVALID_STATE, "'stdin' ReadableStream has already been used", .{}).throw();
                 }
                 out_stdio.* = .{ .readable_stream = stream };
                 return;

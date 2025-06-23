@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { expectMaxObjectTypeCount, getMaxFD, bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {

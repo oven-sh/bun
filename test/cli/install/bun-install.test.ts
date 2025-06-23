@@ -1,4 +1,4 @@
-import { file, listen, Socket, spawn, write } from "bun";
+import { file, listen, Socket, spawn, stderr, write } from "bun";
 import {
   afterAll,
   afterEach,
@@ -6229,7 +6229,7 @@ it("should handle bun ci alias (to --frozen-lockfile)", async () => {
     }),
   );
 
-  const { stderr, exited } = spawn({
+  const { stderr: stderr1, exited: exited1 } = spawn({
     cmd: [bunExe(), "ci"],
     cwd: package_dir,
     stdout: "pipe",
@@ -6238,9 +6238,23 @@ it("should handle bun ci alias (to --frozen-lockfile)", async () => {
     env,
   });
 
-  const err = await new Response(stderr).text();
-  expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-  expect(await exited).toBe(1);
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited1).toBe(1);
+
+  // test that it works even if ci isn't first "arg"
+  const { stderr: stderr2, exited: exited2 } = spawn({
+    cmd: [bunExe(), "--save", "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited2).toBe(1);
 });
 
 it("should handle frozenLockfile in config file", async () => {

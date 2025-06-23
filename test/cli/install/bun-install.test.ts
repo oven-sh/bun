@@ -1,4 +1,4 @@
-import { file, listen, Socket, spawn, stderr, write } from "bun";
+import { file, listen, Socket, spawn, write } from "bun";
 import {
   afterAll,
   afterEach,

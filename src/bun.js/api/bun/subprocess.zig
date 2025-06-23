@@ -1560,11 +1560,11 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         // This doesn't match Node.js' behavior, but for synchronous
         // subprocesses the streams should not keep the timers going.
         if (this.stdout == .pipe) {
-            this.stdout.pipe.close();
+            this.stdout.close();
         }
 
         if (this.stderr == .pipe) {
-            this.stderr.pipe.close();
+            this.stderr.close();
         }
     } else {
         // This matches Node.js behavior. Node calls resume() on the streams.

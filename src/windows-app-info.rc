@@ -18,7 +18,8 @@ BEGIN
             VALUE "InternalName", "bun\0"
             VALUE "OriginalFilename", "bun.exe\0"
             VALUE "ProductName", "Bun\0"
-            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0"
+            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0",
+            VALUE "CompanyName", "Oven\0"
             VALUE "LegalCopyright", "https://bun.sh/docs/project/licensing\0"
         END
     END

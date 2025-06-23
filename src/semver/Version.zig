@@ -286,12 +286,12 @@ pub const Version = extern struct {
         prepatch,
         prerelease,
         release,
-    
+
         pub fn fromString(s: []const u8) ?ReleaseType {
             return std.meta.stringToEnum(ReleaseType, s);
         }
     };
-    
+
     pub fn bump(
         self: Version,
         allocator: std.mem.Allocator,
@@ -352,7 +352,7 @@ pub const Version = extern struct {
                 } else {
                     // Increment existing prerelease
                     const existing_pre = self.tag.pre.slice(original_buf);
-                    
+
                     // Find last numeric component
                     var last_dot: ?usize = null;
                     var i: usize = existing_pre.len;
@@ -362,7 +362,7 @@ pub const Version = extern struct {
                             break;
                         }
                     }
-                    
+
                     if (last_dot) |dot_pos| {
                         const last_part = existing_pre[dot_pos + 1 ..];
                         if (std.fmt.parseUnsigned(u64, last_part, 10) catch null) |num| {
@@ -386,14 +386,14 @@ pub const Version = extern struct {
         // Build the final version string
         var output = std.ArrayList(u8).init(allocator);
         errdefer output.deinit();
-        
+
         try output.writer().print("{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
-        
+
         if (new_version.tag.hasPre()) {
             try output.append('-');
             try output.appendSlice(new_version.tag.pre.slice(pre_strings.items));
         }
-        
+
         return output.toOwnedSlice();
     }
 
@@ -742,7 +742,7 @@ pub const Version = extern struct {
             if (tag_str.len == 0) {
                 return JSC.JSValue.null;
             }
-            
+
             const array = try JSC.JSValue.createEmptyArray(globalThis, 0);
 
             var it = strings.split(tag_str, ".");

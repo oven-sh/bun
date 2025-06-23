@@ -395,19 +395,19 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
     // Format version string
     var version_str = std.ArrayList(u8).init(allocator);
     defer version_str.deinit();
-    
+
     try version_str.writer().print("{d}.{d}.{d}", .{ version.major orelse 0, version.minor orelse 0, version.patch orelse 0 });
-    
+
     if (version.tag.hasPre()) {
         try version_str.append('-');
         try version_str.appendSlice(version.tag.pre.slice(version_slice.slice()));
     }
-    
+
     if (version.tag.hasBuild()) {
         try version_str.append('+');
         try version_str.appendSlice(version.tag.build.slice(version_slice.slice()));
     }
-    
+
     obj.put(globalThis, JSC.ZigString.static("version"), bun.String.createUTF8ForJS(globalThis, version_str.items));
 
     // Store raw input
@@ -450,7 +450,7 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
 
     var identifier_slice: JSC.ZigString.Slice = .empty;
     defer identifier_slice.deinit();
-    
+
     if (arguments.len > 2 and !arguments[2].isUndefinedOrNull()) {
         const id_str = try arguments[2].toJSString(globalThis);
         identifier_slice = id_str.toSlice(globalThis, allocator);
@@ -458,7 +458,7 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
 
     const new_version_str = parse_result.version.min().bump(allocator, release_type, identifier_slice.slice(), version_slice.slice()) catch return JSC.JSValue.null;
     defer allocator.free(new_version_str);
-    
+
     return bun.String.createUTF8ForJS(globalThis, new_version_str);
 }
 
@@ -497,10 +497,6 @@ pub fn intersects(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
 
     return JSC.jsBoolean(g1.intersects(&g2, r1_slice.slice(), r2_slice.slice()));
 }
-
-
-
-
 
 fn findSatisfyingVersion(
     globalThis: *JSC.JSGlobalObject,
@@ -606,8 +602,6 @@ pub fn minSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     return findSatisfyingVersion(globalThis, versions_array, range_slice.slice(), allocator, false);
 }
 
-
-
 pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -639,7 +633,7 @@ pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     // Collect all versions that satisfy the range
     var satisfying_versions = std.ArrayList(Version).init(allocator);
     defer satisfying_versions.deinit();
-    
+
     const length = versions_array.getLength(globalThis) catch return arguments[1];
     if (length == 0) return arguments[1];
 
@@ -647,7 +641,7 @@ pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     while (i < length) : (i += 1) {
         const item = versions_array.getIndex(globalThis, i) catch continue;
         if (!item.isString()) continue;
-        
+
         const version_string = try item.toJSString(globalThis);
         const version_slice = version_string.toSlice(globalThis, allocator);
         defer version_slice.deinit();
@@ -674,33 +668,33 @@ pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
 
     // Try to find a simpler range
     const simplified = try findSimplifiedRange(allocator, satisfying_versions.items, range_slice.slice());
-    
+
     // If the simplified range is shorter, return it
     if (simplified.len < range_slice.slice().len) {
         return bun.String.createUTF8ForJS(globalThis, simplified);
     }
-    
+
     // Otherwise return the original range
     return arguments[1];
 }
 
 fn findSimplifiedRange(allocator: std.mem.Allocator, versions: []const Version, original_range: []const u8) ![]const u8 {
     if (versions.len == 0) return original_range;
-    
+
     const first = versions[0];
     const last = versions[versions.len - 1];
-    
+
     // Check if all versions are in the same major version
     var same_major = true;
     var same_minor = true;
     var same_patch = true;
-    
+
     for (versions) |v| {
         if (v.major != first.major) same_major = false;
         if (v.minor != first.minor) same_minor = false;
         if (v.patch != first.patch) same_patch = false;
     }
-    
+
     // If all versions are the same, return exact version only if it's shorter
     // AND we have multiple versions (not just one that happened to match)
     if (same_patch and same_minor and same_major and versions.len > 1) {
@@ -709,7 +703,7 @@ fn findSimplifiedRange(allocator: std.mem.Allocator, versions: []const Version, 
             return exact;
         }
     }
-    
+
     // Check for consecutive patch versions in same minor
     if (same_major and same_minor) {
         var consecutive = true;
@@ -721,19 +715,19 @@ fn findSimplifiedRange(allocator: std.mem.Allocator, versions: []const Version, 
             }
             expected_patch += 1;
         }
-        
+
         if (consecutive and versions.len >= 3) {
             // Use tilde range for consecutive patches
             return try std.fmt.allocPrint(allocator, "~{d}.{d}.{d}", .{ first.major, first.minor, first.patch });
         }
     }
-    
+
     // Check for consecutive minor versions in same major
     if (same_major) {
         // Check if we have all minors from first to last
         var expected_versions = std.ArrayList(Version).init(allocator);
         defer expected_versions.deinit();
-        
+
         var current_minor = first.minor;
         while (current_minor <= last.minor) : (current_minor += 1) {
             var current_patch: u32 = 0;
@@ -746,48 +740,48 @@ fn findSimplifiedRange(allocator: std.mem.Allocator, versions: []const Version, 
                 }
             }
         }
-        
+
         // If we have good coverage, use caret range
         if (expected_versions.items.len >= versions.len * 3 / 4) { // 75% coverage
             return try std.fmt.allocPrint(allocator, "^{d}.{d}.{d}", .{ first.major, first.minor, first.patch });
         }
     }
-    
+
     // Try range format only if it makes sense (versions are close together)
     if (versions.len > 1) {
         // Only use range format if versions are reasonably close
         const major_diff = last.major - first.major;
         const is_close = major_diff <= 1;
-        
+
         if (is_close) {
             const range_str = try std.fmt.allocPrint(allocator, ">={d}.{d}.{d} <={d}.{d}.{d}", .{
                 first.major, first.minor, first.patch,
-                last.major, last.minor, last.patch,
+                last.major,  last.minor,  last.patch,
             });
-            
+
             if (range_str.len < original_range.len) {
                 return range_str;
             }
         }
     }
-    
+
     // If we have just a few versions, try OR'ing them
     if (versions.len <= 3) {
         var result = std.ArrayList(u8).init(allocator);
         defer result.deinit();
-        
+
         for (versions, 0..) |v, idx| {
             if (idx > 0) {
                 try result.appendSlice(" || ");
             }
             try result.writer().print("{d}.{d}.{d}", .{ v.major, v.minor, v.patch });
         }
-        
+
         if (result.items.len < original_range.len) {
             return try allocator.dupe(u8, result.items);
         }
     }
-    
+
     // Return original if we can't simplify
     return original_range;
 }

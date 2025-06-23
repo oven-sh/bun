@@ -101,7 +101,7 @@ pub const List = struct {
     pub fn intersects(list1: *const List, list2: *const List, list1_buf: string, list2_buf: string) bool {
         // Two lists intersect if their ANDed queries can be satisfied by some version
         // This is an OR operation - if any of the ORed items intersect, the lists intersect
-        
+
         var l1 = list1;
         while (true) {
             var l2 = list2;
@@ -113,7 +113,7 @@ pub const List = struct {
             }
             l1 = l1.next orelse break;
         }
-        
+
         return false;
     }
 
@@ -380,28 +380,28 @@ pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, ve
 pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string, query2_buf: string) bool {
     // Two queries (ANDed ranges) intersect if there exists any version that satisfies both
     // We need to check if ALL constraints from both queries can be satisfied simultaneously
-    
+
     // Collect all ranges from both queries
     var all_ranges = std.ArrayList(Range).init(bun.default_allocator);
     defer all_ranges.deinit();
-    
+
     // Add all ranges from query1
     var q1: ?*const Query = query1;
     while (q1) |q| {
         all_ranges.append(q.range) catch return false;
         q1 = q.next;
     }
-    
+
     // Add all ranges from query2
     var q2: ?*const Query = query2;
     while (q2) |q| {
         all_ranges.append(q.range) catch return false;
         q2 = q.next;
     }
-    
+
     // Now check if all these ranges can be satisfied simultaneously
     // This means we need to find if there's a non-empty intersection of all ranges
-    
+
     // Find the effective lower and upper bounds from all ranges
     var has_lower = false;
     var lower_version: Version = undefined;
@@ -409,7 +409,7 @@ pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string
     var has_upper = false;
     var upper_version: Version = undefined;
     var upper_inclusive = false;
-    
+
     for (all_ranges.items) |range| {
         // Process lower bounds
         if (range.hasLeft()) {
@@ -429,7 +429,7 @@ pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string
             } else if (range.left.op == .eql and !range.hasRight()) {
                 // Exact version constraint
                 const exact_version = range.left.version;
-                
+
                 // Check if this exact version satisfies all other constraints
                 for (all_ranges.items) |other_range| {
                     if (!other_range.satisfies(exact_version, query1_buf, query2_buf)) {
@@ -439,7 +439,7 @@ pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string
                 return true;
             }
         }
-        
+
         // Process upper bounds
         if (range.hasRight()) {
             if (range.right.op == .lte or range.right.op == .lt) {
@@ -472,14 +472,14 @@ pub fn intersects(query1: *const Query, query2: *const Query, query1_buf: string
             }
         }
     }
-    
+
     // Check if the effective range is valid
     if (has_lower and has_upper) {
         const order = lower_version.orderWithoutBuild(upper_version, "", "");
         if (order == .gt) return false;
         if (order == .eq and (!lower_inclusive or !upper_inclusive)) return false;
     }
-    
+
     // If we get here, the ranges can intersect
     return true;
 }

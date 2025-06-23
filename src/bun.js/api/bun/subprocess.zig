@@ -1548,9 +1548,6 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     }
 
     // We won't be sending any more data.
-    // But we might still have data to be read.
-    // So don't cancel reading from stdout or stderr
-    // and DO close stdin.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
     }
@@ -1559,13 +1556,25 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
     }
 
-    // This matches Node.js behavior. Node calls resume() on the streams.
-    if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
-        this.stdout.pipe.reader.read();
-    }
+    if (this.flags.is_sync) {
+        // This doesn't match Node.js' behavior, but for synchronous
+        // subprocesses the streams should not keep the timers going.
+        if (this.stdout == .pipe) {
+            this.stdout.pipe.close();
+        }
 
-    if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
-        this.stderr.pipe.reader.read();
+        if (this.stderr == .pipe) {
+            this.stderr.pipe.close();
+        }
+    } else {
+        // This matches Node.js behavior. Node calls resume() on the streams.
+        if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+            this.stdout.pipe.reader.read();
+        }
+
+        if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+            this.stderr.pipe.reader.read();
+        }
     }
 
     if (stdin) |pipe| {

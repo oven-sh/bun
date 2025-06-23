@@ -83,10 +83,15 @@ pub const HTTPThread = struct {
         async_http_id: u32,
         flags: packed struct(u8) {
             is_tls: bool,
-            ended: bool,
-            chunked: bool,
+            type: Type,
             _: u5 = 0,
         },
+
+        pub const Type = enum(u2) {
+            data = 0,
+            end = 1,
+            endChunked = 2,
+        };
     };
     const ShutdownMessage = struct {
         async_http_id: u32,
@@ -301,10 +306,12 @@ pub const HTTPThread = struct {
             this.queued_writes_lock.lock();
             defer this.queued_writes_lock.unlock();
             for (this.queued_writes.items) |write| {
-                const ended = write.flags.ended;
+                const flags = write.flags;
+                const messageType = flags.type;
+                const ended = messageType == .end or messageType == .endChunked;
 
                 if (bun.http.socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
-                    switch (write.flags.is_tls) {
+                    switch (flags.is_tls) {
                         inline true, false => |is_tls| {
                             const socket = uws.NewSocketHandler(is_tls).fromAny(socket_ptr);
                             if (socket.isClosed() or socket.isShutdown()) {
@@ -315,7 +322,7 @@ pub const HTTPThread = struct {
                                 if (client.state.original_request_body == .stream) {
                                     var stream = &client.state.original_request_body.stream;
                                     stream.ended = ended;
-                                    if (ended and write.flags.chunked) {
+                                    if (messageType == .endChunked) {
                                         // only send the 0-length chunk if the request body is chunked
                                         client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                     } else {
@@ -404,7 +411,7 @@ pub const HTTPThread = struct {
             this.loop.loop.wakeup();
     }
 
-    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, ended: bool, chunked: bool) void {
+    pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: WriteMessage.Type) void {
         {
             this.queued_writes_lock.lock();
             defer this.queued_writes_lock.unlock();
@@ -412,8 +419,7 @@ pub const HTTPThread = struct {
                 .async_http_id = http.async_http_id,
                 .flags = .{
                     .is_tls = http.client.isHTTPS(),
-                    .ended = ended,
-                    .chunked = chunked,
+                    .type = messageType,
                 },
             }) catch bun.outOfMemory();
         }

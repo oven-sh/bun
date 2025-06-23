@@ -1101,7 +1101,7 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
 
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) !usize {
-    const amount = socket.write(data, true);
+    const amount = socket.write(data, false);
     if (amount < 0) {
         return error.WriteFailed;
     }

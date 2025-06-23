@@ -1196,7 +1196,7 @@ pub const FetchTasklet = struct {
             var needs_schedule = false;
             defer if (needs_schedule) {
                 // wakeup the http thread to write the data
-                http.http_thread.scheduleRequestWrite(this.http.?, false, true);
+                http.http_thread.scheduleRequestWrite(this.http.?, .data);
             };
             defer buffer.release();
 
@@ -1222,7 +1222,7 @@ pub const FetchTasklet = struct {
         this.clearSink();
         defer this.deref();
         if (err) |jsError| {
-            if (this.signal_store.aborted.load(.monotonic)) {
+            if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
                 return;
             }
             if (!jsError.isUndefinedOrNull()) {
@@ -1232,7 +1232,7 @@ pub const FetchTasklet = struct {
         } else {
             if (this.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
-                http.http_thread.scheduleRequestWrite(http_, true, true);
+                http.http_thread.scheduleRequestWrite(http_, .endChunked);
             }
         }
     }

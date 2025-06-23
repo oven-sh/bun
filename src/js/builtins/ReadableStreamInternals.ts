@@ -767,34 +767,32 @@ export function assignStreamIntoResumableSink(stream, sink) {
   let reader: ReadableStreamDefaultReader | undefined;
 
   function releaseReader() {
-    if (reader) {
-      try {
-        reader.releaseLock();
-      } catch {}
-      reader = undefined;
-    }
-    sink = undefined;
-    if (stream) {
-      var streamState = $getByIdDirectPrivate(stream, "state");
-      // make it easy for this to be GC'd
-      // but don't do property transitions
-      var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
-      if (readableStreamController) {
-        if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
-          $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
-        if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
-          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
-
-        $putByIdDirectPrivate(stream, "readableStreamController", null);
-        if ($getByIdDirectPrivate(stream, "underlyingSource")) $putByIdDirectPrivate(stream, "underlyingSource", null);
-        readableStreamController = undefined;
-      }
-
-      if (stream && !error && streamState !== $streamClosed && streamState !== $streamErrored) {
-        $readableStreamCloseIfPossible(stream);
-      }
-      stream = undefined;
-    }
+    // if (reader) {
+    //   try {
+    //     reader.releaseLock();
+    //   } catch {}
+    //   reader = undefined;
+    // }
+    // sink = undefined;
+    // if (stream) {
+    //   var streamState = $getByIdDirectPrivate(stream, "state");
+    //   // make it easy for this to be GC'd
+    //   // but don't do property transitions
+    //   var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
+    //   if (readableStreamController) {
+    //     if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
+    //       $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
+    //     if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
+    //       $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
+    //     $putByIdDirectPrivate(stream, "readableStreamController", null);
+    //     if ($getByIdDirectPrivate(stream, "underlyingSource")) $putByIdDirectPrivate(stream, "underlyingSource", null);
+    //     readableStreamController = undefined;
+    //   }
+    //   if (stream && !error && streamState !== $streamClosed && streamState !== $streamErrored) {
+    //     $readableStreamCloseIfPossible(stream);
+    //   }
+    //   stream = undefined;
+    // }
   }
   function endSink(...args: any[]) {
     try {

@@ -183,7 +183,7 @@ describe("bunshell ls", () => {
         .run();
     });
 
-    test("filename with special characters", async () => {
+    test.if(isPosix)("filename with special characters", async () => {
       const tempdir = tempDirWithFiles("ls-special", {});
       await $`touch "file-with-!@#$%^&*()"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`

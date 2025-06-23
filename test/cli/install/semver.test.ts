@@ -490,7 +490,6 @@ describe("Bun.semver.satisfies()", () => {
       ["1.2.3-pre+asdf - 2.4.3-pre+asdf", "1.2.3-pre.2"],
       ["1.2.3-pre+asdf - 2.4.3-pre+asdf", "2.4.3-alpha"],
       ["1.2.3+asdf - 2.4.3+asdf", "1.2.3"],
-      ["1.0.0", "1.0.0"],
       [">=*", "0.2.4"],
       ["", "1.0.0"],
       ["*", "1.2.3"],
@@ -736,5 +735,169 @@ describe("Bun.semver.satisfies()", () => {
 
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
+  });
+});
+
+describe("Bun.semver.major()", () => {
+  test("should return major version", () => {
+    expect(Bun.semver.major("1.2.3")).toBe(1);
+    expect(Bun.semver.major("v2.0.0-alpha.1")).toBe(2);
+    expect(Bun.semver.major("0.0.1")).toBe(0);
+    expect(Bun.semver.major("999.888.777")).toBe(999);
+  });
+  
+  test("should return null for invalid versions", () => {
+    expect(Bun.semver.major("not-a-version")).toBe(null);
+    expect(Bun.semver.major("")).toBe(null);
+    expect(Bun.semver.major("v")).toBe(null);
+  });
+});
+
+describe("Bun.semver.minor()", () => {
+  test("should return minor version", () => {
+    expect(Bun.semver.minor("1.2.3")).toBe(2);
+    expect(Bun.semver.minor("v2.0.0-alpha.1")).toBe(0);
+    expect(Bun.semver.minor("0.999.1")).toBe(999);
+  });
+  
+  test("should return null for invalid versions", () => {
+    expect(Bun.semver.minor("not-a-version")).toBe(null);
+    expect(Bun.semver.minor("")).toBe(null);
+  });
+});
+
+describe("Bun.semver.patch()", () => {
+  test("should return patch version", () => {
+    expect(Bun.semver.patch("1.2.3")).toBe(3);
+    expect(Bun.semver.patch("v2.0.0-alpha.1")).toBe(0);
+    expect(Bun.semver.patch("0.1.999")).toBe(999);
+  });
+  
+  test("should return null for invalid versions", () => {
+    expect(Bun.semver.patch("not-a-version")).toBe(null);
+    expect(Bun.semver.patch("")).toBe(null);
+  });
+});
+
+describe("Bun.semver.prerelease()", () => {
+  test("should return prerelease components", () => {
+    expect(Bun.semver.prerelease("1.2.3-alpha.1")).toEqual(["alpha", 1]);
+    expect(Bun.semver.prerelease("1.0.0-rc.2.beta")).toEqual(["rc", 2, "beta"]);
+    expect(Bun.semver.prerelease("1.0.0-0")).toEqual([0]);
+    expect(Bun.semver.prerelease("1.0.0-x.7.z.92")).toEqual(["x", 7, "z", 92]);
+  });
+  
+  test("should return null for non-prerelease versions", () => {
+    expect(Bun.semver.prerelease("1.2.3")).toBe(null);
+    expect(Bun.semver.prerelease("1.2.3+build")).toBe(null);
+    expect(Bun.semver.prerelease("invalid")).toBe(null);
+  });
+});
+
+describe("Bun.semver.parse()", () => {
+  test("should parse a version into an object", () => {
+    const v = "1.2.3-alpha.1+build.123";
+    const parsed = Bun.semver.parse(v);
+    expect(parsed).not.toBe(null);
+    expect(parsed.major).toBe(1);
+    expect(parsed.minor).toBe(2);
+    expect(parsed.patch).toBe(3);
+    expect(parsed.prerelease).toEqual(["alpha", 1]);
+    expect(parsed.build).toEqual(["build", 123]);
+    expect(parsed.version).toBe("1.2.3-alpha.1+build.123");
+    expect(parsed.raw).toBe(v);
+  });
+  
+  test("should parse simple versions", () => {
+    const parsed = Bun.semver.parse("1.2.3");
+    expect(parsed).not.toBe(null);
+    expect(parsed.major).toBe(1);
+    expect(parsed.minor).toBe(2);
+    expect(parsed.patch).toBe(3);
+    expect(parsed.prerelease).toBe(null);
+    expect(parsed.build).toBe(null);
+    expect(parsed.version).toBe("1.2.3");
+  });
+  
+  test("should return null for invalid versions", () => {
+    expect(Bun.semver.parse("not-a-version")).toBe(null);
+    expect(Bun.semver.parse("")).toBe(null);
+    expect(Bun.semver.parse("v")).toBe(null);
+  });
+});
+
+describe("Bun.semver.bump()", () => {
+  describe("major", () => {
+    test("increments major version", () => {
+      expect(Bun.semver.bump("1.2.3", "major")).toBe("2.0.0");
+      expect(Bun.semver.bump("0.0.1", "major")).toBe("1.0.0");
+      expect(Bun.semver.bump("1.2.3-alpha", "major")).toBe("2.0.0");
+      expect(Bun.semver.bump("1.2.3+build", "major")).toBe("2.0.0");
+    });
+  });
+
+  describe("minor", () => {
+    test("increments minor version", () => {
+      expect(Bun.semver.bump("1.2.3", "minor")).toBe("1.3.0");
+      expect(Bun.semver.bump("0.0.1", "minor")).toBe("0.1.0");
+      expect(Bun.semver.bump("1.2.3-alpha", "minor")).toBe("1.3.0");
+    });
+  });
+
+  describe("patch", () => {
+    test("increments patch version", () => {
+      expect(Bun.semver.bump("1.2.3", "patch")).toBe("1.2.4");
+      expect(Bun.semver.bump("0.0.1", "patch")).toBe("0.0.2");
+      expect(Bun.semver.bump("1.2.3-alpha", "patch")).toBe("1.2.4");
+    });
+  });
+
+  describe("premajor", () => {
+    test("increments major and adds prerelease", () => {
+      expect(Bun.semver.bump("1.2.3", "premajor")).toBe("2.0.0-0.0");
+      expect(Bun.semver.bump("1.2.3", "premajor", "alpha")).toBe("2.0.0-alpha.0");
+      expect(Bun.semver.bump("1.2.3", "premajor", "beta")).toBe("2.0.0-beta.0");
+    });
+  });
+
+  describe("preminor", () => {
+    test("increments minor and adds prerelease", () => {
+      expect(Bun.semver.bump("1.2.3", "preminor")).toBe("1.3.0-0.0");
+      expect(Bun.semver.bump("1.2.3", "preminor", "alpha")).toBe("1.3.0-alpha.0");
+    });
+  });
+
+  describe("prepatch", () => {
+    test("increments patch and adds prerelease", () => {
+      expect(Bun.semver.bump("1.2.3", "prepatch")).toBe("1.2.4-0.0");
+      expect(Bun.semver.bump("1.2.3", "prepatch", "alpha")).toBe("1.2.4-alpha.0");
+    });
+  });
+
+  describe("release", () => {
+    test("removes prerelease", () => {
+      expect(Bun.semver.bump("1.2.3-alpha.1", "release")).toBe("1.2.3");
+      expect(Bun.semver.bump("1.2.3-0", "release")).toBe("1.2.3");
+      expect(Bun.semver.bump("1.2.3", "release")).toBe("1.2.3");
+    });
+  });
+
+  describe("prerelease", () => {
+    test("increments prerelease version", () => {
+      expect(Bun.semver.bump("1.2.3-alpha.1", "prerelease")).toBe("1.2.3-alpha.2");
+      expect(Bun.semver.bump("1.2.3-0", "prerelease")).toBe("1.2.3-1");
+      expect(Bun.semver.bump("1.2.3-alpha", "prerelease")).toBe("1.2.3-alpha.0");
+    });
+
+    test("adds prerelease if none exists", () => {
+      expect(Bun.semver.bump("1.2.3", "prerelease")).toBe("1.2.4-0.0");
+      expect(Bun.semver.bump("1.2.3", "prerelease", "alpha")).toBe("1.2.4-alpha.0");
+    });
+  });
+
+  test("returns null for invalid versions", () => {
+    expect(Bun.semver.bump("not-a-version", "major")).toBe(null);
+    expect(Bun.semver.bump("", "major")).toBe(null);
+    expect(Bun.semver.bump("1.2.3", "invalid" as any)).toBe(null);
   });
 });

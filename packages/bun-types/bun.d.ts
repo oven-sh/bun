@@ -783,7 +783,6 @@ declare module "bun" {
     path?: string | undefined;
     syscall?: string | undefined;
   }
-
   /**
    * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
    *
@@ -1408,7 +1407,6 @@ declare module "bun" {
    * @param sql Function to execute SQL queries within the savepoint
    */
   type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
-
   /**
    * Main SQL client interface providing connection and transaction management
    */
@@ -1961,8 +1959,7 @@ declare module "bun" {
      *            ... on User {
      *                id
      *            }
-     *        }
-     *    }`;
+     *        }`;
      *    ```
      *
      *    Will be replaced with:
@@ -2118,7 +2115,6 @@ declare module "bun" {
     path: string;
     kind: ImportKind;
   }
-
   /**
    * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
    */
@@ -2842,7 +2838,6 @@ declare module "bun" {
    * @link https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState
    */
   type WebSocketReadyState = 0 | 1 | 2 | 3;
-
   /**
    * A fast WebSocket designed for servers.
    *
@@ -3643,7 +3638,6 @@ declare module "bun" {
     errno?: number;
     syscall?: string;
   }
-
   /**
    * Options for TLS connections
    */
@@ -4426,7 +4420,6 @@ declare module "bun" {
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
    */
   function allocUnsafe(size: number): Uint8Array;
-
   /**
    * Options for `Bun.inspect`
    */
@@ -4852,6 +4845,51 @@ declare module "bun" {
      * Throws an error if either version is invalid.
      */
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+    
+    /**
+     * Returns the major version number, or null if the version is invalid.
+     */
+    function major(version: StringLike): number | null;
+    
+    /**
+     * Returns the minor version number, or null if the version is invalid.
+     */
+    function minor(version: StringLike): number | null;
+    
+    /**
+     * Returns the patch version number, or null if the version is invalid.
+     */
+    function patch(version: StringLike): number | null;
+    
+    /**
+     * Returns an array of prerelease components, or null if the version doesn't have a prerelease or is invalid.
+     * Numeric components are parsed as numbers.
+     */
+    function prerelease(version: StringLike): (string | number)[] | null;
+    
+    /**
+     * Parses a version string into an object with its components.
+     * Returns null if the version is invalid.
+     */
+    function parse(version: StringLike): {
+      major: number;
+      minor: number;
+      patch: number;
+      prerelease: (string | number)[] | null;
+      build: (string | number)[] | null;
+      version: string;
+      raw: string;
+    } | null;
+    
+    /**
+     * Increments the version by the release type.
+     * Returns the new version string, or null if the version is invalid.
+     * 
+     * @param version The version to increment
+     * @param releaseType The type of release: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release"
+     * @param identifier Optional identifier for pre-releases (e.g., "alpha", "beta")
+     */
+    function bump(version: StringLike, releaseType: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release", identifier?: string): string | null;
   }
 
   namespace unsafe {
@@ -5166,7 +5204,6 @@ declare module "bun" {
      */
     static readonly algorithms: SupportedCryptoAlgorithms[];
   }
-
   /**
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
@@ -5211,7 +5248,6 @@ declare module "bun" {
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */
   function sleepSync(ms: number): void;
-
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
@@ -5872,7 +5908,6 @@ declare module "bun" {
   interface HTMLBundle {
     index: string;
   }
-
   /**
    * Represents a TCP or TLS socket connection used for network communication.
    * This interface provides methods for reading, writing, managing the connection state,
@@ -6614,7 +6649,6 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
-
   /**
    * @category HTTP & Networking
    */

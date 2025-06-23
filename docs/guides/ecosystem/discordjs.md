@@ -24,7 +24,19 @@ Before we go further, we need to go to the [Discord developer portal](https://di
 
 ---
 
-Once complete, you'll be presented with your bot's _private key_. Let's add this to a file called `.env.local`. Bun automatically reads this file and loads it into `process.env`.
+Once your bot is created, you'll be presented with its _private token_. You’ll need to store this securely in a .env.local file. Bun automatically reads this file and loads its contents into process.env.
+
+```txt
+DISCORD_TOKEN=your-bot-token-goes-here
+```
+Note: The example above uses a placeholder. Never commit your real token to version control.
+
+Most .gitignore templates already include .env.local to prevent accidental leaks. If yours doesn’t, add the following line to your .gitignore:
+
+```txt
+.env.local
+```
+This ensures your sensitive credentials remain private and aren't pushed to GitHub or other remote repositories.
 
 
 ---

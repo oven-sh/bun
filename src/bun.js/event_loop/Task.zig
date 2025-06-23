@@ -490,7 +490,11 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 any.runFromJSThread();
             },
 
-            .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
+            .@"shell.builtin.yes.YesTask" => {
+                var yes_task: *YesTask = task.get(YesTask).?;
+                yes_task.runFromMainThread();
+            },
+            .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
             },
             _ => {
@@ -582,6 +586,7 @@ const ShellMvCheckTargetTask = shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTa
 const ShellMvBatchedTask = shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellMkdirTask = shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = shell.Interpreter.Builtin.Touch.ShellTouchTask;
+const YesTask = shell.Interpreter.Builtin.Yes.YesTask;
 const ShellCpTask = shell.Interpreter.Builtin.Cp.ShellCpTask;
 const ShellCondExprStatTask = shell.Interpreter.CondExpr.ShellCondExprStatTask;
 const ShellAsync = shell.Interpreter.Async;

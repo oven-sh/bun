@@ -68,6 +68,10 @@ pub const YesTask = struct {
         const yes: *Yes = @fieldParentPtr("task", this);
 
         // Manually make safeguard since this task should not be created if output does not need IO
+        if (yes.state != .waiting_io) {
+            return;
+        }
+
         yes.bltn().stdout.enqueueFmt(yes, "{s}\n", .{yes.expletive}, .output_needs_io).run();
 
         this.enqueue();

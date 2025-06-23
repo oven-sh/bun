@@ -1,5 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { createTestBuilder } from "../test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.throws(false);
 
@@ -21,4 +23,18 @@ describe("yes", async () => {
     await $`yes ab cd ef > ${buffer}`;
     expect(buffer.toString()).toEqual("ab\nab\nab\nab\nab\nab");
   });
+});
+
+describe("yes command", async () => {
+  TestBuilder.command`yes | head -n 5`
+    .stdout("y\ny\ny\ny\ny\n")
+    .runAsTest("default output");
+
+  TestBuilder.command`yes xy | head -n 6`
+    .stdout("xy\nxy\nxy\nxy\nxy\nxy\n")
+    .runAsTest("custom expletive");
+
+  TestBuilder.command`yes ab cd ef | head -n 6`
+    .stdout("ab\nab\nab\nab\nab\nab\n")
+    .runAsTest("ignores extra args");
 });

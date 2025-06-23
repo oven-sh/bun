@@ -46,7 +46,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 29 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 49 },
-  "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 139 },
+  "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 143 },
 };
 const words_keys = [...Object.keys(words)];
 

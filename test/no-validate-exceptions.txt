@@ -71,6 +71,7 @@ test/cli/install/catalogs.test.ts
 test/cli/install/npmrc.test.ts
 test/cli/install/overrides.test.ts
 test/cli/run/env.test.ts
+test/cli/run/garbage-env.test.ts
 test/cli/run/esm-defineProperty.test.ts
 test/cli/run/jsx-namespaced-attributes.test.ts
 test/cli/run/log-test.test.ts

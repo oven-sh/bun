@@ -7,6 +7,7 @@ import { join } from "path";
 describe("napi", () => {
   beforeAll(() => {
     // build gyp
+    console.time("Building node-gyp");
     const install = spawnSync({
       cmd: [bunExe(), "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
@@ -19,6 +20,7 @@ describe("napi", () => {
       console.error("build failed, bailing out!");
       process.exit(1);
     }
+    console.timeEnd("Building node-gyp");
   });
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
@@ -294,8 +296,9 @@ describe("napi", () => {
       checkSameOutput("test_get_exception", [5]);
       checkSameOutput("test_get_exception", [{ foo: "bar" }]);
     });
-    it("can throw an exception from an async_complete_callback", () => {
-      checkSameOutput("create_promise", [true]);
+    it("can throw an exception from an async_complete_callback", async () => {
+      const count = 10;
+      await Promise.all(Array.from({ length: count }, () => checkSameOutput("create_promise", [true])));
     });
   });
 

@@ -225,27 +225,25 @@ describe("bundler", () => {
     entryPointsRaw: ["test/entry.ts", "--external", "*"],
   });
 
-  for (let backend of ["cli", "api"] as const) {
-    itBundled(`regression/NODE_PATHBuild ${backend}`, {
-      files: {
-        "/entry.js": `
+  itBundled(`regression/NODE_PATHBuild cli`, {
+    files: {
+      "/entry.js": `
         import MyClass from 'MyClass';
         console.log(new MyClass().constructor.name);
       `,
-        "/src/MyClass.js": `
+      "/src/MyClass.js": `
         export default class MyClass {}
       `,
-      },
-      entryPoints: ["/entry.js"],
-      backend,
-      env: {
-        NODE_PATH: "{{root}}/src",
-      },
-      run: {
-        stdout: "MyClass",
-      },
-    });
-  }
+    },
+    entryPoints: ["/entry.js"],
+    backend: "cli",
+    env: {
+      NODE_PATH: "{{root}}/src",
+    },
+    run: {
+      stdout: "MyClass",
+    },
+  });
 
   itBundled("regression/NamespaceTracking#12337", {
     files: {

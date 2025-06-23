@@ -841,15 +841,16 @@ describe("bun test", () => {
       expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
     });
 
-    test("substitutes object placeholders", () => {
-      const cases = [
-        { a: 1, b: 2, expected: 3, 1: "one", a1b2: "alpha", MixedCase: "X", dup: "A" },
-        { a: 2, b: 3, expected: 5, 1: "two", a1b2: "beta", MixedCase: "Y", dup: "B" },
-      ];
+    describe("substitutes object placeholders", () => {
+      test("basic", () => {
+        const cases = [
+          { a: 1, b: 2, expected: 3, 1: "one", a1b2: "alpha", MixedCase: "X", dup: "A" },
+          { a: 2, b: 3, expected: 5, 1: "two", a1b2: "beta", MixedCase: "Y", dup: "B" },
+        ];
 
-      const stderr = runTest({
-        args: [],
-        input: `
+        const stderr = runTest({
+          args: [],
+          input: `
           import { test, expect } from "bun:test";
 
           test.each(${JSON.stringify(cases)})
@@ -857,11 +858,248 @@ describe("bun test", () => {
               expect(data.a + data.b).toBe(data.expected);
             });
         `,
+        });
+
+        cases.forEach(c => {
+          const expected = `${c.a}+${c.b}=${c.expected} [` + `${c[1]} ${c.a1b2} ${c.MixedCase}  ${c.dup} ${c.dup}]`;
+          expect(stderr).toContain(expected);
+        });
       });
 
-      cases.forEach(c => {
-        const expected = `${c.a}+${c.b}=${c.expected} [` + `${c[1]} ${c.a1b2} ${c.MixedCase}  ${c.dup} ${c.dup}]`;
-        expect(stderr).toContain(expected);
+      test("basic property access", () => {
+        const cases = [
+          { name: "Alice", age: 30 },
+          { name: "Bob", age: 25 },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("User $name is $age years old", data => {
+            expect(data.name).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`User ${c.name} is ${c.age} years old`);
+        });
+      });
+
+      test("numeric property names", () => {
+        const cases = [
+          { 0: "zero", 1: "one", 2: "two", 42: "answer" },
+          { 0: "null", 1: "uno", 2: "dos", 42: "respuesta" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Numbers: $0, $1, $2, $42", data => {
+            expect(data[0]).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Numbers: ${c[0]}, ${c[1]}, ${c[2]}, ${c[42]}`);
+        });
+      });
+
+      test("underscore properties", () => {
+        const cases = [
+          { _private: "secret", __dunder: "magic", _1: "underscore_one", test_case: "snake" },
+          { _private: "hidden", __dunder: "special", _1: "underscore_two", test_case: "case" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Props: $_private, $__dunder, $_1, $test_case", data => {
+            expect(data._private).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Props: ${c._private}, ${c.__dunder}, ${c._1}, ${c.test_case}`);
+        });
+      });
+
+      test("missing properties", () => {
+        const cases = [{ existing: "value1" }, { existing: "value2" }];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Has $existing but not $missing", data => {
+            expect(data.existing).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Has ${c.existing} but not `);
+        });
+      });
+
+      test("special characters in values", () => {
+        const cases = [
+          { special: "hello\nworld", unicode: "café", symbols: "!@#$%^&*()" },
+          { special: "tab\there", unicode: "naïve", symbols: "<>{}[]|\\`~" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Special: '$special', Unicode: '$unicode', Symbols: '$symbols'", data => {
+            expect(data.special).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Special: '${c.special}', Unicode: '${c.unicode}', Symbols: '${c.symbols}'`);
+        });
+      });
+
+      test("boolean and null values", () => {
+        const cases = [
+          { bool_true: true, bool_false: false, null_val: null, undef_val: undefined },
+          { bool_true: false, bool_false: true, null_val: null, undef_val: undefined },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Bool: $bool_true/$bool_false, Null: $null_val, Undef: $undef_val", data => {
+            expect(typeof data.bool_true).toBe('boolean');
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Bool: ${c.bool_true}/${c.bool_false}, Null: ${c.null_val}, Undef: `);
+        });
+      });
+
+      test("nested objects", () => {
+        const cases = [
+          { nested: { deep: { value: "deep1" } }, flat: "flat1" },
+          { nested: { deep: { value: "deep2" } }, flat: "flat2" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Flat: $flat, Nested: $nested", data => {
+            expect(data.flat).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Flat: ${c.flat}, Nested: [object Object]`);
+        });
+      });
+
+      test("array values", () => {
+        const cases = [
+          { arr: [1, 2, 3], str: "test1" },
+          { arr: ["a", "b", "c"], str: "test2" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Array: $arr, String: $str", data => {
+            expect(Array.isArray(data.arr)).toBe(true);
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Array: ${c.arr.toString()}, String: ${c.str}`);
+        });
+      });
+
+      test("long property names", () => {
+        const cases = [
+          { veryLongPropertyNameThatShouldStillWork: "long1", a: "short1" },
+          { veryLongPropertyNameThatShouldStillWork: "long2", a: "short2" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Long: $veryLongPropertyNameThatShouldStillWork, Short: $a", data => {
+            expect(data.a).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Long: ${c.veryLongPropertyNameThatShouldStillWork}, Short: ${c.a}`);
+        });
+      });
+
+      test("case sensitivity", () => {
+        const cases = [
+          { Name: "uppercase", name: "lowercase", NAME: "allcaps" },
+          { Name: "Upper", name: "lower", NAME: "CAPS" },
+        ];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Cases: $Name, $name, $NAME", data => {
+            expect(data.Name).toBeDefined();
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Cases: ${c.Name}, ${c.name}, ${c.NAME}`);
+        });
+      });
+
+      test("no substitution when not object", () => {
+        const cases = [1, 2, 3];
+
+        const stderr = runTest({
+          args: [],
+          input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(cases)})("Value: $value, Number: %i", (num) => {
+            expect(typeof num).toBe('number');
+          });
+        `,
+        });
+
+        cases.forEach(c => {
+          expect(stderr).toContain(`Value: $value, Number: ${c}`);
+        });
       });
     });
     test("check formatting for %#", () => {

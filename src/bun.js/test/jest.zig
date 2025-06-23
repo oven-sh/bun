@@ -1940,7 +1940,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const allocator = bun.default_allocator;
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
+    var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
 
     const object_arg = if (function_args.len == 1 and function_args[0] != .zero and function_args[0].jsType().isObject())
         function_args[0]
@@ -1962,10 +1962,10 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
             if (start > idx + 1) {
                 const key = label[idx + 1 .. start];
-                if (try object_arg.get(globalThis, key)) |value| {
+                if (try object_arg.getOwn(globalThis, key)) |value| {
                     const owned_slice = try value.toSliceOrNull(globalThis);
                     defer owned_slice.deinit();
-                    list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
+                    try list.appendSlice(allocator, owned_slice.slice());
                 }
                 idx = start;
                 continue;
@@ -1992,9 +1992,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var str = bun.String.empty;
                     defer str.deref();
                     current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
+                    const owned_slice = try str.toOwnedSlice(allocator);
                     defer allocator.free(owned_slice);
-                    list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
+                    try list.appendSlice(allocator, owned_slice);
                     idx += 1;
                     args_idx += 1;
                 },
@@ -2002,27 +2002,27 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
-                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
+                    const test_index_str = try std.fmt.allocPrint(allocator, "{}", .{value_fmt});
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    try list.appendSlice(allocator, test_index_str);
                     idx += 1;
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
+                    const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    try list.appendSlice(allocator, test_index_str);
                     idx += 1;
                 },
                 '%' => {
-                    list.append(allocator, '%') catch bun.outOfMemory();
+                    try list.append(allocator, '%');
                     idx += 1;
                 },
                 else => {
                     // ignore unrecognized fmt
                 },
             }
-        } else list.append(allocator, char) catch bun.outOfMemory();
+        } else try list.append(allocator, char);
         idx += 1;
     }
 

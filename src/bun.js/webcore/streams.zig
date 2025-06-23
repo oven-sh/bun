@@ -1331,14 +1331,13 @@ pub const NetworkSink = struct {
     ended: bool = false,
     done: bool = false,
     cancel: bool = false,
-
+    backPressureSize: usize = 0,
+    flushPromise:  JSC.JSPromise.Strong = .{},
     endPromise: JSC.JSPromise.Strong = .{},
-
-    auto_flusher: AutoFlusher = AutoFlusher{},
-
     const HTTPWritableStream = union(enum) {
         s3_upload: *bun.S3.MultiPartUpload,
     };
+
 
     fn getHighWaterMark(this: *@This()) Blob.SizeType {
         if (this.task) |task| {
@@ -1348,15 +1347,6 @@ pub const NetworkSink = struct {
         }
         return this.highWaterMark;
     }
-    fn unregisterAutoFlusher(this: *@This()) void {
-        if (this.auto_flusher.registered)
-            AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
-    }
-
-    fn registerAutoFlusher(this: *@This()) void {
-        if (!this.auto_flusher.registered)
-            AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
-    }
 
     pub fn path(this: *@This()) ?[]const u8 {
         if (this.task) |task| {
@@ -1365,20 +1355,6 @@ pub const NetworkSink = struct {
             };
         }
         return null;
-    }
-
-    pub fn onAutoFlush(this: *@This()) bool {
-        if (this.done) {
-            this.auto_flusher.registered = false;
-            return false;
-        }
-
-        _ = this.internalFlush() catch 0;
-        if (this.buffer.isEmpty()) {
-            this.auto_flusher.registered = false;
-            return false;
-        }
-        return true;
     }
 
     pub fn start(this: *@This(), stream_start: Start) JSC.Maybe(void) {
@@ -1409,8 +1385,6 @@ pub const NetworkSink = struct {
         return @ptrCast(this);
     }
     pub fn finalize(this: *@This()) void {
-        this.unregisterAutoFlusher();
-
         var buffer = this.buffer;
         this.buffer = .{};
         buffer.deinit();
@@ -1429,33 +1403,52 @@ pub const NetworkSink = struct {
         }
     }
 
-    fn sendRequestData(writable: HTTPWritableStream, data: []const u8, is_last: bool) void {
+    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This()) void {
+        const flushed = this.backPressureSize;
+        this.backPressureSize = 0;
+        if (this.flushPromise.hasValue()) {
+            this.flushPromise.resolve(this.globalThis, JSC.JSValue.jsNumber(flushed));
+        }
+        if (task.ended and this.endPromise.hasValue()) {
+            this.endPromise.resolve(this.globalThis, JSC.JSValue.jsNumber(flushed));
+        }else {
+            _ = this.internalFlush() catch 0;
+        }
+    }
+
+    fn sendRequestData(writable: HTTPWritableStream, data: []const u8, is_last: bool) bool {
         switch (writable) {
             inline .s3_upload => |task| {
-                // TODO: handle backpressure
-                _ = task.sendRequestData(data, is_last);
+                return task.sendRequestData(data, is_last);
             },
         }
     }
 
-    pub fn send(this: *@This(), data: []const u8, is_last: bool) !void {
-        if (this.done) return;
+    pub fn send(this: *@This(), data: []const u8, is_last: bool) !bool {
+        if (this.done) return this.backPressureSize > 0;
 
         if (this.task) |task| {
             if (is_last) this.done = true;
-            // TODO: handle backpressure
-            _ = sendRequestData(task, data, is_last);
+            const hasBackpressure = sendRequestData(task, data, is_last);
+            if (hasBackpressure) {
+                this.backPressureSize += data.len;
+            }
         }
+        return this.backPressureSize > 0;
     }
 
     pub fn internalFlush(this: *@This()) !usize {
         if (this.done) return 0;
         var flushed: usize = 0;
+        var has_backpressure = false;
         // we need to respect the max len for the chunk
-        while (this.buffer.isNotEmpty()) {
+        while (this.buffer.isNotEmpty() and this.backPressureSize == 0) {
             const bytes = this.buffer.slice();
             const len: u32 = @min(bytes.len, std.math.maxInt(u32));
-            try this.send(bytes, this.buffer.list.items.len - (this.buffer.cursor + len) == 0 and this.ended);
+            has_backpressure = try this.send(bytes, this.buffer.list.items.len - (this.buffer.cursor + len) == 0 and this.ended);
+            if (has_backpressure) {
+                this.backPressureSize += len;
+            }
             flushed += len;
             this.buffer.cursor = len;
             if (this.buffer.isEmpty()) {
@@ -1463,9 +1456,10 @@ pub const NetworkSink = struct {
             }
         }
         if (this.ended and !this.done) {
-            try this.send("", true);
+            _ = try this.send("", true);
             this.finalize();
         }
+
         return flushed;
     }
 
@@ -1474,7 +1468,19 @@ pub const NetworkSink = struct {
         return .{ .result = {} };
     }
     pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
-        return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(this.internalFlush() catch 0)) };
+        if (this.done) {
+            return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+        }
+        if (this.flushPromise.hasValue()) {
+            return .{ .result = this.flushPromise.value() };
+        }
+
+        const flushed = this.internalFlush() catch 0;
+        if (this.backPressureSize > 0) {
+            this.flushPromise = JSC.JSPromise.Strong.init(globalThis);
+            return .{ .result = this.flushPromise.value() };
+        }
+        return .{ .result = JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(flushed)) };
     }
     pub fn finalizeAndDestroy(this: *@This()) void {
         this.finalize();
@@ -1499,7 +1505,7 @@ pub const NetworkSink = struct {
         if (this.buffer.size() == 0 and len >= this.getHighWaterMark()) {
             // fast path:
             // - large-ish chunk
-            this.send(bytes, false) catch {
+            _ =this.send(bytes, false) catch {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
             return .{ .owned = len };
@@ -1517,7 +1523,6 @@ pub const NetworkSink = struct {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
         }
-        this.registerAutoFlusher();
         return .{ .owned = len };
     }
 
@@ -1535,7 +1540,7 @@ pub const NetworkSink = struct {
             if (strings.isAllASCII(bytes)) {
                 // fast path:
                 // - large-ish chunk
-                this.send(bytes, false) catch {
+                _ = this.send(bytes, false) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
                 return .{ .owned = len };
@@ -1568,9 +1573,6 @@ pub const NetworkSink = struct {
                 return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
             };
         }
-
-        this.registerAutoFlusher();
-
         return .{ .owned = len };
     }
     pub fn writeUTF16(this: *@This(), data: Result) Result.Writable {
@@ -1592,7 +1594,6 @@ pub const NetworkSink = struct {
             return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
         }
 
-        this.registerAutoFlusher();
         return .{ .owned = @as(Blob.SizeType, @intCast(bytes.len)) };
     }
 

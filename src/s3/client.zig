@@ -304,10 +304,12 @@ pub fn writableStream(
         .task = .{ .s3_upload = task },
         .buffer = .{},
         .globalThis = globalThis,
+        // this will be solved when onWritable is called is called + task.ended == true
         .endPromise = JSC.JSPromise.Strong.init(globalThis),
     }).toSink();
 
     task.callback_context = @ptrCast(response_stream);
+    task.onWritable = @ptrCast(&JSC.WebCore.NetworkSink.onWritable);
     var signal = &response_stream.sink.signal;
 
     signal.* = JSC.WebCore.NetworkSink.JSSink.SinkSignal.init(.zero);

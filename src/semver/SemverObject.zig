@@ -169,7 +169,7 @@ pub fn order(
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) {
         return globalThis.throw("Expected two arguments", .{});
     }
@@ -215,7 +215,7 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) {
         return globalThis.throw("Expected two arguments", .{});
     }
@@ -268,7 +268,7 @@ fn getVersionComponent(
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(1).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) {
         return JSC.JSValue.null;
     }
@@ -315,7 +315,7 @@ pub fn prerelease(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
     var stack_fallback = std.heap.stackFallback(512, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(1).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) {
         return JSC.JSValue.null;
     }
@@ -350,7 +350,7 @@ pub fn parse(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSE
     var stack_fallback = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(1).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) {
         return JSC.JSValue.null;
     }
@@ -422,7 +422,7 @@ pub fn bump(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSEr
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(3).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) return JSC.JSValue.null;
 
     // Check if the first argument is a string
@@ -547,7 +547,7 @@ pub fn maxSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) return JSC.JSValue.null;
 
     const versions_array = arguments[0];
@@ -580,7 +580,7 @@ pub fn minSatisfying(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) return JSC.JSValue.null;
 
     const versions_array = arguments[0];
@@ -608,7 +608,7 @@ pub fn simplifyRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame)
     var stack_fallback = std.heap.stackFallback(2048, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(2).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 2) return JSC.JSValue.null;
 
     // First argument must be an array
@@ -792,7 +792,7 @@ pub fn validRange(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bu
     var stack_fallback = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack_fallback.get();
 
-    const arguments = callFrame.arguments_old(1).slice();
+    const arguments = callFrame.arguments();
     if (arguments.len < 1) return JSC.JSValue.null;
 
     // Check if the argument is a string

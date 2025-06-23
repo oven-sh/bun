@@ -4845,28 +4845,28 @@ declare module "bun" {
      * Throws an error if either version is invalid.
      */
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
-    
+
     /**
      * Returns the major version number, or null if the version is invalid.
      */
     function major(version: StringLike): number | null;
-    
+
     /**
      * Returns the minor version number, or null if the version is invalid.
      */
     function minor(version: StringLike): number | null;
-    
+
     /**
      * Returns the patch version number, or null if the version is invalid.
      */
     function patch(version: StringLike): number | null;
-    
+
     /**
      * Returns an array of prerelease components, or null if the version doesn't have a prerelease or is invalid.
      * Numeric components are parsed as numbers.
      */
     function prerelease(version: StringLike): (string | number)[] | null;
-    
+
     /**
      * Parses a version string into an object with its components.
      * Returns null if the version is invalid.
@@ -4880,43 +4880,43 @@ declare module "bun" {
       version: string;
       raw: string;
     } | null;
-    
+
     /**
      * Increments the version by the release type.
      * Returns the new version string, or null if the version is invalid.
-     * 
+     *
      * @param version The version to increment
      * @param releaseType The type of release: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release"
      * @param identifier Optional identifier for pre-releases (e.g., "alpha", "beta")
      */
-    function bump(version: StringLike, releaseType: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release", identifier?: string): string | null;
-    
+    function bump(
+      version: StringLike,
+      releaseType: "major" | "premajor" | "minor" | "preminor" | "patch" | "prepatch" | "prerelease" | "release",
+      identifier?: string,
+    ): string | null;
+
     /**
      * Returns true if the two version ranges intersect (have any versions in common).
      */
     function intersects(range1: StringLike, range2: StringLike): boolean;
-    
 
-    
     /**
      * Returns the highest version in the list that satisfies the range, or null if none of them do.
      */
     function maxSatisfying(versions: StringLike[], range: StringLike): string | null;
-    
+
     /**
      * Returns the lowest version in the list that satisfies the range, or null if none of them do.
      */
     function minSatisfying(versions: StringLike[], range: StringLike): string | null;
-    
 
-    
     /**
      * Returns a simplified range expression that matches the same items in the versions list as the input range.
-     * 
+     *
      * @param versions Array of versions to match
      * @param range The range to simplify
      * @returns The simplified range, or the original if it can't be simplified
-     * 
+     *
      * @example
      * ```ts
      * Bun.semver.simplifyRange(["1.0.0", "1.0.1", "1.0.2"], "1.0.0 || 1.0.1 || 1.0.2"); // "~1.0.0"
@@ -4924,7 +4924,7 @@ declare module "bun" {
      * ```
      */
     function simplifyRange(versions: StringLike[], range: StringLike): string | null;
-    
+
     /**
      * Returns the valid range string, or null if it's not valid.
      */

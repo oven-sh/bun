@@ -745,7 +745,7 @@ describe("Bun.semver.major()", () => {
     expect(Bun.semver.major("0.0.1")).toBe(0);
     expect(Bun.semver.major("999.888.777")).toBe(999);
   });
-  
+
   test("should return null for invalid versions", () => {
     expect(Bun.semver.major("not-a-version")).toBe(null);
     expect(Bun.semver.major("")).toBe(null);
@@ -759,7 +759,7 @@ describe("Bun.semver.minor()", () => {
     expect(Bun.semver.minor("v2.0.0-alpha.1")).toBe(0);
     expect(Bun.semver.minor("0.999.1")).toBe(999);
   });
-  
+
   test("should return null for invalid versions", () => {
     expect(Bun.semver.minor("not-a-version")).toBe(null);
     expect(Bun.semver.minor("")).toBe(null);
@@ -772,7 +772,7 @@ describe("Bun.semver.patch()", () => {
     expect(Bun.semver.patch("v2.0.0-alpha.1")).toBe(0);
     expect(Bun.semver.patch("0.1.999")).toBe(999);
   });
-  
+
   test("should return null for invalid versions", () => {
     expect(Bun.semver.patch("not-a-version")).toBe(null);
     expect(Bun.semver.patch("")).toBe(null);
@@ -786,7 +786,7 @@ describe("Bun.semver.prerelease()", () => {
     expect(Bun.semver.prerelease("1.0.0-0")).toEqual([0]);
     expect(Bun.semver.prerelease("1.0.0-x.7.z.92")).toEqual(["x", 7, "z", 92]);
   });
-  
+
   test("should return null for non-prerelease versions", () => {
     expect(Bun.semver.prerelease("1.2.3")).toBe(null);
     expect(Bun.semver.prerelease("1.2.3+build")).toBe(null);
@@ -807,7 +807,7 @@ describe("Bun.semver.parse()", () => {
     expect(parsed.version).toBe("1.2.3-alpha.1+build.123");
     expect(parsed.raw).toBe(v);
   });
-  
+
   test("should parse simple versions", () => {
     const parsed = Bun.semver.parse("1.2.3");
     expect(parsed).not.toBe(null);
@@ -818,7 +818,7 @@ describe("Bun.semver.parse()", () => {
     expect(parsed.build).toBe(null);
     expect(parsed.version).toBe("1.2.3");
   });
-  
+
   test("should return null for invalid versions", () => {
     expect(Bun.semver.parse("not-a-version")).toBe(null);
     expect(Bun.semver.parse("")).toBe(null);
@@ -976,8 +976,6 @@ describe("Bun.semver.intersects()", () => {
   });
 });
 
-
-
 describe("Bun.semver.maxSatisfying()", () => {
   test("finds the highest satisfying version", () => {
     const versions = ["1.0.0", "1.2.0", "1.3.0", "2.0.0"];
@@ -1014,8 +1012,6 @@ describe("Bun.semver.minSatisfying()", () => {
   });
 });
 
-
-
 describe("Bun.semver.simplifyRange()", () => {
   test("simplifies OR'd exact versions to tilde range", () => {
     expect(Bun.semver.simplifyRange(["1.0.0", "1.0.1", "1.0.2"], "1.0.0 || 1.0.1 || 1.0.2")).toBe("~1.0.0");
@@ -1026,7 +1022,9 @@ describe("Bun.semver.simplifyRange()", () => {
   });
 
   test("returns original range if can't simplify", () => {
-    expect(Bun.semver.simplifyRange(["1.0.0", "2.0.0", "3.0.0"], "1.0.0 || 2.0.0 || 3.0.0")).toBe("1.0.0 || 2.0.0 || 3.0.0");
+    expect(Bun.semver.simplifyRange(["1.0.0", "2.0.0", "3.0.0"], "1.0.0 || 2.0.0 || 3.0.0")).toBe(
+      "1.0.0 || 2.0.0 || 3.0.0",
+    );
   });
 
   test("returns original range if already simple", () => {
@@ -1205,8 +1203,6 @@ describe("Bun.semver negative tests", () => {
     });
   });
 
-
-
   describe("maxSatisfying() negative tests", () => {
     test("throws for non-array first argument", () => {
       expect(() => Bun.semver.maxSatisfying("not-an-array" as any, "^1.0.0")).toThrow();
@@ -1224,9 +1220,9 @@ describe("Bun.semver negative tests", () => {
       expect(Bun.semver.maxSatisfying(["1.0.0"], [] as any)).toBe(null);
     });
 
-         test("skips non-string versions in array", () => {
-       expect(Bun.semver.maxSatisfying([123, "1.0.0", null, "2.0.0", undefined, {}] as any, "^1.0.0")).toBe("1.0.0");
-     });
+    test("skips non-string versions in array", () => {
+      expect(Bun.semver.maxSatisfying([123, "1.0.0", null, "2.0.0", undefined, {}] as any, "^1.0.0")).toBe("1.0.0");
+    });
 
     test("returns null for invalid range strings", () => {
       expect(Bun.semver.maxSatisfying(["1.0.0", "2.0.0"], "")).toBe(null);
@@ -1253,8 +1249,6 @@ describe("Bun.semver negative tests", () => {
       expect(Bun.semver.minSatisfying([123, "2.0.0", null, "1.0.0", undefined, {}] as any, "^1.0.0")).toBe("1.0.0");
     });
   });
-
-
 
   describe("simplifyRange() negative tests", () => {
     test("throws for non-array first argument", () => {

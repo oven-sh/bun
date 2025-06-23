@@ -206,7 +206,7 @@ pub const BundleV2 = struct {
 
         try client_transpiler.configureDefines();
         client_transpiler.resolver.opts = client_transpiler.options;
-
+        client_transpiler.resolver.env_loader = client_transpiler.env;
         this.client_transpiler = client_transpiler;
         return client_transpiler;
     }
@@ -1752,7 +1752,7 @@ pub const BundleV2 = struct {
             if (!transpiler.options.production) {
                 try transpiler.options.conditions.appendSlice(&.{"development"});
             }
-
+            transpiler.resolver.env_loader = transpiler.env;
             transpiler.resolver.opts = transpiler.options;
         }
 

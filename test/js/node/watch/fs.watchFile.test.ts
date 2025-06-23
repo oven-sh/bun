@@ -1,4 +1,4 @@
-import { tempDirWithFiles } from "harness";
+import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -111,6 +111,18 @@ describe("fs.watchFile", () => {
     expect(entries.length).toBeGreaterThan(0);
 
     expect(typeof entries[0][0].mtimeMs === "bigint").toBe(true);
+  });
+
+  test.if(isWindows)("does not fire on atime-only update", async () => {
+    let called = false;
+    const file = path.join(testDir, "watch.txt");
+    fs.watchFile(file, { interval: 50 }, () => {
+      called = true;
+    });
+    fs.readFileSync(file);
+    await Bun.sleep(100);
+    fs.unwatchFile(file);
+    expect(called).toBe(false);
   });
 
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {

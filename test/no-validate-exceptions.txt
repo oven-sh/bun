@@ -1558,6 +1558,7 @@ test/js/node/test/parallel/test-net-listen-close-server-callback-is-not-function
 test/js/node/test/parallel/test-net-listen-close-server.js
 test/js/node/test/parallel/test-net-listen-error.js
 test/js/node/test/parallel/test-net-listen-exclusive-random-ports.js
+test/js/node/test/parallel/test-net-listen-fd0.js
 test/js/node/test/parallel/test-net-listen-handle-in-cluster-1.js
 test/js/node/test/parallel/test-net-listen-invalid-port.js
 test/js/node/test/parallel/test-net-listen-ipv6only.js

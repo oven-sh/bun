@@ -1290,24 +1290,28 @@ const Writable = union(enum) {
                             .err => |err| {
                                 _ = err; // autofix
                                 pipe.deref();
+                                if (stdio.* == .readable_stream) {
+                                    stdio.readable_stream.cancel(event_loop.global);
+                                }
                                 return error.UnexpectedCreatingStdin;
                             },
                         }
                         pipe.writer.setParent(pipe);
-                        subprocess.weak_file_sink_stdin_ptr = pipe;
-                        subprocess.ref();
-                        subprocess.flags.deref_on_stdin_destroyed = true;
-                        subprocess.flags.has_stdin_destructor_called = false;
 
                         if (stdio.* == .readable_stream) {
                             const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                             if (assign_result.toError()) |err| {
                                 pipe.deref();
-                                subprocess.deref();
                                 return event_loop.global.throwValue(err);
                             }
                             promise_for_stream.* = assign_result;
                         }
+
+                        // Only associate it with the subprocess after we've handled possible errors.
+                        subprocess.weak_file_sink_stdin_ptr = pipe;
+                        subprocess.ref();
+                        subprocess.flags.deref_on_stdin_destroyed = true;
+                        subprocess.flags.has_stdin_destructor_called = false;
 
                         return Writable{
                             .pipe = pipe,
@@ -1370,20 +1374,20 @@ const Writable = union(enum) {
 
                 pipe.writer.handle.poll.flags.insert(.socket);
 
-                subprocess.weak_file_sink_stdin_ptr = pipe;
-                subprocess.ref();
-                subprocess.flags.has_stdin_destructor_called = false;
-                subprocess.flags.deref_on_stdin_destroyed = true;
-
                 if (stdio.* == .readable_stream) {
                     const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                     if (assign_result.toError()) |err| {
                         pipe.deref();
-                        subprocess.deref();
                         return event_loop.global.throwValue(err);
                     }
                     promise_for_stream.* = assign_result;
                 }
+
+                // Only associate it with the subprocess once all errors are handled.
+                subprocess.weak_file_sink_stdin_ptr = pipe;
+                subprocess.ref();
+                subprocess.flags.deref_on_stdin_destroyed = true;
+                subprocess.flags.has_stdin_destructor_called = false;
 
                 return Writable{
                     .pipe = pipe,
@@ -2375,7 +2379,7 @@ pub fn spawnMaybeSync(
         .flags = .{
             .is_sync = is_sync,
         },
-        .killSignal = undefined,
+        .killSignal = killSignal,
     });
 
     const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
@@ -2393,16 +2397,9 @@ pub fn spawnMaybeSync(
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
-        .stdin = Writable.init(
-            &stdio[0],
-            loop,
-            subprocess,
-            spawned.stdin,
-            &promise_for_stream,
-        ) catch {
-            subprocess.deref();
-            return globalThis.throwOutOfMemory();
-        },
+        // Assign this after, since it is failable.
+        .stdin = .{ .ignore = {} },
+
         .stdout = Readable.init(
             stdio[1],
             loop,
@@ -2441,6 +2438,28 @@ pub fn spawnMaybeSync(
     };
 
     subprocess.process.setExitHandler(subprocess);
+
+    subprocess.stdin = Writable.init(
+        &stdio[0],
+        loop,
+        subprocess,
+        spawned.stdin,
+        &promise_for_stream,
+    ) catch |err| {
+        // javascript will never reach it.
+        subprocess.deref();
+
+        // If we fail to associate it with a stdin, don't leave the process in a
+        // zombie state and prefer instead to kill it.
+        _ = subprocess.tryKill(subprocess.killSignal);
+
+        switch (err) {
+            error.JSError => |e| return e,
+            else => {
+                return globalThis.throwError(err, "Unexpected error creating stdin");
+            },
+        }
+    };
 
     promise_for_stream.ensureStillAlive();
     subprocess.flags.is_stdin_a_readable_stream = promise_for_stream != .zero;

@@ -1175,20 +1175,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     bun.Output.panic("napi: {s}", .{message});
 }
-pub export fn napi_create_buffer(env_: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
-    log("napi_create_buffer: {d}", .{length});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
-    if (length > 0) {
-        if (data) |ptr| {
-            ptr.* = buffer.asArrayBuffer(env.toJS()).?.ptr;
-        }
-    }
-    result.set(env, buffer);
-    return env.ok();
-}
+pub extern fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result_: ?*napi_value) napi_status {
     log("napi_create_buffer_copy: {d}", .{length});

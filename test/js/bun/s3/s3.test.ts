@@ -1,9 +1,9 @@
 import type { S3Options } from "bun";
-import { S3Client, s3 as defaultS3, file, which } from "bun";
+import { S3Client, s3 as defaultS3, file, which, randomUUIDv7 } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { tempDirWithFiles } from "harness";
+import { getSecret, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -82,124 +82,124 @@ if (isDockerEnabled()) {
   });
 }
 
-// describe.skip("Virtual Hosted-Style", () => {
-//   const r2Url = new URL(getSecret("S3_R2_ENDPOINT") as string);
-//   // R2 do support virtual hosted style lets use it
-//   r2Url.hostname = `${getSecret("S3_R2_BUCKET")}.${r2Url.hostname}`;
+describe("Virtual Hosted-Style", () => {
+  const r2Url = new URL(getSecret("S3_R2_ENDPOINT") as string);
+  // R2 do support virtual hosted style lets use it
+  r2Url.hostname = `${getSecret("S3_R2_BUCKET")}.${r2Url.hostname}`;
 
-//   const credentials: S3Options = {
-//     accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
-//     secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
-//     endpoint: r2Url.toString(),
-//     virtualHostedStyle: true,
-//   };
+  const credentials: S3Options = {
+    accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
+    secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+    endpoint: r2Url.toString(),
+    virtualHostedStyle: true,
+  };
 
-//   it("basic operations", async () => {
-//     const client = new Bun.S3Client(credentials);
-//     const file = client.file(randomUUIDv7() + ".txt");
-//     await file.write("Hello Bun!");
-//     const text = await file.text();
-//     expect(text).toBe("Hello Bun!");
-//     const stat = await file.stat();
-//     expect(stat.size).toBe(10);
-//     expect(stat.type).toBe("text/plain;charset=utf-8");
-//     await file.unlink();
-//     expect(await file.exists()).toBe(false);
-//   });
+  it("basic operations", async () => {
+    const client = new Bun.S3Client(credentials);
+    const file = client.file(randomUUIDv7() + ".txt");
+    await file.write("Hello Bun!");
+    const text = await file.text();
+    expect(text).toBe("Hello Bun!");
+    const stat = await file.stat();
+    expect(stat.size).toBe(10);
+    expect(stat.type).toBe("text/plain;charset=utf-8");
+    await file.unlink();
+    expect(await file.exists()).toBe(false);
+  });
 
-//   it("ignore bucket name in path", async () => {
-//     const client = new Bun.S3Client(credentials);
-//     const filename = randomUUIDv7() + ".txt";
-//     const file = client.file(filename, {
-//       bucket: "will-be-ignored",
-//     });
-//     await file.write("Hello Bun!");
-//     const text = await client.file(filename).text();
-//     expect(text).toBe("Hello Bun!");
-//     await file.unlink();
-//   });
+  it("ignore bucket name in path", async () => {
+    const client = new Bun.S3Client(credentials);
+    const filename = randomUUIDv7() + ".txt";
+    const file = client.file(filename, {
+      bucket: "will-be-ignored",
+    });
+    await file.write("Hello Bun!");
+    const text = await client.file(filename).text();
+    expect(text).toBe("Hello Bun!");
+    await file.unlink();
+  });
 
-//   it("presign", async () => {
-//     {
-//       const client = new Bun.S3Client(credentials);
-//       const presigned = client.presign("filename.txt");
-//       const url = new URL(presigned);
-//       expect(url.hostname).toBe(r2Url.hostname);
-//     }
+  it("presign", async () => {
+    {
+      const client = new Bun.S3Client(credentials);
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe(r2Url.hostname);
+    }
 
-//     {
-//       const client = new Bun.S3Client({
-//         virtualHostedStyle: true,
-//         bucket: "bucket",
-//         accessKeyId: "test",
-//         secretAccessKey: "test",
-//         region: "us-west-1",
-//       });
-//       const presigned = client.presign("filename.txt");
-//       const url = new URL(presigned);
-//       expect(url.hostname).toBe("bucket.s3.us-west-1.amazonaws.com");
-//     }
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-west-1",
+      });
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-west-1.amazonaws.com");
+    }
 
-//     {
-//       const client = new Bun.S3Client({
-//         virtualHostedStyle: true,
-//         bucket: "bucket",
-//         accessKeyId: "test",
-//         secretAccessKey: "test",
-//       });
-//       const presigned = client.presign("filename.txt");
-//       const url = new URL(presigned);
-//       expect(url.hostname).toBe("bucket.s3.us-east-1.amazonaws.com");
-//     }
-//   });
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+      });
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-east-1.amazonaws.com");
+    }
+  });
 
-//   it("inspect", () => {
-//     const client = new Bun.S3Client({
-//       endpoint: "bucket.test.r2.cloudflarestorage.com",
-//       accessKeyId: "test",
-//       secretAccessKey: "test",
-//       virtualHostedStyle: true,
-//     });
+  it("inspect", () => {
+    const client = new Bun.S3Client({
+      endpoint: "bucket.test.r2.cloudflarestorage.com",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      virtualHostedStyle: true,
+    });
 
-//     {
-//       expect(Bun.inspect(client)).toBe(
-//         'S3Client ("bucket") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
-//       );
-//     }
+    {
+      expect(Bun.inspect(client)).toBe(
+        'S3Client ("bucket") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
 
-//     {
-//       expect(
-//         Bun.inspect(
-//           new Bun.S3Client({
-//             virtualHostedStyle: true,
-//             bucket: "bucket",
-//             accessKeyId: "test",
-//             secretAccessKey: "test",
-//             region: "us-west-1",
-//           }),
-//         ),
-//       ).toBe(
-//         'S3Client ("bucket") {\n  endpoint: "https://<bucket>.s3.<region>.amazonaws.com",\n  region: "us-west-1",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
-//       );
-//     }
-//     {
-//       const file = client.file("filename.txt");
-//       expect(Bun.inspect(file)).toBe(
-//         'S3Ref ("bucket/filename.txt") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
-//       );
-//     }
-//     {
-//       const file = client
-//         .file("filename.txt", {
-//           type: "text/plain",
-//         })
-//         .slice(10);
-//       expect(Bun.inspect(file)).toBe(
-//         'S3Ref ("bucket/filename.txt") {\n  type: "text/plain;charset=utf-8",\n  offset: 10,\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
-//       );
-//     }
-//   });
-// });
+    {
+      expect(
+        Bun.inspect(
+          new Bun.S3Client({
+            virtualHostedStyle: true,
+            bucket: "bucket",
+            accessKeyId: "test",
+            secretAccessKey: "test",
+            region: "us-west-1",
+          }),
+        ),
+      ).toBe(
+        'S3Client ("bucket") {\n  endpoint: "https://<bucket>.s3.<region>.amazonaws.com",\n  region: "us-west-1",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+    {
+      const file = client.file("filename.txt");
+      expect(Bun.inspect(file)).toBe(
+        'S3Ref ("bucket/filename.txt") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+    {
+      const file = client
+        .file("filename.txt", {
+          type: "text/plain",
+        })
+        .slice(10);
+      expect(Bun.inspect(file)).toBe(
+        'S3Ref ("bucket/filename.txt") {\n  type: "text/plain;charset=utf-8",\n  offset: 10,\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+  });
+});
 for (let credentials of allCredentials) {
   describe(`${credentials.service}`, () => {
     const s3Options: S3Options = {

@@ -228,8 +228,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (vm.isShuttingDown()) {
                 return;
             }
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = handlers.callErrorHandler(this_value, &.{ this_value, err_value });
@@ -254,8 +256,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
 
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -320,10 +324,11 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .syscall = bun.String.static("connect"),
                 .code = code_,
             };
-            vm.eventLoop().enter();
-            defer {
-                vm.eventLoop().exit();
-            }
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
@@ -346,10 +351,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.has_pending_activity.store(false, .release);
 
             const err_value = err.toErrorInstance(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-                err_value,
-            }) catch |e| globalObject.takeException(e);
+            const result = callback.call(globalObject, this_value, &[_]JSValue{ this_value, err_value }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
                 if (handlers.rejectPromise(err_val)) return;
@@ -472,9 +474,11 @@ pub fn NewSocket(comptime ssl: bool) type {
             } else {
                 if (callback == .zero) return;
             }
-            const vm = handlers.vm;
-            vm.eventLoop().enter();
-            defer vm.eventLoop().exit();
+
+            // the handlers must be kept alive for the duration of the function call
+            // that way if we need to call the error handler, we can
+            var scope = handlers.enter();
+            defer scope.exit();
             const result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
 
             if (result.toError()) |err| {

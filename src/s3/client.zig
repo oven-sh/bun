@@ -261,20 +261,30 @@ pub fn writableStream(
 ) bun.JSError!JSC.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
-            if (sink.endPromise.hasValue()) {
+            if (sink.endPromise.hasValue() or sink.flushPromise.hasValue()) {
                 const event_loop = sink.globalThis.bunVM().eventLoop();
                 event_loop.enter();
                 defer event_loop.exit();
                 switch (result) {
                     .success => {
-                        sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                        if (sink.flushPromise.hasValue()) {
+                            sink.flushPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                        }
+                        if (sink.endPromise.hasValue()) {
+                            sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                        }
                     },
                     .failure => |err| {
+                        const js_err = err.toJS(sink.globalThis, sink.path());
+                        if (sink.flushPromise.hasValue()) {
+                            sink.flushPromise.reject(sink.globalThis, js_err);
+                        }
+                        if (sink.endPromise.hasValue()) {
+                            sink.endPromise.reject(sink.globalThis, js_err);
+                        }
                         if (!sink.done) {
                             sink.abort();
-                            return;
                         }
-                        sink.endPromise.reject(sink.globalThis, err.toJS(sink.globalThis, sink.path()));
                     },
                 }
             }
@@ -301,11 +311,9 @@ pub fn writableStream(
     task.poll_ref.ref(task.vm);
 
     var response_stream = JSC.WebCore.NetworkSink.new(.{
-        .task = .{ .s3_upload = task },
-        .buffer = .{},
+        .task = task,
         .globalThis = globalThis,
-        // this will be solved when onWritable is called is called + task.ended == true
-        .endPromise = JSC.JSPromise.Strong.init(globalThis),
+        .highWaterMark = @truncate(options.partSize),
     }).toSink();
 
     task.callback_context = @ptrCast(response_stream);
@@ -345,9 +353,11 @@ pub const S3UploadStreamWrapper = struct {
             sink.deref();
         }
     }
-    pub fn onWritable(task: *MultiPartUpload, self: *@This()) void {
+    pub fn onWritable(task: *MultiPartUpload, self: *@This(), _: u64) void {
         log("onWritable {} {}", .{ self.sink != null, task.ended });
+        // end was called we dont need to drain anymore
         if (task.ended) return;
+        // we have more space in the queue, drain it
         if (self.sink) |sink| {
             sink.drain();
         }
@@ -355,7 +365,7 @@ pub const S3UploadStreamWrapper = struct {
 
     pub fn writeRequestData(this: *@This(), data: []const u8) bool {
         log("writeRequestData {}", .{data.len});
-        return this.task.sendRequestData(data, false);
+        return this.task.writeBytes(data, false) catch bun.outOfMemory();
     }
 
     pub fn writeEndRequest(this: *@This(), err: ?JSC.JSValue) void {
@@ -377,7 +387,7 @@ pub const S3UploadStreamWrapper = struct {
                 });
             }
         } else {
-            _ = this.task.sendRequestData("", true);
+            _ = this.task.writeBytes("", true) catch bun.outOfMemory();
         }
     }
 

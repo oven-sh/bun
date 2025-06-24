@@ -71,6 +71,7 @@ test/cli/install/catalogs.test.ts
 test/cli/install/npmrc.test.ts
 test/cli/install/overrides.test.ts
 test/cli/run/env.test.ts
+test/cli/run/garbage-env.test.ts
 test/cli/run/esm-defineProperty.test.ts
 test/cli/run/jsx-namespaced-attributes.test.ts
 test/cli/run/log-test.test.ts
@@ -167,6 +168,7 @@ test/js/bun/shell/commands/seq.test.ts
 test/js/bun/shell/commands/true.test.ts
 test/js/bun/shell/commands/which.test.ts
 test/js/bun/shell/commands/yes.test.ts
+test/js/bun/shell/commands/ls.test.ts
 test/js/bun/shell/env.positionals.test.ts
 test/js/bun/shell/exec.test.ts
 test/js/bun/shell/file-io.test.ts
@@ -1531,6 +1533,7 @@ test/js/node/test/parallel/test-net-connect-call-socket-connect.js
 test/js/node/test/parallel/test-net-connect-destroy.js
 test/js/node/test/parallel/test-net-connect-immediate-destroy.js
 test/js/node/test/parallel/test-net-connect-immediate-finish.js
+test/js/node/test/parallel/test-net-connect-keepalive.js
 test/js/node/test/parallel/test-net-connect-no-arg.js
 test/js/node/test/parallel/test-net-connect-nodelay.js
 test/js/node/test/parallel/test-net-connect-options-invalid.js
@@ -1556,6 +1559,7 @@ test/js/node/test/parallel/test-net-listen-close-server-callback-is-not-function
 test/js/node/test/parallel/test-net-listen-close-server.js
 test/js/node/test/parallel/test-net-listen-error.js
 test/js/node/test/parallel/test-net-listen-exclusive-random-ports.js
+test/js/node/test/parallel/test-net-listen-fd0.js
 test/js/node/test/parallel/test-net-listen-handle-in-cluster-1.js
 test/js/node/test/parallel/test-net-listen-invalid-port.js
 test/js/node/test/parallel/test-net-listen-ipv6only.js

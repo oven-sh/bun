@@ -2,6 +2,33 @@
 #include "napi_with_version.h"
 #include <climits>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <stdio.h>
+
+// Node.js makes stdout non-blocking
+// This messes up printf when you spam it quickly enough.
+class BlockingStdoutScope {
+public:
+  BlockingStdoutScope() {
+    original = fcntl(1, F_GETFL);
+    fcntl(1, F_SETFL, original & ~O_NONBLOCK);
+    setvbuf(stdout, nullptr, _IOFBF, 8192);
+    fflush(stdout);
+  }
+
+  ~BlockingStdoutScope() {
+    fflush(stdout);
+    fcntl(1, F_SETFL, original);
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+  }
+
+private:
+  int original;
+};
+
+#endif
+
 // e.g NODE_API_CALL(env, napi_create_int32(env, 5, &my_napi_integer))
 #define NODE_API_CALL(env, call) NODE_API_CALL_CUSTOM_RETURN(env, NULL, call)
 

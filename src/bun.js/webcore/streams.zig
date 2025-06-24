@@ -439,6 +439,25 @@ pub const Result = union(Tag) {
             return prom;
         }
 
+        pub fn runOnNextTick(this: *Pending) void {
+            if (this.state != .pending) return;
+            const vm = JSC.VirtualMachine.get();
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            const clone = bun.create(bun.default_allocator, Pending, this.*);
+            this.state = .none;
+            this.result = .{ .done = {} };
+            vm.eventLoop().enqueueTask(JSC.Task.init(clone));
+        }
+
+        pub fn runFromJSThread(this: *Pending) void {
+            this.run();
+
+            bun.destroy(this);
+        }
+
         pub const Future = union(enum) {
             promise: struct {
                 promise: *JSPromise,

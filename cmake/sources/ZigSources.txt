@@ -627,6 +627,7 @@ src/semver/SemverString.zig
 src/semver/SlicedString.zig
 src/semver/Version.zig
 src/sha.zig
+src/shell/AllocScope.zig
 src/shell/braces.zig
 src/shell/Builtin.zig
 src/shell/builtin/basename.zig

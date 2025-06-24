@@ -14,6 +14,10 @@ beforeAll(() => {
       "bar.txt": "bar",
       "baz.js": "baz",
     },
+    "folder.test": {
+      "file.txt": "content",
+      "another-folder": {},
+    },
   });
 });
 
@@ -60,6 +64,11 @@ describe("fs.glob", () => {
       expect(() => fs.glob("*.txt", { cwd: tmp })).toThrow(TypeError);
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
+  });
+
+  it("matches directories", () => {
+    const paths = fs.globSync("*.test", { cwd: tmp });
+    expect(paths).toContain("folder.test");
   });
 }); // </fs.glob>
 
@@ -120,6 +129,11 @@ describe("fs.globSync", () => {
       expect(() => fs.globSync(["*.txt"])).toThrow(TypeError);
     });
   });
+
+  it("matches directories", () => {
+    const paths = fs.globSync("*.test", { cwd: tmp });
+    expect(paths).toContain("folder.test");
+  });
 }); // </fs.globSync>
 
 describe("fs.promises.glob", () => {
@@ -159,5 +173,16 @@ describe("fs.promises.glob", () => {
     } finally {
       process.cwd = oldProcessCwd;
     }
+  });
+
+  it("matches directories", async () => {
+    const iter = fs.promises.glob("*.test", { cwd: tmp });
+    expect(iter[Symbol.asyncIterator]).toBeDefined();
+    let count = 0;
+    for await (const path of iter) {
+      expect(path).toBe("folder.test");
+      count++;
+    }
+    expect(count).toBe(1);
   });
 }); // </fs.promises.glob>

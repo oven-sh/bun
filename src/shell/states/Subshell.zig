@@ -34,18 +34,47 @@ pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOp
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
 ) *Subshell {
-    return bun.new(Subshell, .{
-        .base = .{ .kind = .condexpr, .interpreter = interpreter, .shell = shell_state },
+    const subshell = parent.create(Subshell);
+    subshell.* = .{
+        .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
-        .redirection_file = std.ArrayList(u8).init(bun.default_allocator),
-    });
+        .redirection_file = undefined,
+    };
+    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    return subshell;
+}
+
+pub fn initDupeShellState(
+    interpreter: *Interpreter,
+    shell_state: *ShellExecEnv,
+    node: *const ast.Subshell,
+    parent: ParentPtr,
+    io: IO,
+) bun.JSC.Maybe(*Subshell) {
+    const subshell = parent.create(Subshell);
+    subshell.* = .{
+        .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
+        .node = node,
+        .parent = parent,
+        .io = io,
+        .redirection_file = undefined,
+    };
+    subshell.base.shell = switch (shell_state.dupeForSubshell(subshell.base.allocScope(), subshell.base.allocator(), io, .subshell)) {
+        .result => |s| s,
+        .err => |e| {
+            parent.destroy(subshell);
+            return .{ .err = e };
+        },
+    };
+    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    return .{ .result = subshell };
 }
 
 pub fn start(this: *Subshell) Yield {
@@ -108,7 +137,6 @@ pub fn transitionToExec(this: *Subshell) Yield {
 }
 
 pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
-    defer child_ptr.deinit();
     this.exit_code = exit_code;
     if (child_ptr.ptr.is(Expansion) and exit_code != 0) {
         if (exit_code != 0) {
@@ -117,10 +145,12 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
             this.state.expanding_redirect.expansion.deinit();
             return this.writeFailingError("{}\n", .{err});
         }
+        child_ptr.deinit();
         return .{ .subshell = this };
     }
 
     if (child_ptr.ptr.is(Script)) {
+        child_ptr.deinit();
         return this.parent.childDone(this, exit_code);
     }
 
@@ -144,7 +174,8 @@ pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();
     this.redirection_file.deinit();
-    bun.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) Yield {
@@ -165,7 +196,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

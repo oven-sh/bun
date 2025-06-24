@@ -1169,7 +1169,7 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
-  test.skip("deepEquals Set/Map stress test", () => {
+  test("deepEquals Set/Map stress test", () => {
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];

@@ -3753,7 +3753,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
             //        AT_SYMLINK_FOLLOW);
             //
             var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
-            const path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{tmpfd.cast()}) orelse unreachable;
+            const path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{tmpfd.cast()}) catch unreachable;
 
             break :brk std.os.linux.linkat(
                 posix.AT.FDCWD,

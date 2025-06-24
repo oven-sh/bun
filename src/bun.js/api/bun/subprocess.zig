@@ -1558,7 +1558,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     jsc_vm.onSubprocessExit(process);
 
-    var stdin: ?*JSC.WebCore.FileSink = if (this.stdin == .pipe) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
+    var stdin: ?*JSC.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = JSC.JSValue.zero;
     if (this_jsvalue != .zero) {
         if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {

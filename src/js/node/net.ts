@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -1508,6 +1508,8 @@ function lookupAndConnect(self, options) {
   const { localAddress, localPort } = options;
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
+
+  validateString(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);

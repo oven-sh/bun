@@ -277,7 +277,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
                         }
                     }
                 } else {
-                    const auto span = str->span<UChar>();
+                    const auto span = str->span<char16_t>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -424,7 +424,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                     }
                 }
             } else {
-                const auto span = view.span<UChar>();
+                const auto span = view.span<char16_t>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);

@@ -1765,7 +1765,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     }
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le: {
-        std::span<UChar> data;
+        std::span<char16_t> data;
         size_t u16length = bytes.size() / 2;
         if (u16length == 0) {
             return JSValue::encode(jsEmptyString(vm));

@@ -102,6 +102,8 @@ src/bun.js/bindings/Exception.zig
 src/bun.js/bindings/FetchHeaders.zig
 src/bun.js/bindings/FFI.zig
 src/bun.js/bindings/generated_classes_list.zig
+src/bun.js/bindings/GeneratedBindings.zig
+src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GetterSetter.zig
 src/bun.js/bindings/HTTPServerAgent.zig
 src/bun.js/bindings/JSArray.zig
@@ -539,6 +541,7 @@ src/install/lockfile/printer/tree_printer.zig
 src/install/lockfile/printer/Yarn.zig
 src/install/lockfile/Tree.zig
 src/install/migration.zig
+src/install/NetworkTask.zig
 src/install/npm.zig
 src/install/PackageInstall.zig
 src/install/PackageInstaller.zig

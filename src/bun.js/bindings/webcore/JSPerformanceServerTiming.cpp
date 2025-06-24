@@ -167,7 +167,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceServerTimingConstructor, (JSGlobalObject *
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformanceServerTimingPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceServerTiming::getConstructor(vm, prototype->globalObject()));
 }
@@ -220,7 +220,7 @@ static inline EncodedJSValue jsPerformanceServerTimingPrototypeFunction_toJSONBo
     auto* result = constructEmptyObject(lexicalGlobalObject);
     auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "name"_s), nameValue);
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);

@@ -22,7 +22,17 @@ afterEach(() => gc());
 const NumberIsInteger = Number.isInteger;
 class ERR_INVALID_ARG_TYPE extends TypeError {
   constructor(name, type, value) {
-    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value} (${Bun.inspect(value)})`);
+    let inspected;
+    if (typeof value === "string") {
+      if (value.indexOf("'") === -1) {
+        inspected = `'${value}'`;
+      } else {
+        inspected = `${JSON.stringify(value)}`;
+      }
+    } else {
+      inspected = Bun.inspect(value);
+    }
+    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value} (${inspected})`);
     this.code = "ERR_INVALID_ARG_TYPE";
   }
 }
@@ -272,7 +282,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => b.write("test string", 0, 5, "invalid")).toThrow(/encoding/);
         // Unsupported arguments for Buffer.write
         expect(() => b.write("test", "utf8", 0)).toThrow(
-          `The "offset" argument must be of type number. Received type string ("utf8")`,
+          `The "offset" argument must be of type number. Received type string ('utf8')`,
         );
       });
 
@@ -302,6 +312,22 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Offset points to the end of the buffer and does not throw.
         // (see https://github.com/nodejs/node/issues/8127).
         Buffer.alloc(1).write("", 1, 0);
+      });
+
+      it("write BigInt beyond 64-bit range", () => {
+        const b = Buffer.allocUnsafe(64);
+        for (const signedFunction of ["writeBigInt64BE", "writeBigInt64LE"]) {
+          expect(() => b[signedFunction](-(2n ** 63n) - 1n)).toThrow(RangeError);
+          expect(() => b[signedFunction](2n ** 63n)).toThrow(RangeError);
+          expect(() => b[signedFunction](-(2n ** 65n))).toThrow(RangeError);
+          expect(() => b[signedFunction](2n ** 65n)).toThrow(RangeError);
+        }
+        for (const unsignedFunction of ["writeBigUInt64BE", "writeBigUInt64LE"]) {
+          expect(() => b[unsignedFunction](-1n)).toThrow(RangeError);
+          expect(() => b[unsignedFunction](2n ** 64n)).toThrow(RangeError);
+          expect(() => b[unsignedFunction](-(2n ** 65n))).toThrow(RangeError);
+          expect(() => b[unsignedFunction](2n ** 65n)).toThrow(RangeError);
+        }
       });
 
       it("copy() beyond end of buffer", () => {
@@ -447,6 +473,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           const c = Buffer.from([0, 0, 0, 0, 0]);
           expect(c.length).toBe(5);
           expect(c.write("あいうえお", encoding)).toBe(4);
+          console.log(c.toString(encoding), { encoding });
           expect(c).toStrictEqual(Buffer.from([0x42, 0x30, 0x44, 0x30, 0x00]));
         });
 

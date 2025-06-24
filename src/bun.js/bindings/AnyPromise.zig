@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -55,9 +55,9 @@ pub const AnyPromise = union(enum) {
         }
     }
 
-    pub fn asValue(this: AnyPromise, globalThis: *JSGlobalObject) JSValue {
+    pub fn asValue(this: AnyPromise) JSValue {
         return switch (this) {
-            .normal => |promise| promise.asValue(globalThis),
+            .normal => |promise| promise.toJS(),
             .internal => |promise| promise.asValue(),
         };
     }
@@ -76,11 +76,15 @@ pub const AnyPromise = union(enum) {
             args: Args,
 
             pub fn call(wrap_: *@This(), global: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(global, @call(.auto, Fn, wrap_.args));
+                return JSC.toJSHostCall(global, @src(), Fn, wrap_.args);
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src(), .enabled);
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
-        JSC__AnyPromise__wrap(globalObject, this.asValue(globalObject), &ctx, @ptrCast(&Wrapper.call));
+        JSC__AnyPromise__wrap(globalObject, this.asValue(), &ctx, @ptrCast(&Wrapper.call));
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 };

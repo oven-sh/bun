@@ -1,15 +1,13 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Allocator = std.mem.Allocator;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const cli = @import("../cli.zig");
 
 const Command = cli.Command;
@@ -162,12 +160,12 @@ pub const BunxCommand = struct {
         }
 
         const package_json_contents = package_json_read.bytes.items;
-        const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
+        const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(&source, transpiler.log, transpiler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -197,7 +195,7 @@ pub const BunxCommand = struct {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(transpiler.allocator)) |dir_name| {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
-                    defer _ = bun.sys.close(bin_dir);
+                    defer bin_dir.close();
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
@@ -277,7 +275,7 @@ pub const BunxCommand = struct {
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
     fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
-        toplevel_fd.assertValid();
+        bun.assert(toplevel_fd.isValid());
         return getBinNameFromProjectDirectory(transpiler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
@@ -478,7 +476,7 @@ pub const BunxCommand = struct {
         //     where a user can replace the directory with malicious code.
         //
         // If this format changes, please update cache clearing code in package_manager_command.zig
-        const uid = if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId();
+        const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
@@ -543,12 +541,12 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(.cwd(), destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
                             };
-                            defer _ = bun.sys.close(fd);
+                            defer fd.close();
 
                             var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
                             var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
@@ -599,7 +597,7 @@ pub const BunxCommand = struct {
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            bun.assert(root_dir_fd != .zero);
+            bun.assert(root_dir_fd.isValid());
             if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {

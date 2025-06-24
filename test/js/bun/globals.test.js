@@ -36,7 +36,7 @@ it("ERR_INVALID_THIS", () => {
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
     expect(e.name).toBe("TypeError");
-    expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ("hellooo")`);
+    expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ('hellooo')`);
   }
 });
 

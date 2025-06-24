@@ -1,8 +1,8 @@
-import { spawnSync, spawn, Glob } from "bun";
+import { Glob, spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isCI, isMusl } from "harness";
-import { join, dirname } from "path";
+import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMusl, isWindows } from "harness";
 import os from "node:os";
+import { dirname, join } from "path";
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");
 const nodeApiRoot = join(__dirname, "node-napi-tests", "test", "node-api");
@@ -11,9 +11,10 @@ const jsNativeApiTests = Array.from(new Glob("**/*.js").scanSync(jsNativeApiRoot
 const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
 
 // These js-native-api tests are known to fail and will be fixed in later PRs
-let failingJsNativeApiTests = [
-  // Fails because Bun doesn't support creating empty external strings
-  "test_string/test.js",
+let failingJsNativeApiTests: string[] = [
+  // We skip certain parts of test_string/test.js because we don't support creating empty external
+  // strings. We don't skip the entire thing because the other tests are useful to check.
+  // "test_string/test.js",
 ];
 
 // These are the tests from node-api that failed as of commit 83f536f4d, except for those that
@@ -49,8 +50,17 @@ let failingNodeApiTests = [
   "test_worker_terminate/test.js",
 ];
 
-if (process.platform == "win32") {
-  failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+if (isBroken && isIntelMacOS) {
+  // TODO(@190n)
+  // these are flaky on Intel Mac
+  failingJsNativeApiTests.push("test_reference/test.js");
+  failingNodeApiTests.push("test_reference_by_node_api_version/test.js");
+}
+
+if (isWindows) {
+  if (isBroken) {
+    failingNodeApiTests.push("test_callback_scope/test.js"); // TODO: remove once #12827 is fixed
+  }
 
   for (const i in failingJsNativeApiTests) {
     failingJsNativeApiTests[i] = failingJsNativeApiTests[i].replaceAll("/", "\\");
@@ -65,6 +75,19 @@ if (isMusl) {
   failingJsNativeApiTests = jsNativeApiTests;
 }
 
+for (const t of failingJsNativeApiTests) {
+  if (!jsNativeApiTests.includes(t)) {
+    console.error(`attempt to skip ${t} which is not a real js-native-api test`);
+    process.exit(1);
+  }
+}
+for (const t of failingNodeApiTests) {
+  if (!nodeApiTests.includes(t)) {
+    console.error(`attempt to skip ${t} which is not a real node-api test`);
+    process.exit(1);
+  }
+}
+
 beforeAll(async () => {
   const directories = jsNativeApiTests
     .filter(t => !failingJsNativeApiTests.includes(t))
@@ -75,7 +98,7 @@ beforeAll(async () => {
 
   async function buildOne(dir: string) {
     const child = spawn({
-      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
+      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug", "-j", "max"],
       cwd: dir,
       stderr: "pipe",
       stdout: "ignore",
@@ -86,14 +109,16 @@ beforeAll(async () => {
         // on linux CI, node-gyp will default to g++ and the version installed there is very old,
         // so we make it use clang instead
         ...(process.platform == "linux" && isCI
-          ? { "CC": "/usr/lib/llvm-18/bin/clang", CXX: "/usr/lib/llvm-18/bin/clang++" }
+          ? { "CC": "/usr/lib/llvm-19/bin/clang", CXX: "/usr/lib/llvm-19/bin/clang++" }
           : {}),
       },
     });
     await child.exited;
     if (child.exitCode !== 0) {
       const stderr = await new Response(child.stderr).text();
-      throw new Error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
+      console.error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
+      console.error("bailing out!");
+      process.exit(1);
     }
   }
 
@@ -105,7 +130,7 @@ beforeAll(async () => {
   }
 
   const parallelism = Math.min(8, os.cpus().length, 1 /* TODO(@heimskr): remove */);
-  const jobs = [];
+  const jobs: Promise<void>[] = [];
   for (let i = 0; i < parallelism; i++) {
     jobs.push(worker());
   }

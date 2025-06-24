@@ -2,6 +2,7 @@
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
+import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
@@ -15,6 +16,8 @@ url = new URL(url, "http://localhost:3000");
 
 const storeHotChunks = args.includes("--store-hot-chunks");
 const expectErrors = args.includes("--expect-errors");
+const verboseWebSockets = args.includes("--verbose-web-sockets");
+const allowUnlimitedReloads = args.includes("--allow-unlimited-reloads");
 
 // Create a new window instance
 let window;
@@ -23,8 +26,15 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
+let isUpdating = null;
+let objectURLRegistry = new Map();
+let internalAPIs;
 
 function reset() {
+  if (isUpdating !== null) {
+    clearImmediate(isUpdating);
+    isUpdating = null;
+  }
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -41,6 +51,7 @@ function reset() {
       warn: () => {},
       info: () => {},
       assert: () => {},
+      trace: () => {},
     };
   }
 }
@@ -53,6 +64,10 @@ function createWindow(windowUrl) {
     width: 1024,
     height: 768,
   });
+
+  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+    window.internal = internal;
+  };
 
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -68,31 +83,22 @@ function createWindow(windowUrl) {
       super(url, protocols, options);
       webSockets.push(this);
       this.addEventListener("message", event => {
+        const data = new Uint8Array(event.data);
+        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
+          isUpdating = setImmediate(() => {
+            process.send({ type: "received-hmr-event", args: [] });
+            isUpdating = null;
+          });
+        }
         if (!allowWebSocketMessages) {
-          const data = new Uint8Array(event.data);
-          console.error(
-            "[E] WebSocket message received while messages are not allowed. Event type",
-            JSON.stringify(String.fromCharCode(data[0])),
-          );
-          let hexDump = "";
-          for (let i = 0; i < data.length; i += 16) {
-            // Print offset
-            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
-            // Print hex values
-            const chunk = data.slice(i, i + 16);
-            const hexValues = Array.from(chunk)
-              .map(b => b.toString(16).padStart(2, "0"))
-              .join(" ");
-            hexDump += hexValues.padEnd(48, " ");
-            // Print ASCII
-            hexDump += "\x1b[2m| \x1b[0m";
-            for (const byte of chunk) {
-              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
-            }
-            hexDump += "\n";
+          const allowedTypes = ["n", "r"];
+          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+            return;
           }
-          console.error(hexDump);
+          dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
           process.exit(exitCodeMap.websocketMessagesAreBanned);
+        } else {
+          verboseWebSockets && dumpWebSocketMessage("[I] WebSocket", data);
         }
       });
     }
@@ -102,11 +108,55 @@ function createWindow(windowUrl) {
     }
   };
 
+  // The method of loading code via object URLs is not supported by happy-dom.
+  // Instead, it is emulated.
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  URL.createObjectURL = function (blob) {
+    const url = originalCreateObjectURL.call(URL, blob);
+    objectURLRegistry.set(url, blob);
+    return url;
+  };
+  URL.revokeObjectURL = function (url) {
+    originalRevokeObjectURL.call(URL, url);
+    objectURLRegistry.delete(url);
+  };
+  const originalDocumentCreateElement = window.document.createElement;
+  const originalElementAppendChild = window.document.head.appendChild;
+  class ScriptTag {
+    src;
+    constructor() {}
+    remove() {}
+  }
+  window.document.createElement = function (tagName) {
+    if (tagName === "script") {
+      return new ScriptTag();
+    }
+    return originalDocumentCreateElement.call(window.document, tagName);
+  };
+  Object.defineProperty(window.document.head.__proto__, "appendChild", {
+    configurable: true,
+    enumerable: true,
+    value: function (element) {
+      if (element instanceof ScriptTag) {
+        assert(element.src.startsWith("blob:"));
+        const blob = objectURLRegistry.get(element.src);
+        assert(blob);
+        blob.arrayBuffer().then(buffer => {
+          const code = new TextDecoder().decode(buffer);
+          (0, window.eval)(code);
+        });
+        return;
+      }
+      return originalElementAppendChild.call(document.head, element);
+    },
+  });
+
   // Intercept console messages
   const originalConsole = window.console;
   window.console = {
     log: (...args) => {
-      process?.send({ type: "message", args: args });
+      process.send({ type: "message", args: args });
     },
     error: (...args) => {
       console.error("[E]", ...args);
@@ -120,6 +170,78 @@ function createWindow(windowUrl) {
       originalConsole.warn(...args);
     },
     info: (...args) => {
+      if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
+        // Wait for all CSS assets to be fully loaded before emitting the event
+        let checkAttempts = 0;
+        const MAX_CHECK_ATTEMPTS = 20; // Prevent infinite waiting
+
+        const checkCSSLoaded = () => {
+          checkAttempts++;
+
+          // Get all link elements with rel="stylesheet"
+          const styleLinks = window.document.querySelectorAll('link[rel="stylesheet"]');
+          // Get all style elements
+          const styleTags = window.document.querySelectorAll("style");
+          // Check for adoptedStyleSheets
+          const adoptedSheets = window.document.adoptedStyleSheets || [];
+
+          // If no stylesheets of any kind, just emit the event
+          if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
+            process.nextTick(() => {
+              process.send({ type: "received-hmr-event", args: [] });
+            });
+            return;
+          }
+
+          // Check if all stylesheets are loaded
+          let allLoaded = true;
+          let pendingCount = 0;
+
+          // Check link elements
+          for (const link of styleLinks) {
+            // If the stylesheet is not loaded yet
+            if (!link.sheet) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          // Check style elements - these should be loaded immediately
+          for (const style of styleTags) {
+            if (!style.sheet) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          // Check adoptedStyleSheets - these should be loaded immediately
+          for (const sheet of adoptedSheets) {
+            if (!sheet.cssRules) {
+              allLoaded = false;
+              pendingCount++;
+            }
+          }
+
+          if (allLoaded || checkAttempts >= MAX_CHECK_ATTEMPTS) {
+            // All CSS is loaded or we've reached max attempts, emit the event
+            if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
+              console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
+            }
+            process.nextTick(() => {
+              process.send({ type: "received-hmr-event", args: [] });
+            });
+          } else {
+            // Wait a bit and check again
+            console.info(
+              `[I] Waiting for ${pendingCount} CSS assets to load (attempt ${checkAttempts}/${MAX_CHECK_ATTEMPTS})...`,
+            );
+            setTimeout(checkCSSLoaded, 50);
+          }
+        };
+
+        // Start checking for CSS loaded state
+        checkCSSLoaded();
+      }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
       console.info("[I]", ...args);
@@ -130,10 +252,15 @@ function createWindow(windowUrl) {
       console.trace(...args);
       process.exit(exitCodeMap.assertionFailed);
     },
+    trace: console.trace,
   };
 
   window.location.reload = async () => {
     reset();
+    if (allowUnlimitedReloads) {
+      handleReload();
+      return;
+    }
     if (expectingReload) {
       // Permission already granted, proceed with reload
       handleReload();
@@ -164,6 +291,28 @@ function createWindow(windowUrl) {
       return nativeEval.call(window, code);
     };
   }
+}
+
+function dumpWebSocketMessage(message, data) {
+  console.error(`${message}. Event type`, JSON.stringify(String.fromCharCode(data[0])));
+  let hexDump = "";
+  for (let i = 0; i < data.length; i += 16) {
+    // Print offset
+    hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+    // Print hex values
+    const chunk = data.slice(i, i + 16);
+    const hexValues = Array.from(chunk)
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    hexDump += hexValues.padEnd(48, " ");
+    // Print ASCII
+    hexDump += "\x1b[2m| \x1b[0m";
+    for (const byte of chunk) {
+      hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+    }
+    hexDump += "\n";
+  }
+  console.error(hexDump);
 }
 
 async function handleReload() {

@@ -1,14 +1,23 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const Shimmer = JSC.Shimmer;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
-pub const JSObject = extern struct {
-    pub const shim = Shimmer("JSC", "JSObject", @This());
-    const cppFn = shim.cppFn;
+extern const JSC__JSObject__maxInlineCapacity: c_uint;
+
+pub const JSObject = opaque {
+    pub inline fn maxInlineCapacity() c_uint {
+        return JSC__JSObject__maxInlineCapacity;
+    }
+
+    extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
+    extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(global: *JSGlobalObject, obj: *JSObject) JSValue;
+    extern fn JSC__createStructure(global: *JSC.JSGlobalObject, owner: *JSC.JSCell, length: u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn toJS(obj: *JSObject) JSValue {
         return JSValue.fromCell(obj);
@@ -21,7 +30,7 @@ pub const JSObject = extern struct {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn create(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
     }
     /// Marshall a struct into a JSObject, copying its properties. It's
@@ -32,7 +41,7 @@ pub const JSObject = extern struct {
     ///
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
-    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
     }
 
@@ -48,7 +57,7 @@ pub const JSObject = extern struct {
     /// depending on whether `null_prototype` is set. Prefer using the object
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
-    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) bun.JSError!*JSObject {
         const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
 
         const obj = obj: {
@@ -67,11 +76,15 @@ pub const JSObject = extern struct {
             cell.put(
                 global,
                 field.name,
-                JSC.toJS(global, @TypeOf(property), property, .temporary),
+                try JSC.toJS(global, @TypeOf(property), property),
             );
         }
 
         return obj;
+    }
+
+    pub fn get(obj: *JSObject, global: *JSGlobalObject, prop: anytype) JSError!?JSValue {
+        return obj.toJS().get(global, prop);
     }
 
     pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
@@ -84,7 +97,11 @@ pub const JSObject = extern struct {
         }
     }
 
-    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+    /// When the GC sees a JSValue referenced in the stack, it knows not to free it
+    /// This mimics the implementation in JavaScriptCore's C++
+    pub inline fn ensureStillAlive(this: *JSObject) void {
+        std.mem.doNotOptimizeAway(this);
+    }
 
     pub const ExternColumnIdentifier = extern struct {
         tag: u8 = 0,
@@ -106,13 +123,13 @@ pub const JSObject = extern struct {
             }
         }
     };
+
     pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
-    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
@@ -127,19 +144,23 @@ pub const JSObject = extern struct {
         return JSC__JSObject__create(global, length, creator, Type.call);
     }
 
-    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
-        return cppFn("getIndex", .{
-            this,
-            globalThis,
-            i,
-        });
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
+        // we don't use fromJSHostCall, because it will assert that if there is an exception
+        // then the JSValue is zero. the function this ends up calling can return undefined
+        // with an exception:
+        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src(), .enabled);
+        defer scope.deinit();
+        const value = JSC__JSObject__getIndex(this, globalThis, i);
+        try scope.returnIfException();
+        bun.assert(value != .zero);
+        return value;
     }
 
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
-        return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
+        return JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
     }
-
-    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
 
     /// This will not call getters or be observable from JavaScript.
     pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {

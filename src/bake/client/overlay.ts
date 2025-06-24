@@ -514,7 +514,11 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
   }
 
   dom.appendChild(
-    elem("div", { class: "r-error-trace" }, [...trace.map(frame => renderTraceFrame(frame, "trace-frame"))]),
+    elem(
+      "div",
+      { class: "r-error-trace" },
+      trace.map(frame => renderTraceFrame(frame, "trace-frame")),
+    ),
   );
   domErrorContent.appendChild(dom);
 }
@@ -667,7 +671,7 @@ declare global {
 }
 
 import { BundlerMessageLevel } from "../enums";
-import { css } from "../macros" with { type: "macro" };
+import { DataViewReader, DataViewWriter } from "./data-view";
 import {
   BundlerMessage,
   BundlerMessageLocation,
@@ -675,6 +679,5 @@ import {
   decodeSerializedError,
   type DeserializedFailure,
 } from "./error-serialization";
-import { DataViewReader, DataViewWriter } from "./data-view";
-import { parseStackTrace, type Frame } from "./stack-trace";
 import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";
+import { parseStackTrace, type Frame } from "./stack-trace";

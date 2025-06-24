@@ -1,5 +1,5 @@
 #include "JSHash.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
@@ -21,12 +21,17 @@ static const HashTableValue JSHashPrototypeTableValues[] = {
 };
 
 const ClassInfo JSHash::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHash) };
-const ClassInfo JSHashPrototype::s_info = { "HashPrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashPrototype) };
-const ClassInfo JSHashConstructor::s_info = { "HashConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashConstructor) };
+const ClassInfo JSHashPrototype::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashPrototype) };
+const ClassInfo JSHashConstructor::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashConstructor) };
 
 JSHash::JSHash(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
 {
+}
+
+void JSHash::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSHash*>(cell)->~JSHash();
 }
 
 JSHash::~JSHash()
@@ -166,7 +171,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputString, encoding));
+        auto inputView = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
@@ -253,15 +261,22 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
-        // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
-        // We need to cache the result for future calls
-        auto data = hash->m_ctx.digestFinal(len);
+
+        const EVP_MD* md = hash->m_ctx.getDigest();
+        uint32_t bufLen = len;
+        if (md == EVP_sha512_224()) {
+            // SHA-512/224 expects buffer length of length % 8. can be truncated afterwards
+            bufLen = SHA512_224_DIGEST_BUFFER_LENGTH;
+        }
+
+        auto data = hash->m_ctx.digestFinal(bufLen);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return JSValue::encode({});
         }
 
-        // Store the digest in the hash object
+        // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
+        // We need to cache the result for future calls
         hash->m_digest = ByteSource::allocated(data.release());
     }
 
@@ -286,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hash cannot be invoked without 'new'"_s);
             return {};

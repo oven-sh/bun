@@ -1,8 +1,8 @@
+import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
-import assert from "assert";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -631,4 +631,99 @@ test("onEnd Plugin does not crash", async () => {
       });
     })(),
   ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+});
+
+test("macro with nested object", async () => {
+  const dir = tempDirWithFilesAnon({
+    "index.ts": `
+import { testMacro } from "./macro" assert { type: "macro" };
+
+export const testConfig = testMacro({
+  borderRadius: {
+    1: "4px",
+    2: "8px",
+  },
+});
+    `,
+    "macro.ts": `
+export function testMacro(val: any) {
+  return val;
+}
+    `,
+  });
+
+  const build = await Bun.build({
+    entrypoints: [join(dir, "index.ts")],
+    minify: true,
+  });
+
+  expect(build.outputs).toHaveLength(1);
+  expect(build.outputs[0].kind).toBe("entry-point");
+  expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(
+    `var t={borderRadius:{"1":"4px","2":"8px"}};export{t as testConfig};\n`,
+  );
+});
+
+// Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
+test("regression/NODE_PATHBuild api", async () => {
+  const dir = tempDirWithFiles("node-path-build", {
+    "entry.js": `
+      import MyClass from 'MyClass';
+      console.log(new MyClass().constructor.name);
+    `,
+    "src/MyClass.js": `
+      export default class MyClass {}
+    `,
+    "build.js": `
+      import { join } from "path";
+      
+      const build = await Bun.build({
+        entrypoints: [join(import.meta.dir, "entry.js")],
+        outdir: join(import.meta.dir, "out"),
+      });
+      
+      if (!build.success) {
+        console.error("Build failed:", build.logs);
+        process.exit(1);
+      }
+      
+      // Run the built file
+      const runProc = Bun.spawn({
+        cmd: [process.argv[0], join(import.meta.dir, "out", "entry.js")],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      
+      await runProc.exited;
+      const runOutput = await new Response(runProc.stdout).text();
+      const runError = await new Response(runProc.stderr).text();
+      
+      if (runError) {
+        console.error("Run error:", runError);
+        process.exit(1);
+      }
+      
+      console.log(runOutput.trim());
+      
+    `,
+  });
+
+  // Run the build script with NODE_PATH set
+  const proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "build.js")],
+    env: {
+      ...bunEnv,
+      NODE_PATH: join(dir, "src"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: dir,
+  });
+
+  await proc.exited;
+  const output = await new Response(proc.stdout).text();
+  const error = await new Response(proc.stderr).text();
+
+  expect(error).toBe("");
+  expect(output.trim()).toBe("MyClass");
 });

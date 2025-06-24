@@ -6,7 +6,7 @@
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include "ncrypto.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/LazyProperty.h>
@@ -23,6 +23,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSHmac* create(JSC::VM& vm, JSC::Structure* structure);
+    static void destroy(JSC::JSCell* cell);
 
     DECLARE_INFO;
 

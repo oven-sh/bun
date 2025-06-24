@@ -214,5 +214,82 @@ test("bun init twice", async () => {
       "type": "module",
     }
   `);
-  expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(`"my edited tsconfig.json"`);
+  expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(
+    `"my edited tsconfig.json"`,
+  );
 });
+
+test("bun init --react works", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "--react"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+
+  expect(out.signalCode).toBeUndefined();
+  expect(out.exitCode).toBe(0);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+  expect(pkg).toHaveProperty("dependencies.react");
+  expect(pkg).toHaveProperty("dependencies.react-dom");
+  expect(pkg).toHaveProperty("devDependencies.@types/react");
+  expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
+
+  expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+}, 30_000);
+
+test("bun init --react=tailwind works", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "--react=tailwind"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+
+  expect(out.signalCode).toBeUndefined();
+  expect(out.exitCode).toBe(0);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+  expect(pkg).toHaveProperty("dependencies.react");
+  expect(pkg).toHaveProperty("dependencies.react-dom");
+  expect(pkg).toHaveProperty("devDependencies.@types/react");
+  expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
+  expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
+
+  expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+}, 30_000);
+
+test("bun init --react=shadcn works", () => {
+  const temp = tmpdirSync();
+
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "--react=shadcn"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+
+  expect(out.signalCode).toBeUndefined();
+  expect(out.exitCode).toBe(0);
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+  expect(pkg).toHaveProperty("dependencies.react");
+  expect(pkg).toHaveProperty("dependencies.react-dom");
+  expect(pkg).toHaveProperty("dependencies.@radix-ui/react-slot");
+  expect(pkg).toHaveProperty("dependencies.class-variance-authority");
+  expect(pkg).toHaveProperty("dependencies.clsx");
+  expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
+
+  expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "src/index.tsx"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
+  expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+}, 30_000);

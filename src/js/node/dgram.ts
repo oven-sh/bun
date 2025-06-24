@@ -30,19 +30,21 @@ const CONNECT_STATE_CONNECTED = 2;
 const RECV_BUFFER = true;
 const SEND_BUFFER = false;
 
-const LIBUS_LISTEN_DEFAULT = 0;
-const LIBUS_LISTEN_EXCLUSIVE_PORT = 1;
-const LIBUS_SOCKET_ALLOW_HALF_OPEN = 2;
-const LIBUS_LISTEN_REUSE_PORT = 4;
-const LIBUS_SOCKET_IPV6_ONLY = 8;
-const LIBUS_LISTEN_REUSE_ADDR = 16;
-const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32;
+const enum uSockets {
+  LISTEN_DEFAULT = 0,
+  LISTEN_EXCLUSIVE_PORT = 1,
+  SOCKET_ALLOW_HALF_OPEN = 2,
+  LISTEN_REUSE_PORT = 4,
+  SOCKET_IPV6_ONLY = 8,
+  LISTEN_REUSE_ADDR = 16,
+  LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
+}
 
 const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
   validateNumber,
@@ -51,7 +53,7 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 
 const EventEmitter = require("node:events");
 
@@ -205,7 +207,7 @@ function createSocket(type, listener) {
   return new Socket(type, listener);
 }
 
-function bufferSize(self, size, buffer) {
+function bufferSize(self, size, _buffer) {
   if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
 
   const ctx = {};
@@ -276,15 +278,12 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   }
 
   let address;
-  let exclusive;
 
   if (port !== null && typeof port === "object") {
     address = port.address || "";
-    exclusive = !!port.exclusive;
     port = port.port;
   } else {
     address = typeof address_ === "function" ? "" : address_;
-    exclusive = false;
   }
 
   // Defaulting address for bind to all interfaces
@@ -303,19 +302,18 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    let flags = LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
+    let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
-      flags |= LIBUS_LISTEN_REUSE_ADDR;
+      flags |= uSockets.LISTEN_REUSE_ADDR;
     }
 
     if (state.ipv6Only) {
-      flags |= LIBUS_SOCKET_IPV6_ONLY;
+      flags |= uSockets.SOCKET_IPV6_ONLY;
     }
 
     if (state.reusePort) {
-      exclusive = true; // TODO: cluster support
-      flags |= LIBUS_LISTEN_REUSE_PORT;
+      flags |= uSockets.LISTEN_REUSE_PORT;
     }
 
     // TODO flags
@@ -503,7 +501,7 @@ function onListenSuccess() {
   clearQueue.$call(this);
 }
 
-function onListenError(err) {
+function onListenError(_err) {
   this.removeListener("listening", onListenSuccess);
   this[kStateSymbol].queue = undefined;
 }

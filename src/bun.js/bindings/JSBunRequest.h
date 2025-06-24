@@ -1,5 +1,6 @@
 #pragma once
 
+#include "JSCookieMap.h"
 #include "root.h"
 #include "ZigGeneratedClasses.h"
 
@@ -32,11 +33,17 @@ public:
     JSObject* params() const;
     void setParams(JSObject* params);
 
+    JSObject* cookies() const;
+    void setCookies(JSObject* cookies);
+
+    JSBunRequest* clone(JSC::VM& vm, JSGlobalObject* globalObject);
+
 private:
     JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
     void finishCreation(JSC::VM& vm, JSObject* params);
 
     mutable JSC::WriteBarrier<JSC::JSObject> m_params;
+    mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;
 };
 
 JSC::Structure* createJSBunRequestStructure(JSC::VM&, Zig::GlobalObject*);

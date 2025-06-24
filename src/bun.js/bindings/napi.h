@@ -29,6 +29,8 @@ struct AsyncCleanupHook {
     void* data = nullptr;
     napi_async_cleanup_hook_handle handle = nullptr;
 };
+
+void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -53,7 +55,7 @@ struct napi_async_cleanup_hook_handle__ {
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
     do {                                                                                                            \
-        if (UNLIKELY(!(assertion))) {                                                                               \
+        if (!(assertion)) [[unlikely]] {                                                                            \
             WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
             WTFReportBacktrace();                                                                                   \
             NAPI_ABORT("Aborted");                                                                                  \
@@ -66,6 +68,7 @@ public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
+        , m_vm(JSC::getVM(globalObject))
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -174,8 +177,7 @@ public:
 
     bool inGC() const
     {
-        JSC::VM& vm = JSC::getVM(m_globalObject);
-        return vm.isCollectorBusyOnCurrentThread();
+        return this->vm().isCollectorBusyOnCurrentThread();
     }
 
     void checkGC() const
@@ -189,7 +191,7 @@ public:
 
     bool isVMTerminating() const
     {
-        return JSC::getVM(m_globalObject).hasTerminationRequest();
+        return this->vm().hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
@@ -207,6 +209,7 @@ public:
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
+    inline JSC::VM& vm() const { return m_vm; }
 
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
@@ -296,6 +299,7 @@ private:
     // TODO(@heimskr): Use WTF::HashSet
     std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
+    JSC::VM& m_vm;
     std::list<std::pair<void (*)(void*), void*>> m_cleanupHooks;
     std::list<Napi::AsyncCleanupHook> m_asyncCleanupHooks;
 };
@@ -648,5 +652,79 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+extern "C" napi_status napi_set_last_error(napi_env env, napi_status status);
+class NAPICallFrame {
+public:
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
+        : NAPICallFrame(globalObject, callFrame, dataPtr)
+    {
+        m_storedNewTarget = storedNewTarget;
+        m_isConstructorCall = !m_storedNewTarget.isEmpty();
+    }
+
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
+        : m_callFrame(callFrame)
+        , m_dataPtr(dataPtr)
+    {
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
+        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
+        // `this` to an object.
+        // TODO change to global? or find another way to avoid JSGlobalProxy
+        JSC::JSObject* jscThis = globalObject->globalThis();
+        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            jscThis = m_callFrame->thisValue().toObject(globalObject);
+            // https://tc39.es/ecma262/#sec-toobject
+            // toObject only throws for undefined and null, which we checked for
+            scope.assertNoException();
+        }
+        m_callFrame->setThisValue(jscThis);
+    }
+
+    JSValue thisValue() const
+    {
+        return m_callFrame->thisValue();
+    }
+
+    napi_callback_info toNapi()
+    {
+        return reinterpret_cast<napi_callback_info>(this);
+    }
+
+    ALWAYS_INLINE void* dataPtr() const
+    {
+        return m_dataPtr;
+    }
+
+    void extract(size_t* argc, // [in-out] Specifies the size of the provided argv array
+                               // and receives the actual count of args.
+        napi_value* argv, // [out] Array of values
+        napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
+        void** data, Zig::GlobalObject* globalObject);
+
+    JSValue newTarget()
+    {
+        if (!m_isConstructorCall) {
+            return JSValue();
+        }
+
+        if (m_storedNewTarget.isUndefined()) {
+            // napi_get_new_target:
+            // "This API returns the new.target of the constructor call. If the current callback
+            // is not a constructor call, the result is NULL."
+            // they mean a null pointer, not JavaScript null
+            return JSValue();
+        } else {
+            return m_storedNewTarget;
+        }
+    }
+
+private:
+    JSC::CallFrame* m_callFrame;
+    void* m_dataPtr;
+    JSValue m_storedNewTarget;
+    bool m_isConstructorCall = false;
+};
 
 }

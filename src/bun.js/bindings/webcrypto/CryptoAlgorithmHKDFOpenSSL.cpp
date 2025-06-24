@@ -42,7 +42,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHKDF::platformDeriveBits(const Crypt
         return Exception { NotSupportedError };
 
     Vector<uint8_t> output(length / 8);
-    if (HKDF(output.data(), output.size(), algorithm, key.key().data(), key.key().size(), parameters.saltVector().data(), parameters.saltVector().size(), parameters.infoVector().data(), parameters.infoVector().size()) <= 0)
+    if (HKDF(output.begin(), output.size(), algorithm, key.key().begin(), key.key().size(), parameters.saltVector().begin(), parameters.saltVector().size(), parameters.infoVector().begin(), parameters.infoVector().size()) <= 0)
         return Exception { OperationError };
 
     return output;

@@ -18,19 +18,12 @@
 //! easy-to-use API for the parser.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("../css_parser.zig");
-const CSSString = css.CSSString;
-const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
-
-const Result = css.Result;
-const PrintResult = css.PrintResult;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -39,8 +32,8 @@ const parser = css.selector.parser;
 const ValidSelectorImpl = parser.ValidSelectorImpl;
 const GenericComponent = parser.GenericComponent;
 const Combinator = parser.Combinator;
-const SpecifityAndFlags = parser.SpecifityAndFlags;
-const compute_specifity = parser.compute_specifity;
+const SpecificityAndFlags = parser.SpecificityAndFlags;
+const compute_specificity = parser.compute_specificity;
 const SelectorFlags = parser.SelectorFlags;
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
@@ -77,7 +70,7 @@ pub fn SelectorBuilder(comptime Impl: type) type {
         const This = @This();
 
         const BuildResult = struct {
-            specifity_and_flags: SpecifityAndFlags,
+            specificity_and_flags: SpecificityAndFlags,
             components: ArrayList(GenericComponent(Impl)),
         };
 
@@ -125,24 +118,18 @@ pub fn SelectorBuilder(comptime Impl: type) type {
             parsed_slotted: bool,
             parsed_part: bool,
         ) BuildResult {
-            const specifity = compute_specifity(Impl, this.simple_selectors.slice());
-            var flags = SelectorFlags.empty();
-            // PERF: is it faster to do these ORs all at once
-            if (parsed_pseudo) {
-                flags.has_pseudo = true;
-            }
-            if (parsed_slotted) {
-                flags.has_slotted = true;
-            }
-            if (parsed_part) {
-                flags.has_part = true;
-            }
+            const specificity = compute_specificity(Impl, this.simple_selectors.slice());
+            const flags: SelectorFlags = .{
+                .has_pseudo = parsed_pseudo,
+                .has_slotted = parsed_slotted,
+                .has_part = parsed_part,
+            };
             // `buildWithSpecificityAndFlags()` will
             defer this.deinit();
-            return this.buildWithSpecificityAndFlags(SpecifityAndFlags{ .specificity = specifity, .flags = flags });
+            return this.buildWithSpecificityAndFlags(SpecificityAndFlags{ .specificity = specificity, .flags = flags });
         }
 
-        /// Builds a selector with the given specifity and flags.
+        /// Builds a selector with the given specificity and flags.
         ///
         /// PERF:
         ///     Recall that this code is ported from servo, which optimizes for matching speed, so
@@ -153,7 +140,7 @@ pub fn SelectorBuilder(comptime Impl: type) type {
         ///     order requires additional allocations, and undoing the reversal when serializing the
         ///     selector. So we could just change this code to store the components in the same order
         ///     as the source.
-        pub fn buildWithSpecificityAndFlags(this: *This, spec: SpecifityAndFlags) BuildResult {
+        pub fn buildWithSpecificityAndFlags(this: *This, spec: SpecificityAndFlags) BuildResult {
             const T = GenericComponent(Impl);
             const rest: []const T, const current: []const T = splitFromEnd(T, this.simple_selectors.slice(), this.current_len);
             const combinators = this.combinators.slice();
@@ -201,7 +188,7 @@ pub fn SelectorBuilder(comptime Impl: type) type {
                 }
             }
 
-            return .{ .specifity_and_flags = spec, .components = components };
+            return .{ .specificity_and_flags = spec, .components = components };
         }
 
         pub fn splitFromEnd(comptime T: type, s: []const T, at: usize) struct { []const T, []const T } {

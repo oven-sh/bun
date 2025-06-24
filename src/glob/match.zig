@@ -23,7 +23,7 @@
 // THE SOFTWARE.
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Allocator = std.mem.Allocator;
 
@@ -32,9 +32,6 @@ const Allocator = std.mem.Allocator;
 /// One such stack buffer is created recursively for each pair of braces
 /// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
 /// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
-const GLOB_STACK_BUF_SIZE = 64;
-const BRACE_DEPTH_MAX = 10;
-
 const Brace = struct {
     open_brace_idx: u32,
     branch_idx: u32,
@@ -139,6 +136,7 @@ pub fn match(_: Allocator, glob: []const u8, path: []const u8) MatchResult {
     // TODO: consider just returning a bool
     // return matched != negated;
     if (negated) {
+        // FIXME(@DonIsaac): This looks backwards to me
         return if (matched) .negate_no_match else .negate_match;
     } else {
         return if (matched) .match else .no_match;

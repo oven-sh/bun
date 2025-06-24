@@ -1,5 +1,5 @@
 #include "JSHmac.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
@@ -12,6 +12,7 @@
 #include <JavaScriptCore/Error.h>
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -21,12 +22,17 @@ static const HashTableValue JSHmacPrototypeTableValues[] = {
 };
 
 const ClassInfo JSHmac::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmac) };
-const ClassInfo JSHmacPrototype::s_info = { "HmacPrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacPrototype) };
-const ClassInfo JSHmacConstructor::s_info = { "HmacConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacConstructor) };
+const ClassInfo JSHmacPrototype::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacPrototype) };
+const ClassInfo JSHmacConstructor::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacConstructor) };
 
 JSHmac::JSHmac(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
 {
+}
+
+void JSHmac::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSHmac*>(cell)->~JSHmac();
 }
 
 JSHmac::~JSHmac()
@@ -134,7 +140,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputString, encoding));
+        auto inputView = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
@@ -232,7 +241,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSHmacClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSHmacClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hmac cannot be invoked without 'new'"_s);
             return {};
@@ -249,7 +258,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     // Check if we have initialization arguments
     JSValue algorithmValue = callFrame->argument(0);
-    Bun::V::validateString(scope, globalObject, algorithmValue, "hmac"_s);
+    V::validateString(scope, globalObject, algorithmValue, "hmac"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Get encoding next before stringifying algorithm
@@ -259,8 +268,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
         encodingValue = options.get(globalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!encodingValue.isNull()) {
-            Bun::V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
+        if (!encodingValue.isUndefinedOrNull()) {
+            V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -270,11 +279,10 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     JSValue key = callFrame->argument(1);
 
-    Vector<uint8_t> keyData;
-    prepareSecretKey(globalObject, scope, keyData, key, encodingValue);
+    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    hmac->init(globalObject, scope, algorithm, keyData.span());
+    hmac->init(globalObject, scope, algorithm, keyObject.symmetricKey().span());
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(hmac);
@@ -285,7 +293,7 @@ JSC_DEFINE_HOST_FUNCTION(callHmac, (JSC::JSGlobalObject * globalObject, JSC::Cal
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    throwTypeError(globalObject, scope, "Class constructor Hmac cannot be invoked without 'new'"_s);
+    throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Hmac"_s);
     return JSC::encodedJSUndefined();
 }
 

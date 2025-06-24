@@ -6,33 +6,24 @@ const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
-const Lock = bun.Mutex;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
 
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
-
-const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;
 const G = js_ast.G;
-const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
@@ -40,22 +31,17 @@ const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Ast = js_ast.Ast;
 
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
-const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = bun.assert;
 
-threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
-threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = bun.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
@@ -167,7 +153,7 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     var remaining = input;
     var len: usize = 2; // for quotes
 
-    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
+    while (strings.indexOfNeedsEscapeForJavaScriptString(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
@@ -251,7 +237,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
 
             switch (encoding) {
                 .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
+                    if (strings.indexOfNeedsEscapeForJavaScriptString(remain, quote_char)) |j| {
                         const text_chunk = text[i .. i + clamped_width];
                         try writer.writeAll(text_chunk);
                         i += clamped_width;
@@ -420,14 +406,14 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
-    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void;
+    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
 
-    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
+    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void)) type {
         return struct {
-            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
                 try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
             }
 
@@ -687,7 +673,6 @@ fn NewPrinter(
         writer: Writer,
 
         has_printed_bundled_import_statement: bool = false,
-        imported_module_ids: std.ArrayList(u32),
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
@@ -1378,7 +1363,7 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            bun.assert(!ref.isNull());
+            bun.assert(!ref.isNull()); // Invalid Symbol
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1692,10 +1677,11 @@ fn NewPrinter(
                     .bun => {
                         if (record.kind == .dynamic) {
                             p.print("Promise.resolve(globalThis.Bun)");
-                        } else if (record.kind == .require) {
+                            return;
+                        } else if (record.kind == .require or record.kind == .stmt) {
                             p.print("globalThis.Bun");
+                            return;
                         }
-                        return;
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {
@@ -2125,12 +2111,12 @@ fn NewPrinter(
 
                         if (p.options.target == .node) {
                             // "__require.module"
-                            if (p.options.require_ref) |require|
-                                p.printSymbol(require)
-                            else
-                                p.print("require");
-
-                            p.print(".module");
+                            if (p.options.require_ref) |require| {
+                                p.printSymbol(require);
+                                p.print(".module");
+                            } else {
+                                p.print("module");
+                            }
                         } else if (p.options.commonjs_module_ref.isValid()) {
                             p.printSymbol(p.options.commonjs_module_ref);
                         } else {
@@ -3129,7 +3115,7 @@ fn NewPrinter(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        var last = p.binary_expression_stack.pop();
+                        var last = p.binary_expression_stack.pop().?;
                         last.visitRightAndFinish(p);
                     }
                 },
@@ -5243,18 +5229,10 @@ fn NewPrinter(
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
-            if (imported_module_ids_list_unset) {
-                imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
-                imported_module_ids_list_unset = false;
-            }
-
-            imported_module_ids_list.clearRetainingCapacity();
-
             var printer = Printer{
                 .import_records = import_records,
                 .options = opts,
                 .writer = writer,
-                .imported_module_ids = imported_module_ids_list,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
@@ -5262,9 +5240,9 @@ fn NewPrinter(
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
                 printer.source_map_builder.line_offset_table_byte_offset_list =
                     printer
-                    .source_map_builder
-                    .line_offset_tables
-                    .items(.byte_offset_to_start_of_line);
+                        .source_map_builder
+                        .line_offset_tables
+                        .items(.byte_offset_to_start_of_line);
             }
 
             return printer;
@@ -5553,128 +5531,6 @@ pub const DirectWriter = struct {
     pub const Error = std.posix.WriteError;
 };
 
-// Unbuffered           653ms
-//   Buffered    65k     47ms
-//   Buffered    16k     43ms
-//   Buffered     4k     55ms
-const FileWriterInternal = struct {
-    file: std.fs.File,
-    last_bytes: [2]u8 = [_]u8{ 0, 0 },
-    threadlocal var buffer: MutableString = undefined;
-    threadlocal var has_loaded_buffer: bool = false;
-
-    pub fn getBuffer() *MutableString {
-        buffer.reset();
-        return &buffer;
-    }
-
-    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
-        return &buffer;
-    }
-
-    pub fn init(file: std.fs.File) FileWriterInternal {
-        if (!has_loaded_buffer) {
-            buffer = MutableString.init(default_allocator, 0) catch unreachable;
-            has_loaded_buffer = true;
-        }
-
-        buffer.reset();
-
-        return FileWriterInternal{
-            .file = file,
-        };
-    }
-    pub fn writeByte(this: *FileWriterInternal, byte: u8) anyerror!usize {
-        try buffer.appendChar(byte);
-
-        this.last_bytes = .{ this.last_bytes[1], byte };
-        return 1;
-    }
-    pub fn writeAll(this: *FileWriterInternal, bytes: anytype) anyerror!usize {
-        try buffer.append(bytes);
-        if (bytes.len >= 2) {
-            this.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
-        } else if (bytes.len >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], bytes[bytes.len - 1] };
-        }
-        return bytes.len;
-    }
-
-    pub fn slice(_: *@This()) string {
-        return buffer.list.items;
-    }
-
-    pub fn getLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[1];
-    }
-
-    pub fn getLastLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[0];
-    }
-
-    pub fn reserveNext(_: *FileWriterInternal, count: u64) anyerror![*]u8 {
-        try buffer.growIfNeeded(count);
-        return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
-    }
-    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
-        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
-
-        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
-        if (count >= 2) {
-            this.last_bytes = buffer.list.items[buffer.list.items.len - 2 ..][0..2].*;
-        } else if (count >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], buffer.list.items[buffer.list.items.len - 1] };
-        }
-    }
-
-    pub fn done(
-        ctx: *FileWriterInternal,
-    ) anyerror!void {
-        defer buffer.reset();
-        const result_ = buffer.slice();
-        var result = result_;
-
-        while (result.len > 0) {
-            switch (result.len) {
-                0...4096 => {
-                    const written = try ctx.file.write(result);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-                else => {
-                    const first = result.ptr[0 .. result.len / 3];
-                    const second = result[first.len..][0..first.len];
-                    const remain = first.len + second.len;
-                    const third: []const u8 = result[remain..];
-
-                    var vecs = [_]std.posix.iovec_const{
-                        .{
-                            .base = first.ptr,
-                            .len = first.len,
-                        },
-                        .{
-                            .base = second.ptr,
-                            .len = second.len,
-                        },
-                        .{
-                            .base = third.ptr,
-                            .len = third.len,
-                        },
-                    };
-
-                    const written = try std.posix.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-            }
-        }
-    }
-
-    pub fn flush(
-        _: *FileWriterInternal,
-    ) anyerror!void {}
-};
-
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
     written: []u8 = &[_]u8{},
@@ -5692,12 +5548,9 @@ pub const BufferWriter = struct {
         return this.buffer.list.items;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) BufferWriter {
         return BufferWriter{
-            .buffer = MutableString.init(
-                allocator,
-                0,
-            ) catch unreachable,
+            .buffer = MutableString.initEmpty(allocator),
         };
     }
 
@@ -5801,19 +5654,6 @@ pub const BufferPrinter = NewWriter(
     BufferWriter.reserveNext,
     BufferWriter.advanceBy,
 );
-pub const FileWriter = NewWriter(
-    FileWriterInternal,
-    FileWriterInternal.writeByte,
-    FileWriterInternal.writeAll,
-    FileWriterInternal.getLastByte,
-    FileWriterInternal.getLastLastByte,
-    FileWriterInternal.reserveNext,
-    FileWriterInternal.advanceBy,
-);
-pub fn NewFileWriter(file: std.fs.File) FileWriter {
-    const internal = FileWriterInternal.init(file);
-    return FileWriter.init(internal);
-}
 
 pub const Format = enum {
     esm,
@@ -5976,9 +5816,6 @@ pub fn printAst(
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     if (!opts.bundling and
         tree.uses_require_ref and
@@ -6016,7 +5853,7 @@ pub fn printAst(
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
 
-            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+            try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), "");
@@ -6024,7 +5861,7 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 
@@ -6084,10 +5921,10 @@ pub fn print(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
-    const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
+    const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
-    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator);
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(
@@ -6172,9 +6009,6 @@ pub fn printWithWriterAndPlatform(
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer writer.* = printer.writer.*;
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.printDevServerModule(source, &ast, &parts[0]);
@@ -6252,9 +6086,6 @@ pub fn printCommonJS(
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
@@ -6271,7 +6102,7 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 

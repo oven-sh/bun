@@ -1,8 +1,6 @@
 /**
  * @note this file patches `node:test` via the require cache.
  */
-import { AnyFunction } from "bun";
-import os from "node:os";
 import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
@@ -130,11 +128,11 @@ export function createTest(path: string) {
       }, exact);
     }
 
-    function mustCallAtLeast(fn: AnyFunction, minimum: number) {
+    function mustCallAtLeast(fn: unknown, minimum: number) {
       return _mustCallInner(fn, minimum, "minimum");
     }
 
-    function _mustCallInner(fn: AnyFunction, criteria = 1, field: string) {
+    function _mustCallInner(fn: unknown, criteria = 1, field: string) {
       // @ts-ignore
       if (process._exiting) throw new Error("Cannot use common.mustCall*() in process exit handler");
       if (typeof fn === "number") {
@@ -265,130 +263,4 @@ export function createTest(path: string) {
 
 declare namespace Bun {
   function jest(path: string): typeof import("bun:test");
-}
-
-const normalized = os.platform() === "win32" ? Bun.main.replaceAll("\\", "/") : Bun.main;
-if (normalized.includes("node/test/parallel")) {
-  function createMockNodeTestModule() {
-    interface TestError extends Error {
-      testStack: string[];
-    }
-    type Context = {
-      filename: string;
-      testStack: string[];
-      failures: Error[];
-      successes: number;
-      addFailure(err: unknown): TestError;
-      recordSuccess(): void;
-    };
-    const contexts: Record</* requiring file */ string, Context> = {};
-
-    // @ts-ignore
-    let activeSuite: Context = undefined;
-
-    function createContext(key: string): Context {
-      return {
-        filename: key, // duplicate for ease-of-use
-        // entered each time describe, it, etc is called
-        testStack: [],
-        failures: [],
-        successes: 0,
-        addFailure(err: unknown) {
-          const error: TestError = (err instanceof Error ? err : new Error(err as any)) as any;
-          error.testStack = this.testStack;
-          const testMessage = `Test failed: ${this.testStack.join(" > ")}`;
-          error.message = testMessage + "\n" + error.message;
-          this.failures.push(error);
-          console.error(error);
-          return error;
-        },
-        recordSuccess() {
-          const fullname = this.testStack.join(" > ");
-          console.log("✅ Test passed:", fullname);
-          this.successes++;
-        },
-      };
-    }
-
-    function getContext() {
-      const key: string = Bun.main; // module.parent?.filename ?? require.main?.filename ?? __filename;
-      return (activeSuite = contexts[key] ??= createContext(key));
-    }
-
-    async function test(
-      label: string | Function,
-      optionsOrFn: Record<string, any> | Function,
-      fn?: Function | undefined,
-    ) {
-      let options = optionsOrFn;
-      if (arguments.length === 2) {
-        assertNode.equal(typeof optionsOrFn, "function", "Second argument to test() must be a function.");
-        fn = optionsOrFn as Function;
-        options = {};
-      }
-      if (typeof fn !== "function" && typeof label === "function") {
-        fn = label;
-        label = fn.name;
-        options = {};
-      }
-
-      const ctx = getContext();
-      const { skip } = options;
-
-      if (skip) return;
-      try {
-        ctx.testStack.push(label as string);
-        await fn();
-        ctx.recordSuccess();
-      } catch (err) {
-        const error = ctx.addFailure(err);
-        throw error;
-      } finally {
-        ctx.testStack.pop();
-      }
-    }
-
-    function describe(labelOrFn: string | Function, maybeFnOrOptions?: Function, maybeFn?: Function) {
-      const [label, fn] =
-        typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn ?? maybeFnOrOptions];
-      if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
-
-      getContext().testStack.push(label);
-      try {
-        fn();
-      } catch (e) {
-        getContext().addFailure(e);
-        throw e;
-      } finally {
-        getContext().testStack.pop();
-      }
-
-      const failures = getContext().failures.length;
-      const successes = getContext().successes;
-      console.error(`describe("${label}") finished with ${successes} passed and ${failures} failed tests.`);
-      if (failures > 0) {
-        throw new Error(`${failures} tests failed.`);
-      }
-    }
-
-    return {
-      test,
-      it: test,
-      describe,
-      suite: describe,
-    };
-  }
-
-  require.cache["node:test"] ??= {
-    exports: createMockNodeTestModule(),
-    loaded: true,
-    isPreloading: false,
-    id: "node:test",
-    parent: require.main,
-    filename: "node:test",
-    children: [],
-    path: "node:test",
-    paths: [],
-    require,
-  };
 }

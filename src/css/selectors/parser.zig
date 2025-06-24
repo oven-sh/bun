@@ -1,18 +1,15 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
-const CSSString = css.CSSString;
 const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
 
 const Result = css.Result;
-const PrintResult = css.PrintResult;
 const SmallList = css.SmallList;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -218,81 +215,81 @@ pub const attrs = struct {
     };
 };
 
-pub const Specifity = struct {
+pub const Specificity = struct {
     id_selectors: u32 = 0,
     class_like_selectors: u32 = 0,
     element_selectors: u32 = 0,
 
     const MAX_10BIT: u32 = (1 << 10) - 1;
 
-    pub fn toU32(this: Specifity) u32 {
+    pub fn toU32(this: Specificity) u32 {
         return @as(u32, @as(u32, @min(this.id_selectors, MAX_10BIT)) << @as(u32, 20)) |
             @as(u32, @as(u32, @min(this.class_like_selectors, MAX_10BIT)) << @as(u32, 10)) |
             @min(this.element_selectors, MAX_10BIT);
     }
 
-    pub fn fromU32(value: u32) Specifity {
+    pub fn fromU32(value: u32) Specificity {
         bun.assert(value <= MAX_10BIT << 20 | MAX_10BIT << 10 | MAX_10BIT);
-        return Specifity{
+        return Specificity{
             .id_selectors = value >> 20,
             .class_like_selectors = (value >> 10) & MAX_10BIT,
             .element_selectors = value & MAX_10BIT,
         };
     }
 
-    pub fn add(lhs: *Specifity, rhs: Specifity) void {
+    pub fn add(lhs: *Specificity, rhs: Specificity) void {
         lhs.id_selectors += rhs.id_selectors;
         lhs.element_selectors += rhs.element_selectors;
         lhs.class_like_selectors += rhs.class_like_selectors;
     }
 };
 
-pub fn compute_specifity(comptime Impl: type, iter: []const GenericComponent(Impl)) u32 {
-    const spec = compute_complex_selector_specifity(Impl, iter);
+pub fn compute_specificity(comptime Impl: type, iter: []const GenericComponent(Impl)) u32 {
+    const spec = compute_complex_selector_specificity(Impl, iter);
     return spec.toU32();
 }
 
-fn compute_complex_selector_specifity(comptime Impl: type, iter: []const GenericComponent(Impl)) Specifity {
-    var specifity: Specifity = .{};
+fn compute_complex_selector_specificity(comptime Impl: type, iter: []const GenericComponent(Impl)) Specificity {
+    var specificity: Specificity = .{};
 
     for (iter) |*simple_selector| {
-        compute_simple_selector_specifity(Impl, simple_selector, &specifity);
+        compute_simple_selector_specificity(Impl, simple_selector, &specificity);
     }
 
-    return specifity;
+    return specificity;
 }
 
-fn compute_simple_selector_specifity(
+fn compute_simple_selector_specificity(
     comptime Impl: type,
     simple_selector: *const GenericComponent(Impl),
-    specifity: *Specifity,
+    specificity: *Specificity,
 ) void {
     switch (simple_selector.*) {
         .combinator => {
             bun.unreachablePanic("Found combinator in simple selectors vector?", .{});
         },
         .part, .pseudo_element, .local_name => {
-            specifity.element_selectors += 1;
+            specificity.element_selectors += 1;
         },
         .slotted => |selector| {
-            specifity.element_selectors += 1;
+            specificity.element_selectors += 1;
             // Note that due to the way ::slotted works we only compete with
             // other ::slotted rules, so the above rule doesn't really
             // matter, but we do it still for consistency with other
             // pseudo-elements.
             //
             // See: https://github.com/w3c/csswg-drafts/issues/1915
-            specifity.add(Specifity.fromU32(selector.specifity()));
+            specificity.add(Specificity.fromU32(selector.specificity()));
         },
         .host => |maybe_selector| {
-            specifity.class_like_selectors += 1;
+            specificity.class_like_selectors += 1;
             if (maybe_selector) |*selector| {
                 // See: https://github.com/w3c/csswg-drafts/issues/1915
-                specifity.add(Specifity.fromU32(selector.specifity()));
+                specificity.add(Specificity.fromU32(selector.specificity()));
             }
         },
         .id => {
-            specifity.id_selectors += 1;
+            specificity.id_selectors += 1;
         },
         .class,
         .attribute_in_no_namespace,
@@ -304,7 +301,7 @@ fn compute_simple_selector_specifity(
         .nth,
         .non_ts_pseudo_class,
         => {
-            specifity.class_like_selectors += 1;
+            specificity.class_like_selectors += 1;
         },
         .nth_of => |nth_of_data| {
             // https://drafts.csswg.org/selectors/#specificity-rules:
@@ -313,12 +310,12 @@ fn compute_simple_selector_specifity(
             //     like the :nth-child() pseudo-class, combines the
             //     specificity of a regular pseudo-class with that of its
             //     selector argument S.
-            specifity.class_like_selectors += 1;
+            specificity.class_like_selectors += 1;
             var max: u32 = 0;
             for (nth_of_data.selectors) |*selector| {
-                max = @max(selector.specifity(), max);
+                max = @max(selector.specificity(), max);
             }
-            specifity.add(Specifity.fromU32(max));
+            specificity.add(Specificity.fromU32(max));
         },
         .negation, .is, .any => {
             // https://drafts.csswg.org/selectors/#specificity-rules:
@@ -334,9 +331,9 @@ fn compute_simple_selector_specifity(
             };
             var max: u32 = 0;
             for (list) |*selector| {
-                max = @max(selector.specifity(), max);
+                max = @max(selector.specificity(), max);
             }
-            specifity.add(Specifity.fromU32(max));
+            specificity.add(Specificity.fromU32(max));
         },
         .where,
         .has,
@@ -346,7 +343,7 @@ fn compute_simple_selector_specifity(
         .default_namespace,
         .namespace,
         => {
-            // Does not affect specifity
+            // Does not affect specificity
         },
         .nesting => {
             // TODO
@@ -395,7 +392,7 @@ fn parse_selector(
             return .{ .err = input.newCustomError(kind.intoDefaultParserError()) };
         }
 
-        if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+        if (state.afterAnyPseudo()) {
             const source_location = input.currentSourceLocation();
             if (input.next().asValue()) |next| {
                 return .{ .err = source_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = next.* })) };
@@ -478,7 +475,7 @@ fn parse_selector(
         builder.pushCombinator(combinator);
     }
 
-    if (!state.contains(SelectorParsingState{ .after_nesting = true })) {
+    if (!state.after_nesting) {
         switch (nesting_requirement) {
             .implicit => {
                 builder.addNestingPrefix();
@@ -490,15 +487,12 @@ fn parse_selector(
         }
     }
 
-    const has_pseudo_element = state.intersects(SelectorParsingState{
-        .after_pseudo_element = true,
-        .after_unknown_pseudo_element = true,
-    });
-    const slotted = state.intersects(SelectorParsingState{ .after_slotted = true });
-    const part = state.intersects(SelectorParsingState{ .after_part = true });
+    const has_pseudo_element = state.after_pseudo_element or state.after_unknown_pseudo_element;
+    const slotted = state.after_slotted;
+    const part = state.after_part;
     const result = builder.build(has_pseudo_element, slotted, part);
     return .{ .result = Selector{
-        .specifity_and_flags = result.specifity_and_flags,
+        .specificity_and_flags = result.specificity_and_flags,
         .components = result.components,
     } };
 }
@@ -520,7 +514,7 @@ fn parse_compound_selector(
 
     var empty: bool = true;
     if (parser.isNestingAllowed() and if (input.tryParse(css.Parser.expectDelim, .{'&'}).isOk()) true else false) {
-        state.insert(SelectorParsingState{ .after_nesting = true });
+        state.after_nesting = true;
         builder.pushSimpleSelector(.nesting);
         empty = false;
     }
@@ -570,7 +564,7 @@ fn parse_compound_selector(
                 //
                 //     (Similar quotes for :where() / :not())
                 //
-                const ignore_default_ns = state.intersects(SelectorParsingState{ .skip_default_namespace = true }) or
+                const ignore_default_ns = state.skip_default_namespace or
                     (result == .simple_selector and result.simple_selector == .host);
                 if (!ignore_default_ns) {
                     builder.pushSimpleSelector(.{ .default_namespace = url });
@@ -586,33 +580,33 @@ fn parse_compound_selector(
             },
             .part_pseudo => {
                 const selector = result.part_pseudo;
-                state.insert(SelectorParsingState{ .after_part = true });
+                state.after_part = true;
                 builder.pushCombinator(.part);
                 builder.pushSimpleSelector(.{ .part = selector });
             },
             .slotted_pseudo => |selector| {
-                state.insert(.{ .after_slotted = true });
+                state.after_slotted = true;
                 builder.pushCombinator(.slot_assignment);
                 builder.pushSimpleSelector(.{ .slotted = selector });
             },
             .pseudo_element => |p| {
                 if (!p.isUnknown()) {
-                    state.insert(SelectorParsingState{ .after_pseudo_element = true });
+                    state.after_pseudo_element = true;
                     builder.pushCombinator(.pseudo_element);
                 } else {
-                    state.insert(.{ .after_unknown_pseudo_element = true });
+                    state.after_unknown_pseudo_element = true;
                 }
 
                 if (!p.acceptsStatePseudoClasses()) {
-                    state.insert(.{ .after_non_stateful_pseudo_element = true });
+                    state.after_non_stateful_pseudo_element = true;
                 }
 
                 if (p.isWebkitScrollbar()) {
-                    state.insert(.{ .after_webkit_scrollbar = true });
+                    state.after_webkit_scrollbar = true;
                 }
 
                 if (p.isViewTransition()) {
-                    state.insert(.{ .after_view_transition = true });
+                    state.after_view_transition = true;
                 }
 
                 builder.pushSimpleSelector(.{ .pseudo_element = p });
@@ -947,7 +941,7 @@ pub const PseudoClass = union(enum) {
     pub fn getPrefix(this: *const PseudoClass) css.VendorPrefix {
         return switch (this.*) {
             inline .fullscreen, .any_link, .read_only, .read_write, .placeholder_shown, .autofill => |p| p,
-            else => css.VendorPrefix.empty(),
+            else => css.VendorPrefix{},
         };
     }
 
@@ -960,7 +954,7 @@ pub const PseudoClass = union(enum) {
             .read_write => |*p| .{ p, F.pseudo_class_read_write },
             .placeholder_shown => |*p| .{ p, F.pseudo_class_placeholder_shown },
             .autofill => |*p| .{ p, F.pseudo_class_autofill },
-            else => return css.VendorPrefix.empty(),
+            else => return css.VendorPrefix{},
         };
         p.* = targets.prefixes(p.*, feature);
         return p.*;
@@ -1322,7 +1316,7 @@ pub const SelectorParser = struct {
     }
 
     pub fn deepCombinatorEnabled(this: *SelectorParser) bool {
-        return this.options.flags.contains(css.ParserFlags{ .deep_selector_combinator = true });
+        return this.options.flags.deep_selector_combinator;
     }
 
     pub fn defaultNamespace(this: *SelectorParser) ?impl.Selectors.SelectorImpl.NamespaceUrl {
@@ -1432,9 +1426,9 @@ pub fn GenericSelectorList(comptime Impl: type) type {
             if (this.v.len() == 0) return true;
             if (this.v.len() == 1) return true;
 
-            const value = this.v.at(0).specifity();
+            const value = this.v.at(0).specificity();
             for (this.v.slice()[1..]) |*sel| {
-                if (sel.specifity() != value) return false;
+                if (sel.specificity() != value) return false;
             }
             return true;
         }
@@ -1459,7 +1453,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
             error_recovery: ParseErrorRecovery,
             nesting_requirement: NestingRequirement,
         ) Result(This) {
-            var state = SelectorParsingState.empty();
+            var state = SelectorParsingState{};
             return parseWithState(parser, input, &state, error_recovery, nesting_requirement);
         }
 
@@ -1469,7 +1463,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
             error_recovery: ParseErrorRecovery,
             nesting_requirement: NestingRequirement,
         ) Result(This) {
-            var state = SelectorParsingState.empty();
+            var state = SelectorParsingState{};
             return parseRelativeWithState(parser, input, &state, error_recovery, nesting_requirement);
         }
 
@@ -1631,7 +1625,7 @@ pub fn GenericSelector(comptime Impl: type) type {
     ValidSelectorImpl(Impl);
 
     return struct {
-        specifity_and_flags: SpecifityAndFlags,
+        specificity_and_flags: SpecificityAndFlags,
         components: ArrayList(GenericComponent(Impl)),
 
         const This = @This();
@@ -1665,7 +1659,7 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         /// Parse a selector, without any pseudo-element.
         pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
-            var state = SelectorParsingState.empty();
+            var state = SelectorParsingState{};
             return parse_selector(Impl, parser, input, &state, .none);
         }
 
@@ -1704,7 +1698,7 @@ pub fn GenericSelector(comptime Impl: type) type {
         }
 
         pub fn hasPseudoElement(this: *const This) bool {
-            return this.specifity_and_flags.hasPseudoElement();
+            return this.specificity_and_flags.hasPseudoElement();
         }
 
         /// Returns count of simple selectors and combinators in the Selector.
@@ -1721,13 +1715,13 @@ pub fn GenericSelector(comptime Impl: type) type {
             }
             const result = builder.build(false, false, false);
             return This{
-                .specifity_and_flags = result.specifity_and_flags,
+                .specificity_and_flags = result.specificity_and_flags,
                 .components = result.components,
             };
         }
 
-        pub fn specifity(this: *const This) u32 {
-            return this.specifity_and_flags.specificity;
+        pub fn specificity(this: *const This) u32 {
+            return this.specificity_and_flags.specificity;
         }
 
         pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(This) {
@@ -2123,55 +2117,52 @@ pub const SelectorParsingState = packed struct(u16) {
     __unused: u5 = 0,
 
     /// Whether we are after any of the pseudo-like things.
-    pub const AFTER_PSEUDO = SelectorParsingState{ .after_part = true, .after_slotted = true, .after_pseudo_element = true };
-
-    pub usingnamespace css.Bitflags(@This());
+    pub fn afterAnyPseudo(state: SelectorParsingState) bool {
+        return state.after_part or state.after_slotted or state.after_pseudo_element;
+    }
 
     pub fn allowsPseudos(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState{
-            .after_pseudo_element = true,
-            .disallow_pseudos = true,
-        });
+        return !this.after_pseudo_element and !this.disallow_pseudos;
     }
 
     pub fn allowsPart(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState.AFTER_PSEUDO.bitwiseOr(SelectorParsingState{ .disallow_pseudos = true }));
+        return !this.disallow_pseudos and !this.afterAnyPseudo();
     }
 
     pub fn allowsSlotted(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState.AFTER_PSEUDO.bitwiseOr(.{ .disallow_pseudos = true }));
+        return this.allowsPart();
     }
 
     pub fn allowsTreeStructuralPseudoClasses(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState.AFTER_PSEUDO);
+        return !this.afterAnyPseudo();
     }
 
     pub fn allowsNonFunctionalPseudoClasses(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState{ .after_slotted = true, .after_non_stateful_pseudo_element = true });
+        return !this.after_slotted and !this.after_non_stateful_pseudo_element;
     }
 
     pub fn allowsCombinators(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState{ .disallow_combinators = true });
+        return !this.disallow_combinators;
     }
 
     pub fn allowsCustomFunctionalPseudoClasses(this: SelectorParsingState) bool {
-        return !this.intersects(SelectorParsingState.AFTER_PSEUDO);
+        return !this.afterAnyPseudo();
     }
 };
 
-pub const SpecifityAndFlags = struct {
+pub const SpecificityAndFlags = struct {
     /// There are two free bits here, since we use ten bits for each specificity
     /// kind (id, class, element).
     specificity: u32,
     /// There's padding after this field due to the size of the flags.
     flags: SelectorFlags,
 
-    pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
+    pub fn eql(this: *const SpecificityAndFlags, other: *const SpecificityAndFlags) bool {
         return css.implementEql(@This(), this, other);
     }
 
-    pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
-        return this.flags.intersects(SelectorFlags{ .has_pseudo = true });
+    pub fn hasPseudoElement(this: *const SpecificityAndFlags) bool {
+        return this.flags.has_pseudo;
     }
 
     pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
@@ -2188,8 +2179,6 @@ pub const SelectorFlags = packed struct(u8) {
     has_slotted: bool = false,
     has_part: bool = false,
     __unused: u5 = 0,
-
-    pub usingnamespace css.Bitflags(@This());
 };
 
 /// How to treat invalid selectors in a selector list.
@@ -2465,7 +2454,7 @@ pub const PseudoElement = union(enum) {
             .placeholder => |*p| .{ p, F.pseudo_element_placeholder },
             .backdrop => |*p| .{ p, F.pseudo_element_backdrop },
             .file_selector_button => |*p| .{ p, F.pseudo_element_file_selector_button },
-            else => return css.VendorPrefix.empty(),
+            else => return css.VendorPrefix{},
         };
 
         p.* = targets.prefixes(p.*, feature);
@@ -2476,7 +2465,7 @@ pub const PseudoElement = union(enum) {
     pub fn getPrefix(this: *const PseudoElement) css.VendorPrefix {
         return switch (this.*) {
             .selection, .placeholder, .backdrop, .file_selector_button => |p| p,
-            else => css.VendorPrefix.empty(),
+            else => css.VendorPrefix{},
         };
     }
 
@@ -2585,7 +2574,7 @@ pub fn parse_type_selector(
 
     const namespace: QNamePrefix(Impl) = result.some[0];
     const local_name: ?[]const u8 = result.some[1];
-    if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+    if (state.afterAnyPseudo()) {
         return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
     }
 
@@ -2678,7 +2667,7 @@ pub fn parse_one_simple_selector(
 
     switch (token) {
         .idhash => |id| {
-            if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+            if (state.afterAnyPseudo()) {
                 return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .idhash = id } })) };
             }
             const component: GenericComponent(Impl) = .{ .id = parser.newLocalIdentifier(input, .ID, id, token_loc) };
@@ -2687,7 +2676,7 @@ pub fn parse_one_simple_selector(
             } };
         },
         .open_square => {
-            if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+            if (state.afterAnyPseudo()) {
                 return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .open_square })) };
             }
             const Closure = struct {
@@ -2823,7 +2812,7 @@ pub fn parse_one_simple_selector(
                     };
                 };
 
-                if (state.intersects(.{ .after_slotted = true }) and pseudo_element.validAfterSlotted()) {
+                if (state.after_slotted and pseudo_element.validAfterSlotted()) {
                     return .{ .result = .{ .pseudo_element = pseudo_element } };
                 }
 
@@ -2858,7 +2847,7 @@ pub fn parse_one_simple_selector(
         .delim => |d| {
             switch (d) {
                 '.' => {
-                    if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+                    if (state.afterAnyPseudo()) {
                         return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .delim = '.' } })) };
                     }
                     const location = input.currentSourceLocation();
@@ -2876,7 +2865,7 @@ pub fn parse_one_simple_selector(
                 },
                 '&' => {
                     if (parser.isNestingAllowed()) {
-                        state.insert(SelectorParsingState{ .after_nesting = true });
+                        state.after_nesting = true;
                         return .{ .result = S{
                             .simple_selector = .nesting,
                         } };
@@ -2994,7 +2983,7 @@ pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, in
     };
     const never_matches = switch (operator) {
         .equal, .dash_match => false,
-        .includes => value_str.len == 0 or std.mem.indexOfAny(u8, value_str, SELECTOR_WHITESPACE) != null,
+        .includes => value_str.len == 0 or bun.strings.indexOfAny(value_str, SELECTOR_WHITESPACE) != null,
         .prefix, .substring, .suffix => value_str.len == 0,
     };
 
@@ -3181,7 +3170,7 @@ pub fn parse_simple_pseudo_class(
 
     // The view-transition pseudo elements accept the :only-child pseudo class.
     // https://w3c.github.io/csswg-drafts/css-view-transitions-1/#pseudo-root
-    if (state.intersects(SelectorParsingState{ .after_view_transition = true })) {
+    if (state.after_view_transition) {
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
             return .{ .result = .{ .nth = NthSelectorData.only(false) } };
         }
@@ -3191,11 +3180,11 @@ pub fn parse_simple_pseudo_class(
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
-    if (state.intersects(SelectorParsingState{ .after_webkit_scrollbar = true })) {
+    if (state.after_webkit_scrollbar) {
         if (!pseudo_class.isValidAfterWebkitScrollbar()) {
             return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_pseudo_class_after_webkit_scrollbar)) };
         }
-    } else if (state.intersects(SelectorParsingState{ .after_pseudo_element = true })) {
+    } else if (state.after_pseudo_element) {
         if (!pseudo_class.isUserActionState()) {
             return .{ .err = location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_pseudo_class_after_pseudo_element)) };
         }

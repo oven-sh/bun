@@ -1,16 +1,11 @@
-const PackageManager = @import("./install.zig").PackageManager;
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
-const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const bun = @import("root").bun;
-const Path = bun.path;
-const JSON = bun.JSON;
+const bun = @import("bun");
 const OOM = bun.OOM;
 const Dependency = bun.install.Dependency;
 
@@ -96,6 +91,13 @@ pub const Resolution = extern struct {
             .workspace => error.UnexpectedResolution,
             .symlink => error.UnexpectedResolution,
             .folder => error.UnexpectedResolution,
+
+            // even though it's a dependency type, it's not
+            // possible for 'catalog:' to be written to the
+            // lockfile for any resolution because the install
+            // will fail it it's not successfully replaced by
+            // a version
+            .catalog => error.UnexpectedResolution,
 
             // should not happen
             .dist_tag => error.UnexpectedResolution,

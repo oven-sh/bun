@@ -416,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif
@@ -479,7 +480,7 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (UNLIKELY(err != 0)) {
+        if (err != 0) [[unlikely]] {
             abort();
         }
     };
@@ -487,7 +488,7 @@ extern "C" void bun_initialize_process()
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
-            if (UNLIKELY(errno == EBADF)) {
+            if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
             }
@@ -499,7 +500,7 @@ extern "C" void bun_initialize_process()
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
 
-            if (LIKELY(err == 0)) {
+            if (err == 0) [[likely]] {
                 anyTTYs = true;
             }
         }
@@ -882,6 +883,28 @@ extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
 #endif
 
 #if OS(DARWIN)
+#include <os/signpost.h>
+#include "generated_perf_trace_events.h"
+
+// The event names have to be compile-time constants.
+// So we trick the compiler into thinking they are by using a macro.
+extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_signpost_id_t spid, int trace_event_id)
+{
+#define EMIT_SIGNPOST(name, id)                                 \
+    case id:                                                    \
+        os_signpost_emit_with_type(log, type, spid, #name, ""); \
+        break;
+
+    switch (trace_event_id) {
+        FOR_EACH_TRACE_EVENT(EMIT_SIGNPOST)
+    default: {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid trace event id. Please run scripts/generate-perf-trace-events.sh to update the list of trace events.");
+    }
+    }
+}
+
+#undef EMIT_SIGNPOST
+#undef FOR_EACH_TRACE_EVENT
 
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
 

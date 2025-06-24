@@ -6,7 +6,7 @@
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include "ncrypto.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/LazyProperty.h>
@@ -33,6 +33,8 @@ public:
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
+
+    static void destroy(JSC::JSCell* cell);
 
     JSHash(JSC::VM& vm, JSC::Structure* structure);
     ~JSHash();

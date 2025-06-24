@@ -1,8 +1,7 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSAst = bun.JSAst;
-const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -191,7 +190,7 @@ pub fn parseJSON(
             .fail => |fail| return fail.err,
         };
 
-        const ptr = ParsedSourceMap.new(map_data);
+        const ptr = bun.new(ParsedSourceMap, map_data);
         ptr.external_source_names = source_paths_slice.?;
         break :map ptr;
     } else null;
@@ -582,6 +581,7 @@ pub const Mapping = struct {
         }
 
         return .{ .success = .{
+            .ref_count = .init(),
             .mappings = mapping,
             .input_line_count = input_line_count,
         } };
@@ -612,6 +612,14 @@ pub const ParseResult = union(enum) {
 };
 
 pub const ParsedSourceMap = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    /// ParsedSourceMap can be acquired by different threads via the thread-safe
+    /// source map store (SavedSourceMap), so the reference count must be thread-safe.
+    ref_count: RefCount,
+
     input_line_count: usize = 0,
     mappings: Mapping.List = .{},
     /// If this is empty, this implies that the source code is a single file
@@ -629,11 +637,7 @@ pub const ParsedSourceMap = struct {
     /// rely on source contents)
     underlying_provider: SourceContentPtr = .none,
 
-    ref_count: std.atomic.Value(u32) = .init(1),
-
     is_standalone_module_graph: bool = false,
-
-    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint,
@@ -654,11 +658,9 @@ pub const ParsedSourceMap = struct {
         return psm.external_source_names.len != 0;
     }
 
-    fn deinitFn(this: *ParsedSourceMap) void {
-        this.deinitWithAllocator(bun.default_allocator);
-    }
+    fn deinit(this: *ParsedSourceMap) void {
+        const allocator = bun.default_allocator;
 
-    fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
         this.mappings.deinit(allocator);
 
         if (this.external_source_names.len > 0) {
@@ -667,7 +669,7 @@ pub const ParsedSourceMap = struct {
             allocator.free(this.external_source_names);
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     fn standaloneModuleGraphData(this: *ParsedSourceMap) *bun.StandaloneModuleGraph.SerializedSourceMap.Loaded {
@@ -1144,7 +1146,7 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
 
 pub fn appendSourceMappingURLRemote(
     origin: URL,
-    source: Logger.Source,
+    source: *const Logger.Source,
     asset_prefix_path: []const u8,
     comptime Writer: type,
     writer: Writer,
@@ -1226,7 +1228,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContents(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
@@ -1243,7 +1245,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         offset: usize,

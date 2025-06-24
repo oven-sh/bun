@@ -37,6 +37,10 @@ export default [
         fn: "updateSettings",
         length: 1,
       },
+      setLocalWindowSize: {
+        fn: "setLocalWindowSize",
+        length: 1,
+      },
       read: {
         fn: "read",
         length: 1,
@@ -97,9 +101,13 @@ export default [
         fn: "hasNativeRead",
         length: 1,
       },
-      getAllStreams: {
-        fn: "getAllStreams",
-        length: 0,
+      setNextStreamID: {
+        fn: "setNextStreamID",
+        length: 1,
+      },
+      forEachStream: {
+        fn: "forEachStream",
+        length: 2,
       },
       emitErrorToAllStreams: {
         fn: "emitErrorToAllStreams",

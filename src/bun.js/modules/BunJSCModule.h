@@ -50,7 +50,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 #if OS(DARWIN)
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
@@ -81,7 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
         auto str = hostValue.toWTFString(globalObject);
         if (!str.isEmpty())
-            host = toCString(str).data();
+            host = toCString(str).span().data();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -246,12 +246,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                     unsigned size = std::min(left.length(), right.length());
                     left = left.substring(0, size);
                     right = right.substring(0, size);
-                    int result = WTF::codePointCompare(right, left);
-                    if (result == 0) {
+                    std::strong_ordering result = WTF::codePointCompare(right, left);
+                    if (result == std::strong_ordering::equal) {
                         return originalLeftLength > originalRightLength;
                     }
 
-                    return result > 0;
+                    return result == std::strong_ordering::greater;
                 }
 
                 return a.second > b.second;
@@ -330,12 +330,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                     unsigned size = std::min(left.length(), right.length());
                     left = left.substring(0, size);
                     right = right.substring(0, size);
-                    int result = WTF::codePointCompare(right, left);
-                    if (result == 0) {
+                    std::strong_ordering result = WTF::codePointCompare(right, left);
+                    if (result == std::strong_ordering::equal) {
                         return originalLeftLength > originalRightLength;
                     }
 
-                    return result > 0;
+                    return result == std::strong_ordering::greater;
                 }
 
                 return a.second > b.second;
@@ -415,14 +415,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.data())) {
+            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.data();
+            Options::samplingProfilerPath() = pathCString.span().data();
             samplingProfiler.registerForReportAtExit();
         }
     }
@@ -584,8 +584,11 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -615,9 +618,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
         return {};
     }
     vm.dateCache.resetIfNecessarySlow();
-    WTF::Vector<UChar, 32> buffer;
+    WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
-    WTF::String timeZoneString({ buffer.data(), buffer.size() });
+    WTF::String timeZoneString(buffer.span());
     return JSValue::encode(jsString(vm, timeZoneString));
 }
 
@@ -767,11 +770,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     bool asNodeBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
-        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(
-                globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
             if (!binaryTypeValue.isString()) {
-                throwTypeError(globalObject, throwScope,
-                    "binaryType must be a string"_s);
+                throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
                 return {};
             }
 
@@ -782,8 +783,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList),
-        dummyPorts);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope,
@@ -887,7 +887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     }
 
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.data(),
+        globalObject, Bun::toString(fileName), basicBlocks.begin(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 
@@ -925,37 +925,37 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h
 @begin BunJSCModuleTable
-    callerSourceOrigin                  functionCallerSourceOrigin                  Function    0                                              
-    jscDescribe                         functionDescribe                            Function    0                            
-    jscDescribeArray                    functionDescribeArray                       Function    0                                         
-    drainMicrotasks                     functionDrainMicrotasks                     Function    0                                       
-    edenGC                              functionEdenGC                              Function    0                      
-    fullGC                              functionFullGC                              Function    0                      
-    gcAndSweep                          functionGCAndSweep                          Function    0                              
-    getRandomSeed                       functionGetRandomSeed                       Function    0                                     
-    heapSize                            functionHeapSize                            Function    0                            
-    heapStats                           functionMemoryUsageStatistics               Function    0                                         
-    startSamplingProfiler               functionStartSamplingProfiler               Function    0                                                     
-    samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0                                                               
-    noInline                            functionNeverInlineFunction                 Function    0                                       
-    isRope                              functionIsRope                              Function    0                      
-    memoryUsage                         functionCreateMemoryFootprint               Function    0                                         
-    noFTL                               functionNoFTL                               Function    0                     
-    noOSRExitFuzzing                    functionNoOSRExitFuzzing                    Function    0                                            
-    numberOfDFGCompiles                 functionNumberOfDFGCompiles                 Function    0                                               
-    optimizeNextInvocation              functionOptimizeNextInvocation              Function    0                                                      
-    releaseWeakRefs                     functionReleaseWeakRefs                     Function    0                                       
-    reoptimizationRetryCount            functionReoptimizationRetryCount            Function    0                                                            
-    setRandomSeed                       functionSetRandomSeed                       Function    0                                     
-    startRemoteDebugger                 functionStartRemoteDebugger                 Function    0                                               
-    totalCompileTime                    functionTotalCompileTime                    Function    0                                            
-    getProtectedObjects                 functionGetProtectedObjects                 Function    0                                               
-    generateHeapSnapshotForDebugging    functionGenerateHeapSnapshotForDebugging    Function    0                                                                            
-    profile                              functionRunProfiler                          Function    0                           
-    setTimeZone                         functionSetTimeZone                         Function    0                               
-    serialize                           functionSerialize                           Function    0                             
-    deserialize                         functionDeserialize                         Function    0   
-    estimateShallowMemoryUsageOf         functionEstimateDirectMemoryUsageOf         Function    1
+    callerSourceOrigin                  functionCallerSourceOrigin                  Function    0
+    jscDescribe                         functionDescribe                            Function    0
+    jscDescribeArray                    functionDescribeArray                       Function    0
+    drainMicrotasks                     functionDrainMicrotasks                     Function    0
+    edenGC                              functionEdenGC                              Function    0
+    fullGC                              functionFullGC                              Function    0
+    gcAndSweep                          functionGCAndSweep                          Function    0
+    getRandomSeed                       functionGetRandomSeed                       Function    0
+    heapSize                            functionHeapSize                            Function    0
+    heapStats                           functionMemoryUsageStatistics               Function    0
+    startSamplingProfiler               functionStartSamplingProfiler               Function    0
+    samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
+    noInline                            functionNeverInlineFunction                 Function    0
+    isRope                              functionIsRope                              Function    0
+    memoryUsage                         functionCreateMemoryFootprint               Function    0
+    noFTL                               functionNoFTL                               Function    0
+    noOSRExitFuzzing                    functionNoOSRExitFuzzing                    Function    0
+    numberOfDFGCompiles                 functionNumberOfDFGCompiles                 Function    0
+    optimizeNextInvocation              functionOptimizeNextInvocation              Function    0
+    releaseWeakRefs                     functionReleaseWeakRefs                     Function    0
+    reoptimizationRetryCount            functionReoptimizationRetryCount            Function    0
+    setRandomSeed                       functionSetRandomSeed                       Function    0
+    startRemoteDebugger                 functionStartRemoteDebugger                 Function    0
+    totalCompileTime                    functionTotalCompileTime                    Function    0
+    getProtectedObjects                 functionGetProtectedObjects                 Function    0
+    generateHeapSnapshotForDebugging    functionGenerateHeapSnapshotForDebugging    Function    0
+    profile                             functionRunProfiler                         Function    0
+    setTimeZone                         functionSetTimeZone                         Function    0
+    serialize                           functionSerialize                           Function    0
+    deserialize                         functionDeserialize                         Function    0
+    estimateShallowMemoryUsageOf        functionEstimateDirectMemoryUsageOf         Function    1
     percentAvailableMemoryInUse         functionPercentAvailableMemoryInUse         Function    0
 @end
 */

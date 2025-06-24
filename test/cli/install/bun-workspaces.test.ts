@@ -1,18 +1,19 @@
-import { file, write, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { beforeEach, describe, expect, test, beforeAll, afterAll } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { cp, mkdir, rm, exists } from "fs/promises";
+import { cp, exists, mkdir, rm } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
-  assertManifestsPopulated,
   VerdaccioRegistry,
-  readdirSorted,
 } from "harness";
 import { join } from "path";
+
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -1679,5 +1680,140 @@ test("can override npm package with workspace package under a different name", a
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "pkg1",
     version: "2.2.2",
+  });
+});
+
+describe("LinkWorkspacePackages", () => {
+  let bunfigPath: string;
+
+  beforeEach(async () => {
+    bunfigPath = join(packageDir, "bunfig.toml");
+
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+        }),
+      ),
+
+      write(
+        join(packageDir, "packages", "mono", "package.json"),
+        JSON.stringify({
+          name: "no-deps",
+          version: "2.0.0",
+        }),
+      ),
+    ]);
+  });
+
+  afterEach(async () => {
+    await Promise.all([
+      rm(bunfigPath, { force: true }),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+      rm(join(packageDir, "packages"), { recursive: true, force: true }),
+      rm(join(packageDir, "package.json"), { force: true }),
+    ]);
+  });
+
+  test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+    // Create bunfig.toml with linkWorkspacePackages set to false
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0", // Use Same version as workspace package and it shouldn't link
+          },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    const out = await Bun.readableStreamToText(stdout);
+
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    const lockfile = parseLockfile(packageDir);
+
+    // Check the resolution tag to ensure it's not a workspace link
+    const barPackage = lockfile.packages.find(p => p.name === "bar");
+    expect(barPackage.dependencies.length).toEqual(1);
+    const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
+    expect(barDependency).toBeDefined();
+
+    // Verify that the dependency linked to the bar package is the npm version, not the workspace version
+    expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
+  });
+
+  test("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+    // Create bunfig.toml with linkWorkspacePackages set to false
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "workspace:*", // Explicit workspace: prefix should still link
+          },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    const out = await Bun.readableStreamToText(stdout);
+
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    const lockfile = parseLockfile(packageDir);
+
+    // Check the resolution tag to ensure it's not a workspace link
+    const barPackage = lockfile.packages.find(p => p.name === "bar");
+    expect(barPackage.dependencies.length).toEqual(1);
+    const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
+    expect(barDependency).toBeDefined();
+
+    // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
+    expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
 });

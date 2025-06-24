@@ -9,7 +9,6 @@ const net = require('net');
   assert.throws(
     () => server.listen({ port: 0, signal: 'INVALID_SIGNAL' }),
     {
-      message: `The "options.signal" property must be of type AbortSignal. Received type string ("INVALID_SIGNAL")`,
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError'
     });

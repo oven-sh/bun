@@ -17,7 +17,7 @@
 #include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
-static _Atomic int orig_termios_spinlock;
+static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;
@@ -194,7 +194,7 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
 
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -245,4 +245,8 @@ extern "C" void* Bun__StackCheck__getMaxStack()
     return stackBoundsForCurrentThread.end();
 }
 
+extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
+{
+    WTFPrintBacktrace({ stack, stack_count });
+}
 }

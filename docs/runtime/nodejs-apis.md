@@ -32,7 +32,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath. 100% of Node.js's test suite for EventEmitter passes.
+🟢 Fully implemented. 100% of Node.js's test suite passes. `EventEmitterAsyncResource` uses `AsyncResource` underneath.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -104,9 +104,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `ECDH` `checkPrime` `checkPrimeSync` `generatePrime` `generatePrimeSync` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
-
-Some methods are not optimized yet.
+🟡 Missing `secureHeapUsed` `setEngine` `setFips`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
@@ -118,11 +116,11 @@ Some methods are not optimized yet.
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
+🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.sh/docs/runtime/plugins) in the meantime.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 `SocketAddress` class not exposed (but implemented). `BlockList` exists but is a no-op.
+🟢 Fully implemented.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
@@ -142,7 +140,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController` `MIMEType` `MIMEParams`
+🟡 Missing `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -174,7 +172,7 @@ Some methods are not optimized yet.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+🟡 Partly implemented. Missing mocks, snapshots, timers. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
@@ -346,7 +344,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is a currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
+🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 
@@ -378,7 +376,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`require()`](https://nodejs.org/api/globals.html#require)
 
-🟢 Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options). `require.extensions` is a stub.
+🟢 Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options).
 
 ### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
 

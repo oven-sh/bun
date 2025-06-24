@@ -1,11 +1,9 @@
 const StringBuilder = @This();
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const assert = bun.assert;
-
-const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
 len: usize = 0,
 cap: usize = 0,

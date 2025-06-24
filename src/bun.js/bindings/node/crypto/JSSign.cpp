@@ -8,16 +8,15 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBufferEncodingType.h"
-#include "KeyObject.h"
 #include "JSCryptoKey.h"
-#include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSBuffer.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunString.h"
 #include "JSVerify.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyRSA.h"
+#include "KeyObject.h"
 
 namespace Bun {
 
@@ -44,6 +43,17 @@ static const JSC::HashTableValue JSSignPrototypeTableValues[] = {
 
 // JSSign implementation
 const JSC::ClassInfo JSSign::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSign) };
+const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
+const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
+
+void JSSign::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSSign*>(cell)->~JSSign();
+}
+
+JSSign::~JSSign()
+{
+}
 
 JSSign::JSSign(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -81,7 +91,6 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 }
 
 // JSSignPrototype implementation
-const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
 
 JSSignPrototype::JSSignPrototype(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -110,7 +119,6 @@ JSC::Structure* JSSignPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObjec
 }
 
 // JSSignConstructor implementation
-const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
 
 JSSignConstructor::JSSignConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, callSign, constructSign)
@@ -143,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "init"_s);
         return {};
     }
@@ -223,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "update"_s);
         return JSValue::encode({});
     }
@@ -252,7 +260,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
         }
 
-        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataString, encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
@@ -279,7 +290,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
 }
 
-JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, NodeCryptoKeys::DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)
+JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -346,7 +357,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     }
 
     // Convert to P1363 format if requested for EC keys
-    if (dsa_sig_enc == NodeCryptoKeys::DSASigEnc::P1363 && pkey.isSigVariant()) {
+    if (dsa_sig_enc == DSASigEnc::P1363 && pkey.isSigVariant()) {
         auto p1363Size = pkey.getBytesOfRS().value_or(0) * 2;
         if (p1363Size > 0) {
             auto p1363Buffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
@@ -383,7 +394,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*lexicalGlobalObject, scope, "Sign"_s, "sign"_s);
         return {};
     }
@@ -408,23 +419,36 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(lexicalGlobalObject, options, {});
+    int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, options);
+    std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get DSA signature encoding format
-    NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, options);
+    DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    // Get key argument
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options, std::nullopt);
-    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
-    if (!maybeKeyPtr) {
-        return {};
+    auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject;
+    if (prepareResult.keyData) {
+        keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(*prepareResult.keyData));
+    } else {
+        keyObject = KeyObject::getPublicOrPrivateKey(
+            lexicalGlobalObject,
+            scope,
+            prepareResult.keyDataView,
+            CryptoKeyType::Private,
+            prepareResult.formatType,
+            prepareResult.encodingType,
+            prepareResult.cipher,
+            WTFMove(prepareResult.passphrase));
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
+
+    const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
@@ -434,7 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // If output encoding is not buffer, convert the signature to the requested encoding
     if (outputEncoding != BufferEncodingType::buffer) {
-        EncodedJSValue encodedSignature = jsBufferToString(vm, lexicalGlobalObject, signature, 0, signature->byteLength(), outputEncoding);
+        EncodedJSValue encodedSignature = jsBufferToString(lexicalGlobalObject, scope, signature, 0, signature->byteLength(), outputEncoding);
         RETURN_IF_EXCEPTION(scope, {});
         return encodedSignature;
     }
@@ -460,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     JSC::Structure* structure = zigGlobalObject->m_JSSignClassStructure.get(zigGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Sign cannot be invoked without 'new'"_s);
             return {};
@@ -473,182 +497,6 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     return JSC::JSValue::encode(JSSign::create(vm, structure));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    ncrypto::ClearErrorOnReturn clearError;
-
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto argCount = callFrame->argumentCount();
-
-    // Validate algorithm if provided
-    JSValue algorithmValue = callFrame->argument(0);
-    std::optional<WebCore::CryptoAlgorithmIdentifier> hash = std::nullopt;
-    const EVP_MD* digest = nullptr;
-    if (!algorithmValue.isUndefinedOrNull()) {
-        Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        WTF::String algorithmName = algorithmValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        hash = WebCore::CryptoAlgorithmRegistry::singleton().identifier(algorithmName);
-
-        digest = ncrypto::getDigestByName(algorithmName);
-        if (!digest) {
-            return Bun::ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmName);
-        }
-    }
-
-    // Get data argument
-    JSValue dataValue = callFrame->argument(1);
-    JSC::JSArrayBufferView* dataView = getArrayBufferOrView(globalObject, scope, dataValue, "data"_s, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!dataView) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "data must be a Buffer, TypedArray, or DataView"_s);
-        return {};
-    }
-
-    // Get key argument
-    JSValue keyValue = callFrame->argument(2);
-
-    std::optional<int> saltLen = getSaltLength(globalObject, keyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Get DSA signature encoding format
-    NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, keyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Prepare the private key
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(globalObject, scope, keyValue, hash);
-    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
-    if (!maybeKeyPtr) {
-        return {};
-    }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
-
-    // Get callback if provided
-    JSValue callbackValue;
-    bool hasCallback = false;
-    if (argCount > 3) {
-        callbackValue = callFrame->argument(3);
-        if (!callbackValue.isUndefined()) {
-            Bun::V::validateFunction(scope, globalObject, callbackValue, "callback"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            hasCallback = true;
-        }
-    }
-
-    // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(globalObject, keyValue, keyPtr);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Create data buffer
-    ncrypto::Buffer<const unsigned char> dataBuf {
-        .data = reinterpret_cast<const unsigned char*>(dataView->vector()),
-        .len = dataView->byteLength()
-    };
-
-    // Create a new EVP_MD_CTX for signing
-    auto mdCtx = ncrypto::EVPMDCtxPointer::New();
-    if (!mdCtx) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to create message digest context"_s);
-        return {};
-    }
-
-    // Initialize the context for signing with the key and digest
-    auto ctx = mdCtx.signInit(keyPtr, digest);
-    if (!ctx.has_value()) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to initialize signing context"_s);
-        return {};
-    }
-
-    // Apply RSA options if needed
-    if (keyPtr.isRsaVariant()) {
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(ctx.value(), padding, saltLen)) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set RSA padding"_s);
-            return {};
-        }
-    }
-
-    RefPtr<JSC::ArrayBuffer> sigBuffer = nullptr;
-    if (keyPtr.isOneShotVariant()) {
-        auto data = mdCtx.signOneShot(dataBuf);
-        if (!data) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
-            return {};
-        }
-
-        sigBuffer = JSC::ArrayBuffer::tryCreate(data.size(), 1);
-        if (!sigBuffer) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
-            return {};
-        }
-
-        memcpy(sigBuffer->data(), data.get(), data.size());
-
-    } else {
-        auto signatureData = mdCtx.sign(dataBuf);
-        if (!signatureData) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
-            return {};
-        }
-
-        // Convert to P1363 format if requested for EC keys
-        if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant() && keyPtr.getBytesOfRS().value_or(0) * 2 > 0) {
-            auto p1363Size = keyPtr.getBytesOfRS().value_or(0) * 2;
-            sigBuffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
-            if (!sigBuffer) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate P1363 buffer"_s);
-                return {};
-            }
-
-            ncrypto::Buffer<const unsigned char> derSig {
-                .data = reinterpret_cast<const unsigned char*>(signatureData.get()),
-                .len = signatureData.size()
-            };
-
-            if (!ncrypto::extractP1363(derSig, static_cast<unsigned char*>(sigBuffer->data()), p1363Size / 2)) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert signature format"_s);
-                return {};
-            }
-        } else {
-            sigBuffer = JSC::ArrayBuffer::tryCreate(signatureData.size(), 1);
-            if (!sigBuffer) {
-                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
-                return {};
-            }
-
-            memcpy(sigBuffer->data(), signatureData.get(), signatureData.size());
-        }
-    }
-    ASSERT(sigBuffer);
-
-    // Create JSUint8Array from the signature buffer
-    auto* globalObj = defaultGlobalObject(globalObject);
-    auto* signature = JSC::JSUint8Array::create(globalObject, globalObj->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuffer->byteLength());
-
-    // If we have a callback, call it with the signature
-    if (hasCallback) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(jsNull());
-        args.append(signature);
-        ASSERT(!args.hasOverflowed());
-
-        NakedPtr<JSC::Exception> returnedException = nullptr;
-        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackValue, JSC::getCallData(callbackValue), JSC::jsUndefined(), args, returnedException);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (returnedException) {
-            scope.throwException(globalObject, returnedException.get());
-        }
-
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Otherwise, return the signature directly
-    return JSValue::encode(signature);
 }
 
 void setupJSSignClassStructure(LazyClassStructure::Initializer& init)

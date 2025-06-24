@@ -1,3 +1,5 @@
+#pragma once
+
 #include "root.h"
 
 #include "ZigGlobalObject.h"
@@ -7,25 +9,25 @@
 
 namespace Bun {
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFiniteNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateSignalName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateInteger);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateNumber);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateString);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateFiniteNumber);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateFunction);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateBoolean);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validatePort);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateAbortSignal);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateArray);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateInt32);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateUint32);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateSignalName);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateEncoding);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validatePlainFunction);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateUndefined);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateBuffer);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateOneOf);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_validateObject);
 
 namespace V {
 
@@ -40,11 +42,15 @@ JSC::EncodedJSValue validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* 
 JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength);
 JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue minLength);
 JSC::EncodedJSValue validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
-JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive);
-JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive);
+JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive, uint32_t* out = nullptr);
+JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive, uint32_t* out = nullptr);
+JSC::EncodedJSValue validateInt32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max);
+JSC::EncodedJSValue validateInt32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue min, JSValue max, int32_t* out = nullptr);
 JSC::EncodedJSValue validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
-JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::Vector<ASCIILiteral>& oneOf);
+JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const ASCIILiteral> oneOf);
+JSC::EncodedJSValue validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out = nullptr);
 JSC::EncodedJSValue validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
+JSC::EncodedJSValue validateBoolean(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name);
 
 }
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-pub const bun = @import("./bun.zig");
+const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
 
@@ -33,6 +33,10 @@ pub fn main() void {
         std.posix.sigaction(std.posix.SIG.XFSZ, &act, null);
     }
 
+    if (Environment.isDebug) {
+        bun.debug_allocator_data.backing = .init;
+    }
+
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
@@ -54,7 +58,7 @@ pub fn main() void {
     Output.Source.Stdio.init();
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
-        bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
+        bun_warn_avx_missing(bun.CLI.UpgradeCommand.Bun__githubBaselineURL.ptr);
     }
 
     bun.StackCheck.configureThread();
@@ -81,6 +85,6 @@ pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
     bun.copy(T, dest[0..source.len], source);
 }
 pub fn eqlBytes(src: []const u8, dest: []const u8) bool {
-    return bun.C.memcmp(src.ptr, dest.ptr, src.len) == 0;
+    return bun.c.memcmp(src.ptr, dest.ptr, src.len) == 0;
 }
 // -- End Zig Standard Library Additions --

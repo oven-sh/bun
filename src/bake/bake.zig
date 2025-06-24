@@ -104,13 +104,13 @@ pub const SplitBundlerOptions = struct {
         .ssr = .{},
     };
 
-    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) !void {
+    pub fn parsePluginArray(opts: *SplitBundlerOptions, plugin_array: JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
         const plugin = opts.plugin orelse Plugin.create(global, .bun);
         opts.plugin = plugin;
         const empty_object = JSValue.createEmptyObject(global, 0);
 
-        var iter = plugin_array.arrayIterator(global);
-        while (iter.next()) |plugin_config| {
+        var iter = try plugin_array.arrayIterator(global);
+        while (try iter.next()) |plugin_config| {
             if (!plugin_config.isObject()) {
                 return global.throwInvalidArguments("Expected plugin to be an object", .{});
             }
@@ -359,7 +359,7 @@ pub const Framework = struct {
         refs: *StringRefList,
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
-    ) !Framework {
+    ) bun.JSError!Framework {
         if (opts.isString()) {
             const str = try opts.toBunString(global);
             defer str.deref();
@@ -391,7 +391,7 @@ pub const Framework = struct {
                 break :brk null;
 
             if (rfr == .true) break :brk .{};
-            if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+            if (rfr == .false or rfr.isUndefinedOrNull()) break :brk null;
 
             if (!rfr.isObject()) {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
@@ -411,7 +411,7 @@ pub const Framework = struct {
         const server_components: ?ServerComponents = sc: {
             const sc: JSValue = try opts.get(global, "serverComponents") orelse
                 break :sc null;
-            if (sc == .false or sc == .null or sc == .undefined) break :sc null;
+            if (sc == .false or sc.isUndefinedOrNull()) break :sc null;
 
             if (!sc.isObject()) {
                 return global.throwInvalidArguments("'framework.serverComponents' must be an object or 'undefined'", .{});
@@ -446,13 +446,13 @@ pub const Framework = struct {
             const array = try opts.getArray(global, "builtInModules") orelse
                 break :built_in_modules .{};
 
-            const len = array.getLength(global);
+            const len = try array.getLength(global);
             var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
             try files.ensureTotalCapacity(arena, len);
 
-            var it = array.arrayIterator(global);
+            var it = try array.arrayIterator(global);
             var i: usize = 0;
-            while (it.next()) |file| : (i += 1) {
+            while (try it.next()) |file| : (i += 1) {
                 if (!file.isObject()) {
                     return global.throwInvalidArguments("'builtInModules[{d}]' is not an object", .{i});
                 }
@@ -477,16 +477,16 @@ pub const Framework = struct {
             const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
                 return global.throwInvalidArguments("Missing 'framework.fileSystemRouterTypes'", .{});
             };
-            const len = array.getLength(global);
+            const len = try array.getLength(global);
             if (len > 256) {
                 return global.throwInvalidArguments("Framework can only define up to 256 file-system router types", .{});
             }
             const file_system_router_types = try arena.alloc(FileSystemRouterType, len);
 
-            var it = array.arrayIterator(global);
+            var it = try array.arrayIterator(global);
             var i: usize = 0;
             errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
-            while (it.next()) |fsr_opts| : (i += 1) {
+            while (try it.next()) |fsr_opts| : (i += 1) {
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };
@@ -511,10 +511,10 @@ pub const Framework = struct {
                             break :exts &.{};
                         }
                     } else if (exts_js.isArray()) {
-                        var it_2 = exts_js.arrayIterator(global);
+                        var it_2 = try exts_js.arrayIterator(global);
                         var i_2: usize = 0;
-                        const extensions = try arena.alloc([]const u8, exts_js.getLength(global));
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                        const extensions = try arena.alloc([]const u8, try exts_js.getLength(global));
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
                             const slice = refs.track(try array_item.toSlice(global, arena));
                             if (bun.strings.eqlComptime(slice, "*"))
                                 return global.throwInvalidArguments("'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array.", .{});
@@ -536,10 +536,10 @@ pub const Framework = struct {
 
                 const ignore_dirs: []const []const u8 = if (try fsr_opts.get(global, "ignoreDirs")) |exts_js| exts: {
                     if (exts_js.isArray()) {
-                        var it_2 = array.arrayIterator(global);
+                        var it_2 = try array.arrayIterator(global);
                         var i_2: usize = 0;
                         const dirs = try arena.alloc([]const u8, len);
-                        while (it_2.next()) |array_item| : (i_2 += 1) {
+                        while (try it_2.next()) |array_item| : (i_2 += 1) {
                             dirs[i_2] = refs.track(try array_item.toSlice(global, arena));
                         }
                         break :exts dirs;
@@ -594,6 +594,17 @@ pub const Framework = struct {
         out: *bun.transpiler.Transpiler,
         bundler_options: *const BuildConfigSubset,
     ) !void {
+        const JSAst = bun.JSAst;
+
+        var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
+        ast_memory_allocator.initWithoutStack(arena);
+        var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+            .previous = JSAst.Stmt.Data.Store.memory_allocator,
+            .current = &ast_memory_allocator,
+        };
+        ast_scope.enter();
+        defer ast_scope.exit();
+
         out.* = try bun.Transpiler.init(
             arena,
             log,
@@ -708,7 +719,7 @@ fn getOptionalString(
 ) !?[]const u8 {
     const value = try target.get(global, property) orelse
         return null;
-    if (value == .undefined or value == .null)
+    if (value.isUndefinedOrNull())
         return null;
     const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));
@@ -876,7 +887,7 @@ pub fn printWarning() void {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const JSC = bun.JSC;

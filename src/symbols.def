@@ -572,6 +572,7 @@ EXPORTS
   node_api_create_property_key_latin1
   node_api_create_property_key_utf16
   node_api_create_property_key_utf8
+  dumpBtjsTrace
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ

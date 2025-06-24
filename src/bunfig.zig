@@ -1,24 +1,14 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
-const C = bun.C;
+
 const options = @import("./options.zig");
 const logger = bun.logger;
 const js_ast = bun.JSAst;
-const js_lexer = bun.js_lexer;
-const Defines = @import("./defines.zig");
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
-const Npm = @import("./install/npm.zig");
-const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
@@ -354,7 +344,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(Api.BunInstall);
@@ -590,6 +580,12 @@ pub const Bunfig = struct {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if (install_obj.get("linkWorkspacePackages")) |link_workspace| {
+                        if (link_workspace.asBool()) |value| {
+                            install.link_workspace_packages = value;
                         }
                     }
                 }
@@ -985,21 +981,21 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
@@ -1010,7 +1006,7 @@ pub const Bunfig = struct {
             .json = expr,
             .log = ctx.log,
             .allocator = allocator,
-            .source = &source,
+            .source = source,
             .bunfig = &ctx.args,
             .ctx = ctx,
         };

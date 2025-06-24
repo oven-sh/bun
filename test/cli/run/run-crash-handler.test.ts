@@ -36,7 +36,7 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
 
   await proc.exited;
 
-  /// Wait two seconds for a slow http request, or continue immediatly once the request is heard.
+  /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
   await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
 
   expect(proc.exited).resolves.not.toBe(0);

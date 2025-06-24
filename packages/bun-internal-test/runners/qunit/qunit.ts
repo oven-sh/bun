@@ -1,7 +1,7 @@
-import type { DataInit, EachFn, Fn, Hooks, HooksFn, ModuleFn, TestEachFn, TestFn, TestOrEachFn } from "./qunit.d";
+import { deepEquals, inspect } from "bun";
 import type { TestContext } from "bun-test";
-import { inspect, deepEquals } from "bun";
 import { Assert } from "./assert";
+import type { DataInit, EachFn, Fn, Hooks, HooksFn, ModuleFn, TestEachFn, TestFn, TestOrEachFn } from "./qunit.d";
 
 type Status = "todo" | "skip" | "only" | undefined;
 

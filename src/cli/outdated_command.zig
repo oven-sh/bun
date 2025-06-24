@@ -1,11 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
 const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
@@ -22,6 +21,17 @@ const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const OOM = bun.OOM;
 
 pub const OutdatedCommand = struct {
+    fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
+        return if (dep.version.tag == .catalog) blk: {
+            const catalog_dep = manager.lockfile.catalogs.get(
+                manager.lockfile,
+                dep.version.value.catalog,
+                dep.name,
+            ) orelse return null;
+            break :blk catalog_dep.version;
+        } else dep.version;
+    }
+
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -40,12 +50,10 @@ pub const OutdatedCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
-        return switch (manager.options.log_level) {
-            inline else => |log_level| outdated(ctx, original_cwd, manager, log_level),
-        };
+        try outdated(ctx, original_cwd, manager);
     }
 
-    fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
+    fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
         const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
@@ -55,13 +63,13 @@ pub const OutdatedCommand = struct {
 
         manager.lockfile = switch (load_lockfile_result) {
             .not_found => {
-                if (log_level != .silent) {
+                if (manager.options.log_level != .silent) {
                     Output.errGeneric("missing lockfile, nothing outdated", .{});
                 }
                 Global.crash();
             },
             .err => |cause| {
-                if (log_level != .silent) {
+                if (manager.options.log_level != .silent) {
                     switch (cause.step) {
                         .open_file => Output.errGeneric("failed to open lockfile: {s}", .{
                             @errorName(cause.value),
@@ -99,14 +107,14 @@ pub const OutdatedCommand = struct {
                     ) catch bun.outOfMemory();
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
-                    try updateManifestsIfNecessary(manager, log_level, workspace_pkg_ids);
+                    try updateManifestsIfNecessary(manager, workspace_pkg_ids);
                     try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
                 } else {
                     // just the current workspace
                     const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
 
-                    try updateManifestsIfNecessary(manager, log_level, &.{root_pkg_id});
+                    try updateManifestsIfNecessary(manager, &.{root_pkg_id});
                     try printOutdatedInfoTable(manager, &.{root_pkg_id}, false, enable_ansi_colors);
                 }
             },
@@ -284,7 +292,8 @@ pub const OutdatedCommand = struct {
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
                 if (package_id == invalid_package_id) continue;
                 const dep = lockfile.buffers.dependencies.items[dep_id];
-                if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
 
@@ -323,22 +332,22 @@ pub const OutdatedCommand = struct {
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
 
-                const update_version = if (dep.version.tag == .npm)
-                    manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+                const update_version = if (resolved_version.tag == .npm)
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                 else
-                    manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
                 const package_name_len = package_name.len +
                     if (dep.behavior.dev)
-                    " (dev)".len
-                else if (dep.behavior.peer)
-                    " (peer)".len
-                else if (dep.behavior.optional)
-                    " (optional)".len
-                else
-                    0;
+                        " (dev)".len
+                    else if (dep.behavior.peer)
+                        " (peer)".len
+                    else if (dep.behavior.optional)
+                        " (optional)".len
+                    else
+                        0;
 
                 if (package_name_len > max_name) max_name = package_name_len;
 
@@ -443,10 +452,11 @@ pub const OutdatedCommand = struct {
                     ) orelse continue;
 
                     const latest = manifest.findByDistTag("latest") orelse continue;
-                    const update = if (dep.version.tag == .npm)
-                        manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+                    const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                    const update = if (resolved_version.tag == .npm)
+                        manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                     else
-                        manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                        manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
                     table.printLineSeparator();
 
@@ -521,9 +531,9 @@ pub const OutdatedCommand = struct {
 
     fn updateManifestsIfNecessary(
         manager: *PackageManager,
-        comptime log_level: PackageManager.Options.LogLevel,
         workspace_pkg_ids: []const PackageID,
     ) !void {
+        const log_level = manager.options.log_level;
         const lockfile = manager.lockfile;
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -540,7 +550,8 @@ pub const OutdatedCommand = struct {
                 const package_id = resolutions[dep_id];
                 if (package_id == invalid_package_id) continue;
                 const dep = dependencies[dep_id];
-                if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution: Install.Resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
 
@@ -616,7 +627,7 @@ pub const OutdatedCommand = struct {
                             .manifests_only = true,
                         },
                         true,
-                        log_level,
+                        closure.manager.options.log_level,
                     ) catch |err| {
                         closure.err = err;
                         return true;
@@ -630,7 +641,7 @@ pub const OutdatedCommand = struct {
         var run_closure: RunClosure = .{ .manager = manager };
         manager.sleepUntil(&run_closure, &RunClosure.isDone);
 
-        if (comptime log_level.showProgress()) {
+        if (log_level.showProgress()) {
             manager.endProgressBar();
             Output.flush();
         }

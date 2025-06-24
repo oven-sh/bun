@@ -20,6 +20,7 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
         static_cast<ArrayAllocationProfile*>(nullptr),
         reinterpret_cast<JSValue*>(elements),
         (unsigned int)length);
+    // RETURN_IF_EXCEPTION
     return isolate->currentHandleScope()->createLocal<Array>(isolate->vm(), array);
 }
 

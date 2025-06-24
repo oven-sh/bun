@@ -55,7 +55,7 @@ function generate(ssl) {
       },
       setSession: {
         fn: "setSession",
-        length: 0,
+        length: 1,
       },
       getTLSTicket: {
         fn: "getTLSTicket",
@@ -116,7 +116,6 @@ function generate(ssl) {
         length: 0,
       },
 
-      //   },
       listener: {
         getter: "getListener",
       },
@@ -140,6 +139,10 @@ function generate(ssl) {
         fn: "shutdown",
         length: 1,
       },
+      close: {
+        fn: "close",
+        length: 0,
+      },
 
       ref: {
         fn: "jsRef",
@@ -150,9 +153,19 @@ function generate(ssl) {
         length: 0,
       },
 
+      localFamily: {
+        getter: "getLocalFamily",
+        cache: true,
+      },
+      localAddress: {
+        getter: "getLocalAddress",
+        cache: true,
+      },
       localPort: {
         getter: "getLocalPort",
+        cache: true,
       },
+
       //   cork: {
       //     fn: "cork",
       //     length: 1,
@@ -170,9 +183,16 @@ function generate(ssl) {
       //   getter: "getTopics",
       // },
 
+      remoteFamily: {
+        getter: "getRemoteFamily",
+        cache: true,
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,
+      },
+      remotePort: {
+        getter: "getRemotePort",
       },
 
       reload: {
@@ -261,10 +281,14 @@ export default [
         getter: "getHostname",
         cache: true,
       },
-
       data: {
         getter: "getData",
         setter: "setData",
+      },
+
+      getsockname: {
+        fn: "getsockname",
+        length: 1,
       },
     },
     finalize: true,
@@ -425,6 +449,43 @@ export default [
         this: true,
         enumerable: false,
         configurable: true,
+      },
+    },
+  }),
+  define({
+    name: "BlockList",
+    construct: true,
+    call: false,
+    finalize: true,
+    estimatedSize: true,
+    // inspectCustom: true,
+    structuredClone: { transferable: false, tag: 251 },
+    JSType: "0b11101110",
+    klass: {
+      isBlockList: {
+        fn: "isBlockList",
+        length: 1,
+      },
+    },
+    proto: {
+      addAddress: {
+        fn: "addAddress",
+        length: 1,
+      },
+      addRange: {
+        fn: "addRange",
+        length: 2,
+      },
+      addSubnet: {
+        fn: "addSubnet",
+        length: 2,
+      },
+      check: {
+        fn: "check",
+        length: 1,
+      },
+      rules: {
+        getter: "rules",
       },
     },
   }),

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const SIMDUTFResult = extern struct {
@@ -95,6 +95,7 @@ pub extern fn simdutf__utf8_length_from_utf32(input: [*c]const c_uint, length: u
 pub extern fn simdutf__utf16_length_from_utf32(input: [*c]const c_uint, length: usize) usize;
 pub extern fn simdutf__utf32_length_from_utf8(input: [*]const u8, length: usize) usize;
 pub extern fn simdutf__utf8_length_from_latin1(input: [*]const u8, length: usize) usize;
+pub extern fn simdutf__utf16_length_from_latin1(input: [*]const u8, length: usize) usize;
 
 pub const validate = struct {
     pub const with_errors = struct {
@@ -294,6 +295,10 @@ pub const length = struct {
             pub fn utf32(input: []const u32) usize {
                 JSC.markBinding(@src());
                 return simdutf__utf16_length_from_utf32(input.ptr, input.len);
+            }
+
+            pub fn latin1(input: []const u8) usize {
+                return simdutf__utf16_length_from_latin1(input.ptr, input.len);
             }
         };
     };

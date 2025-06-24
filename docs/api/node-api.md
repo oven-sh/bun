@@ -12,5 +12,3 @@ Alternatively, use `process.dlopen`:
 let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
-
-Bun polyfills the [`detect-libc`](https://npmjs.com/package/detect-libc) package, which is used by many Node-API modules to detect which `.node` binding to `require`.

@@ -1,12 +1,3 @@
-const logger = bun.logger;
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
-const Fs = @import("../fs.zig");
-const js_ast = bun.JSAst;
-const Transpiler = bun.Transpiler;
-const strings = bun.strings;
-
 pub const FallbackEntryPoint = struct {
     code_buffer: [8192]u8 = undefined,
     path_buffer: bun.PathBuffer = undefined,
@@ -345,3 +336,12 @@ pub const MacroEntryPoint = struct {
         entry.source.path.namespace = js_ast.Macro.namespace;
     }
 };
+
+const logger = bun.logger;
+const std = @import("std");
+const bun = @import("bun");
+const string = bun.string;
+const Fs = @import("../fs.zig");
+const js_ast = bun.JSAst;
+const Transpiler = bun.Transpiler;
+const strings = bun.strings;

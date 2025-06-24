@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { Window } from "happy-dom";
 test("reproduction", async (): Promise<undefined> => {
   expect.assertions(1);

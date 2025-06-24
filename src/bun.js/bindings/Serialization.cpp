@@ -16,14 +16,16 @@ struct SerializedValueSlice {
 };
 
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
-extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, bool forTransferBool)
 {
     JSValue value = JSValue::decode(encodedValue);
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList),
-        dummyPorts);
+    auto forStorage = SerializationForStorage::No;
+    auto context = SerializationContext::Default;
+    auto forTransferEnum = forTransferBool ? SerializationForTransfer::Yes : SerializationForTransfer::No;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -39,7 +41,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     const Vector<uint8_t>& bytes = serializedValue->wireBytes();
 
     return {
-        bytes.data(),
+        bytes.begin(),
         bytes.size(),
         &serializedValue.leakRef(),
     };

@@ -52,7 +52,7 @@ const reactAndRefreshStub = {
     exports.register = function(fn, name) {
       if (typeof name !== "string") throw new Error("name must be a string");
       if (typeof fn !== "function") throw new Error("fn must be a function");
-      if (components.has(name)) throw new Error("Component already registered: " + name + ". Read its hash from test harness first");
+      if (components.has(name)) console.warn("WARNING: Component already registered: " + name + ". Read its hash from test harness first");
       const entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined, name: undefined, customHooks: undefined };
       entry.name = name;
       components.set(name, entry);

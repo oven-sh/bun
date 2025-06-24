@@ -1,13 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
@@ -78,8 +75,6 @@ pub const Targets = css.targets.Targets;
 
 pub const Features = css.targets.Features;
 
-const Browsers = css.targets.Browsers;
-
 pub const ImportInfo = struct {
     import_records: *const bun.BabyList(bun.ImportRecord),
     /// bundle_v2.graph.ast.items(.url_for_css)
@@ -122,7 +117,7 @@ pub fn Printer(comptime Writer: type) type {
         col: u32 = 0,
         minify: bool,
         targets: Targets,
-        vendor_prefix: css.VendorPrefix = css.VendorPrefix.empty(),
+        vendor_prefix: css.VendorPrefix = .{},
         in_calc: bool = false,
         css_module: ?css.CssModule = null,
         dependencies: ?ArrayList(css.Dependency) = null,
@@ -378,8 +373,13 @@ pub fn Printer(comptime Writer: type) type {
 
         pub fn writeIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef, handle_css_module: bool) PrintErr!void {
             if (!handle_css_module) {
-                bun.assert(ident.isIdent());
-                return css.serializer.serializeIdentifier(ident.asIdent().?.v, this) catch return this.addFmtError();
+                if (ident.asIdent()) |identifier| {
+                    return css.serializer.serializeIdentifier(identifier.v, this) catch return this.addFmtError();
+                } else {
+                    const ref = ident.asRef().?;
+                    const symbol = this.symbols.get(ref) orelse return this.addFmtError();
+                    return css.serializer.serializeIdentifier(symbol.original_name, this) catch return this.addFmtError();
+                }
             }
 
             const str = this.lookupIdentOrRef(ident);

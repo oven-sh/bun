@@ -1,8 +1,6 @@
 const { validateAbortSignal, validateFunction } = require("internal/validators");
 const { kResistStopPropagation } = require("internal/shared");
 
-const SymbolDispose = Symbol.dispose;
-
 function addAbortListener(signal: AbortSignal, listener: EventListener): Disposable {
   if (signal === undefined) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
@@ -15,14 +13,13 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
     queueMicrotask(() => listener());
   } else {
     // TODO(atlowChemi) add { subscription: true } and return directly
-    signal.addEventListener("abort", listener, { __proto__: null, once: true, [kResistStopPropagation]: true });
+    signal.addEventListener("abort", listener, { once: true, [kResistStopPropagation]: true });
     removeEventListener = () => {
       signal.removeEventListener("abort", listener);
     };
   }
   return {
-    __proto__: null,
-    [SymbolDispose]() {
+    [Symbol.dispose]() {
       removeEventListener?.();
     },
   };

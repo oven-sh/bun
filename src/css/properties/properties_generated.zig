@@ -1,15 +1,15 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
+const bits = bun.bits;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
-const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
-const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
+const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -32,30 +32,16 @@ const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
 const Length = css.css_values.length.Length;
-const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
 const Time = css.css_values.time.Time;
 const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
 const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 pub const font = css.css_properties.font;
 const border = css.css_properties.border;
@@ -230,7 +216,6 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-const ClipPath = masking.ClipPath;
 const MaskMode = masking.MaskMode;
 const MaskClip = masking.MaskClip;
 const GeometryBox = masking.GeometryBox;
@@ -255,7 +240,6 @@ const Position = position.Position;
 const Result = css.Result;
 
 const BabyList = bun.BabyList;
-const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
@@ -508,7 +492,7 @@ pub const Property = union(PropertyIdTag) {
     unparsed: UnparsedProperty,
     custom: CustomProperty,
 
-    pub usingnamespace PropertyImpl();
+    pub const toCss = properties_impl.property_mixin.toCss;
 
     // Sanity check to make sure all types have the following functions:
     // - deepClone()
@@ -7116,11 +7100,11 @@ pub const Property = union(PropertyIdTag) {
             .@"inset-inline" => |*v| return v.longhand(property_id),
             .inset => |*v| return v.longhand(property_id),
             .@"border-radius" => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .@"border-image" => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .@"border-color" => |*v| return v.longhand(property_id),
@@ -7145,11 +7129,11 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => |*v| return v.longhand(property_id),
             .outline => |*v| return v.longhand(property_id),
             .@"flex-flow" => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .flex => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .@"place-content" => |*v| return v.longhand(property_id),
@@ -7170,11 +7154,11 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding" => |*v| return v.longhand(property_id),
             .font => |*v| return v.longhand(property_id),
             .transition => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .mask => |*v| {
-                if (!v[1].eq(property_id.prefix())) return null;
+                if (!(v[1] == property_id.prefix())) return null;
                 return v[0].longhand(property_id);
             },
             .@"mask-border" => |*v| return v.longhand(property_id),
@@ -7194,10 +7178,10 @@ pub const Property = union(PropertyIdTag) {
             .@"background-size" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-size"),
             .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundRepeat, 1), v, &rhs.@"background-repeat"),
             .@"background-attachment" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), v, &rhs.@"background-attachment"),
-            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundClip, 1), &v[0], &rhs.@"background-clip"[0]) and v[1].eq(rhs.@"background-clip"[1]),
+            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundClip, 1), &v[0], &rhs.@"background-clip"[0]) and v[1] == rhs.@"background-clip"[1],
             .@"background-origin" => |*v| css.generic.eql(SmallList(background.BackgroundOrigin, 1), v, &rhs.@"background-origin"),
             .background => |*v| css.generic.eql(SmallList(background.Background, 1), v, &rhs.background),
-            .@"box-shadow" => |*v| css.generic.eql(SmallList(box_shadow.BoxShadow, 1), &v[0], &rhs.@"box-shadow"[0]) and v[1].eq(rhs.@"box-shadow"[1]),
+            .@"box-shadow" => |*v| css.generic.eql(SmallList(box_shadow.BoxShadow, 1), &v[0], &rhs.@"box-shadow"[0]) and v[1] == rhs.@"box-shadow"[1],
             .opacity => |*v| css.generic.eql(css.css_values.alpha.AlphaValue, v, &rhs.opacity),
             .color => |*v| css.generic.eql(CssColor, v, &rhs.color),
             .display => |*v| css.generic.eql(display.Display, v, &rhs.display),
@@ -7214,12 +7198,12 @@ pub const Property = union(PropertyIdTag) {
             .@"min-inline-size" => |*v| css.generic.eql(size.Size, v, &rhs.@"min-inline-size"),
             .@"max-block-size" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-block-size"),
             .@"max-inline-size" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-inline-size"),
-            .@"box-sizing" => |*v| css.generic.eql(size.BoxSizing, &v[0], &rhs.@"box-sizing"[0]) and v[1].eq(rhs.@"box-sizing"[1]),
+            .@"box-sizing" => |*v| css.generic.eql(size.BoxSizing, &v[0], &rhs.@"box-sizing"[0]) and v[1] == rhs.@"box-sizing"[1],
             .@"aspect-ratio" => |*v| css.generic.eql(size.AspectRatio, v, &rhs.@"aspect-ratio"),
             .overflow => |*v| css.generic.eql(overflow.Overflow, v, &rhs.overflow),
             .@"overflow-x" => |*v| css.generic.eql(overflow.OverflowKeyword, v, &rhs.@"overflow-x"),
             .@"overflow-y" => |*v| css.generic.eql(overflow.OverflowKeyword, v, &rhs.@"overflow-y"),
-            .@"text-overflow" => |*v| css.generic.eql(overflow.TextOverflow, &v[0], &rhs.@"text-overflow"[0]) and v[1].eq(rhs.@"text-overflow"[1]),
+            .@"text-overflow" => |*v| css.generic.eql(overflow.TextOverflow, &v[0], &rhs.@"text-overflow"[0]) and v[1] == rhs.@"text-overflow"[1],
             .position => |*v| css.generic.eql(position.Position, v, &rhs.position),
             .top => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.top),
             .bottom => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.bottom),
@@ -7257,21 +7241,21 @@ pub const Property = union(PropertyIdTag) {
             .@"border-block-end-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-block-end-width"),
             .@"border-inline-start-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-inline-start-width"),
             .@"border-inline-end-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-inline-end-width"),
-            .@"border-top-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-top-left-radius"[0]) and v[1].eq(rhs.@"border-top-left-radius"[1]),
-            .@"border-top-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-top-right-radius"[0]) and v[1].eq(rhs.@"border-top-right-radius"[1]),
-            .@"border-bottom-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-bottom-left-radius"[0]) and v[1].eq(rhs.@"border-bottom-left-radius"[1]),
-            .@"border-bottom-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-bottom-right-radius"[0]) and v[1].eq(rhs.@"border-bottom-right-radius"[1]),
+            .@"border-top-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-top-left-radius"[0]) and (v[1] == rhs.@"border-top-left-radius"[1]),
+            .@"border-top-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-top-right-radius"[0]) and (v[1] == rhs.@"border-top-right-radius"[1]),
+            .@"border-bottom-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-bottom-left-radius"[0]) and (v[1] == rhs.@"border-bottom-left-radius"[1]),
+            .@"border-bottom-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &rhs.@"border-bottom-right-radius"[0]) and (v[1] == rhs.@"border-bottom-right-radius"[1]),
             .@"border-start-start-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-start-start-radius"),
             .@"border-start-end-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-start-end-radius"),
             .@"border-end-start-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-end-start-radius"),
             .@"border-end-end-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-end-end-radius"),
-            .@"border-radius" => |*v| css.generic.eql(BorderRadius, &v[0], &rhs.@"border-radius"[0]) and v[1].eq(rhs.@"border-radius"[1]),
+            .@"border-radius" => |*v| css.generic.eql(BorderRadius, &v[0], &rhs.@"border-radius"[0]) and (v[1] == rhs.@"border-radius"[1]),
             .@"border-image-source" => |*v| css.generic.eql(Image, v, &rhs.@"border-image-source"),
             .@"border-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), v, &rhs.@"border-image-outset"),
             .@"border-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, v, &rhs.@"border-image-repeat"),
             .@"border-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), v, &rhs.@"border-image-width"),
             .@"border-image-slice" => |*v| css.generic.eql(BorderImageSlice, v, &rhs.@"border-image-slice"),
-            .@"border-image" => |*v| css.generic.eql(BorderImage, &v[0], &rhs.@"border-image"[0]) and v[1].eq(rhs.@"border-image"[1]),
+            .@"border-image" => |*v| css.generic.eql(BorderImage, &v[0], &rhs.@"border-image"[0]) and (v[1] == rhs.@"border-image"[1]),
             .@"border-color" => |*v| css.generic.eql(BorderColor, v, &rhs.@"border-color"),
             .@"border-style" => |*v| css.generic.eql(BorderStyle, v, &rhs.@"border-style"),
             .@"border-width" => |*v| css.generic.eql(BorderWidth, v, &rhs.@"border-width"),
@@ -7296,42 +7280,42 @@ pub const Property = union(PropertyIdTag) {
             .@"outline-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"outline-color"),
             .@"outline-style" => |*v| css.generic.eql(OutlineStyle, v, &rhs.@"outline-style"),
             .@"outline-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"outline-width"),
-            .@"flex-direction" => |*v| css.generic.eql(FlexDirection, &v[0], &rhs.@"flex-direction"[0]) and v[1].eq(rhs.@"flex-direction"[1]),
-            .@"flex-wrap" => |*v| css.generic.eql(FlexWrap, &v[0], &rhs.@"flex-wrap"[0]) and v[1].eq(rhs.@"flex-wrap"[1]),
-            .@"flex-flow" => |*v| css.generic.eql(FlexFlow, &v[0], &rhs.@"flex-flow"[0]) and v[1].eq(rhs.@"flex-flow"[1]),
-            .@"flex-grow" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-grow"[0]) and v[1].eq(rhs.@"flex-grow"[1]),
-            .@"flex-shrink" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-shrink"[0]) and v[1].eq(rhs.@"flex-shrink"[1]),
-            .@"flex-basis" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &rhs.@"flex-basis"[0]) and v[1].eq(rhs.@"flex-basis"[1]),
-            .flex => |*v| css.generic.eql(Flex, &v[0], &rhs.flex[0]) and v[1].eq(rhs.flex[1]),
-            .order => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.order[0]) and v[1].eq(rhs.order[1]),
-            .@"align-content" => |*v| css.generic.eql(AlignContent, &v[0], &rhs.@"align-content"[0]) and v[1].eq(rhs.@"align-content"[1]),
-            .@"justify-content" => |*v| css.generic.eql(JustifyContent, &v[0], &rhs.@"justify-content"[0]) and v[1].eq(rhs.@"justify-content"[1]),
+            .@"flex-direction" => |*v| css.generic.eql(FlexDirection, &v[0], &rhs.@"flex-direction"[0]) and (v[1] == rhs.@"flex-direction"[1]),
+            .@"flex-wrap" => |*v| css.generic.eql(FlexWrap, &v[0], &rhs.@"flex-wrap"[0]) and (v[1] == rhs.@"flex-wrap"[1]),
+            .@"flex-flow" => |*v| css.generic.eql(FlexFlow, &v[0], &rhs.@"flex-flow"[0]) and (v[1] == rhs.@"flex-flow"[1]),
+            .@"flex-grow" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-grow"[0]) and (v[1] == rhs.@"flex-grow"[1]),
+            .@"flex-shrink" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-shrink"[0]) and (v[1] == rhs.@"flex-shrink"[1]),
+            .@"flex-basis" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &rhs.@"flex-basis"[0]) and (v[1] == rhs.@"flex-basis"[1]),
+            .flex => |*v| css.generic.eql(Flex, &v[0], &rhs.flex[0]) and (v[1] == rhs.flex[1]),
+            .order => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.order[0]) and (v[1] == rhs.order[1]),
+            .@"align-content" => |*v| css.generic.eql(AlignContent, &v[0], &rhs.@"align-content"[0]) and (v[1] == rhs.@"align-content"[1]),
+            .@"justify-content" => |*v| css.generic.eql(JustifyContent, &v[0], &rhs.@"justify-content"[0]) and (v[1] == rhs.@"justify-content"[1]),
             .@"place-content" => |*v| css.generic.eql(PlaceContent, v, &rhs.@"place-content"),
-            .@"align-self" => |*v| css.generic.eql(AlignSelf, &v[0], &rhs.@"align-self"[0]) and v[1].eq(rhs.@"align-self"[1]),
+            .@"align-self" => |*v| css.generic.eql(AlignSelf, &v[0], &rhs.@"align-self"[0]) and (v[1] == rhs.@"align-self"[1]),
             .@"justify-self" => |*v| css.generic.eql(JustifySelf, v, &rhs.@"justify-self"),
             .@"place-self" => |*v| css.generic.eql(PlaceSelf, v, &rhs.@"place-self"),
-            .@"align-items" => |*v| css.generic.eql(AlignItems, &v[0], &rhs.@"align-items"[0]) and v[1].eq(rhs.@"align-items"[1]),
+            .@"align-items" => |*v| css.generic.eql(AlignItems, &v[0], &rhs.@"align-items"[0]) and (v[1] == rhs.@"align-items"[1]),
             .@"justify-items" => |*v| css.generic.eql(JustifyItems, v, &rhs.@"justify-items"),
             .@"place-items" => |*v| css.generic.eql(PlaceItems, v, &rhs.@"place-items"),
             .@"row-gap" => |*v| css.generic.eql(GapValue, v, &rhs.@"row-gap"),
             .@"column-gap" => |*v| css.generic.eql(GapValue, v, &rhs.@"column-gap"),
             .gap => |*v| css.generic.eql(Gap, v, &rhs.gap),
-            .@"box-orient" => |*v| css.generic.eql(BoxOrient, &v[0], &rhs.@"box-orient"[0]) and v[1].eq(rhs.@"box-orient"[1]),
-            .@"box-direction" => |*v| css.generic.eql(BoxDirection, &v[0], &rhs.@"box-direction"[0]) and v[1].eq(rhs.@"box-direction"[1]),
-            .@"box-ordinal-group" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"box-ordinal-group"[0]) and v[1].eq(rhs.@"box-ordinal-group"[1]),
-            .@"box-align" => |*v| css.generic.eql(BoxAlign, &v[0], &rhs.@"box-align"[0]) and v[1].eq(rhs.@"box-align"[1]),
-            .@"box-flex" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"box-flex"[0]) and v[1].eq(rhs.@"box-flex"[1]),
-            .@"box-flex-group" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"box-flex-group"[0]) and v[1].eq(rhs.@"box-flex-group"[1]),
-            .@"box-pack" => |*v| css.generic.eql(BoxPack, &v[0], &rhs.@"box-pack"[0]) and v[1].eq(rhs.@"box-pack"[1]),
-            .@"box-lines" => |*v| css.generic.eql(BoxLines, &v[0], &rhs.@"box-lines"[0]) and v[1].eq(rhs.@"box-lines"[1]),
-            .@"flex-pack" => |*v| css.generic.eql(FlexPack, &v[0], &rhs.@"flex-pack"[0]) and v[1].eq(rhs.@"flex-pack"[1]),
-            .@"flex-order" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"flex-order"[0]) and v[1].eq(rhs.@"flex-order"[1]),
-            .@"flex-align" => |*v| css.generic.eql(BoxAlign, &v[0], &rhs.@"flex-align"[0]) and v[1].eq(rhs.@"flex-align"[1]),
-            .@"flex-item-align" => |*v| css.generic.eql(FlexItemAlign, &v[0], &rhs.@"flex-item-align"[0]) and v[1].eq(rhs.@"flex-item-align"[1]),
-            .@"flex-line-pack" => |*v| css.generic.eql(FlexLinePack, &v[0], &rhs.@"flex-line-pack"[0]) and v[1].eq(rhs.@"flex-line-pack"[1]),
-            .@"flex-positive" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-positive"[0]) and v[1].eq(rhs.@"flex-positive"[1]),
-            .@"flex-negative" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-negative"[0]) and v[1].eq(rhs.@"flex-negative"[1]),
-            .@"flex-preferred-size" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &rhs.@"flex-preferred-size"[0]) and v[1].eq(rhs.@"flex-preferred-size"[1]),
+            .@"box-orient" => |*v| css.generic.eql(BoxOrient, &v[0], &rhs.@"box-orient"[0]) and (v[1] == rhs.@"box-orient"[1]),
+            .@"box-direction" => |*v| css.generic.eql(BoxDirection, &v[0], &rhs.@"box-direction"[0]) and (v[1] == rhs.@"box-direction"[1]),
+            .@"box-ordinal-group" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"box-ordinal-group"[0]) and (v[1] == rhs.@"box-ordinal-group"[1]),
+            .@"box-align" => |*v| css.generic.eql(BoxAlign, &v[0], &rhs.@"box-align"[0]) and (v[1] == rhs.@"box-align"[1]),
+            .@"box-flex" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"box-flex"[0]) and (v[1] == rhs.@"box-flex"[1]),
+            .@"box-flex-group" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"box-flex-group"[0]) and (v[1] == rhs.@"box-flex-group"[1]),
+            .@"box-pack" => |*v| css.generic.eql(BoxPack, &v[0], &rhs.@"box-pack"[0]) and (v[1] == rhs.@"box-pack"[1]),
+            .@"box-lines" => |*v| css.generic.eql(BoxLines, &v[0], &rhs.@"box-lines"[0]) and (v[1] == rhs.@"box-lines"[1]),
+            .@"flex-pack" => |*v| css.generic.eql(FlexPack, &v[0], &rhs.@"flex-pack"[0]) and (v[1] == rhs.@"flex-pack"[1]),
+            .@"flex-order" => |*v| css.generic.eql(CSSInteger, &v[0], &rhs.@"flex-order"[0]) and (v[1] == rhs.@"flex-order"[1]),
+            .@"flex-align" => |*v| css.generic.eql(BoxAlign, &v[0], &rhs.@"flex-align"[0]) and (v[1] == rhs.@"flex-align"[1]),
+            .@"flex-item-align" => |*v| css.generic.eql(FlexItemAlign, &v[0], &rhs.@"flex-item-align"[0]) and (v[1] == rhs.@"flex-item-align"[1]),
+            .@"flex-line-pack" => |*v| css.generic.eql(FlexLinePack, &v[0], &rhs.@"flex-line-pack"[0]) and (v[1] == rhs.@"flex-line-pack"[1]),
+            .@"flex-positive" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-positive"[0]) and (v[1] == rhs.@"flex-positive"[1]),
+            .@"flex-negative" => |*v| css.generic.eql(CSSNumber, &v[0], &rhs.@"flex-negative"[0]) and (v[1] == rhs.@"flex-negative"[1]),
+            .@"flex-preferred-size" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &rhs.@"flex-preferred-size"[0]) and (v[1] == rhs.@"flex-preferred-size"[1]),
             .@"margin-top" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-top"),
             .@"margin-bottom" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-bottom"),
             .@"margin-left" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-left"),
@@ -7384,38 +7368,38 @@ pub const Property = union(PropertyIdTag) {
             .@"font-variant-caps" => |*v| css.generic.eql(FontVariantCaps, v, &rhs.@"font-variant-caps"),
             .@"line-height" => |*v| css.generic.eql(LineHeight, v, &rhs.@"line-height"),
             .font => |*v| css.generic.eql(Font, v, &rhs.font),
-            .@"transition-property" => |*v| css.generic.eql(SmallList(PropertyId, 1), &v[0], &rhs.@"transition-property"[0]) and v[1].eq(rhs.@"transition-property"[1]),
-            .@"transition-duration" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-duration"[0]) and v[1].eq(rhs.@"transition-duration"[1]),
-            .@"transition-delay" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-delay"[0]) and v[1].eq(rhs.@"transition-delay"[1]),
-            .@"transition-timing-function" => |*v| css.generic.eql(SmallList(EasingFunction, 1), &v[0], &rhs.@"transition-timing-function"[0]) and v[1].eq(rhs.@"transition-timing-function"[1]),
-            .transition => |*v| css.generic.eql(SmallList(Transition, 1), &v[0], &rhs.transition[0]) and v[1].eq(rhs.transition[1]),
-            .transform => |*v| css.generic.eql(TransformList, &v[0], &rhs.transform[0]) and v[1].eq(rhs.transform[1]),
-            .@"transform-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"transform-origin"[0]) and v[1].eq(rhs.@"transform-origin"[1]),
-            .@"transform-style" => |*v| css.generic.eql(TransformStyle, &v[0], &rhs.@"transform-style"[0]) and v[1].eq(rhs.@"transform-style"[1]),
+            .@"transition-property" => |*v| css.generic.eql(SmallList(PropertyId, 1), &v[0], &rhs.@"transition-property"[0]) and (v[1] == rhs.@"transition-property"[1]),
+            .@"transition-duration" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-duration"[0]) and (v[1] == rhs.@"transition-duration"[1]),
+            .@"transition-delay" => |*v| css.generic.eql(SmallList(Time, 1), &v[0], &rhs.@"transition-delay"[0]) and (v[1] == rhs.@"transition-delay"[1]),
+            .@"transition-timing-function" => |*v| css.generic.eql(SmallList(EasingFunction, 1), &v[0], &rhs.@"transition-timing-function"[0]) and (v[1] == rhs.@"transition-timing-function"[1]),
+            .transition => |*v| css.generic.eql(SmallList(Transition, 1), &v[0], &rhs.transition[0]) and (v[1] == rhs.transition[1]),
+            .transform => |*v| css.generic.eql(TransformList, &v[0], &rhs.transform[0]) and (v[1] == rhs.transform[1]),
+            .@"transform-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"transform-origin"[0]) and (v[1] == rhs.@"transform-origin"[1]),
+            .@"transform-style" => |*v| css.generic.eql(TransformStyle, &v[0], &rhs.@"transform-style"[0]) and (v[1] == rhs.@"transform-style"[1]),
             .@"transform-box" => |*v| css.generic.eql(TransformBox, v, &rhs.@"transform-box"),
-            .@"backface-visibility" => |*v| css.generic.eql(BackfaceVisibility, &v[0], &rhs.@"backface-visibility"[0]) and v[1].eq(rhs.@"backface-visibility"[1]),
-            .perspective => |*v| css.generic.eql(Perspective, &v[0], &rhs.perspective[0]) and v[1].eq(rhs.perspective[1]),
-            .@"perspective-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"perspective-origin"[0]) and v[1].eq(rhs.@"perspective-origin"[1]),
+            .@"backface-visibility" => |*v| css.generic.eql(BackfaceVisibility, &v[0], &rhs.@"backface-visibility"[0]) and (v[1] == rhs.@"backface-visibility"[1]),
+            .perspective => |*v| css.generic.eql(Perspective, &v[0], &rhs.perspective[0]) and (v[1] == rhs.perspective[1]),
+            .@"perspective-origin" => |*v| css.generic.eql(Position, &v[0], &rhs.@"perspective-origin"[0]) and (v[1] == rhs.@"perspective-origin"[1]),
             .translate => |*v| css.generic.eql(Translate, v, &rhs.translate),
             .rotate => |*v| css.generic.eql(Rotate, v, &rhs.rotate),
             .scale => |*v| css.generic.eql(Scale, v, &rhs.scale),
-            .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-decoration-color"[0]) and v[1].eq(rhs.@"text-decoration-color"[1]),
-            .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-emphasis-color"[0]) and v[1].eq(rhs.@"text-emphasis-color"[1]),
+            .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-decoration-color"[0]) and (v[1] == rhs.@"text-decoration-color"[1]),
+            .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &rhs.@"text-emphasis-color"[0]) and (v[1] == rhs.@"text-emphasis-color"[1]),
             .@"text-shadow" => |*v| css.generic.eql(SmallList(TextShadow, 1), v, &rhs.@"text-shadow"),
             .direction => |*v| css.generic.eql(Direction, v, &rhs.direction),
             .composes => |*v| css.generic.eql(Composes, v, &rhs.composes),
-            .@"mask-image" => |*v| css.generic.eql(SmallList(Image, 1), &v[0], &rhs.@"mask-image"[0]) and v[1].eq(rhs.@"mask-image"[1]),
+            .@"mask-image" => |*v| css.generic.eql(SmallList(Image, 1), &v[0], &rhs.@"mask-image"[0]) and (v[1] == rhs.@"mask-image"[1]),
             .@"mask-mode" => |*v| css.generic.eql(SmallList(MaskMode, 1), v, &rhs.@"mask-mode"),
-            .@"mask-repeat" => |*v| css.generic.eql(SmallList(BackgroundRepeat, 1), &v[0], &rhs.@"mask-repeat"[0]) and v[1].eq(rhs.@"mask-repeat"[1]),
+            .@"mask-repeat" => |*v| css.generic.eql(SmallList(BackgroundRepeat, 1), &v[0], &rhs.@"mask-repeat"[0]) and (v[1] == rhs.@"mask-repeat"[1]),
             .@"mask-position-x" => |*v| css.generic.eql(SmallList(HorizontalPosition, 1), v, &rhs.@"mask-position-x"),
             .@"mask-position-y" => |*v| css.generic.eql(SmallList(VerticalPosition, 1), v, &rhs.@"mask-position-y"),
-            .@"mask-position" => |*v| css.generic.eql(SmallList(Position, 1), &v[0], &rhs.@"mask-position"[0]) and v[1].eq(rhs.@"mask-position"[1]),
-            .@"mask-clip" => |*v| css.generic.eql(SmallList(MaskClip, 1), &v[0], &rhs.@"mask-clip"[0]) and v[1].eq(rhs.@"mask-clip"[1]),
-            .@"mask-origin" => |*v| css.generic.eql(SmallList(GeometryBox, 1), &v[0], &rhs.@"mask-origin"[0]) and v[1].eq(rhs.@"mask-origin"[1]),
-            .@"mask-size" => |*v| css.generic.eql(SmallList(BackgroundSize, 1), &v[0], &rhs.@"mask-size"[0]) and v[1].eq(rhs.@"mask-size"[1]),
+            .@"mask-position" => |*v| css.generic.eql(SmallList(Position, 1), &v[0], &rhs.@"mask-position"[0]) and (v[1] == rhs.@"mask-position"[1]),
+            .@"mask-clip" => |*v| css.generic.eql(SmallList(MaskClip, 1), &v[0], &rhs.@"mask-clip"[0]) and (v[1] == rhs.@"mask-clip"[1]),
+            .@"mask-origin" => |*v| css.generic.eql(SmallList(GeometryBox, 1), &v[0], &rhs.@"mask-origin"[0]) and (v[1] == rhs.@"mask-origin"[1]),
+            .@"mask-size" => |*v| css.generic.eql(SmallList(BackgroundSize, 1), &v[0], &rhs.@"mask-size"[0]) and (v[1] == rhs.@"mask-size"[1]),
             .@"mask-composite" => |*v| css.generic.eql(SmallList(MaskComposite, 1), v, &rhs.@"mask-composite"),
             .@"mask-type" => |*v| css.generic.eql(MaskType, v, &rhs.@"mask-type"),
-            .mask => |*v| css.generic.eql(SmallList(Mask, 1), &v[0], &rhs.mask[0]) and v[1].eq(rhs.mask[1]),
+            .mask => |*v| css.generic.eql(SmallList(Mask, 1), &v[0], &rhs.mask[0]) and (v[1] == rhs.mask[1]),
             .@"mask-border-source" => |*v| css.generic.eql(Image, v, &rhs.@"mask-border-source"),
             .@"mask-border-mode" => |*v| css.generic.eql(MaskBorderMode, v, &rhs.@"mask-border-mode"),
             .@"mask-border-slice" => |*v| css.generic.eql(BorderImageSlice, v, &rhs.@"mask-border-slice"),
@@ -7424,13 +7408,13 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-border-repeat" => |*v| css.generic.eql(BorderImageRepeat, v, &rhs.@"mask-border-repeat"),
             .@"mask-border" => |*v| css.generic.eql(MaskBorder, v, &rhs.@"mask-border"),
             .@"-webkit-mask-composite" => |*v| css.generic.eql(SmallList(WebKitMaskComposite, 1), v, &rhs.@"-webkit-mask-composite"),
-            .@"mask-source-type" => |*v| css.generic.eql(SmallList(WebKitMaskSourceType, 1), &v[0], &rhs.@"mask-source-type"[0]) and v[1].eq(rhs.@"mask-source-type"[1]),
-            .@"mask-box-image" => |*v| css.generic.eql(BorderImage, &v[0], &rhs.@"mask-box-image"[0]) and v[1].eq(rhs.@"mask-box-image"[1]),
-            .@"mask-box-image-source" => |*v| css.generic.eql(Image, &v[0], &rhs.@"mask-box-image-source"[0]) and v[1].eq(rhs.@"mask-box-image-source"[1]),
-            .@"mask-box-image-slice" => |*v| css.generic.eql(BorderImageSlice, &v[0], &rhs.@"mask-box-image-slice"[0]) and v[1].eq(rhs.@"mask-box-image-slice"[1]),
-            .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &rhs.@"mask-box-image-width"[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
-            .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &rhs.@"mask-box-image-outset"[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
-            .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &rhs.@"mask-box-image-repeat"[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
+            .@"mask-source-type" => |*v| css.generic.eql(SmallList(WebKitMaskSourceType, 1), &v[0], &rhs.@"mask-source-type"[0]) and (v[1] == rhs.@"mask-source-type"[1]),
+            .@"mask-box-image" => |*v| css.generic.eql(BorderImage, &v[0], &rhs.@"mask-box-image"[0]) and (v[1] == rhs.@"mask-box-image"[1]),
+            .@"mask-box-image-source" => |*v| css.generic.eql(Image, &v[0], &rhs.@"mask-box-image-source"[0]) and (v[1] == rhs.@"mask-box-image-source"[1]),
+            .@"mask-box-image-slice" => |*v| css.generic.eql(BorderImageSlice, &v[0], &rhs.@"mask-box-image-slice"[0]) and (v[1] == rhs.@"mask-box-image-slice"[1]),
+            .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &rhs.@"mask-box-image-width"[0]) and (v[1] == rhs.@"mask-box-image-width"[1]),
+            .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &rhs.@"mask-box-image-outset"[0]) and (v[1] == rhs.@"mask-box-image-outset"[1]),
+            .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &rhs.@"mask-box-image-repeat"[0]) and (v[1] == rhs.@"mask-box-image-repeat"[1]),
             .@"color-scheme" => |*v| css.generic.eql(ColorScheme, v, &rhs.@"color-scheme"),
             .unparsed => |*u| u.eql(&rhs.unparsed),
             .all => true,
@@ -7689,7 +7673,10 @@ pub const PropertyId = union(PropertyIdTag) {
     unparsed,
     custom: CustomPropertyName,
 
-    pub usingnamespace PropertyIdImpl();
+    pub const toCss = properties_impl.property_id_mixin.toCss;
+    pub const parse = properties_impl.property_id_mixin.parse;
+    pub const fromString = properties_impl.property_id_mixin.fromString;
+    pub const fromStr = fromString;
 
     /// Returns the property name, without any vendor prefixes.
     pub inline fn name(this: *const PropertyId) []const u8 {
@@ -7700,116 +7687,116 @@ pub const PropertyId = union(PropertyIdTag) {
     /// Returns the vendor prefix for this property id.
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
-            .@"background-color" => VendorPrefix.empty(),
-            .@"background-image" => VendorPrefix.empty(),
-            .@"background-position-x" => VendorPrefix.empty(),
-            .@"background-position-y" => VendorPrefix.empty(),
-            .@"background-position" => VendorPrefix.empty(),
-            .@"background-size" => VendorPrefix.empty(),
-            .@"background-repeat" => VendorPrefix.empty(),
-            .@"background-attachment" => VendorPrefix.empty(),
+            .@"background-color" => .empty,
+            .@"background-image" => .empty,
+            .@"background-position-x" => .empty,
+            .@"background-position-y" => .empty,
+            .@"background-position" => .empty,
+            .@"background-size" => .empty,
+            .@"background-repeat" => .empty,
+            .@"background-attachment" => .empty,
             .@"background-clip" => |p| p,
-            .@"background-origin" => VendorPrefix.empty(),
-            .background => VendorPrefix.empty(),
+            .@"background-origin" => .empty,
+            .background => .empty,
             .@"box-shadow" => |p| p,
-            .opacity => VendorPrefix.empty(),
-            .color => VendorPrefix.empty(),
-            .display => VendorPrefix.empty(),
-            .visibility => VendorPrefix.empty(),
-            .width => VendorPrefix.empty(),
-            .height => VendorPrefix.empty(),
-            .@"min-width" => VendorPrefix.empty(),
-            .@"min-height" => VendorPrefix.empty(),
-            .@"max-width" => VendorPrefix.empty(),
-            .@"max-height" => VendorPrefix.empty(),
-            .@"block-size" => VendorPrefix.empty(),
-            .@"inline-size" => VendorPrefix.empty(),
-            .@"min-block-size" => VendorPrefix.empty(),
-            .@"min-inline-size" => VendorPrefix.empty(),
-            .@"max-block-size" => VendorPrefix.empty(),
-            .@"max-inline-size" => VendorPrefix.empty(),
+            .opacity => .empty,
+            .color => .empty,
+            .display => .empty,
+            .visibility => .empty,
+            .width => .empty,
+            .height => .empty,
+            .@"min-width" => .empty,
+            .@"min-height" => .empty,
+            .@"max-width" => .empty,
+            .@"max-height" => .empty,
+            .@"block-size" => .empty,
+            .@"inline-size" => .empty,
+            .@"min-block-size" => .empty,
+            .@"min-inline-size" => .empty,
+            .@"max-block-size" => .empty,
+            .@"max-inline-size" => .empty,
             .@"box-sizing" => |p| p,
-            .@"aspect-ratio" => VendorPrefix.empty(),
-            .overflow => VendorPrefix.empty(),
-            .@"overflow-x" => VendorPrefix.empty(),
-            .@"overflow-y" => VendorPrefix.empty(),
+            .@"aspect-ratio" => .empty,
+            .overflow => .empty,
+            .@"overflow-x" => .empty,
+            .@"overflow-y" => .empty,
             .@"text-overflow" => |p| p,
-            .position => VendorPrefix.empty(),
-            .top => VendorPrefix.empty(),
-            .bottom => VendorPrefix.empty(),
-            .left => VendorPrefix.empty(),
-            .right => VendorPrefix.empty(),
-            .@"inset-block-start" => VendorPrefix.empty(),
-            .@"inset-block-end" => VendorPrefix.empty(),
-            .@"inset-inline-start" => VendorPrefix.empty(),
-            .@"inset-inline-end" => VendorPrefix.empty(),
-            .@"inset-block" => VendorPrefix.empty(),
-            .@"inset-inline" => VendorPrefix.empty(),
-            .inset => VendorPrefix.empty(),
-            .@"border-spacing" => VendorPrefix.empty(),
-            .@"border-top-color" => VendorPrefix.empty(),
-            .@"border-bottom-color" => VendorPrefix.empty(),
-            .@"border-left-color" => VendorPrefix.empty(),
-            .@"border-right-color" => VendorPrefix.empty(),
-            .@"border-block-start-color" => VendorPrefix.empty(),
-            .@"border-block-end-color" => VendorPrefix.empty(),
-            .@"border-inline-start-color" => VendorPrefix.empty(),
-            .@"border-inline-end-color" => VendorPrefix.empty(),
-            .@"border-top-style" => VendorPrefix.empty(),
-            .@"border-bottom-style" => VendorPrefix.empty(),
-            .@"border-left-style" => VendorPrefix.empty(),
-            .@"border-right-style" => VendorPrefix.empty(),
-            .@"border-block-start-style" => VendorPrefix.empty(),
-            .@"border-block-end-style" => VendorPrefix.empty(),
-            .@"border-inline-start-style" => VendorPrefix.empty(),
-            .@"border-inline-end-style" => VendorPrefix.empty(),
-            .@"border-top-width" => VendorPrefix.empty(),
-            .@"border-bottom-width" => VendorPrefix.empty(),
-            .@"border-left-width" => VendorPrefix.empty(),
-            .@"border-right-width" => VendorPrefix.empty(),
-            .@"border-block-start-width" => VendorPrefix.empty(),
-            .@"border-block-end-width" => VendorPrefix.empty(),
-            .@"border-inline-start-width" => VendorPrefix.empty(),
-            .@"border-inline-end-width" => VendorPrefix.empty(),
+            .position => .empty,
+            .top => .empty,
+            .bottom => .empty,
+            .left => .empty,
+            .right => .empty,
+            .@"inset-block-start" => .empty,
+            .@"inset-block-end" => .empty,
+            .@"inset-inline-start" => .empty,
+            .@"inset-inline-end" => .empty,
+            .@"inset-block" => .empty,
+            .@"inset-inline" => .empty,
+            .inset => .empty,
+            .@"border-spacing" => .empty,
+            .@"border-top-color" => .empty,
+            .@"border-bottom-color" => .empty,
+            .@"border-left-color" => .empty,
+            .@"border-right-color" => .empty,
+            .@"border-block-start-color" => .empty,
+            .@"border-block-end-color" => .empty,
+            .@"border-inline-start-color" => .empty,
+            .@"border-inline-end-color" => .empty,
+            .@"border-top-style" => .empty,
+            .@"border-bottom-style" => .empty,
+            .@"border-left-style" => .empty,
+            .@"border-right-style" => .empty,
+            .@"border-block-start-style" => .empty,
+            .@"border-block-end-style" => .empty,
+            .@"border-inline-start-style" => .empty,
+            .@"border-inline-end-style" => .empty,
+            .@"border-top-width" => .empty,
+            .@"border-bottom-width" => .empty,
+            .@"border-left-width" => .empty,
+            .@"border-right-width" => .empty,
+            .@"border-block-start-width" => .empty,
+            .@"border-block-end-width" => .empty,
+            .@"border-inline-start-width" => .empty,
+            .@"border-inline-end-width" => .empty,
             .@"border-top-left-radius" => |p| p,
             .@"border-top-right-radius" => |p| p,
             .@"border-bottom-left-radius" => |p| p,
             .@"border-bottom-right-radius" => |p| p,
-            .@"border-start-start-radius" => VendorPrefix.empty(),
-            .@"border-start-end-radius" => VendorPrefix.empty(),
-            .@"border-end-start-radius" => VendorPrefix.empty(),
-            .@"border-end-end-radius" => VendorPrefix.empty(),
+            .@"border-start-start-radius" => .empty,
+            .@"border-start-end-radius" => .empty,
+            .@"border-end-start-radius" => .empty,
+            .@"border-end-end-radius" => .empty,
             .@"border-radius" => |p| p,
-            .@"border-image-source" => VendorPrefix.empty(),
-            .@"border-image-outset" => VendorPrefix.empty(),
-            .@"border-image-repeat" => VendorPrefix.empty(),
-            .@"border-image-width" => VendorPrefix.empty(),
-            .@"border-image-slice" => VendorPrefix.empty(),
+            .@"border-image-source" => .empty,
+            .@"border-image-outset" => .empty,
+            .@"border-image-repeat" => .empty,
+            .@"border-image-width" => .empty,
+            .@"border-image-slice" => .empty,
             .@"border-image" => |p| p,
-            .@"border-color" => VendorPrefix.empty(),
-            .@"border-style" => VendorPrefix.empty(),
-            .@"border-width" => VendorPrefix.empty(),
-            .@"border-block-color" => VendorPrefix.empty(),
-            .@"border-block-style" => VendorPrefix.empty(),
-            .@"border-block-width" => VendorPrefix.empty(),
-            .@"border-inline-color" => VendorPrefix.empty(),
-            .@"border-inline-style" => VendorPrefix.empty(),
-            .@"border-inline-width" => VendorPrefix.empty(),
-            .border => VendorPrefix.empty(),
-            .@"border-top" => VendorPrefix.empty(),
-            .@"border-bottom" => VendorPrefix.empty(),
-            .@"border-left" => VendorPrefix.empty(),
-            .@"border-right" => VendorPrefix.empty(),
-            .@"border-block" => VendorPrefix.empty(),
-            .@"border-block-start" => VendorPrefix.empty(),
-            .@"border-block-end" => VendorPrefix.empty(),
-            .@"border-inline" => VendorPrefix.empty(),
-            .@"border-inline-start" => VendorPrefix.empty(),
-            .@"border-inline-end" => VendorPrefix.empty(),
-            .outline => VendorPrefix.empty(),
-            .@"outline-color" => VendorPrefix.empty(),
-            .@"outline-style" => VendorPrefix.empty(),
-            .@"outline-width" => VendorPrefix.empty(),
+            .@"border-color" => .empty,
+            .@"border-style" => .empty,
+            .@"border-width" => .empty,
+            .@"border-block-color" => .empty,
+            .@"border-block-style" => .empty,
+            .@"border-block-width" => .empty,
+            .@"border-inline-color" => .empty,
+            .@"border-inline-style" => .empty,
+            .@"border-inline-width" => .empty,
+            .border => .empty,
+            .@"border-top" => .empty,
+            .@"border-bottom" => .empty,
+            .@"border-left" => .empty,
+            .@"border-right" => .empty,
+            .@"border-block" => .empty,
+            .@"border-block-start" => .empty,
+            .@"border-block-end" => .empty,
+            .@"border-inline" => .empty,
+            .@"border-inline-start" => .empty,
+            .@"border-inline-end" => .empty,
+            .outline => .empty,
+            .@"outline-color" => .empty,
+            .@"outline-style" => .empty,
+            .@"outline-width" => .empty,
             .@"flex-direction" => |p| p,
             .@"flex-wrap" => |p| p,
             .@"flex-flow" => |p| p,
@@ -7820,16 +7807,16 @@ pub const PropertyId = union(PropertyIdTag) {
             .order => |p| p,
             .@"align-content" => |p| p,
             .@"justify-content" => |p| p,
-            .@"place-content" => VendorPrefix.empty(),
+            .@"place-content" => .empty,
             .@"align-self" => |p| p,
-            .@"justify-self" => VendorPrefix.empty(),
-            .@"place-self" => VendorPrefix.empty(),
+            .@"justify-self" => .empty,
+            .@"place-self" => .empty,
             .@"align-items" => |p| p,
-            .@"justify-items" => VendorPrefix.empty(),
-            .@"place-items" => VendorPrefix.empty(),
-            .@"row-gap" => VendorPrefix.empty(),
-            .@"column-gap" => VendorPrefix.empty(),
-            .gap => VendorPrefix.empty(),
+            .@"justify-items" => .empty,
+            .@"place-items" => .empty,
+            .@"row-gap" => .empty,
+            .@"column-gap" => .empty,
+            .gap => .empty,
             .@"box-orient" => |p| p,
             .@"box-direction" => |p| p,
             .@"box-ordinal-group" => |p| p,
@@ -7846,58 +7833,58 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"flex-positive" => |p| p,
             .@"flex-negative" => |p| p,
             .@"flex-preferred-size" => |p| p,
-            .@"margin-top" => VendorPrefix.empty(),
-            .@"margin-bottom" => VendorPrefix.empty(),
-            .@"margin-left" => VendorPrefix.empty(),
-            .@"margin-right" => VendorPrefix.empty(),
-            .@"margin-block-start" => VendorPrefix.empty(),
-            .@"margin-block-end" => VendorPrefix.empty(),
-            .@"margin-inline-start" => VendorPrefix.empty(),
-            .@"margin-inline-end" => VendorPrefix.empty(),
-            .@"margin-block" => VendorPrefix.empty(),
-            .@"margin-inline" => VendorPrefix.empty(),
-            .margin => VendorPrefix.empty(),
-            .@"padding-top" => VendorPrefix.empty(),
-            .@"padding-bottom" => VendorPrefix.empty(),
-            .@"padding-left" => VendorPrefix.empty(),
-            .@"padding-right" => VendorPrefix.empty(),
-            .@"padding-block-start" => VendorPrefix.empty(),
-            .@"padding-block-end" => VendorPrefix.empty(),
-            .@"padding-inline-start" => VendorPrefix.empty(),
-            .@"padding-inline-end" => VendorPrefix.empty(),
-            .@"padding-block" => VendorPrefix.empty(),
-            .@"padding-inline" => VendorPrefix.empty(),
-            .padding => VendorPrefix.empty(),
-            .@"scroll-margin-top" => VendorPrefix.empty(),
-            .@"scroll-margin-bottom" => VendorPrefix.empty(),
-            .@"scroll-margin-left" => VendorPrefix.empty(),
-            .@"scroll-margin-right" => VendorPrefix.empty(),
-            .@"scroll-margin-block-start" => VendorPrefix.empty(),
-            .@"scroll-margin-block-end" => VendorPrefix.empty(),
-            .@"scroll-margin-inline-start" => VendorPrefix.empty(),
-            .@"scroll-margin-inline-end" => VendorPrefix.empty(),
-            .@"scroll-margin-block" => VendorPrefix.empty(),
-            .@"scroll-margin-inline" => VendorPrefix.empty(),
-            .@"scroll-margin" => VendorPrefix.empty(),
-            .@"scroll-padding-top" => VendorPrefix.empty(),
-            .@"scroll-padding-bottom" => VendorPrefix.empty(),
-            .@"scroll-padding-left" => VendorPrefix.empty(),
-            .@"scroll-padding-right" => VendorPrefix.empty(),
-            .@"scroll-padding-block-start" => VendorPrefix.empty(),
-            .@"scroll-padding-block-end" => VendorPrefix.empty(),
-            .@"scroll-padding-inline-start" => VendorPrefix.empty(),
-            .@"scroll-padding-inline-end" => VendorPrefix.empty(),
-            .@"scroll-padding-block" => VendorPrefix.empty(),
-            .@"scroll-padding-inline" => VendorPrefix.empty(),
-            .@"scroll-padding" => VendorPrefix.empty(),
-            .@"font-weight" => VendorPrefix.empty(),
-            .@"font-size" => VendorPrefix.empty(),
-            .@"font-stretch" => VendorPrefix.empty(),
-            .@"font-family" => VendorPrefix.empty(),
-            .@"font-style" => VendorPrefix.empty(),
-            .@"font-variant-caps" => VendorPrefix.empty(),
-            .@"line-height" => VendorPrefix.empty(),
-            .font => VendorPrefix.empty(),
+            .@"margin-top" => .empty,
+            .@"margin-bottom" => .empty,
+            .@"margin-left" => .empty,
+            .@"margin-right" => .empty,
+            .@"margin-block-start" => .empty,
+            .@"margin-block-end" => .empty,
+            .@"margin-inline-start" => .empty,
+            .@"margin-inline-end" => .empty,
+            .@"margin-block" => .empty,
+            .@"margin-inline" => .empty,
+            .margin => .empty,
+            .@"padding-top" => .empty,
+            .@"padding-bottom" => .empty,
+            .@"padding-left" => .empty,
+            .@"padding-right" => .empty,
+            .@"padding-block-start" => .empty,
+            .@"padding-block-end" => .empty,
+            .@"padding-inline-start" => .empty,
+            .@"padding-inline-end" => .empty,
+            .@"padding-block" => .empty,
+            .@"padding-inline" => .empty,
+            .padding => .empty,
+            .@"scroll-margin-top" => .empty,
+            .@"scroll-margin-bottom" => .empty,
+            .@"scroll-margin-left" => .empty,
+            .@"scroll-margin-right" => .empty,
+            .@"scroll-margin-block-start" => .empty,
+            .@"scroll-margin-block-end" => .empty,
+            .@"scroll-margin-inline-start" => .empty,
+            .@"scroll-margin-inline-end" => .empty,
+            .@"scroll-margin-block" => .empty,
+            .@"scroll-margin-inline" => .empty,
+            .@"scroll-margin" => .empty,
+            .@"scroll-padding-top" => .empty,
+            .@"scroll-padding-bottom" => .empty,
+            .@"scroll-padding-left" => .empty,
+            .@"scroll-padding-right" => .empty,
+            .@"scroll-padding-block-start" => .empty,
+            .@"scroll-padding-block-end" => .empty,
+            .@"scroll-padding-inline-start" => .empty,
+            .@"scroll-padding-inline-end" => .empty,
+            .@"scroll-padding-block" => .empty,
+            .@"scroll-padding-inline" => .empty,
+            .@"scroll-padding" => .empty,
+            .@"font-weight" => .empty,
+            .@"font-size" => .empty,
+            .@"font-stretch" => .empty,
+            .@"font-family" => .empty,
+            .@"font-style" => .empty,
+            .@"font-variant-caps" => .empty,
+            .@"line-height" => .empty,
+            .font => .empty,
             .@"transition-property" => |p| p,
             .@"transition-duration" => |p| p,
             .@"transition-delay" => |p| p,
@@ -7906,38 +7893,38 @@ pub const PropertyId = union(PropertyIdTag) {
             .transform => |p| p,
             .@"transform-origin" => |p| p,
             .@"transform-style" => |p| p,
-            .@"transform-box" => VendorPrefix.empty(),
+            .@"transform-box" => .empty,
             .@"backface-visibility" => |p| p,
             .perspective => |p| p,
             .@"perspective-origin" => |p| p,
-            .translate => VendorPrefix.empty(),
-            .rotate => VendorPrefix.empty(),
-            .scale => VendorPrefix.empty(),
+            .translate => .empty,
+            .rotate => .empty,
+            .scale => .empty,
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
-            .@"text-shadow" => VendorPrefix.empty(),
-            .direction => VendorPrefix.empty(),
-            .composes => VendorPrefix.empty(),
+            .@"text-shadow" => .empty,
+            .direction => .empty,
+            .composes => .empty,
             .@"mask-image" => |p| p,
-            .@"mask-mode" => VendorPrefix.empty(),
+            .@"mask-mode" => .empty,
             .@"mask-repeat" => |p| p,
-            .@"mask-position-x" => VendorPrefix.empty(),
-            .@"mask-position-y" => VendorPrefix.empty(),
+            .@"mask-position-x" => .empty,
+            .@"mask-position-y" => .empty,
             .@"mask-position" => |p| p,
             .@"mask-clip" => |p| p,
             .@"mask-origin" => |p| p,
             .@"mask-size" => |p| p,
-            .@"mask-composite" => VendorPrefix.empty(),
-            .@"mask-type" => VendorPrefix.empty(),
+            .@"mask-composite" => .empty,
+            .@"mask-type" => .empty,
             .mask => |p| p,
-            .@"mask-border-source" => VendorPrefix.empty(),
-            .@"mask-border-mode" => VendorPrefix.empty(),
-            .@"mask-border-slice" => VendorPrefix.empty(),
-            .@"mask-border-width" => VendorPrefix.empty(),
-            .@"mask-border-outset" => VendorPrefix.empty(),
-            .@"mask-border-repeat" => VendorPrefix.empty(),
-            .@"mask-border" => VendorPrefix.empty(),
-            .@"-webkit-mask-composite" => VendorPrefix.empty(),
+            .@"mask-border-source" => .empty,
+            .@"mask-border-mode" => .empty,
+            .@"mask-border-slice" => .empty,
+            .@"mask-border-width" => .empty,
+            .@"mask-border-outset" => .empty,
+            .@"mask-border-repeat" => .empty,
+            .@"mask-border" => .empty,
+            .@"-webkit-mask-composite" => .empty,
             .@"mask-source-type" => |p| p,
             .@"mask-box-image" => |p| p,
             .@"mask-box-image-source" => |p| p,
@@ -7945,8 +7932,8 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => |p| p,
             .@"mask-box-image-outset" => |p| p,
             .@"mask-box-image-repeat" => |p| p,
-            .@"color-scheme" => VendorPrefix.empty(),
-            .all, .custom, .unparsed => VendorPrefix.empty(),
+            .@"color-scheme" => .empty,
+            .all, .custom, .unparsed => .empty,
         };
     }
 
@@ -7957,987 +7944,987 @@ pub const PropertyId = union(PropertyIdTag) {
             switch (prop) {
                 .@"background-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-color";
                 },
                 .@"background-image" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-image";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-image";
                 },
                 .@"background-position-x" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-position-x";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position-x";
                 },
                 .@"background-position-y" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-position-y";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position-y";
                 },
                 .@"background-position" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-position";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position";
                 },
                 .@"background-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-size";
                 },
                 .@"background-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-repeat";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-repeat";
                 },
                 .@"background-attachment" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-attachment";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-attachment";
                 },
                 .@"background-clip" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"background-clip" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"background-clip" = pre };
                 },
                 .@"background-origin" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"background-origin";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-origin";
                 },
                 .background => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .background;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .background;
                 },
                 .@"box-shadow" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-shadow" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-shadow" = pre };
                 },
                 .opacity => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .opacity;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .opacity;
                 },
                 .color => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .color;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .color;
                 },
                 .display => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .display;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .display;
                 },
                 .visibility => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .visibility;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .visibility;
                 },
                 .width => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .width;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .width;
                 },
                 .height => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .height;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .height;
                 },
                 .@"min-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"min-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-width";
                 },
                 .@"min-height" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"min-height";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-height";
                 },
                 .@"max-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"max-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-width";
                 },
                 .@"max-height" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"max-height";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-height";
                 },
                 .@"block-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"block-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"block-size";
                 },
                 .@"inline-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inline-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inline-size";
                 },
                 .@"min-block-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"min-block-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-block-size";
                 },
                 .@"min-inline-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"min-inline-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-inline-size";
                 },
                 .@"max-block-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"max-block-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-block-size";
                 },
                 .@"max-inline-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"max-inline-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-inline-size";
                 },
                 .@"box-sizing" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-sizing" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-sizing" = pre };
                 },
                 .@"aspect-ratio" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"aspect-ratio";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"aspect-ratio";
                 },
                 .overflow => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .overflow;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .overflow;
                 },
                 .@"overflow-x" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"overflow-x";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"overflow-x";
                 },
                 .@"overflow-y" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"overflow-y";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"overflow-y";
                 },
                 .@"text-overflow" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .o = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"text-overflow" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-overflow" = pre };
                 },
                 .position => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .position;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .position;
                 },
                 .top => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .top;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .top;
                 },
                 .bottom => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .bottom;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .bottom;
                 },
                 .left => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .left;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .left;
                 },
                 .right => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .right;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .right;
                 },
                 .@"inset-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block-start";
                 },
                 .@"inset-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block-end";
                 },
                 .@"inset-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline-start";
                 },
                 .@"inset-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline-end";
                 },
                 .@"inset-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block";
                 },
                 .@"inset-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"inset-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline";
                 },
                 .inset => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .inset;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .inset;
                 },
                 .@"border-spacing" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-spacing";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-spacing";
                 },
                 .@"border-top-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-top-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-color";
                 },
                 .@"border-bottom-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-color";
                 },
                 .@"border-left-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-left-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-color";
                 },
                 .@"border-right-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-right-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-color";
                 },
                 .@"border-block-start-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-color";
                 },
                 .@"border-block-end-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-color";
                 },
                 .@"border-inline-start-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-color";
                 },
                 .@"border-inline-end-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-color";
                 },
                 .@"border-top-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-top-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-style";
                 },
                 .@"border-bottom-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-style";
                 },
                 .@"border-left-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-left-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-style";
                 },
                 .@"border-right-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-right-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-style";
                 },
                 .@"border-block-start-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-style";
                 },
                 .@"border-block-end-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-style";
                 },
                 .@"border-inline-start-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-style";
                 },
                 .@"border-inline-end-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-style";
                 },
                 .@"border-top-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-top-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-width";
                 },
                 .@"border-bottom-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-bottom-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-width";
                 },
                 .@"border-left-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-left-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-width";
                 },
                 .@"border-right-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-right-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-width";
                 },
                 .@"border-block-start-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-start-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-width";
                 },
                 .@"border-block-end-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-end-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-width";
                 },
                 .@"border-inline-start-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-width";
                 },
                 .@"border-inline-end-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-width";
                 },
                 .@"border-top-left-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-top-left-radius" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-top-left-radius" = pre };
                 },
                 .@"border-top-right-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-top-right-radius" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-top-right-radius" = pre };
                 },
                 .@"border-bottom-left-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-left-radius" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-bottom-left-radius" = pre };
                 },
                 .@"border-bottom-right-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-right-radius" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-bottom-right-radius" = pre };
                 },
                 .@"border-start-start-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-start-start-radius";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-start-start-radius";
                 },
                 .@"border-start-end-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-start-end-radius";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-start-end-radius";
                 },
                 .@"border-end-start-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-end-start-radius";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-end-start-radius";
                 },
                 .@"border-end-end-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-end-end-radius";
                 },
                 .@"border-radius" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-radius" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-radius" = pre };
                 },
                 .@"border-image-source" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-image-source";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-source";
                 },
                 .@"border-image-outset" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-image-outset";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-outset";
                 },
                 .@"border-image-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-image-repeat";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-repeat";
                 },
                 .@"border-image-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-image-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-width";
                 },
                 .@"border-image-slice" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-image-slice";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-slice";
                 },
                 .@"border-image" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .o = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"border-image" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-image" = pre };
                 },
                 .@"border-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-color";
                 },
                 .@"border-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-style";
                 },
                 .@"border-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-width";
                 },
                 .@"border-block-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-color";
                 },
                 .@"border-block-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-style";
                 },
                 .@"border-block-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-width";
                 },
                 .@"border-inline-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-color";
                 },
                 .@"border-inline-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-style";
                 },
                 .@"border-inline-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-width";
                 },
                 .border => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .border;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .border;
                 },
                 .@"border-top" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-top";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top";
                 },
                 .@"border-bottom" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-bottom";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom";
                 },
                 .@"border-left" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-left";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left";
                 },
                 .@"border-right" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-right";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right";
                 },
                 .@"border-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block";
                 },
                 .@"border-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start";
                 },
                 .@"border-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end";
                 },
                 .@"border-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline";
                 },
                 .@"border-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start";
                 },
                 .@"border-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"border-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end";
                 },
                 .outline => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .outline;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .outline;
                 },
                 .@"outline-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"outline-color";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-color";
                 },
                 .@"outline-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"outline-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-style";
                 },
                 .@"outline-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"outline-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-width";
                 },
                 .@"flex-direction" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-direction" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-direction" = pre };
                 },
                 .@"flex-wrap" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-wrap" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-wrap" = pre };
                 },
                 .@"flex-flow" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-flow" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-flow" = pre };
                 },
                 .@"flex-grow" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-grow" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-grow" = pre };
                 },
                 .@"flex-shrink" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-shrink" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-shrink" = pre };
                 },
                 .@"flex-basis" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-basis" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-basis" = pre };
                 },
                 .flex => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .flex = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .flex = pre };
                 },
                 .order => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .order = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .order = pre };
                 },
                 .@"align-content" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"align-content" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-content" = pre };
                 },
                 .@"justify-content" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"justify-content" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"justify-content" = pre };
                 },
                 .@"place-content" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"place-content";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-content";
                 },
                 .@"align-self" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"align-self" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-self" = pre };
                 },
                 .@"justify-self" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"justify-self";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"justify-self";
                 },
                 .@"place-self" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"place-self";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-self";
                 },
                 .@"align-items" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"align-items" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-items" = pre };
                 },
                 .@"justify-items" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"justify-items";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"justify-items";
                 },
                 .@"place-items" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"place-items";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-items";
                 },
                 .@"row-gap" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"row-gap";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"row-gap";
                 },
                 .@"column-gap" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"column-gap";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"column-gap";
                 },
                 .gap => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .gap;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .gap;
                 },
                 .@"box-orient" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-orient" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-orient" = pre };
                 },
                 .@"box-direction" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-direction" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-direction" = pre };
                 },
                 .@"box-ordinal-group" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-ordinal-group" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-ordinal-group" = pre };
                 },
                 .@"box-align" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-align" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-align" = pre };
                 },
                 .@"box-flex" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-flex" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-flex" = pre };
                 },
                 .@"box-flex-group" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-flex-group" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-flex-group" = pre };
                 },
                 .@"box-pack" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-pack" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-pack" = pre };
                 },
                 .@"box-lines" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"box-lines" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-lines" = pre };
                 },
                 .@"flex-pack" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-pack" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-pack" = pre };
                 },
                 .@"flex-order" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-order" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-order" = pre };
                 },
                 .@"flex-align" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-align" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-align" = pre };
                 },
                 .@"flex-item-align" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-item-align" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-item-align" = pre };
                 },
                 .@"flex-line-pack" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-line-pack" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-line-pack" = pre };
                 },
                 .@"flex-positive" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-positive" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-positive" = pre };
                 },
                 .@"flex-negative" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-negative" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-negative" = pre };
                 },
                 .@"flex-preferred-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"flex-preferred-size" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-preferred-size" = pre };
                 },
                 .@"margin-top" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-top";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-top";
                 },
                 .@"margin-bottom" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-bottom";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-bottom";
                 },
                 .@"margin-left" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-left";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-left";
                 },
                 .@"margin-right" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-right";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-right";
                 },
                 .@"margin-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block-start";
                 },
                 .@"margin-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block-end";
                 },
                 .@"margin-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline-start";
                 },
                 .@"margin-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline-end";
                 },
                 .@"margin-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block";
                 },
                 .@"margin-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"margin-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline";
                 },
                 .margin => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .margin;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .margin;
                 },
                 .@"padding-top" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-top";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-top";
                 },
                 .@"padding-bottom" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-bottom";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-bottom";
                 },
                 .@"padding-left" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-left";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-left";
                 },
                 .@"padding-right" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-right";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-right";
                 },
                 .@"padding-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block-start";
                 },
                 .@"padding-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block-end";
                 },
                 .@"padding-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline-start";
                 },
                 .@"padding-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline-end";
                 },
                 .@"padding-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block";
                 },
                 .@"padding-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"padding-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline";
                 },
                 .padding => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .padding;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .padding;
                 },
                 .@"scroll-margin-top" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-top";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-top";
                 },
                 .@"scroll-margin-bottom" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-bottom";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-bottom";
                 },
                 .@"scroll-margin-left" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-left";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-left";
                 },
                 .@"scroll-margin-right" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-right";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-right";
                 },
                 .@"scroll-margin-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block-start";
                 },
                 .@"scroll-margin-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block-end";
                 },
                 .@"scroll-margin-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline-start";
                 },
                 .@"scroll-margin-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline-end";
                 },
                 .@"scroll-margin-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block";
                 },
                 .@"scroll-margin-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline";
                 },
                 .@"scroll-margin" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-margin";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin";
                 },
                 .@"scroll-padding-top" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-top";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-top";
                 },
                 .@"scroll-padding-bottom" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-bottom";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-bottom";
                 },
                 .@"scroll-padding-left" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-left";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-left";
                 },
                 .@"scroll-padding-right" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-right";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-right";
                 },
                 .@"scroll-padding-block-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block-start";
                 },
                 .@"scroll-padding-block-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block-end";
                 },
                 .@"scroll-padding-inline-start" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-start";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline-start";
                 },
                 .@"scroll-padding-inline-end" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-end";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline-end";
                 },
                 .@"scroll-padding-block" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block";
                 },
                 .@"scroll-padding-inline" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline";
                 },
                 .@"scroll-padding" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"scroll-padding";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding";
                 },
                 .@"font-weight" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-weight";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-weight";
                 },
                 .@"font-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-size";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-size";
                 },
                 .@"font-stretch" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-stretch";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-stretch";
                 },
                 .@"font-family" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-family";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-family";
                 },
                 .@"font-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-style";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-style";
                 },
                 .@"font-variant-caps" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"font-variant-caps";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-variant-caps";
                 },
                 .@"line-height" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"line-height";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"line-height";
                 },
                 .font => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .font;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .font;
                 },
                 .@"transition-property" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-property" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-property" = pre };
                 },
                 .@"transition-duration" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-duration" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-duration" = pre };
                 },
                 .@"transition-delay" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-delay" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-delay" = pre };
                 },
                 .@"transition-timing-function" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transition-timing-function" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-timing-function" = pre };
                 },
                 .transition => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .transition = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .transition = pre };
                 },
                 .transform => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .transform = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .transform = pre };
                 },
                 .@"transform-origin" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transform-origin" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transform-origin" = pre };
                 },
                 .@"transform-style" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"transform-style" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transform-style" = pre };
                 },
                 .@"transform-box" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"transform-box";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"transform-box";
                 },
                 .@"backface-visibility" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"backface-visibility" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"backface-visibility" = pre };
                 },
                 .perspective => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .perspective = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .perspective = pre };
                 },
                 .@"perspective-origin" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"perspective-origin" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"perspective-origin" = pre };
                 },
                 .translate => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .translate;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .translate;
                 },
                 .rotate => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .rotate;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .rotate;
                 },
                 .scale => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .scale;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .scale;
                 },
                 .@"text-decoration-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-decoration-color" = pre };
                 },
                 .@"text-emphasis-color" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-emphasis-color" = pre };
                 },
                 .@"text-shadow" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"text-shadow";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"text-shadow";
                 },
                 .direction => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .direction;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .direction;
                 },
                 .composes => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .composes;
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .composes;
                 },
                 .@"mask-image" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-image" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-image" = pre };
                 },
                 .@"mask-mode" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-mode";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-mode";
                 },
                 .@"mask-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-repeat" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-repeat" = pre };
                 },
                 .@"mask-position-x" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-position-x";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-position-x";
                 },
                 .@"mask-position-y" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-position-y";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-position-y";
                 },
                 .@"mask-position" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-position" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-position" = pre };
                 },
                 .@"mask-clip" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-clip" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-clip" = pre };
                 },
                 .@"mask-origin" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-origin" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-origin" = pre };
                 },
                 .@"mask-size" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-size" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-size" = pre };
                 },
                 .@"mask-composite" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-composite";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-composite";
                 },
                 .@"mask-type" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-type";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-type";
                 },
                 .mask => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .mask = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .mask = pre };
                 },
                 .@"mask-border-source" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-source";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-source";
                 },
                 .@"mask-border-mode" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-mode";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-mode";
                 },
                 .@"mask-border-slice" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-slice";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-slice";
                 },
                 .@"mask-border-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-width";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-width";
                 },
                 .@"mask-border-outset" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-outset";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-outset";
                 },
                 .@"mask-border-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border-repeat";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-repeat";
                 },
                 .@"mask-border" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"mask-border";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border";
                 },
                 .@"-webkit-mask-composite" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"-webkit-mask-composite";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"-webkit-mask-composite";
                 },
                 .@"mask-source-type" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-source-type" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-source-type" = pre };
                 },
                 .@"mask-box-image" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image" = pre };
                 },
                 .@"mask-box-image-source" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-source" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-source" = pre };
                 },
                 .@"mask-box-image-slice" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-slice" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-slice" = pre };
                 },
                 .@"mask-box-image-width" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-width" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-width" = pre };
                 },
                 .@"mask-box-image-outset" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-outset" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-outset" = pre };
                 },
                 .@"mask-box-image-repeat" => {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-repeat" = pre };
                 },
                 .@"color-scheme" => {
                     const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (allowed_prefixes.contains(pre)) return .@"color-scheme";
+                    if (bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"color-scheme";
                 },
             }
         }
@@ -9199,383 +9186,13 @@ pub const PropertyId = union(PropertyIdTag) {
 
     pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
         return switch (this.*) {
-            .@"background-color" => {},
-            .@"background-image" => {},
-            .@"background-position-x" => {},
-            .@"background-position-y" => {},
-            .@"background-position" => {},
-            .@"background-size" => {},
-            .@"background-repeat" => {},
-            .@"background-attachment" => {},
-            .@"background-clip" => |*p| {
-                p.insert(pre);
+            inline else => |*p| {
+                switch (@TypeOf(p)) {
+                    *void, *CustomPropertyName => {},
+                    *VendorPrefix => bits.insert(VendorPrefix, p, pre),
+                    else => |T| @compileError("unexpected " ++ @typeName(T)),
+                }
             },
-            .@"background-origin" => {},
-            .background => {},
-            .@"box-shadow" => |*p| {
-                p.insert(pre);
-            },
-            .opacity => {},
-            .color => {},
-            .display => {},
-            .visibility => {},
-            .width => {},
-            .height => {},
-            .@"min-width" => {},
-            .@"min-height" => {},
-            .@"max-width" => {},
-            .@"max-height" => {},
-            .@"block-size" => {},
-            .@"inline-size" => {},
-            .@"min-block-size" => {},
-            .@"min-inline-size" => {},
-            .@"max-block-size" => {},
-            .@"max-inline-size" => {},
-            .@"box-sizing" => |*p| {
-                p.insert(pre);
-            },
-            .@"aspect-ratio" => {},
-            .overflow => {},
-            .@"overflow-x" => {},
-            .@"overflow-y" => {},
-            .@"text-overflow" => |*p| {
-                p.insert(pre);
-            },
-            .position => {},
-            .top => {},
-            .bottom => {},
-            .left => {},
-            .right => {},
-            .@"inset-block-start" => {},
-            .@"inset-block-end" => {},
-            .@"inset-inline-start" => {},
-            .@"inset-inline-end" => {},
-            .@"inset-block" => {},
-            .@"inset-inline" => {},
-            .inset => {},
-            .@"border-spacing" => {},
-            .@"border-top-color" => {},
-            .@"border-bottom-color" => {},
-            .@"border-left-color" => {},
-            .@"border-right-color" => {},
-            .@"border-block-start-color" => {},
-            .@"border-block-end-color" => {},
-            .@"border-inline-start-color" => {},
-            .@"border-inline-end-color" => {},
-            .@"border-top-style" => {},
-            .@"border-bottom-style" => {},
-            .@"border-left-style" => {},
-            .@"border-right-style" => {},
-            .@"border-block-start-style" => {},
-            .@"border-block-end-style" => {},
-            .@"border-inline-start-style" => {},
-            .@"border-inline-end-style" => {},
-            .@"border-top-width" => {},
-            .@"border-bottom-width" => {},
-            .@"border-left-width" => {},
-            .@"border-right-width" => {},
-            .@"border-block-start-width" => {},
-            .@"border-block-end-width" => {},
-            .@"border-inline-start-width" => {},
-            .@"border-inline-end-width" => {},
-            .@"border-top-left-radius" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-top-right-radius" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-bottom-left-radius" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-bottom-right-radius" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-start-start-radius" => {},
-            .@"border-start-end-radius" => {},
-            .@"border-end-start-radius" => {},
-            .@"border-end-end-radius" => {},
-            .@"border-radius" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-image-source" => {},
-            .@"border-image-outset" => {},
-            .@"border-image-repeat" => {},
-            .@"border-image-width" => {},
-            .@"border-image-slice" => {},
-            .@"border-image" => |*p| {
-                p.insert(pre);
-            },
-            .@"border-color" => {},
-            .@"border-style" => {},
-            .@"border-width" => {},
-            .@"border-block-color" => {},
-            .@"border-block-style" => {},
-            .@"border-block-width" => {},
-            .@"border-inline-color" => {},
-            .@"border-inline-style" => {},
-            .@"border-inline-width" => {},
-            .border => {},
-            .@"border-top" => {},
-            .@"border-bottom" => {},
-            .@"border-left" => {},
-            .@"border-right" => {},
-            .@"border-block" => {},
-            .@"border-block-start" => {},
-            .@"border-block-end" => {},
-            .@"border-inline" => {},
-            .@"border-inline-start" => {},
-            .@"border-inline-end" => {},
-            .outline => {},
-            .@"outline-color" => {},
-            .@"outline-style" => {},
-            .@"outline-width" => {},
-            .@"flex-direction" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-wrap" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-flow" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-grow" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-shrink" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-basis" => |*p| {
-                p.insert(pre);
-            },
-            .flex => |*p| {
-                p.insert(pre);
-            },
-            .order => |*p| {
-                p.insert(pre);
-            },
-            .@"align-content" => |*p| {
-                p.insert(pre);
-            },
-            .@"justify-content" => |*p| {
-                p.insert(pre);
-            },
-            .@"place-content" => {},
-            .@"align-self" => |*p| {
-                p.insert(pre);
-            },
-            .@"justify-self" => {},
-            .@"place-self" => {},
-            .@"align-items" => |*p| {
-                p.insert(pre);
-            },
-            .@"justify-items" => {},
-            .@"place-items" => {},
-            .@"row-gap" => {},
-            .@"column-gap" => {},
-            .gap => {},
-            .@"box-orient" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-direction" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-ordinal-group" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-align" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-flex" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-flex-group" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-pack" => |*p| {
-                p.insert(pre);
-            },
-            .@"box-lines" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-pack" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-order" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-align" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-item-align" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-line-pack" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-positive" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-negative" => |*p| {
-                p.insert(pre);
-            },
-            .@"flex-preferred-size" => |*p| {
-                p.insert(pre);
-            },
-            .@"margin-top" => {},
-            .@"margin-bottom" => {},
-            .@"margin-left" => {},
-            .@"margin-right" => {},
-            .@"margin-block-start" => {},
-            .@"margin-block-end" => {},
-            .@"margin-inline-start" => {},
-            .@"margin-inline-end" => {},
-            .@"margin-block" => {},
-            .@"margin-inline" => {},
-            .margin => {},
-            .@"padding-top" => {},
-            .@"padding-bottom" => {},
-            .@"padding-left" => {},
-            .@"padding-right" => {},
-            .@"padding-block-start" => {},
-            .@"padding-block-end" => {},
-            .@"padding-inline-start" => {},
-            .@"padding-inline-end" => {},
-            .@"padding-block" => {},
-            .@"padding-inline" => {},
-            .padding => {},
-            .@"scroll-margin-top" => {},
-            .@"scroll-margin-bottom" => {},
-            .@"scroll-margin-left" => {},
-            .@"scroll-margin-right" => {},
-            .@"scroll-margin-block-start" => {},
-            .@"scroll-margin-block-end" => {},
-            .@"scroll-margin-inline-start" => {},
-            .@"scroll-margin-inline-end" => {},
-            .@"scroll-margin-block" => {},
-            .@"scroll-margin-inline" => {},
-            .@"scroll-margin" => {},
-            .@"scroll-padding-top" => {},
-            .@"scroll-padding-bottom" => {},
-            .@"scroll-padding-left" => {},
-            .@"scroll-padding-right" => {},
-            .@"scroll-padding-block-start" => {},
-            .@"scroll-padding-block-end" => {},
-            .@"scroll-padding-inline-start" => {},
-            .@"scroll-padding-inline-end" => {},
-            .@"scroll-padding-block" => {},
-            .@"scroll-padding-inline" => {},
-            .@"scroll-padding" => {},
-            .@"font-weight" => {},
-            .@"font-size" => {},
-            .@"font-stretch" => {},
-            .@"font-family" => {},
-            .@"font-style" => {},
-            .@"font-variant-caps" => {},
-            .@"line-height" => {},
-            .font => {},
-            .@"transition-property" => |*p| {
-                p.insert(pre);
-            },
-            .@"transition-duration" => |*p| {
-                p.insert(pre);
-            },
-            .@"transition-delay" => |*p| {
-                p.insert(pre);
-            },
-            .@"transition-timing-function" => |*p| {
-                p.insert(pre);
-            },
-            .transition => |*p| {
-                p.insert(pre);
-            },
-            .transform => |*p| {
-                p.insert(pre);
-            },
-            .@"transform-origin" => |*p| {
-                p.insert(pre);
-            },
-            .@"transform-style" => |*p| {
-                p.insert(pre);
-            },
-            .@"transform-box" => {},
-            .@"backface-visibility" => |*p| {
-                p.insert(pre);
-            },
-            .perspective => |*p| {
-                p.insert(pre);
-            },
-            .@"perspective-origin" => |*p| {
-                p.insert(pre);
-            },
-            .translate => {},
-            .rotate => {},
-            .scale => {},
-            .@"text-decoration-color" => |*p| {
-                p.insert(pre);
-            },
-            .@"text-emphasis-color" => |*p| {
-                p.insert(pre);
-            },
-            .@"text-shadow" => {},
-            .direction => {},
-            .composes => {},
-            .@"mask-image" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-mode" => {},
-            .@"mask-repeat" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-position-x" => {},
-            .@"mask-position-y" => {},
-            .@"mask-position" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-clip" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-origin" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-size" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-composite" => {},
-            .@"mask-type" => {},
-            .mask => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-border-source" => {},
-            .@"mask-border-mode" => {},
-            .@"mask-border-slice" => {},
-            .@"mask-border-width" => {},
-            .@"mask-border-outset" => {},
-            .@"mask-border-repeat" => {},
-            .@"mask-border" => {},
-            .@"-webkit-mask-composite" => {},
-            .@"mask-source-type" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image-source" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image-slice" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image-width" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image-outset" => |*p| {
-                p.insert(pre);
-            },
-            .@"mask-box-image-repeat" => |*p| {
-                p.insert(pre);
-            },
-            .@"color-scheme" => {},
-            else => {},
         };
     }
 
@@ -9588,7 +9205,7 @@ pub const PropertyId = union(PropertyIdTag) {
         inline for (bun.meta.EnumFields(PropertyId), std.meta.fields(PropertyId)) |enum_field, union_field| {
             if (enum_field.value == @intFromEnum(lhs.*)) {
                 if (comptime union_field.type == css.VendorPrefix) {
-                    return @field(lhs, union_field.name).eql(@field(rhs, union_field.name));
+                    return @field(lhs, union_field.name) == @field(rhs, union_field.name);
                 } else {
                     return true;
                 }

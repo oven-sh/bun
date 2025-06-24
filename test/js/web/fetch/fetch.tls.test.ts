@@ -9,7 +9,7 @@ type TLSOptions = {
   passphrase?: string;
 };
 
-import { tls as validTls, expiredTls, invalidTls } from "harness";
+import { expiredTls, invalidTls, tls as validTls } from "harness";
 
 const CERT_LOCALHOST_IP = { ...validTls };
 const CERT_EXPIRED = { ...expiredTls };

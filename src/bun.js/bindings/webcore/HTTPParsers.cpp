@@ -47,7 +47,7 @@ namespace WebCore {
 // True if characters which satisfy the predicate are present, incrementing
 // "pos" to the next character which does not satisfy the predicate.
 // Note: might return pos == str.length().
-static inline bool skipWhile(const String& str, unsigned& pos, const Function<bool(const UChar)>& predicate)
+static inline bool skipWhile(const String& str, unsigned& pos, const Function<bool(const char16_t)>& predicate)
 {
     const unsigned start = pos;
     const unsigned len = str.length();
@@ -60,7 +60,7 @@ static inline bool skipWhile(const String& str, unsigned& pos, const Function<bo
 // Note: Might return pos == str.length()
 static inline bool skipWhiteSpace(const String& str, unsigned& pos)
 {
-    skipWhile(str, pos, isTabOrSpace<UChar>);
+    skipWhile(str, pos, isTabOrSpace<char16_t>);
     return pos < str.length();
 }
 
@@ -109,7 +109,7 @@ static inline bool skipValue(const String& str, unsigned& pos)
 bool isValidReasonPhrase(const String& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
         if (c == 0x7F || !isLatin1(c) || (c < 0x20 && c != '\t'))
             return false;
     }
@@ -117,19 +117,21 @@ bool isValidReasonPhrase(const String& value)
 }
 
 // See https://fetch.spec.whatwg.org/#concept-header
-bool isValidHTTPHeaderValue(const String& value)
+bool isValidHTTPHeaderValue(const StringView& value)
 {
-    UChar c = value[0];
+    auto length = value.length();
+    if (length == 0) return true;
+    char16_t c = value[0];
     if (isTabOrSpace(c))
         return false;
-    c = value[value.length() - 1];
+    c = value[length - 1];
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {
         const LChar* begin = value.span8().data();
         const LChar* end = begin + value.length();
         for (const LChar* p = begin; p != end; ++p) {
-            if (UNLIKELY(*p <= 13)) {
+            if (*p <= 13) [[unlikely]] {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
                     return false;
@@ -147,10 +149,10 @@ bool isValidHTTPHeaderValue(const String& value)
 }
 
 // See RFC 7231, Section 5.3.2.
-bool isValidAcceptHeaderValue(const String& value)
+bool isValidAcceptHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
 
         // First check for alphanumeric for performance reasons then allowlist four delimiter characters.
         if (isASCIIAlphanumeric(c) || c == ',' || c == '/' || c == ';' || c == '=')
@@ -170,7 +172,7 @@ bool isValidAcceptHeaderValue(const String& value)
 static bool containsCORSUnsafeRequestHeaderBytes(const String& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
         // https://fetch.spec.whatwg.org/#cors-unsafe-request-header-byte
         if ((c < 0x20 && c != '\t') || (c == '"' || c == '(' || c == ')' || c == ':' || c == '<' || c == '>' || c == '?' || c == '@' || c == '[' || c == '\\' || c == ']' || c == 0x7B || c == '{' || c == '}' || c == 0x7F))
             return true;
@@ -181,10 +183,10 @@ static bool containsCORSUnsafeRequestHeaderBytes(const String& value)
 
 // See RFC 7231, Section 5.3.5 and 3.1.3.2.
 // https://fetch.spec.whatwg.org/#cors-safelisted-request-header
-bool isValidLanguageHeaderValue(const String& value)
+bool isValidLanguageHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
-        UChar c = value[i];
+        char16_t c = value[i];
         if (isASCIIAlphanumeric(c) || c == ' ' || c == '*' || c == ',' || c == '-' || c == '.' || c == ';' || c == '=')
             continue;
         return false;
@@ -193,7 +195,7 @@ bool isValidLanguageHeaderValue(const String& value)
 }
 
 // See RFC 7230, Section 3.2.6.
-bool isValidHTTPToken(const StringView value)
+bool isValidHTTPToken(const StringView& value)
 {
     if (value.isEmpty())
         return false;
@@ -208,7 +210,7 @@ bool isValidHTTPToken(const StringView value)
         return true;
     }
 
-    for (UChar c : value.codeUnits()) {
+    for (char16_t c : value.codeUnits()) {
         if (!RFC7230::isTokenCharacter(c))
             return false;
     }
@@ -218,7 +220,7 @@ bool isValidHTTPToken(const StringView value)
 #if USE(GLIB)
 // True if the character at the given position satisifies a predicate, incrementing "pos" by one.
 // Note: Might return pos == str.length()
-static inline bool skipCharacter(const String& value, unsigned& pos, Function<bool(const UChar)>&& predicate)
+static inline bool skipCharacter(const String& value, unsigned& pos, Function<bool(const char16_t)>&& predicate)
 {
     if (pos < value.length() && predicate(value[pos])) {
         ++pos;
@@ -229,9 +231,9 @@ static inline bool skipCharacter(const String& value, unsigned& pos, Function<bo
 
 // True if the "expected" character is at the given position, incrementing "pos" by one.
 // Note: Might return pos == str.length()
-static inline bool skipCharacter(const String& value, unsigned& pos, const UChar expected)
+static inline bool skipCharacter(const String& value, unsigned& pos, const char16_t expected)
 {
-    return skipCharacter(value, pos, [expected](const UChar c) {
+    return skipCharacter(value, pos, [expected](const char16_t c) {
         return c == expected;
     });
 }
@@ -356,12 +358,12 @@ StringView filenameFromHTTPContentDisposition(StringView value)
         if (valueStartPos == notFound)
             continue;
 
-        auto key = keyValuePair.left(valueStartPos).trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        auto key = keyValuePair.left(valueStartPos).trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
 
         if (key.isEmpty() || key != "filename"_s)
             continue;
 
-        auto value = keyValuePair.substring(valueStartPos + 1).trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        auto value = keyValuePair.substring(valueStartPos + 1).trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
 
         // Remove quotes if there are any
         if (value.length() > 1 && value[0] == '\"')
@@ -370,7 +372,7 @@ StringView filenameFromHTTPContentDisposition(StringView value)
         return value;
     }
 
-    return String();
+    return emptyString();
 }
 
 String extractMIMETypeFromMediaType(const String& mediaType)
@@ -379,7 +381,7 @@ String extractMIMETypeFromMediaType(const String& mediaType)
     unsigned length = mediaType.length();
 
     for (; position < length; ++position) {
-        UChar c = mediaType[position];
+        char16_t c = mediaType[position];
         if (!isTabOrSpace(c))
             break;
     }
@@ -391,7 +393,7 @@ String extractMIMETypeFromMediaType(const String& mediaType)
 
     unsigned typeEnd = position;
     for (; position < length; ++position) {
-        UChar c = mediaType[position];
+        char16_t c = mediaType[position];
 
         // While RFC 2616 does not allow it, other browsers allow multiple values in the HTTP media
         // type header field, Content-Type. In such cases, the media type string passed here may contain
@@ -549,7 +551,7 @@ XSSProtectionDisposition parseXSSProtectionHeader(const String& header, String& 
 ContentTypeOptionsDisposition parseContentTypeOptionsHeader(StringView header)
 {
     StringView leftToken = header.left(header.find(','));
-    if (equalLettersIgnoringASCIICase(leftToken.trim(isASCIIWhitespaceWithoutFF<UChar>), "nosniff"_s))
+    if (equalLettersIgnoringASCIICase(leftToken.trim(isASCIIWhitespaceWithoutFF<char16_t>), "nosniff"_s))
         return ContentTypeOptionsDisposition::Nosniff;
     return ContentTypeOptionsDisposition::None;
 }
@@ -577,7 +579,7 @@ XFrameOptionsDisposition parseXFrameOptionsHeader(StringView header)
         return result;
 
     for (auto currentHeader : header.splitAllowingEmptyEntries(',')) {
-        currentHeader = currentHeader.trim(isUnicodeCompatibleASCIIWhitespace<UChar>);
+        currentHeader = currentHeader.trim(isUnicodeCompatibleASCIIWhitespace<char16_t>);
         XFrameOptionsDisposition currentValue = XFrameOptionsDisposition::None;
         if (equalLettersIgnoringASCIICase(currentHeader, "deny"_s))
             currentValue = XFrameOptionsDisposition::Deny;
@@ -608,7 +610,7 @@ XFrameOptionsDisposition parseXFrameOptionsHeader(StringView header)
 //         return result;
 
 //     for (auto value : StringView(headerValue).split(',')) {
-//         auto trimmedValue = value.trim(isASCIIWhitespaceWithoutFF<UChar>);
+//         auto trimmedValue = value.trim(isASCIIWhitespaceWithoutFF<char16_t>);
 //         if (trimmedValue == "\"cache\""_s)
 //             result.add(ClearSiteDataValue::Cache);
 //         else if (trimmedValue == "\"cookies\""_s)
@@ -630,7 +632,7 @@ bool parseRange(StringView range, RangeAllowWhitespace allowWhitespace, long lon
     rangeStart = rangeEnd = -1;
 
     // Only 0x20 and 0x09 matter as newlines are already gone by the time we parse a header value.
-    if (allowWhitespace == RangeAllowWhitespace::No && range.find(isTabOrSpace<UChar>) != notFound)
+    if (allowWhitespace == RangeAllowWhitespace::No && range.find(isTabOrSpace<char16_t>) != notFound)
         return false;
 
     // The "bytes" unit identifier should be present.
@@ -638,7 +640,7 @@ bool parseRange(StringView range, RangeAllowWhitespace allowWhitespace, long lon
     if (!startsWithLettersIgnoringASCIICase(range, "bytes"_s))
         return false;
 
-    auto byteRange = range.substring(bytesLength).trim(isASCIIWhitespaceWithoutFF<UChar>);
+    auto byteRange = range.substring(bytesLength).trim(isASCIIWhitespaceWithoutFF<char16_t>);
 
     if (!byteRange.startsWith('='))
         return false;
@@ -740,10 +742,10 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
                 failureReason = makeString("CR doesn't follow LF in header name at "_s, trimInputSample(p, end - p));
                 return 0;
             }
-            failureReason = makeString("Unexpected CR in header name at "_s, trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected CR in header name at "_s, trimInputSample(name.begin(), name.size()));
             return 0;
         case '\n':
-            failureReason = makeString("Unexpected LF in header name at "_s, trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected LF in header name at "_s, trimInputSample(name.begin(), name.size()));
             return 0;
         case ':':
             break;
@@ -752,7 +754,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
                 if (name.size() < 1)
                     failureReason = "Unexpected start character in header name"_s;
                 else
-                    failureReason = makeString("Unexpected character in header name at "_s, trimInputSample(name.data(), name.size()));
+                    failureReason = makeString("Unexpected character in header name at "_s, trimInputSample(name.begin(), name.size()));
                 return 0;
             }
             name.append(*p);
@@ -780,7 +782,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
             break;
         case '\n':
             if (strict) {
-                failureReason = makeString("Unexpected LF in header value at "_s, trimInputSample(value.data(), value.size()));
+                failureReason = makeString("Unexpected LF in header value at "_s, trimInputSample(value.begin(), value.size()));
                 return 0;
             }
             break;
@@ -796,7 +798,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
         failureReason = makeString("CR doesn't follow LF after header value at "_s, trimInputSample(p, end - p));
         return 0;
     }
-    valueStr = String::fromUTF8({ value.data(), value.size() });
+    valueStr = String::fromUTF8({ value.begin(), value.size() });
     if (valueStr.isNull()) {
         failureReason = "Invalid UTF-8 sequence in header value"_s;
         return 0;
@@ -968,7 +970,7 @@ bool isSafeMethod(const String& method)
 
 CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView header)
 {
-    auto trimmedHeader = header.trim(isASCIIWhitespaceWithoutFF<UChar>);
+    auto trimmedHeader = header.trim(isASCIIWhitespaceWithoutFF<char16_t>);
 
     if (trimmedHeader.isEmpty())
         return CrossOriginResourcePolicy::None;
@@ -983,6 +985,36 @@ CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView header
         return CrossOriginResourcePolicy::CrossOrigin;
 
     return CrossOriginResourcePolicy::Invalid;
+}
+
+extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestampMs)
+{
+    if (timestampMs == 0) {
+        return 0;
+    }
+
+    time_t timestamp = timestampMs / 1000;
+    struct tm tstruct = {};
+#ifdef _WIN32
+    gmtime_s(&tstruct, &timestamp);
+#else
+    gmtime_r(&timestamp, &tstruct);
+#endif
+    static const char wday_name[][4] = {
+        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+    };
+    static const char mon_name[][4] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    return snprintf(buffer, length, "%.3s, %.2u %.3s %.4u %.2u:%.2u:%.2u GMT",
+        wday_name[tstruct.tm_wday],
+        tstruct.tm_mday % 99,
+        mon_name[tstruct.tm_mon],
+        (1900 + tstruct.tm_year) % 9999,
+        tstruct.tm_hour % 99,
+        tstruct.tm_min % 99,
+        tstruct.tm_sec % 99);
 }
 
 }

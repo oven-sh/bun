@@ -4,6 +4,9 @@
 const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
+const setImmediateGlobal = globalThis.setImmediate;
+const setTimeoutGlobal = globalThis.setTimeout;
+const setIntervalGlobal = globalThis.setInterval;
 
 function asyncIterator({ next: nextFunction, return: returnFunction }) {
   const result = {};
@@ -20,7 +23,7 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
   return result;
 }
 
-function setTimeoutPromise(after = 1, value, options = {}) {
+function setTimeout(after = 1, value, options = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -53,7 +56,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => resolve(value), after, ...arguments_);
+    const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
     if (!reference) {
       timeout?.unref?.();
     }
@@ -70,7 +73,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     : returnValue;
 }
 
-function setImmediatePromise(value, options = {}) {
+function setImmediate(value, options = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -92,7 +95,7 @@ function setImmediatePromise(value, options = {}) {
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const immediate = setImmediate(() => resolve(value));
+    const immediate = setImmediateGlobal(() => resolve(value));
     if (!reference) {
       immediate?.unref?.();
     }
@@ -109,7 +112,7 @@ function setImmediatePromise(value, options = {}) {
     : returnValue;
 }
 
-function setIntervalPromise(after = 1, value, options = {}) {
+function setInterval(after = 1, value, options = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -166,7 +169,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   try {
     let notYielded = 0;
     let callback;
-    interval = setInterval(() => {
+    interval = setIntervalGlobal(() => {
       notYielded++;
       if (callback) {
         callback();
@@ -217,7 +220,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
         return Promise.resolve({});
       },
     });
-  } catch (error) {
+  } catch {
     return asyncIterator({
       next: function () {
         clearInterval(interval);
@@ -228,11 +231,11 @@ function setIntervalPromise(after = 1, value, options = {}) {
 }
 
 export default {
-  setTimeout: setTimeoutPromise,
-  setImmediate: setImmediatePromise,
-  setInterval: setIntervalPromise,
+  setTimeout,
+  setImmediate,
+  setInterval,
   scheduler: {
-    wait: (delay, options) => setTimeoutPromise(delay, undefined, options),
-    yield: setImmediatePromise,
+    wait: (delay, options) => setTimeout(delay, undefined, options),
+    yield: setImmediate,
   },
 };

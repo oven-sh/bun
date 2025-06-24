@@ -1,4 +1,4 @@
-# Version: 7
+# Version: 8
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -345,7 +345,7 @@ function Install-Rust {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "18.1.8"
+    -Version "19.1.7"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

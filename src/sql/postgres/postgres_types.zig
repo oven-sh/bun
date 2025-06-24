@@ -1,13 +1,8 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const postgres = bun.JSC.Postgres;
+const bun = @import("bun");
+const postgres = bun.api.Postgres;
 const Data = postgres.Data;
-const protocol = @This();
-const PostgresInt32 = postgres.PostgresInt32;
-const PostgresShort = postgres.PostgresShort;
 const String = bun.String;
-const debug = postgres.debug;
-const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const short = postgres.short;
@@ -358,23 +353,22 @@ pub const Tag = enum(short) {
                 return .int8;
             }
 
-            if (tag.isArrayLike() and value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, value.getIndex(globalObject, 0));
+            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
+                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
             }
-            if (globalObject.hasException()) return error.JSError;
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             if (tag == .BooleanObject) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Unknown object is not a valid PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Unknown object is not a valid PostgreSQL type", .{}).throw();
             }
 
             // We will JSON.stringify anything else.

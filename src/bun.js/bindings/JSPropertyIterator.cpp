@@ -41,17 +41,19 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
+    ASSERT(object);
+    ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
-    if (UNLIKELY(object->hasNonReifiedStaticProperties())) {
+    if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
 #if OS(WINDOWS)
-    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
+    if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
         auto* zigGlobal = defaultGlobalObject(globalObject);
         if (zigGlobal->m_processEnvObject.isInitialized()) {
@@ -129,7 +131,7 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
     const auto& prop = iter->properties->propertyNameVector()[i];
-    if (UNLIKELY(iter->isSpecialProxy)) {
+    if (iter->isSpecialProxy) [[unlikely]] {
         return getOwnProxyObject(iter, object, prop, propertyName);
     }
 
@@ -153,7 +155,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
     const auto& prop = iter->properties->propertyNameVector()[i];
-    if (UNLIKELY(iter->isSpecialProxy)) {
+    if (iter->isSpecialProxy) [[unlikely]] {
         return getOwnProxyObject(iter, object, prop, propertyName);
     }
     auto& vm = iter->vm;

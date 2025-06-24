@@ -8,7 +8,6 @@
     "emitDecoratorMetadata": true
   },
   "references": [
-    //
     { "path": "./src" },
     { "path": "./src/bake" },
     { "path": "./src/js" },

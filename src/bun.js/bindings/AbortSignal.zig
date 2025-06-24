@@ -1,11 +1,10 @@
-const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CommonAbortReason = @import("CommonAbortReason.zig").CommonAbortReason;
 
-pub const AbortSignal = extern opaque {
+pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
     extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.C) void) *AbortSignal;
@@ -89,7 +88,7 @@ pub const AbortSignal = extern opaque {
         pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
             return switch (this) {
                 .common => |reason| .{ .AbortReason = reason },
-                .js => |value| .{ .JSValue = JSC.Strong.create(value, globalObject) },
+                .js => |value| .{ .JSValue = .create(value, globalObject) },
             };
         }
 
@@ -105,7 +104,7 @@ pub const AbortSignal = extern opaque {
         var reason: u8 = 0;
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
-            bun.debugAssert(js_reason == .undefined);
+            bun.debugAssert(js_reason.isUndefined());
             return .{ .common = @enumFromInt(reason) };
         }
         if (js_reason == .zero) {

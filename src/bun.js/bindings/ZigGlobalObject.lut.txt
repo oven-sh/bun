@@ -81,8 +81,8 @@
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
-  URL                             DOMURLConstructorCallback                            PropertyCallback
-  URLSearchParams                 URLSearchParamsConstructorCallback                   PropertyCallback
+  URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
+  URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback
   WritableStream                  WritableStreamConstructorCallback                    PropertyCallback

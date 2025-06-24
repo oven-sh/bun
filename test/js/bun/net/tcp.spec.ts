@@ -1,5 +1,5 @@
 import { Socket, SocketHandler, type TCPSocketListener } from "bun";
-import { jest, describe, beforeAll, afterAll, beforeEach, afterEach, it, expect } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "bun:test";
 
 const createMockHandler = <Data = undefined>() =>
   ({

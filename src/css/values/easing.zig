@@ -1,28 +1,13 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.Length;
-const Percentage = css.css_values.percentage.Percentage;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Url = css.css_values.url.Url;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Angle = css.css_values.angle.Angle;
-const Time = css.css_values.time.Time;
-const Resolution = css.css_values.resolution.Resolution;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const Ident = css.css_values.ident.Ident;
 
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
 pub const EasingFunction = union(enum) {
@@ -231,11 +216,11 @@ pub const EasingFunction = union(enum) {
     pub fn isEase(this: *const EasingFunction) bool {
         return this.* == .ease or
             (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
-            .x1 = 0.25,
-            .y1 = 0.1,
-            .x2 = 0.25,
-            .y2 = 1.0,
-        }));
+                .x1 = 0.25,
+                .y1 = 0.1,
+                .x2 = 0.25,
+                .y2 = 1.0,
+            }));
     }
 };
 
@@ -250,7 +235,7 @@ pub const StepPosition = enum {
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
     @"jump-both",
 
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     const Map = bun.ComptimeEnumMap(enum {
         start,

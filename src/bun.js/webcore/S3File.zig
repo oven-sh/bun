@@ -1,17 +1,15 @@
-const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const strings = bun.strings;
 const Output = bun.Output;
 const S3Client = @import("./S3Client.zig");
 const S3 = bun.S3;
 const S3Stat = @import("./S3Stat.zig").S3Stat;
-pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
+pub fn writeFormat(s3: *Blob.Store.S3, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
     // detect virtual host style bucket name
@@ -75,7 +73,7 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
 }
 pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -106,7 +104,7 @@ pub fn presign(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
 pub fn unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -138,7 +136,7 @@ pub fn unlink(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
 pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -154,7 +152,7 @@ pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     const data = args.nextEat() orelse {
-        return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to upload", .{}).throw();
+        return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to upload", .{}).throw();
     };
 
     switch (path_or_blob) {
@@ -181,7 +179,7 @@ pub fn write(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
 pub fn size(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -214,7 +212,7 @@ pub fn size(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSEr
 }
 pub fn exists(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -366,7 +364,7 @@ pub const S3BlobStatTask = struct {
     global: *JSC.JSGlobalObject,
     store: *Blob.Store,
 
-    usingnamespace bun.New(S3BlobStatTask);
+    pub const new = bun.TrivialNew(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
@@ -469,13 +467,13 @@ pub const S3BlobStatTask = struct {
     pub fn deinit(this: *S3BlobStatTask) void {
         this.store.deref();
         this.promise.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
 pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_options: ?JSValue) bun.JSError!JSValue {
     if (!this.isS3()) {
-        return globalThis.ERR_INVALID_THIS("presign is only possible for s3:// files", .{}).throw();
+        return globalThis.ERR(.INVALID_THIS, "presign is only possible for s3:// files", .{}).throw();
     }
 
     var method: bun.http.Method = .GET;
@@ -492,7 +490,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
     if (extra_options) |options| {
         if (options.isObject()) {
             if (try options.getTruthyComptime(globalThis, "method")) |method_| {
-                method = Method.fromJS(globalThis, method_) orelse {
+                method = try Method.fromJS(globalThis, method_) orelse {
                     return globalThis.throwInvalidArguments("method must be GET, PUT, DELETE or HEAD when using s3 protocol", .{});
                 };
             }
@@ -510,7 +508,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *JSC.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
-    }, .{ .expires = expires }) catch |sign_err| {
+    }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
@@ -540,14 +538,11 @@ pub fn getBucketName(
     return bucket;
 }
 
-pub fn getBucket(
-    this: *Blob,
-    globalThis: *JSC.JSGlobalObject,
-) callconv(JSC.conv) JSValue {
+pub fn getBucket(this: *Blob, globalThis: *JSC.JSGlobalObject) callconv(JSC.conv) JSValue {
     if (getBucketName(this)) |name| {
         return bun.String.createUTF8ForJS(globalThis, name);
     }
-    return .undefined;
+    return .js_undefined;
 }
 pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1);
@@ -560,7 +555,7 @@ pub fn getStat(this: *Blob, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) 
 
 pub fn stat(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callframe.arguments_old(3).slice();
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
     // accept a path or a blob
@@ -614,7 +609,7 @@ pub fn constructInternal(
 ) bun.JSError!*Blob {
     const vm = globalObject.bunVM();
     const arguments = callframe.arguments_old(2).slice();
-    var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(vm, arguments);
     defer args.deinit();
 
     const path = (try JSC.Node.PathLike.fromJS(globalObject, &args)) orelse {
@@ -650,8 +645,8 @@ comptime {
 }
 
 pub const exports = struct {
-    pub const JSS3File__presign = JSC.toJSHostFunctionWithContext(Blob, getPresignUrl);
-    pub const JSS3File__stat = JSC.toJSHostFunctionWithContext(Blob, getStat);
+    pub const JSS3File__presign = JSC.toJSHostFnWithContext(Blob, getPresignUrl);
+    pub const JSS3File__stat = JSC.toJSHostFnWithContext(Blob, getStat);
 };
 extern fn BUN__createJSS3File(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(JSC.conv) JSValue;
 extern fn BUN__createJSS3FileUnsafely(*JSC.JSGlobalObject, *Blob) callconv(JSC.conv) JSValue;

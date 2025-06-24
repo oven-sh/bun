@@ -1,5 +1,5 @@
 const Async = bun.Async;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 pub const PollOrFd = union(enum) {
@@ -59,11 +59,11 @@ pub const PollOrFd = union(enum) {
 
             //TODO: We should make this call compatible using bun.FileDescriptor
             if (Environment.isWindows) {
-                bun.Async.Closer.close(bun.uvfdcast(fd), bun.windows.libuv.Loop.get());
+                bun.Async.Closer.close(fd, bun.windows.libuv.Loop.get());
             } else if (close_async and close_fd) {
                 bun.Async.Closer.close(fd, {});
             } else {
-                if (close_fd) _ = bun.sys.close(fd);
+                if (close_fd) _ = fd.closeAllowingBadFileDescriptor(null);
             }
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));

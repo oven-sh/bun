@@ -5,7 +5,7 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
-    "module": "preserve",
+    "module": "Preserve",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -15,5 +15,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
 }

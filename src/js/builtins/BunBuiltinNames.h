@@ -49,6 +49,7 @@ using namespace JSC;
     macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
     macro(atimeMs) \
+    macro(attributes) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
@@ -61,6 +62,7 @@ using namespace JSC;
     macro(cancel) \
     macro(cancelAlgorithm) \
     macro(chdir) \
+    macro(checks) \
     macro(checkBufferRead) \
     macro(cloneArrayBuffer) \
     macro(close) \
@@ -70,6 +72,7 @@ using namespace JSC;
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
+    macro(cmd) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \
@@ -97,6 +100,7 @@ using namespace JSC;
     macro(dirname) \
     macro(disturbed) \
     macro(document) \
+    macro(domain) \
     macro(encode) \
     macro(encoding) \
     macro(end) \
@@ -105,6 +109,7 @@ using namespace JSC;
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
     macro(execArgv) \
+    macro(expires) \
     macro(exports) \
     macro(extname) \
     macro(failureKind) \
@@ -128,8 +133,10 @@ using namespace JSC;
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
+    macro(hostDefinedImportType) \
     macro(hostname) \
     macro(href) \
+    macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
     macro(inFlightCloseRequest) \
@@ -150,13 +157,14 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
-    macro(loadCJS2ESM) \
+    macro(loadEsmIntoCjs) \
     macro(localStreams) \
     macro(main) \
     macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(maxAge) \
     macro(method) \
     macro(mockedFunction) \
     macro(mode) \
@@ -174,6 +182,7 @@ using namespace JSC;
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
+    macro(partitioned) \
     macro(password) \
     macro(patch) \
     macro(path) \
@@ -217,6 +226,8 @@ using namespace JSC;
     macro(requireNativeModule) \
     macro(resolveSync) \
     macro(resume) \
+    macro(sameSite) \
+    macro(secure) \
     macro(self) \
     macro(sep) \
     macro(setBody) \
@@ -225,6 +236,7 @@ using namespace JSC;
     macro(signal) \
     macro(sink) \
     macro(size) \
+    macro(specifier) \
     macro(start) \
     macro(startAlgorithm) \
     macro(startConsumingStream) \
@@ -291,7 +303,7 @@ public:
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
-        if (UNLIKELY(m_inspectCustomPublicName.isEmpty())) {
+        if (m_inspectCustomPublicName.isEmpty()) [[unlikely]] {
             m_inspectCustomPublicName = Identifier::fromUid(m_vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
         }
         return m_inspectCustomPublicName;

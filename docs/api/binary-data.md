@@ -557,6 +557,7 @@ Buffer.from(buf, 0, 10);
 #### To `string`
 
 As UTF-8:
+
 ```ts
 new TextDecoder().decode(buf);
 ```
@@ -638,6 +639,7 @@ Buffer.from(arr);
 #### To `string`
 
 As UTF-8:
+
 ```ts
 new TextDecoder().decode(arr);
 ```
@@ -716,6 +718,7 @@ Buffer.from(view.buffer, view.byteOffset, view.byteLength);
 #### To `string`
 
 As UTF-8:
+
 ```ts
 new TextDecoder().decode(view);
 ```
@@ -788,16 +791,21 @@ new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 #### To `string`
 
 As UTF-8:
+
 ```ts
 buf.toString();
 ```
+
 As base64:
+
 ```ts
-buf.toString('base64');
+buf.toString("base64");
 ```
+
 As hex:
+
 ```ts
-buf.toString('hex');
+buf.toString("hex");
 ```
 
 #### To `number[]`
@@ -876,6 +884,7 @@ Buffer.from(await blob.arrayBuffer());
 #### To `string`
 
 As UTF-8:
+
 ```ts
 await blob.text();
 ```
@@ -962,6 +971,7 @@ Buffer.from(Bun.readableStreamToArrayBuffer(stream));
 #### To `string`
 
 As UTF-8:
+
 ```ts
 // with Response
 await new Response(stream).text();

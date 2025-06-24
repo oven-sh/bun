@@ -1,10 +1,11 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
+const JSError = bun.JSError;
 
 pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
     var js_type = value.jsType();
@@ -20,7 +21,7 @@ pub fn throwErrInvalidArgValue(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
+    return globalThis.ERR(.INVALID_ARG_VALUE, fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgTypeWithMessage(
@@ -29,7 +30,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
+    return globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).throw();
 }
 
 pub fn throwErrInvalidArgType(
@@ -50,28 +51,41 @@ pub fn throwRangeError(
     args: anytype,
 ) bun.JSError {
     @branchHint(.cold);
-    return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
+    return globalThis.ERR(.OUT_OF_RANGE, fmt, args).throw();
 }
 
-pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
-    const min = min_value orelse JSC.MIN_SAFE_INTEGER;
-    const max = max_value orelse JSC.MAX_SAFE_INTEGER;
-
+pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, comptime min_value: ?i64, comptime max_value: ?i64) bun.JSError!i64 {
     if (!value.isNumber()) {
         return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
     }
 
+    if (!value.isInteger()) {
+        return globalThis.throwRangeError(value.asNumber(), .{ .field_name = name, .msg = "an integer" });
+    }
+
+    comptime {
+        if (min_value) |min| {
+            if (min < JSC.MIN_SAFE_INTEGER) {
+                @compileError("min_value must be greater than or equal to JSC.MIN_SAFE_INTEGER");
+            }
+        }
+        if (max_value) |max| {
+            if (max > JSC.MAX_SAFE_INTEGER) {
+                @compileError("max_value must be less than or equal to JSC.MAX_SAFE_INTEGER");
+            }
+        }
+    }
+
+    const min: f64 = @floatFromInt(min_value orelse JSC.MIN_SAFE_INTEGER);
+    const max: f64 = @floatFromInt(max_value orelse JSC.MAX_SAFE_INTEGER);
+
     const num = value.asNumber();
 
-    if (!value.isAnyInt()) {
-        return globalThis.throwRangeError(num, .{ .field_name = name, .msg = "an integer" });
+    if (num < min or num > max) {
+        return globalThis.throwRangeError(num, .{ .field_name = name, .min = @intFromFloat(min), .max = @intFromFloat(max) });
     }
 
-    const int = value.asInt52();
-    if (int < min or int > max) {
-        return globalThis.throwRangeError(int, .{ .field_name = name, .min = min, .max = max });
-    }
-    return int;
+    return @intFromFloat(num);
 }
 
 pub fn validateIntegerOrBigInt(globalThis: *JSGlobalObject, value: JSValue, comptime name: string, min_value: ?i64, max_value: ?i64) bun.JSError!i64 {
@@ -150,28 +164,29 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) bun.JSError!f64 {
-    if (!value.isNumber())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, name: string, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
+    }
 
     const num: f64 = value.asNumber();
     var valid = true;
-    if (min) |min_val| {
-        if (num < min_val) valid = false;
+    if (maybe_min) |min| {
+        if (num < min) valid = false;
     }
-    if (max) |max_val| {
-        if (num > max_val) valid = false;
+    if (maybe_max) |max| {
+        if (num > max) valid = false;
     }
-    if ((min != null or max != null) and std.math.isNan(num)) {
+    if ((maybe_min != null or maybe_max != null) and std.math.isNan(num)) {
         valid = false;
     }
     if (!valid) {
-        if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
-        } else if (min != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
-        } else {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {s}", name_args ++ .{ max, value });
+        if (maybe_min != null and maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d} && <= {d}. Received {d}", .{ name, maybe_min.?, maybe_max.?, num });
+        } else if (maybe_min != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d}. Received {d}", .{ name, maybe_min.?, num });
+        } else if (maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be <= {d}. Received {d}", .{ name, maybe_max.?, num });
         }
     }
     return num;
@@ -183,10 +198,11 @@ pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime nam
     return value.asBoolean();
 }
 
-pub const ValidateObjectOptions = packed struct {
+pub const ValidateObjectOptions = packed struct(u8) {
     allow_nullable: bool = false,
     allow_array: bool = false,
     allow_function: bool = false,
+    _: u5 = 0,
 };
 
 pub fn validateObject(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, comptime options: ValidateObjectOptions) bun.JSError!void {
@@ -228,8 +244,8 @@ pub fn validateArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_
 pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
-    var iter = value.arrayIterator(globalThis);
-    while (iter.next()) |item| {
+    var iter = try value.arrayIterator(globalThis);
+    while (try iter.next()) |item| {
         if (!item.isString()) {
             return throwErrInvalidArgType(globalThis, name_fmt ++ "[{d}]", name_args ++ .{i}, "string", value);
         }
@@ -241,8 +257,8 @@ pub fn validateStringArray(globalThis: *JSGlobalObject, value: JSValue, comptime
 pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!usize {
     try validateArray(globalThis, value, name_fmt, name_args, null);
     var i: usize = 0;
-    var iter = value.arrayIterator(globalThis);
-    while (iter.next()) |item| {
+    var iter = try value.arrayIterator(globalThis);
+    while (try iter.next()) |item| {
         if (!item.isBoolean()) {
             return throwErrInvalidArgType(globalThis, name_fmt ++ "[{d}]", name_args ++ .{i}, "boolean", value);
         }
@@ -251,9 +267,10 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     return i;
 }
 
-pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!JSValue {
-    if (!value.jsType().isFunction())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
+pub fn validateFunction(global: *JSGlobalObject, name: string, value: JSValue) bun.JSError!JSValue {
+    if (!value.isFunction()) {
+        return global.throwInvalidArgumentTypeValue(name, "function", value);
+    }
     return value;
 }
 

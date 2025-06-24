@@ -88,7 +88,7 @@ if (process.platform !== "win32") {
 fileUrlRelTo(() => import.meta.resolve("lodash"), "../../../node_modules/lodash/lodash.js");
 
 exact(() => import.meta.resolve("node:path"), "node:path");
-exact(() => import.meta.resolve("path"), process?.versions?.bun ? "path" : "node:path");
+exact(() => import.meta.resolve("path"), "node:path");
 exact(() => import.meta.resolve("node:doesnotexist"), "node:doesnotexist");
 
 if (process?.versions?.bun) {

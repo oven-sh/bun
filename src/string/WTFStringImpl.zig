@@ -1,7 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const OOM = bun.OOM;
 
 pub const WTFStringImpl = *WTFStringImplStruct;
 const ZigString = bun.JSC.ZigString;
@@ -205,10 +204,10 @@ pub const WTFStringImplStruct = extern struct {
     pub fn utf8ByteLength(this: WTFStringImpl) usize {
         if (this.is8Bit()) {
             const input = this.latin1Slice();
-            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU8(input.ptr, input.len, .utf8) else 0;
+            return if (input.len > 0) JSC.WebCore.encoding.byteLengthU8(input.ptr, input.len, .utf8) else 0;
         } else {
             const input = this.utf16Slice();
-            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU16(input.ptr, input.len, .utf8) else 0;
+            return if (input.len > 0) bun.strings.elementLengthUTF16IntoUTF8([]const u16, input) else 0;
         }
     }
 
@@ -232,7 +231,7 @@ pub const WTFStringImplStruct = extern struct {
 };
 
 pub const StringImplAllocator = struct {
-    fn alloc(ptr: *anyopaque, len: usize, _: u8, _: usize) ?[*]u8 {
+    fn alloc(ptr: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
         var this = bun.cast(WTFStringImpl, ptr);
         const len_ = this.byteLength();
 
@@ -247,14 +246,10 @@ pub const StringImplAllocator = struct {
         return @constCast(this.m_ptr.latin1);
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
     pub fn free(
         ptr: *anyopaque,
         buf: []u8,
-        _: u8,
+        _: std.mem.Alignment,
         _: usize,
     ) void {
         var this = bun.cast(WTFStringImpl, ptr);
@@ -265,7 +260,8 @@ pub const StringImplAllocator = struct {
 
     pub const VTable = std.mem.Allocator.VTable{
         .alloc = &alloc,
-        .resize = &resize,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
         .free = &free,
     };
 

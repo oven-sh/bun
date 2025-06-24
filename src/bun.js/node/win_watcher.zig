@@ -1,18 +1,14 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const windows = bun.windows;
 const uv = windows.libuv;
-const Path = @import("../../resolver/resolve_path.zig");
-const Fs = @import("../../fs.zig");
-const Mutex = bun.Mutex;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 
-const FSWatcher = bun.JSC.Node.FSWatcher;
+const FSWatcher = bun.JSC.Node.fs.Watcher;
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 const Event = FSWatcher.Event;
 
@@ -28,7 +24,7 @@ pub const PathWatcherManager = struct {
     vm: *JSC.VirtualMachine,
     deinit_on_last_watcher: bool = false,
 
-    pub usingnamespace bun.New(PathWatcherManager);
+    pub const new = bun.TrivialNew(PathWatcherManager);
 
     pub fn init(vm: *JSC.VirtualMachine) *PathWatcherManager {
         return PathWatcherManager.new(.{
@@ -55,6 +51,7 @@ pub const PathWatcherManager = struct {
             _ = this.watchers.swapRemoveAt(index);
         }
     }
+
     fn deinit(this: *PathWatcherManager) void {
         // enable to create a new manager
         if (default_manager == this) {
@@ -76,19 +73,20 @@ pub const PathWatcherManager = struct {
         }
 
         this.watchers.deinit(bun.default_allocator);
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
-const onPathUpdateFn = JSC.Node.FSWatcher.onPathUpdate;
-const onUpdateEndFn = JSC.Node.FSWatcher.onUpdateEnd;
+const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
+const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
 
 pub const PathWatcher = struct {
     handle: uv.uv_fs_event_t,
     manager: ?*PathWatcherManager,
     emit_in_progress: bool = false,
     handlers: std.AutoArrayHashMapUnmanaged(*anyopaque, ChangeEvent) = .{},
-    pub usingnamespace bun.New(PathWatcher);
+
+    pub const new = bun.TrivialNew(PathWatcher);
 
     const log = Output.scoped(.@"fs.watch", false);
 
@@ -183,7 +181,7 @@ pub const PathWatcher = struct {
         var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
-                if (err.errno == @intFromEnum(bun.C.E.NOENT)) {
+                if (err.errno == @intFromEnum(bun.sys.E.NOENT)) {
                     return .{ .err = .{
                         .errno = err.errno,
                         .syscall = .open,
@@ -238,7 +236,7 @@ pub const PathWatcher = struct {
         log("onClose", .{});
         const event = bun.cast(*uv.uv_fs_event_t, handler);
         const this = bun.cast(*PathWatcher, event.data);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn detach(this: *PathWatcher, handler: *anyopaque) void {
@@ -266,7 +264,7 @@ pub const PathWatcher = struct {
             }
         }
         if (uv.uv_is_closed(@ptrCast(&this.handle))) {
-            this.destroy();
+            bun.destroy(this);
         } else {
             _ = uv.uv_fs_event_stop(&this.handle);
             _ = uv.uv_close(@ptrCast(&this.handle), PathWatcher.uvClosedCallback);

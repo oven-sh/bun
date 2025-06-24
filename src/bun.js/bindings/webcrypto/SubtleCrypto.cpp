@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmRegistry.h"
+#include "CryptoAlgorithmX25519Params.h"
 #include "JSAesCbcCfbParams.h"
 #include "JSAesCtrParams.h"
 #include "JSAesGcmParams.h"
@@ -46,6 +47,7 @@
 #include "JSHmacKeyParams.h"
 #include "JSJsonWebKey.h"
 #include "JSPbkdf2Params.h"
+#include "JSX25519Params.h"
 #include "JSRsaHashedImportParams.h"
 #include "JSRsaHashedKeyGenParams.h"
 #include "JSRsaKeyGenParams.h"
@@ -122,7 +124,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.name);
-    if (UNLIKELY(!identifier))
+    if (!identifier) [[unlikely]]
         return Exception { NotSupportedError };
 
     if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
@@ -280,6 +282,19 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmEcdhKeyDeriveParams>(params);
+            break;
+        }
+        case CryptoAlgorithmIdentifier::X25519: {
+            // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
+            JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+            JSValue publicValue = value.get()->get(&state, vm.propertyNames->publicKeyword);
+            JSObject* newValue = constructEmptyObject(&state);
+            newValue->putDirect(vm, vm.propertyNames->name, nameValue);
+            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+
+            auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            result = makeUnique<CryptoAlgorithmX25519Params>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::HKDF: {
@@ -620,7 +635,7 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& cipherText) mutable {
         if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), cipherText.data(), cipherText.size());
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), cipherText.begin(), cipherText.size());
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -660,7 +675,7 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& plainText) mutable {
         if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), plainText.data(), plainText.size());
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), plainText.begin(), plainText.size());
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -698,7 +713,7 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& signature) mutable {
         if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), signature.data(), signature.size());
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), signature.begin(), signature.size());
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -765,7 +780,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& digest) mutable {
         if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), digest.data(), digest.size());
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), digest.begin(), digest.size());
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -925,7 +940,7 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](const Vector<uint8_t>& derivedKey) mutable {
         if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), derivedKey.data(), derivedKey.size());
+            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), derivedKey.begin(), derivedKey.size());
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
         if (auto promise = getPromise(index, weakThis))
@@ -1002,7 +1017,7 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
             case SubtleCrypto::KeyFormat::Pkcs8:
             case SubtleCrypto::KeyFormat::Raw: {
                 Vector<uint8_t>& rawKey = std::get<Vector<uint8_t>>(key);
-                fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), rawKey.data(), rawKey.size());
+                fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), rawKey.begin(), rawKey.size());
                 return;
             }
             case SubtleCrypto::KeyFormat::Jwk:
@@ -1084,13 +1099,13 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTFMove(std::get<JsonWebKey>(key)));
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(std::span { jwkUTF8String.data(), jwkUTF8String.length() });
+                    bytes.append(jwkUTF8String.span());
                 }
                 }
 
                 auto callback = [index, weakThis](const Vector<uint8_t>& wrappedKey) mutable {
                     if (auto promise = getPromise(index, weakThis))
-                        fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), wrappedKey.data(), wrappedKey.size());
+                        fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), wrappedKey.begin(), wrappedKey.size());
                 };
                 auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
                     if (auto promise = getPromise(index, weakThis))
@@ -1156,13 +1171,13 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     }
 
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappedKeyAlgorithm->identifier);
-    if (UNLIKELY(!importAlgorithm)) {
+    if (!importAlgorithm) [[unlikely]] {
         promise->reject(Exception { NotSupportedError });
         return;
     }
 
     auto unwrapAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappingKey.algorithmIdentifier());
-    if (UNLIKELY(!unwrapAlgorithm)) {
+    if (!unwrapAlgorithm) [[unlikely]] {
         promise->reject(Exception { NotSupportedError });
         return;
     }
@@ -1185,7 +1200,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     auto& vm = state.vm();
                     auto scope = DECLARE_THROW_SCOPE(vm);
 
-                    String jwkString(std::span { bytes.data(), bytes.size() });
+                    String jwkString(bytes.span());
                     JSLockHolder locker(vm);
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (!jwkObject) {

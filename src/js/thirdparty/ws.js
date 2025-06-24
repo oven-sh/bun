@@ -3,11 +3,17 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
+const ReadyState_CONNECTING = 0;
+const ReadyState_OPEN = 1;
+const ReadyState_CLOSING = 2;
+const ReadyState_CLOSED = 3;
+
 const EventEmitter = require("node:events");
 const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -50,17 +56,16 @@ let WebSocket;
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
  */
 class BunWebSocket extends EventEmitter {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
+  static [Symbol.toStringTag] = "WebSocket";
+  static CONNECTING = ReadyState_CONNECTING;
+  static OPEN = ReadyState_OPEN;
+  static CLOSING = ReadyState_CLOSING;
+  static CLOSED = ReadyState_CLOSED;
 
   #ws;
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
-  static [Symbol.toStringTag] = "WebSocket";
-
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -422,8 +427,8 @@ class BunWebSocket extends EventEmitter {
 
   pause() {
     switch (this.readyState) {
-      case WebSocket.CONNECTING:
-      case WebSocket.CLOSED:
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
         return;
     }
 
@@ -435,8 +440,8 @@ class BunWebSocket extends EventEmitter {
 
   resume() {
     switch (this.readyState) {
-      case WebSocket.CONNECTING:
-      case WebSocket.CLOSED:
+      case ReadyState_CONNECTING:
+      case ReadyState_CLOSED:
         return;
     }
 
@@ -581,7 +586,8 @@ const wsTokenChars = [
 ];
 
 /**
- * Parses the `Sec-WebSocket-Protocol` header into a set of subprotocol names.
+ * Parses the `Sec-WebSocket-Protocol` header into a set of subprotocols
+ * names.
  *
  * @param {String} header The field value of the header
  * @return {Set} The subprotocol names
@@ -645,7 +651,7 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers) {
+function abortHandshake(response, code, message, headers = {}) {
   message = message || http.STATUS_CODES[code];
   headers = {
     Connection: "close",
@@ -692,7 +698,7 @@ class BunWebSocketMocked extends EventEmitter {
   constructor(url, protocol, extensions, binaryType) {
     super();
     this.#ws = null;
-    this.#state = 0;
+    this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
     binaryType = binaryType || "arraybuffer";
@@ -760,14 +766,14 @@ class BunWebSocketMocked extends EventEmitter {
 
   #open(ws) {
     this.#ws = ws;
-    this.#state = 1;
+    this.#state = ReadyState_OPEN;
     this.emit("open", this);
     // first drain event
     this.#drain(ws);
   }
 
   #close(ws, code, reason) {
-    this.#state = 3;
+    this.#state = ReadyState_CLOSED;
     this.#ws = null;
 
     this.emit("close", code, reason);
@@ -791,7 +797,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === 0) {
+    if (this.#state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -816,7 +822,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#state === 0) {
+    if (this.#state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -846,7 +852,7 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === 1) {
+    if (this.#state === ReadyState_OPEN) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
       // send returns:
@@ -863,7 +869,7 @@ class BunWebSocketMocked extends EventEmitter {
       }
 
       typeof cb === "function" && process.nextTick(cb);
-    } else if (this.#state === 0) {
+    } else if (this.#state === ReadyState_CONNECTING) {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
@@ -871,8 +877,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   close(code, reason) {
-    if (this.#state === 1) {
-      this.#state = 2;
+    if (this.#state === ReadyState_OPEN) {
+      this.#state = ReadyState_CLOSING;
       this.#ws.close(code, reason);
     }
   }
@@ -887,8 +893,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (!this) return;
 
     let state = this.#state;
-    if (state === 3) return;
-    if (state === 0) {
+    if (state === ReadyState_CLOSED) return;
+    if (state === ReadyState_CONNECTING) {
       const msg = "WebSocket was closed before the connection was established";
       abortHandshake(this, this._req, msg);
       return;
@@ -896,7 +902,7 @@ class BunWebSocketMocked extends EventEmitter {
 
     let ws = this.#ws;
     if (ws) {
-      this.#state = WebSocket.CLOSING;
+      this.#state = ReadyState_CLOSING;
       ws.terminate();
     }
   }
@@ -944,7 +950,7 @@ class BunWebSocketMocked extends EventEmitter {
    *     not to skip UTF-8 validation for text and close messages
    * @private
    */
-  setSocket(socket, head, options) {
+  setSocket(_socket, _head, _options) {
     throw new Error("Not implemented");
   }
 
@@ -998,7 +1004,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   // TODO: implement this more proper
-  addEventListener(type, listener, options) {
+  addEventListener(type, listener, _options) {
     if (type === "message") {
       const l = data => listener({ data });
       l.listener = listener;
@@ -1230,7 +1236,10 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [{ [kBunInternals]: server }, response, req] = socket[kBunInternals];
+    const response = socket._httpMessage;
+    const server = socket.server[kBunInternals];
+    const req = socket[kBunInternals];
+
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";
@@ -1252,7 +1261,6 @@ class WebSocketServer extends EventEmitter {
         data: ws[kBunInternals],
       })
     ) {
-      response._reply(undefined);
       if (this.clients) {
         this.clients.add(ws);
         ws.on("close", () => {
@@ -1280,7 +1288,7 @@ class WebSocketServer extends EventEmitter {
    */
   handleUpgrade(req, socket, head, cb) {
     // socket is actually fake so we use internal http_res
-    const [_, response] = socket[kBunInternals];
+    const response = socket._httpMessage;
 
     // socket.on("error", socketOnError);
 
@@ -1322,7 +1330,7 @@ class WebSocketServer extends EventEmitter {
     if (secWebSocketProtocol !== undefined) {
       try {
         protocols = subprotocolParse(secWebSocketProtocol);
-      } catch (err) {
+      } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
         abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
         return;
@@ -1452,7 +1460,7 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = ws => {
+var createWebSocketStream = _ws => {
   throw new Error("Not supported yet in Bun");
 };
 

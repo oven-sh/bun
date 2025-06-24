@@ -1,9 +1,7 @@
 //https://github.com/dmgk/zig-uuid
 const std = @import("std");
-const crypto = std.crypto;
 const fmt = std.fmt;
-const testing = std.testing;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();
@@ -13,7 +11,7 @@ bytes: [16]u8,
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };
 
-    bun.rand(&uuid.bytes);
+    bun.csprng(&uuid.bytes);
     // Version 4
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1

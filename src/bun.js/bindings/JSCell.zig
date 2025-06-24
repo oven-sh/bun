@@ -1,32 +1,39 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
+const GetterSetter = @import("GetterSetter.zig").GetterSetter;
+const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const GetterSetter = @import("GetterSetter.zig").GetterSetter;
-const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 
-pub const JSCell = extern struct {
-    pub const shim = JSC.Shimmer("JSC", "JSCell", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSCell.h";
-    pub const name = "JSC::JSCell";
-    pub const namespace = "JSC";
-
-    const CellType = enum(u8) { _ };
-
-    pub fn getObject(this: *JSCell) *JSC.JSObject {
-        return shim.cppFn("getObject", .{this});
+pub const JSCell = opaque {
+    /// Statically cast a cell to a JSObject. Returns null for non-objects.
+    /// Use `toObject` to mutate non-objects into objects.
+    pub fn getObject(this: *JSCell) ?*JSC.JSObject {
+        JSC.markMemberBinding(JSCell, @src());
+        return JSC__JSCell__getObject(this);
     }
 
-    pub fn getType(this: *JSCell) u8 {
-        return shim.cppFn("getType", .{
-            this,
-        });
+    /// Convert a cell to a JSObject.
+    ///
+    /// Statically casts cells that are already objects, otherwise mutates them
+    /// into objects.
+    ///
+    /// ## References
+    /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
+    pub fn toObject(this: *JSCell, global: *JSC.JSGlobalObject) *JSC.JSObject {
+        JSC.markMemberBinding(JSCell, @src());
+        return JSC__JSCell__toObject(this, global);
     }
 
-    pub const Extern = [_][]const u8{ "getObject", "getType" };
+    pub fn getType(this: *const JSCell) u8 {
+        JSC.markMemberBinding(JSCell, @src());
+        return @enumFromInt(JSC__JSCell__getType(this));
+    }
+
+    pub fn toJS(this: *JSCell) JSC.JSValue {
+        return JSC.JSValue.fromCell(this);
+    }
 
     pub fn getGetterSetter(this: *JSCell) *GetterSetter {
         if (comptime bun.Environment.allow_assert) {
@@ -41,4 +48,16 @@ pub const JSCell = extern struct {
         }
         return @as(*CustomGetterSetter, @ptrCast(@alignCast(this)));
     }
+
+    pub fn ensureStillAlive(this: *JSCell) void {
+        std.mem.doNotOptimizeAway(this);
+    }
+
+    extern fn JSC__JSCell__getObject(this: *JSCell) *JSC.JSObject;
+    extern fn JSC__JSCell__toObject(this: *JSCell, *JSGlobalObject) *JSC.JSObject;
+    // NOTE: this function always returns a JSType, but by using `u8` then
+    // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
+    // WebKit's. This protects us from possible future breaking changes made
+    // when upgrading WebKit.
+    extern fn JSC__JSCell__getType(this: *JSCell) u8;
 };

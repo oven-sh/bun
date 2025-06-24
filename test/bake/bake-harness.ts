@@ -24,6 +24,27 @@ import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const isDebugBuild = Bun.version.includes("debug");
 
+const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
+  ? (arg: string) => {
+      console.log("\x1b[36m" + arg + "\x1b[0m");
+    }
+  : () => {};
+
+/**
+ * Can be set in fast development environments to improve iteration time.
+ * In CI/Windows it appears that sometimes these tests dont wait enough
+ * for things to happen, so the extra delay reduces flakiness.
+ * 
+ * Needs much more investigation.
+ */
+const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
+
+/**
+ * Set to `ALL` to run all stress tests for 10 minutes each.
+ * Set to a filter to run a specific filter for 10 minutes.
+ */
+const stressTestSelect = process.env.DEV_SERVER_STRESS;
+
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
   fileSystemRouterTypes: [
@@ -80,6 +101,8 @@ export interface DevServerTest {
 
   /** Starting files */
   files?: FileObject;
+  /** Manually specify which html files to serve */
+  htmlFiles?: string[];
   /**
    * Framework to use. Consider `minimalFramework` if possible.
    * Provide this object or `files['bun.app.ts']` for a dynamic one.
@@ -104,6 +127,8 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+
+  skip?: ('win32'|'darwin'|'linux'|'ci')[],
 }
 
 let interactive = false;
@@ -147,6 +172,19 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
+enum WatchSynchronization {
+  // Callback for starting a batch
+  Started = 0,
+  // During a batch, files were seen. Batch is still running.
+  SeenFiles = 1,
+  // Batch no longer running, files seen!
+  ResultDidNotBundle = 2,
+  // Sent on every build finished:
+  AnyBuildFinished = 3,
+  // Sent on every build finished, you must wait for web sockets:
+  AnyBuildFinishedWaitForWebSockets = 4,
+}
+
 export class Dev extends EventEmitter {
   rootDir: string;
   port: number;
@@ -155,6 +193,8 @@ export class Dev extends EventEmitter {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
+  batchingChanges: { write?: () => void } | null = null;
+  stressTestEndurance = false;
 
   socket?: WebSocket;
 
@@ -193,7 +233,8 @@ export class Dev extends EventEmitter {
         connected.resolve();
       }
       if (data[0] === "r".charCodeAt(0)) {
-        this.emit("redundant_watch");
+        verboseSynchronization("watch_synchronization: " + WatchSynchronization[data[1]]);
+        this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
     };
@@ -217,25 +258,105 @@ export class Dev extends EventEmitter {
     });
   }
 
+  #waitForSyncEvent(event: WatchSynchronization) {
+    return new Promise<void>((resolve, reject) => {
+      let dev = this;
+      function handle(kind: WatchSynchronization) {
+        if (kind === event) {
+          dev.off("watch_synchronization", handle);
+          resolve();
+        }
+      }
+      dev.on("watch_synchronization", handle);
+    });
+  }
+
+  async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
+    if (this.batchingChanges) {
+      this.batchingChanges.write?.();
+      return null;
+    }
+    this.batchingChanges = {};
+
+    let dev = this;
+    const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
+    this.socket!.send("H");
+    await initWait;
+
+    let hasSeenFiles = true;
+    let seenFiles: PromiseWithResolvers<void>;
+    function onSeenFiles(ev: WatchSynchronization) {
+      if (ev === WatchSynchronization.SeenFiles) {
+        hasSeenFiles = true;
+        seenFiles.resolve();
+        dev.off("watch_synchronization", onSeenFiles);
+      }
+    }
+    function resetSeenFilesWithResolvers() {
+      if (!hasSeenFiles) return;
+      seenFiles = Promise.withResolvers<void>();
+      dev.on("watch_synchronization", onSeenFiles);
+    }
+    resetSeenFilesWithResolvers();
+
+    let wantsHmrEvent = true;
+    for (const client of dev.connectedClients) {
+      if (!client.webSocketMessagesAllowed) {
+        wantsHmrEvent = false;
+        break;
+      }
+    }
+
+    const wait = this.waitForHotReload(wantsHmrEvent);
+    const b = {
+      write: resetSeenFilesWithResolvers,
+      [Symbol.asyncDispose]: async() => {
+        if (wantsHmrEvent && interactive) {
+          await seenFiles.promise;
+        } else if (wantsHmrEvent) {
+          await Promise.race([
+            seenFiles.promise,
+            Bun.sleep(1000),
+          ]);
+        }
+        if (!fastBatches) {
+          // Wait an extra delay to avoid double-triggering events.
+          await Bun.sleep(300);
+        }
+
+        dev.off("watch_synchronization", onSeenFiles);
+
+        this.socket!.send("H");
+        await wait;
+
+        let errors = options.errors;
+        if (errors !== null) {
+          errors ??= [];
+          for (const client of this.connectedClients) {
+            await client.expectErrorOverlay(errors, options.snapshot);
+          }
+        }
+        this.batchingChanges = null;
+      },
+    };
+    this.batchingChanges = b;
+    return b;
+  }
+
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
+
       await Bun.write(
         this.join(file),
         ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
       );
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -258,12 +379,15 @@ export class Dev extends EventEmitter {
    * @param options Options for handling errors after deletion
    * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
    */
-  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
+  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && options.wait && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -271,15 +395,6 @@ export class Dev extends EventEmitter {
       }
 
       fs.unlinkSync(filePath);
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && options.wait && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -295,7 +410,12 @@ export class Dev extends EventEmitter {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("patch " + file);
-      const wait = this.waitForHotReload();
+      const isDev = this.nodeEnv === "development";
+      await using _wait = isDev ? await this.batchChanges({
+        errors: errors,
+        snapshot: snapshot,
+      }) : null;
+
       const filename = this.join(file);
       const source = fs.readFileSync(filename, "utf8");
       const contents = source.replace(find, replace);
@@ -303,14 +423,6 @@ export class Dev extends EventEmitter {
         throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
       }
       await Bun.write(filename, typeof contents === "string" && shouldDedent ? dedent(contents) : contents);
-      await wait;
-
-      if (errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -318,22 +430,60 @@ export class Dev extends EventEmitter {
     return path.join(this.rootDir, file);
   }
 
-  async waitForHotReload() {
+  waitForHotReload(wantsHmrEvent: boolean) {
     if (this.nodeEnv !== "development") return Promise.resolve();
-    const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, isCI ? 1000 : 250).catch(() => {});
-    const ctrl = new AbortController();
-    await Promise.race([
-      // On failure, give a little time in case a partial write caused a
-      // bundling error, and a success came in.
-      err.then(
-        () => Bun.sleep(500),
-        () => {},
-      ),
-      success,
-      EventEmitter.once(this, "redundant_watch", { signal: ctrl.signal }),
-    ]);
-    ctrl.abort();
+    let dev = this;
+    return new Promise<void>((resolve, reject) => {
+      let timer: NodeJS.Timer | null = null;
+      let clientWaits = 0;
+      let seenMainEvent = false;
+      function cleanupAndResolve() {
+        verboseSynchronization("Cleaning up and resolving");
+        timer !== null && clearTimeout(timer);
+        dev.off("watch_synchronization", onEvent);
+        for (const dispose of disposes) {
+          dispose();
+        }
+        if (fastBatches) resolve();
+        else setTimeout(resolve, 250);
+      }
+      const disposes = new Set<() => void>();
+      for (const client of dev.connectedClients) {
+        const socketEventHandler = () => {
+          verboseSynchronization("Client received event");
+          clientWaits++;
+          if (seenMainEvent && clientWaits === dev.connectedClients.size) {
+            client.off("received-hmr-event", socketEventHandler);
+            cleanupAndResolve();
+          }
+        };
+        client.on("received-hmr-event", socketEventHandler);
+        disposes.add(() => {
+          client.off("received-hmr-event", socketEventHandler);
+        });
+      }
+      async function onEvent(kind: WatchSynchronization) {
+        assert(kind !== WatchSynchronization.Started, "WatchSynchronization.Started should not be emitted");
+        if (kind === WatchSynchronization.AnyBuildFinished) {
+          seenMainEvent = true;
+          cleanupAndResolve();
+        } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
+          verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
+          seenMainEvent = true;
+          if (clientWaits === dev.connectedClients.size) {
+            cleanupAndResolve();
+          }
+        } else if (kind === WatchSynchronization.ResultDidNotBundle) {
+          if (wantsHmrEvent) {
+            await Bun.sleep(500);
+            if (seenMainEvent) return;
+            console.warn("\x1b[33mWARN: Dev Server did not pick up any changed files. Consider wrapping this call in expectNoWebSocketActivity\x1b[35m");
+          }
+          cleanupAndResolve();
+        }
+      };
+      dev.on("watch_synchronization", onEvent);
+    });
   }
 
   async client(
@@ -342,6 +492,8 @@ export class Dev extends EventEmitter {
       errors?: ErrorSpec[];
       /** Allow using `getMostRecentHmrChunk` */
       storeHotChunks?: boolean;
+      /** Disable the logic that fails a test from a reload */
+      allowUnlimitedReloads?: boolean;
     } = {},
   ) {
     await maybeWaitInteractive("open client " + url);
@@ -349,6 +501,7 @@ export class Dev extends EventEmitter {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
       expectErrors: !!options.errors,
+      allowUnlimitedReloads: options.allowUnlimitedReloads,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -371,9 +524,11 @@ export class Dev extends EventEmitter {
 
   async gracefulExit() {
     await this.fetch("/_dev_server_test_set");
-    this.devProcess.send({ type: "graceful-exit" });
+    const hasAlreadyExited = this.devProcess.exitCode !== null || this.devProcess.signalCode !== null;
+    if (!hasAlreadyExited) {
+      this.devProcess.send({ type: "graceful-exit" });
+    }
     await Promise.race([
-      //
       this.devProcess.exited,
       new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
@@ -391,6 +546,46 @@ export class Dev extends EventEmitter {
 
   mkdir(dir: string) {
     return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
+  }
+
+  /**
+   * Run a stress test. The function should perform I/O in a loop, for about a
+   * couple of seconds. In CI, this round is run once. In development, this can
+   * be run forever using `DEV_SERVER_STRESS=FILTER`.
+   * 
+   * Tests using this should go in `stress.test.ts`
+   */
+  async stressTest(round: () => (Promise<void> | void)) {
+    if (!this.stressTestEndurance) {
+      await round();
+      await Bun.sleep(250);
+      if (this.output.panicked) {
+        throw new Error("DevServer panicked in stress test");
+      }
+      return;
+    }
+
+    const endTime = Date.now() + 10 * 60 * 1000;
+    let iteration = 0;
+    
+    using log = new TrailingLog;
+    while (Date.now() < endTime) {
+      const timeRemaining = endTime - Date.now();
+      const minutes = Math.floor(timeRemaining / 60000);
+      const seconds = Math.floor((timeRemaining % 60000) / 1000);
+      log.setMessage(`[STRESS] Time remaining: ${minutes}:${seconds.toString().padStart(2, '0')}. Iteration ${++iteration}`);
+
+      await round();
+      
+      if (this.output.panicked) {
+        throw new Error("DevServer panicked in stress test");
+      }
+    }
+
+    await Bun.sleep(250);
+    if (this.output.panicked) {
+      throw new Error("DevServer panicked in stress test");
+    }
   }
 }
 
@@ -552,8 +747,9 @@ export class Client extends EventEmitter {
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
   hmr = false;
+  webSocketMessagesAllowed = true;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean; allowUnlimitedReloads?: boolean, }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -565,6 +761,7 @@ export class Client extends EventEmitter {
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
         options.expectErrors ? "--expect-errors" : "",
+        options.allowUnlimitedReloads ? "--allow-unlimited-reloads" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -597,7 +794,6 @@ export class Client extends EventEmitter {
     });
     this.#proc = proc;
     this.hmr = options.hmr;
-    // @ts-expect-error
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
@@ -684,19 +880,37 @@ export class Client extends EventEmitter {
   }
 
   expectMessage(...x: any) {
+    return this.#expectMessageImpl(true, x);
+  }
+
+  expectMessageInAnyOrder(...x: any) {
+    return this.#expectMessageImpl(false, x);
+  }
+
+  #expectMessageImpl(strictOrdering: boolean, x: any[]) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       if (this.exited) throw new Error("Client exited while waiting for message");
       if (this.messages.length !== x.length) {
+        if (interactive) {
+          console.log("Waiting for messages (have", this.messages.length, "expected", x.length, ")");
+        }
+        const dev = this;
         // Wait up to a threshold before giving up
+        function cleanup() {
+          dev.off("message", onMessage);
+          dev.off("exit", onExit);
+        }
         const resolver = Promise.withResolvers();
         function onMessage(message: any) {
-          if (this.messages.length === x.length) resolver.resolve();
+          process.nextTick(() => {
+            if (dev.messages.length === x.length) resolver.resolve();
+          });
         }
         function onExit() {
           resolver.resolve();
         }
-        this.once("message", onMessage);
-        this.once("exit", onExit);
+        this.on("message", onMessage);
+        this.on("exit", onExit);
         let t: any = setTimeout(
           () => {
             t = null;
@@ -706,11 +920,15 @@ export class Client extends EventEmitter {
         );
         await resolver.promise;
         if (t) clearTimeout(t);
-        this.off("message", onMessage);
+        cleanup();
       }
       if (this.exited) throw new Error("Client exited while waiting for message");
-      const m = this.messages;
+      let m = this.messages;
       this.messages = [];
+      if (!strictOrdering) {
+        m = m.sort();
+        x = x.sort();
+      }
       expect(m).toEqual(x);
     });
   }
@@ -935,12 +1153,14 @@ export class Client extends EventEmitter {
 
       // Block WebSocket messages
       this.#proc.send({ type: "set-allow-websocket-messages", args: [false] });
+      this.webSocketMessagesAllowed = false;
 
       try {
         await cb();
       } finally {
         // Re-enable WebSocket messages
         this.#proc.send({ type: "set-allow-websocket-messages", args: [true] });
+        this.webSocketMessagesAllowed = true;
       }
     });
   }
@@ -1275,7 +1495,7 @@ class OutputLineStream extends EventEmitter {
 
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from "./${file}";`),
+    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, '/'))};`),
     "export default {",
     "  static: {",
     ...(htmlFiles.length === 1
@@ -1298,6 +1518,11 @@ export function indexHtmlScript(htmlFiles: string[]) {
   ].join("\n");
 }
 
+const skipTargets = [
+  process.platform,
+  isCI ? 'ci' : null,
+].filter(Boolean);
+
 function testImpl<T extends DevServerTest>(
   description: string,
   options: T,
@@ -1311,6 +1536,18 @@ function testImpl<T extends DevServerTest>(
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
+  const name = `${
+    NODE_ENV === "development" //
+      ? Bun.enableANSIColors
+        ? " \x1b[35mDEV\x1b[0m"
+        : " DEV"
+      : Bun.enableANSIColors
+        ? "\x1b[36mPROD\x1b[0m"
+        : "PROD"
+  }:${basename}-${count}: ${description}`;
+
+  const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
+
   async function run() {
     const root = path.join(tempDir, basename + count);
 
@@ -1319,9 +1556,9 @@ function testImpl<T extends DevServerTest>(
 
     const mainDir = path.resolve(root, options.mainDir ?? ".");
     if (options.files) {
-      const htmlFiles = Object.keys(options.files)
-        .filter(file => file.endsWith(".html"))
-        .map(x => path.join(root, x));
+      const htmlFiles = (options.htmlFiles ?? Object.keys(options.files).filter(file => file.endsWith(".html"))).map(
+        x => path.join(root, x),
+      );
       await writeAll(root, options.files);
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
@@ -1383,7 +1620,7 @@ function testImpl<T extends DevServerTest>(
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from "${path.join(mainDir, "bun.app.ts")}";
+        import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
         import { fullGC } from "bun:jsc";
 
         const routes = appConfig.static ?? (appConfig.routes ??= {});
@@ -1448,6 +1685,7 @@ function testImpl<T extends DevServerTest>(
           BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1460,14 +1698,15 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
     }
-    // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
-    // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();
+    }
+    if (isStressTest) {
+      dev.stressTestEndurance = true;
     }
 
     await maybeWaitInteractive("start");
@@ -1499,27 +1738,19 @@ function testImpl<T extends DevServerTest>(
     await dev.gracefulExit();
   }
 
-  const name = `${
-    NODE_ENV === "development" //
-      ? Bun.enableANSIColors
-        ? " \x1b[35mDEV\x1b[0m"
-        : " DEV"
-      : Bun.enableANSIColors
-        ? "\x1b[36mPROD\x1b[0m"
-        : "PROD"
-  }:${basename}-${count}: ${description}`;
   try {
-    // TODO: resolve ci flakiness.
-    if (isCI && isWindows) {
-      return jest.test.skip(name, run);
+    if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
+      jest.test.todo(name, run);
+      return options;
     }
-
     jest.test(
       name,
       run,
-      interactive
-        ? interactive_timeout
-        : (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+      isStressTest
+        ? 11 * 60 * 1000
+        : interactive
+            ? interactive_timeout
+            : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
     );
     return options;
   } catch {
@@ -1552,6 +1783,61 @@ function logErr(err: any) {
     console.error(err.stackLine);
   } else {
     console.error(err);
+  }
+}
+
+// Loosely modelled after the widget system in @paperclover/console
+// Only works with a single log
+let hasTrailingLog = false;
+class TrailingLog {
+  lines = 0;
+  message = "";
+  realConsole;
+
+  constructor() {
+    if (hasTrailingLog) throw new Error("Only one trailing log is allowed");
+    hasTrailingLog = true;
+    this.realConsole = {};
+    console.log = this.#wrapLog("log");
+    console.error = this.#wrapLog("error");
+    console.warn = this.#wrapLog("warn");
+    console.info = this.#wrapLog("info");
+    console.debug = this.#wrapLog("debug");
+  }
+
+  #wrapLog(method: keyof Console) {
+    const m: Function = this.realConsole[method] = console[method];
+    return (...args: any[]) => {
+      if (this.lines > 0) {
+        process.stderr.write('\u001B[?2026h' + this.#clear());
+        this.realConsole[method](...args);
+        process.stderr.write(this.message + '\u001B[?2026l');
+      } else {
+        m.apply(console, args);
+      }
+    } 
+  }
+
+  #clear() {
+    return '\x1b[2K' + ("\x1b[1A\x1b[2K").repeat(this.lines) + '\r';
+  }
+
+  [Symbol.dispose] = () => {
+    if (this.lines > 0) {
+      process.stderr.write(this.#clear());
+    }
+    hasTrailingLog = false;
+    console.log = this.realConsole.log;
+    console.error = this.realConsole.error;
+    console.warn = this.realConsole.warn;
+    console.info = this.realConsole.info;
+    console.debug = this.realConsole.debug;
+  }
+
+  setMessage(message: string) {
+    this.message = message.trim() + "\n";
+    this.lines = this.message.split("\n").length - 1;
+    process.stderr.write('\u001B[?2026h'  + this.#clear() + this.message + '\u001B[?2026l');
   }
 }
 

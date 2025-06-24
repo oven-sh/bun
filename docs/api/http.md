@@ -61,6 +61,7 @@ Routes in `Bun.serve()` receive a `BunRequest` (which extends [`Request`](https:
 // Simplified for brevity
 interface BunRequest<T extends string> extends Request {
   params: Record<T, string>;
+  readonly cookies: CookieMap;
 }
 ```
 
@@ -325,7 +326,11 @@ Bun.serve({
 
 ### HTML imports
 
-To add a client-side single-page app, you can use an HTML import:
+Bun supports importing HTML files directly into your server code, enabling full-stack applications with both server-side and client-side code. HTML imports work in two modes:
+
+**Development (`bun --hot`):** Assets are bundled on-demand at runtime, enabling hot module replacement (HMR) for a fast, iterative development experience. When you change your frontend code, the browser automatically updates without a full page reload.
+
+**Production (`bun build`):** When building with `bun build --target=bun`, the `import index from "./index.html"` statement resolves to a pre-built manifest object containing all bundled client assets. `Bun.serve` consumes this manifest to serve optimized assets with zero runtime bundling overhead. This is ideal for deploying to production.
 
 ```ts
 import myReactSinglePageApp from "./index.html";
@@ -337,9 +342,9 @@ Bun.serve({
 });
 ```
 
-HTML imports don't just serve HTML. It's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser.
+HTML imports don't just serve HTML — it's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser. You can use this to build full-featured frontends with React, TypeScript, Tailwind CSS, and more.
 
-You can use this to build a full-featured frontend with React, TypeScript, Tailwind CSS, and more. Check out [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack) to learn more.
+For a complete guide on building full-stack applications with HTML imports, including detailed examples and best practices, see [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack).
 
 ### Practical example: REST API
 
@@ -933,6 +938,83 @@ const server = Bun.serve({
 ```
 
 Returns `null` for closed requests or Unix domain sockets.
+
+## Working with Cookies
+
+Bun provides a built-in API for working with cookies in HTTP requests and responses. The `BunRequest` object includes a `cookies` property that provides a `CookieMap` for easily accessing and manipulating cookies. When using `routes`, `Bun.serve()` automatically tracks `request.cookies.set` and applies them to the response.
+
+### Reading cookies
+
+Read cookies from incoming requests using the `cookies` property on the `BunRequest` object:
+
+```ts
+Bun.serve({
+  routes: {
+    "/profile": req => {
+      // Access cookies from the request
+      const userId = req.cookies.get("user_id");
+      const theme = req.cookies.get("theme") || "light";
+
+      return Response.json({
+        userId,
+        theme,
+        message: "Profile page",
+      });
+    },
+  },
+});
+```
+
+### Setting cookies
+
+To set cookies, use the `set` method on the `CookieMap` from the `BunRequest` object.
+
+```ts
+Bun.serve({
+  routes: {
+    "/login": req => {
+      const cookies = req.cookies;
+
+      // Set a cookie with various options
+      cookies.set("user_id", "12345", {
+        maxAge: 60 * 60 * 24 * 7, // 1 week
+        httpOnly: true,
+        secure: true,
+        path: "/",
+      });
+
+      // Add a theme preference cookie
+      cookies.set("theme", "dark");
+
+      // Modified cookies from the request are automatically applied to the response
+      return new Response("Login successful");
+    },
+  },
+});
+```
+
+`Bun.serve()` automatically tracks modified cookies from the request and applies them to the response.
+
+### Deleting cookies
+
+To delete a cookie, use the `delete` method on the `request.cookies` (`CookieMap`) object:
+
+```ts
+Bun.serve({
+  routes: {
+    "/logout": req => {
+      // Delete the user_id cookie
+      req.cookies.delete("user_id", {
+        path: "/",
+      });
+
+      return new Response("Logged out successfully");
+    },
+  },
+});
+```
+
+Deleted cookies become a `Set-Cookie` header on the response with the `maxAge` set to `0` and an empty `value`.
 
 ## Server Metrics
 

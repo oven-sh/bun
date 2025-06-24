@@ -76,7 +76,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -1627,7 +1627,7 @@ describe("should error with invalid options", async () => {
           requestCert: "invalid",
         },
       });
-    }).toThrow("Expected requestCert to be a boolean");
+    }).toThrow('The "requestCert" property must be of type boolean, got string');
   });
   it("rejectUnauthorized", () => {
     expect(() => {
@@ -1640,7 +1640,7 @@ describe("should error with invalid options", async () => {
           rejectUnauthorized: "invalid",
         },
       });
-    }).toThrow("Expected rejectUnauthorized to be a boolean");
+    }).toThrow('The "rejectUnauthorized" property must be of type boolean, got string');
   });
   it("lowMemoryMode", () => {
     expect(() => {
@@ -1773,7 +1773,7 @@ it("should be able to abrupt stop the server", async () => {
       await fetch(server.url).then(res => res.text());
       expect.unreachable();
     } catch (e) {
-      expect(e.code).toBe("ConnectionClosed");
+      expect(e.code).toBe("ECONNRESET");
     }
   }
 });
@@ -2171,4 +2171,25 @@ it("do the best effort to flush everything", async () => {
   });
   let response = await fetch(server.url);
   expect(await response.text()).toBe("bun");
+});
+
+it("#20283", async () => {
+  using server = Bun.serve({
+    routes: {
+      "/": async req => {
+        // calling clone() with no cookies should not crash
+        const cloned = req.clone();
+        return Response.json({
+          cookies: req.cookies,
+          clonedCookies: cloned.cookies,
+        });
+      },
+    },
+    port: 0,
+  });
+
+  const response = await fetch(server.url);
+  const json = await response.json();
+  // there should be no cookies and the clone should have succeeded
+  expect(json).toEqual({ cookies: {}, clonedCookies: {} });
 });

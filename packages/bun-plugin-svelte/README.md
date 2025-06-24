@@ -8,7 +8,7 @@ The official [Svelte](https://svelte.dev/) plugin for [Bun](https://bun.sh/).
 ## Installation
 
 ```sh
-bun add -D bun-plugin-svelte
+$ bun add -D bun-plugin-svelte
 ```
 
 ## Dev Server Usage
@@ -16,51 +16,24 @@ bun add -D bun-plugin-svelte
 `bun-plugin-svelte` integrates with Bun's [Fullstack Dev Server](https://bun.sh/docs/bundler/fullstack), giving you
 HMR when developing your Svelte app.
 
-```html
-<!-- index.html -->
-<html>
-  <head>
-    <script type="module" src="./index.ts"></script>
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
-</html>
+Start by registering it in your [bunfig.toml](https://bun.sh/docs/runtime/bunfig):
+
+```toml
+[serve.static]
+plugins = ["bun-plugin-svelte"]
 ```
 
-```ts
-// index.ts
+Then start your dev server:
 
-import { mount, unmount } from "svelte";
-import App from "./App.svelte";
-
-// mount the application entrypoint to the DOM
-const root = document.getElementById("root")!;
-const app = mount(App, { target: root });
+```
+$ bun index.html
 ```
 
-```svelte
-<!-- App.svelte -->
-
-<script lang="ts">
-  // out-of-the-box typescript support
-  let name: string = "Bun";
-</script>
-
-<main class="app">
-  <h1>Cookin up apps with {name}</h1>
-</main>
-
-<style>
-  h1 {
-      color: #ff3e00;
-      text-align: center;
-      font-size: 2em;
-  }
-</style>
-```
+See the [example](https://github.com/oven-sh/bun/tree/main/packages/bun-plugin-svelte/example) for a complete example.
 
 ## Bundler Usage
+
+`bun-plugin-svelte` lets you bundle Svelte components with [`Bun.build`](https://bun.sh/docs/bundler).
 
 ```ts
 // build.ts
@@ -70,7 +43,7 @@ import { SveltePlugin } from "bun-plugin-svelte"; // NOTE: not published to npm 
 Bun.build({
   entrypoints: ["src/index.ts"],
   outdir: "dist",
-  target: "browser", // use "bun" or "node" to use Svelte components server-side
+  target: "browser",
   sourcemap: true, // sourcemaps not yet supported
   plugins: [
     SveltePlugin({
@@ -84,3 +57,13 @@ Bun.build({
 
 `bun-plugin-svelte` does not yet support server-side imports (e.g. for SSR).
 This will be added in the near future.
+
+## Not Yet Supported
+
+Support for these features will be added in the near future
+
+- Server-side imports/rendering
+- Source maps
+- CSS extensions (e.g. tailwind) in `<style>` blocks
+- TypeScript-specific features (e.g. enums and namespaces). If you're using
+  TypeScript 5.8, consider enabling [`--erasableSyntaxOnly`](https://devblogs.microsoft.com/typescript/announcing-typescript-5-8-beta/#the---erasablesyntaxonly-option)

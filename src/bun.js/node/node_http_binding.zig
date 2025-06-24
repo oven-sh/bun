@@ -1,11 +1,5 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const Environment = bun.Environment;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
-const uv = bun.windows.libuv;
 
 pub fn getBunServerAllClosedPromise(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();

@@ -1,9 +1,9 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const BoringSSL = bun.BoringSSL.c;
-const X509 = @import("./x509.zig");
 const JSC = bun.JSC;
 const uws = bun.uws;
+const log = bun.Output.scoped(.SSLWrapper, true);
 
 /// Mimics the behavior of openssl.c in uSockets, wrapping data that can be received from any where (network, DuplexStream, etc)
 pub fn SSLWrapper(comptime T: type) type {
@@ -25,7 +25,9 @@ pub fn SSLWrapper(comptime T: type) type {
 
     return struct {
         const This = @This();
-        const BUFFER_SIZE = 16384;
+        // 64kb nice buffer size for SSL reads and writes, should be enough for most cases
+        // in reads we loop until we have no more data to read and in writes we loop until we have no more data to write/backpressure
+        const BUFFER_SIZE = 65536;
 
         handlers: Handlers,
         ssl: ?*BoringSSL.SSL,
@@ -33,7 +35,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
         flags: Flags = .{},
 
-        pub const Flags = packed struct {
+        pub const Flags = packed struct(u8) {
             handshake_state: HandshakeState = HandshakeState.HANDSHAKE_PENDING,
             received_ssl_shutdown: bool = false,
             sent_ssl_shutdown: bool = false,
@@ -96,10 +98,10 @@ pub fn SSLWrapper(comptime T: type) type {
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
             bun.BoringSSL.load();
 
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            const ctx_opts: uws.SocketContext.BunSocketContextOptions = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
+            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
             errdefer BoringSSL.SSL_CTX_free(ctx);
             return try This.initWithCTX(ctx, is_client, handlers);
         }
@@ -107,6 +109,12 @@ pub fn SSLWrapper(comptime T: type) type {
         pub fn start(this: *This) void {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             this.handlers.onOpen(this.handlers.ctx);
+            // start the handshake
+            this.handleTraffic();
+        }
+        pub fn startWithPayload(this: *This, payload: []const u8) void {
+            this.handlers.onOpen(this.handlers.ctx);
+            this.receiveData(payload);
             // start the handshake
             this.handleTraffic();
         }
@@ -180,10 +188,15 @@ pub fn SSLWrapper(comptime T: type) type {
         // Return if we have pending data to be read or write
         pub fn hasPendingData(this: *const This) bool {
             const ssl = this.ssl orelse return false;
-
             return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl)) > 0 or BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
         }
 
+        /// Return if we buffered data inside the BIO read buffer, not necessarily will return data to read
+        /// this dont reflect SSL_pending()
+        fn hasPendingRead(this: *const This) bool {
+            const ssl = this.ssl orelse return false;
+            return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
+        }
         // We sent or received a shutdown (closing or closed)
         pub fn isShutdown(this: *const This) bool {
             return this.flags.closed_notified or this.flags.received_ssl_shutdown or this.flags.sent_ssl_shutdown;
@@ -298,7 +311,7 @@ pub fn SSLWrapper(comptime T: type) type {
                 return .{};
             }
             const ssl = this.ssl orelse return .{};
-            return uws.us_ssl_socket_verify_error_from_ssl(ssl);
+            return ssl.getVerifyError();
         }
 
         /// Update the handshake state
@@ -382,18 +395,12 @@ pub fn SSLWrapper(comptime T: type) type {
 
             // read data from the input BIO
             while (true) {
+                log("handleReading", .{});
                 const ssl = this.ssl orelse return false;
 
-                const input = BoringSSL.SSL_get_rbio(ssl) orelse return true;
-
-                const pending = BoringSSL.BIO_ctrl_pending(input);
-                if (pending <= 0) {
-                    // no data to write
-                    break;
-                }
                 const available = buffer[read..];
                 const just_read = BoringSSL.SSL_read(ssl, available.ptr, @intCast(available.len));
-
+                log("just read {d}", .{just_read});
                 if (just_read <= 0) {
                     const err = BoringSSL.SSL_get_error(ssl, just_read);
                     BoringSSL.ERR_clear_error();
@@ -424,11 +431,13 @@ pub fn SSLWrapper(comptime T: type) type {
 
                         // flush the reading
                         if (read > 0) {
+                            log("triggering data callback (read {d})", .{read});
                             this.triggerDataCallback(buffer[0..read]);
                         }
                         this.triggerCloseCallback();
                         return false;
                     } else {
+                        log("wanna read/write just break", .{});
                         // we wanna read/write just break
                         break;
                     }
@@ -438,6 +447,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
                 read += @intCast(just_read);
                 if (read == buffer.len) {
+                    log("triggering data callback (read {d}) and resetting read buffer", .{read});
                     // we filled the buffer
                     this.triggerDataCallback(buffer[0..read]);
                     read = 0;
@@ -445,41 +455,45 @@ pub fn SSLWrapper(comptime T: type) type {
             }
             // we finished reading
             if (read > 0) {
+                log("triggering data callback (read {d})", .{read});
                 this.triggerDataCallback(buffer[0..read]);
             }
             return true;
         }
 
         fn handleWriting(this: *This, buffer: *[BUFFER_SIZE]u8) void {
+            var read: usize = 0;
             while (true) {
                 const ssl = this.ssl orelse return;
-
                 const output = BoringSSL.SSL_get_wbio(ssl) orelse return;
-                // read data from the output BIO
-                const pending = BoringSSL.BIO_ctrl_pending(output);
-                if (pending <= 0) {
-                    // no data to write
+                const available = buffer[read..];
+                const just_read = BoringSSL.BIO_read(output, available.ptr, @intCast(available.len));
+                if (just_read > 0) {
+                    read += @intCast(just_read);
+                    if (read == buffer.len) {
+                        this.triggerWannaWriteCallback(buffer[0..read]);
+                        read = 0;
+                    }
+                } else {
                     break;
                 }
-                // limit the read to the buffer size
-                const len = @min(pending, buffer.len);
-                const pending_buffer = buffer[0..len];
-                const read = BoringSSL.BIO_read(output, pending_buffer.ptr, len);
-                if (read > 0) {
-                    this.triggerWannaWriteCallback(buffer[0..@intCast(read)]);
-                }
+            }
+            if (read > 0) {
+                this.triggerWannaWriteCallback(buffer[0..read]);
             }
         }
 
         fn handleTraffic(this: *This) void {
+
             // always handle the handshake first
             if (this.updateHandshakeState()) {
                 // shared stack buffer for reading and writing
                 var buffer: [BUFFER_SIZE]u8 = undefined;
                 // drain the input BIO first
                 this.handleWriting(&buffer);
-                // drain the output BIO
-                if (this.handleReading(&buffer)) {
+
+                // drain the output BIO in loop, because read can trigger writing and vice versa
+                while (this.hasPendingRead() and this.handleReading(&buffer)) {
                     // read data can trigger writing so we need to handle it
                     this.handleWriting(&buffer);
                 }

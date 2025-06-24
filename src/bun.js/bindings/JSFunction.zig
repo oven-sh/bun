@@ -1,23 +1,12 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const Shimmer = JSC.Shimmer;
-const JSHostFunctionType = JSC.JSHostFunctionType;
+const JSHostFn = JSC.JSHostFn;
 const ZigString = JSC.ZigString;
 const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 
-pub const JSFunction = extern struct {
-    pub const shim = Shimmer("JSC", "JSFunction", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSFunction.h";
-    pub const name = "JSC::JSFunction";
-    pub const namespace = "JSC";
-
+pub const JSFunction = opaque {
     const ImplementationVisibility = enum(u8) {
         public,
         private,
@@ -33,23 +22,23 @@ pub const JSFunction = extern struct {
     const CreateJSFunctionOptions = struct {
         implementation_visibility: ImplementationVisibility = .public,
         intrinsic: Intrinsic = .none,
-        constructor: ?*const JSHostFunctionType = null,
+        constructor: ?*const JSHostFn = null,
     };
 
     extern fn JSFunction__createFromZig(
         global: *JSGlobalObject,
         fn_name: bun.String,
-        implementation: *const JSHostFunctionType,
+        implementation: *const JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
         intrinsic: Intrinsic,
-        constructor: ?*const JSHostFunctionType,
+        constructor: ?*const JSHostFn,
     ) JSValue;
 
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: JSC.JSHostZigFunction,
+        comptime implementation: JSC.JSHostFnZig,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -59,7 +48,7 @@ pub const JSFunction = extern struct {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            JSC.toJSHostFunction(implementation),
+            JSC.toJSHostFn(implementation),
             function_length,
             options.implementation_visibility,
             options.intrinsic,
@@ -67,8 +56,9 @@ pub const JSFunction = extern struct {
         );
     }
 
+    pub extern fn JSC__JSFunction__optimizeSoon(value: JSValue) void;
     pub fn optimizeSoon(value: JSValue) void {
-        cppFn("optimizeSoon", .{value});
+        JSC__JSFunction__optimizeSoon(value);
     }
 
     extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
@@ -77,12 +67,4 @@ pub const JSFunction = extern struct {
         var str: ZigString = undefined;
         return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
     }
-
-    pub const Extern = [_][]const u8{
-        "fromString",
-        "getName",
-        "displayName",
-        "calculatedDisplayName",
-        "optimizeSoon",
-    };
 };

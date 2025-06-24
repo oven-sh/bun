@@ -1,39 +1,31 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const logger = bun.logger;
 const File = bun.sys.File;
 
 const Install = @import("./install.zig");
 const Resolution = @import("./resolution.zig").Resolution;
 const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
 const Npm = @import("./npm.zig");
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 
 const Semver = bun.Semver;
 const String = Semver.String;
-const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
 
 const Lockfile = @import("./lockfile.zig");
 const LoadResult = Lockfile.LoadResult;
 
 const JSAst = bun.JSAst;
-const Expr = JSAst.Expr;
-const B = JSAst.B;
 const E = JSAst.E;
-const G = JSAst.G;
-const S = JSAst.S;
 
 const debug = Output.scoped(.migrate, false);
 
@@ -186,8 +178,7 @@ pub fn migrateNPMLockfile(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
-                &workspaces,
+            const workspace_packages_count = try workspaces.processNamesArray(
                 allocator,
                 &manager.workspace_package_json_cache,
                 log,
@@ -825,6 +816,10 @@ pub fn migrateNPMLockfile(
 
                                     break :resolved switch (res_version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+
+                                        // npm does not support catalogs
+                                        .catalog => return error.InvalidNPMLockfile,
+
                                         .npm, .dist_tag => res: {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
                                             // an npm dependency, but that case is so convoluted that it is not worth handling.

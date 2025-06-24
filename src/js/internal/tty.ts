@@ -150,7 +150,7 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   const TERM = env.TERM;
 
   if (TERM) {
-    if (/^xterm-256/.test(TERM) !== null) {
+    if (TERM.startsWith("xterm-256") !== null) {
       return COLORS_256;
     }
 

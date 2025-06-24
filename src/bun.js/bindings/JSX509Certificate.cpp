@@ -17,11 +17,8 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "JSCryptoKey.h"
 
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include "CryptoKeyEC.h"
-#include "CryptoKeyRSA.h"
 #include "openssl/evp.h"
 #include "JavaScriptCore/ObjectPrototype.h"
 #include "BunString.h"
@@ -30,31 +27,8 @@
 #include "wtf/text/ExternalStringImpl.h"
 #include <wtf/SIMDUTF.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-
-RefPtr<WebCore::CryptoKey> toCryptoKey(EVP_PKEY* pkey)
-{
-    auto type = EVP_PKEY_base_id(pkey);
-    unsigned usages = 0;
-    usages |= WebCore::CryptoKeyUsageSign;
-    usages |= WebCore::CryptoKeyUsageVerify;
-    usages |= WebCore::CryptoKeyUsageDeriveKey;
-    usages |= WebCore::CryptoKeyUsageDeriveBits;
-    usages |= WebCore::CryptoKeyUsageWrapKey;
-    usages |= WebCore::CryptoKeyUsageUnwrapKey;
-    usages |= WebCore::CryptoKeyUsageEncrypt;
-    usages |= WebCore::CryptoKeyUsageDecrypt;
-
-    if (type == EVP_PKEY_EC) {
-        return WebCore::CryptoKeyEC::create(WebCore::CryptoAlgorithmIdentifier::ECDH, WebCore::CryptoKeyEC::NamedCurve::P256, WebCore::CryptoKeyType::Public, WebCore::EvpPKeyPtr(pkey), true, usages);
-    } else if (type == EVP_PKEY_RSA) {
-        return WebCore::CryptoKeyRSA::create(WebCore::CryptoAlgorithmIdentifier::RSA_OAEP, WebCore::CryptoAlgorithmIdentifier::SHA_1, true, WebCore::CryptoKeyType::Public, WebCore::EvpPKeyPtr(pkey), true, usages);
-    } else if (type == EVP_PKEY_ED25519) {
-        return WebCore::CryptoKeyEC::create(WebCore::CryptoAlgorithmIdentifier::ECDH, WebCore::CryptoKeyEC::NamedCurve::P256, WebCore::CryptoKeyType::Public, WebCore::EvpPKeyPtr(pkey), true, usages);
-    }
-
-    EVP_PKEY_free(pkey);
-    return nullptr;
-}
+#include "CryptoUtil.h"
+#include "JSPublicKeyObject.h"
 
 namespace Bun {
 
@@ -135,14 +109,14 @@ static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
         data = std::span(reinterpret_cast<const uint8_t*>(view.span().data()), view.span().size());
     } else if (auto* typedArray = jsDynamicCast<JSArrayBufferView*>(arg)) {
-        if (UNLIKELY(typedArray->isDetached())) {
+        if (typedArray->isDetached()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "TypedArray is detached"_s);
             return {};
         }
         data = typedArray->span();
     } else if (auto* buffer = jsDynamicCast<JSArrayBuffer*>(arg)) {
         auto* impl = buffer->impl();
-        if (UNLIKELY(!impl)) {
+        if (!impl) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Buffer is detached"_s);
             return {};
         }
@@ -183,7 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
@@ -282,13 +256,13 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
         return nullptr;
     }
 
-    return create(vm, structure, globalObject, std::move(result.value));
+    return create(vm, structure, globalObject, WTFMove(result.value));
 }
 
 JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::X509Pointer&& cert)
 {
     auto* certificate = create(vm, structure);
-    certificate->m_x509 = std::move(cert);
+    certificate->m_x509 = WTFMove(cert);
     size_t size = i2d_X509(certificate->m_x509.get(), nullptr);
     certificate->m_extraMemorySizeForGC = size;
     vm.heap.reportExtraMemoryAllocated(certificate, size);
@@ -705,26 +679,16 @@ JSValue JSX509Certificate::publicKey()
     return m_publicKey.get(this);
 }
 
-bool JSX509Certificate::checkPrivateKey(JSGlobalObject* globalObject, EVP_PKEY* pkey)
+bool JSX509Certificate::checkPrivateKey(const KeyObject& keyObject)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!pkey)
-        return false;
-
-    return view().checkPrivateKey(ncrypto::EVPKeyPointer(pkey));
+    const auto& key = keyObject.asymmetricKey();
+    return view().checkPrivateKey(key);
 }
 
-bool JSX509Certificate::verify(JSGlobalObject* globalObject, EVP_PKEY* pkey)
+bool JSX509Certificate::verify(const KeyObject& keyObject)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!pkey)
-        return false;
-
-    return view().checkPublicKey(ncrypto::EVPKeyPointer(pkey));
+    const auto& key = keyObject.asymmetricKey();
+    return view().checkPublicKey(key);
 }
 
 // This one doesn't depend on a JSX509Certificate object
@@ -1063,24 +1027,20 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
     return object;
 }
 
-JSValue JSX509Certificate::computePublicKey(ncrypto::X509View view, JSGlobalObject* globalObject)
+JSValue JSX509Certificate::computePublicKey(ncrypto::X509View view, JSGlobalObject* lexicalGlobalObject)
 {
-    VM& vm = globalObject->vm();
+    VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto result = view.getPublicKey();
     if (!result) {
-        throwBoringSSLError(vm, scope, globalObject, result.error.value_or(0));
+        throwCryptoError(lexicalGlobalObject, scope, result.error.value_or(0));
         return {};
     }
 
-    RefPtr<WebCore::CryptoKey> key = toCryptoKey(result.value.release());
-    if (!key) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to convert public key to CryptoKey"_s);
-        return {};
-    }
-
-    return toJSNewlyCreated(globalObject, defaultGlobalObject(globalObject), key.releaseNonNull());
+    auto handle = KeyObject::create(CryptoKeyType::Public, WTFMove(result.value));
+    return JSPublicKeyObject::create(vm, globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject), lexicalGlobalObject, WTFMove(handle));
 }
 
 JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
@@ -1124,6 +1084,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
             array->push(globalObject, jsString(vm, value));
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, 0, jsString(vm, value));
             object->putDirect(vm, identifier, array);
         }

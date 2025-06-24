@@ -42,8 +42,9 @@ public:
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
         auto* thisObject = jsEventEmitterCastFast(vm, &lexicalGlobalObject, thisValue);
-        if (UNLIKELY(!thisObject))
+        if (!thisObject) [[unlikely]] {
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
+        }
 
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }

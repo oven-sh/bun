@@ -105,6 +105,7 @@ devTest("import.meta.hot.accept patches imports", {
   },
 });
 devTest("import.meta.hot.accept specifier", {
+  timeoutMultiplier: 3,
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["a.ts"],
@@ -292,22 +293,23 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessage("Name updated: Bob");
 
     // Test updating both files
-    await Promise.all([
-      dev.write(
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
         "counter.ts",
         `
           export const count = 3;
         `,
-      ),
-      dev.write(
+      );
+      await dev.write(
         "name.ts",
         `
           export const name = "Charlie";
         `,
-      ),
-    ]);
+      );
+    }
 
-    await c.expectMessage("Counter updated: 3", "Name updated: Charlie");
+    await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
 devTest("import.meta.hot.data persistence", {

@@ -6,8 +6,32 @@ export interface Frame {
 }
 
 const CHROME_IE_STACK_REGEXP = /^\s*at .*(\S+:\d+|\(native\))/m;
-const SAFARI_NATIVE_CODE_REGEXP = /^(eval@)?(\[native code])?$/;
 const LOCATION_REGEXP = /(.+?)(?::(\d+))?(?::(\d+))?$/;
+
+/// A map of blob URLs to a filepath that the server can understand.
+export interface SourceMapURL {
+  id: string;
+  url: string;
+  /**
+   * Starts at the number of modules in this. As modules are replaced, this is
+   * decremented. When it reaches 0, the blob is eligible for garbage
+   * collection.
+   */
+  refs: number;
+  /**
+   * In bytes.
+   */
+  size: number;
+}
+const blobToSourceMap = new Map<string, SourceMapURL>();
+const gcBlobs: SourceMapURL[] = [];
+/**
+ * Even if a module got replaced, it isn't safe to forget about it's object URL,
+ * because a callback created by it could still be in circulation. To avoid the
+ * browser tab eating infinite memory, when more than `gcSize` bytes are
+ * unreachable, the oldest blobs will get freed.
+ */
+let gcSize = 1024 * 1024 * 2; // 2MB
 
 /**
  * Modern port of the error-stack-parser library
@@ -48,11 +72,11 @@ function parseV8OrIE(stack: string): Frame[] {
       let fileName = ["eval", "<anonymous>"].indexOf(locationParts[0]) > -1 ? undefined : locationParts[0];
 
       return {
-        fn: functionName,
+        fn: functionName || "unknown",
         file: fileName,
         line: 0 | locationParts[1],
         col: 0 | locationParts[2],
-      };
+      } satisfies Frame;
     });
 }
 
@@ -96,5 +120,66 @@ function extractLocation(urlLike: string) {
   }
 
   const parts: any = LOCATION_REGEXP.exec(urlLike.replace(/[()]/g, ""));
-  return [parts[1], parts[2] || undefined, parts[3] || undefined];
+  return [remapFileName(parts[1]), parts[2] || undefined, parts[3] || undefined];
+}
+
+function remapFileName(fileName: string) {
+  if (fileName.startsWith("blob:")) {
+    const sourceMapURL = blobToSourceMap.get(fileName);
+    if (sourceMapURL) {
+      return location.origin + "/_bun/client/hmr-" + sourceMapURL.id + ".js";
+    }
+  }
+  return fileName;
+}
+
+export function addMapping(blobUrl: string, value: SourceMapURL) {
+  DEBUG.ASSERT(!blobToSourceMap.has(blobUrl));
+  blobToSourceMap.set(blobUrl, value);
+}
+
+export function derefMapping(value: SourceMapURL) {
+  const refs = --value.refs;
+  if (refs <= 0) {
+    if (value.size > gcSize) {
+      const url = value.url;
+      revokeObjectURL(value);
+      blobToSourceMap.delete(url);
+    } else {
+      gcBlobs.push(value);
+      // Count up to gcSize, then delete old blobs
+      let acc = 0;
+      for (let i = gcBlobs.length - 1; i >= 0; i--) {
+        const size = gcBlobs[i].size;
+        acc += size;
+        if (acc > gcSize) {
+          acc -= size;
+          revokeObjectURL(gcBlobs[i]);
+          gcBlobs.splice(i, 1);
+        }
+      }
+    }
+  }
+}
+
+export function revokeObjectURL(value: SourceMapURL) {
+  URL.revokeObjectURL(value.url);
+  // TODO: notify the server that the source map is no longer needed
+}
+
+// These methods are exported for testing only
+
+export function configureSourceMapGCSize(size: number) {
+  gcSize = size;
+}
+
+export function clearDisconnectedSourceMaps() {
+  for (const sourceMap of blobToSourceMap.values()) {
+    sourceMap.refs = 1;
+    derefMapping(sourceMap);
+  }
+}
+
+export function getKnownSourceMaps() {
+  return { blobToSourceMap, gcBlobs };
 }

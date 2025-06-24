@@ -618,7 +618,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
         return {};
     }
     vm.dateCache.resetIfNecessarySlow();
-    WTF::Vector<UChar, 32> buffer;
+    WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());
     return JSValue::encode(jsString(vm, timeZoneString));

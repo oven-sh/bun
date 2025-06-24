@@ -3193,7 +3193,7 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
             auto* global = init.owner;
             auto& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto scope = DECLARE_CATCH_SCOPE(vm);
 
             // if we get the termination exception, we'd still like to set a non-null Map so that
             // we don't segfault

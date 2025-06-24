@@ -1893,6 +1893,31 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
+    void** data,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    // In Node.js, napi_create_buffer is uninitialized memory.
+    auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    if (data != nullptr) {
+        // Node.js' code looks like this:
+        //    *data = node::Buffer::Data(buffer);
+        // That means they unconditionally update the data pointer.
+        *data = length > 0 ? uint8Array->typedVector() : nullptr;
+    }
+
+    *result = toNapi(uint8Array, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,

@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 describe("dns.prefetch", () => {
   it("should prefetch", async () => {
     const currentStats = dns.getCacheStats();
-    dns.prefetch("example.com");
+    dns.prefetch("example.com", 80);
     await Bun.sleep(32);
 
     // Must set keepalive: false to ensure it doesn't reuse the socket.

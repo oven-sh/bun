@@ -32,7 +32,7 @@ pub const Start = union(Tag) {
     pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
         switch (this) {
             .empty, .ready => {
-                return .undefined;
+                return .js_undefined;
             },
             .chunk_size => |chunk| {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
@@ -47,7 +47,7 @@ pub const Start = union(Tag) {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
-                return .undefined;
+                return .js_undefined;
             },
         }
     }
@@ -81,7 +81,7 @@ pub const Start = union(Tag) {
                 var chunk_size: Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.getOwn(globalThis, "asUint8Array")) |val| {
+                if (try value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;
@@ -437,6 +437,25 @@ pub const Result = union(Tag) {
             };
             this.state = .pending;
             return prom;
+        }
+
+        pub fn runOnNextTick(this: *Pending) void {
+            if (this.state != .pending) return;
+            const vm = JSC.VirtualMachine.get();
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            const clone = bun.create(bun.default_allocator, Pending, this.*);
+            this.state = .none;
+            this.result = .{ .done = {} };
+            vm.eventLoop().enqueueTask(JSC.Task.init(clone));
+        }
+
+        pub fn runFromJSThread(this: *Pending) void {
+            this.run();
+
+            bun.destroy(this);
         }
 
         pub const Future = union(enum) {

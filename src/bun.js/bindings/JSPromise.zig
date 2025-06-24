@@ -189,17 +189,22 @@ pub const JSPromise = opaque {
             args: Args,
 
             pub fn call(this: *@This(), g: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(g, @call(.auto, Fn, this.args));
+                return JSC.toJSHostCall(g, @src(), Fn, this.args);
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src(), .enabled);
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
-        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        return promise;
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
         if (value == .zero) {
-            return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
+            return resolvedPromiseValue(globalObject, .js_undefined);
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }
@@ -257,6 +262,9 @@ pub const JSPromise = opaque {
     /// The value can be another Promise
     /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src(), .enabled);
+        defer scope.deinit();
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -266,6 +274,7 @@ pub const JSPromise = opaque {
         }
 
         JSC__JSPromise__resolve(this, globalThis, value);
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {

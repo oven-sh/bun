@@ -24,7 +24,7 @@ const ArgsSlice = struct {
     start: u32,
     end: u32,
 
-    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) JSValue {
+    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) bun.JSError!JSValue {
         return this.array.getIndex(globalThis, this.start + i);
     }
 };
@@ -157,8 +157,8 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
     const exec_argv = bun.api.node.process.getExecArgv(globalThis);
     const argv = bun.api.node.process.getArgv(globalThis);
     if (argv.isArray() and exec_argv.isArray()) {
-        var iter = exec_argv.arrayIterator(globalThis);
-        while (iter.next()) |item| {
+        var iter = try exec_argv.arrayIterator(globalThis);
+        while (try iter.next()) |item| {
             if (item.isString()) {
                 const str = try item.toBunString(globalThis);
                 defer str.deref();
@@ -166,16 +166,16 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
                     return .{
                         .array = argv,
                         .start = 1,
-                        .end = @intCast(argv.getLength(globalThis)),
+                        .end = @intCast(try argv.getLength(globalThis)),
                     };
                 }
             }
         }
-        return .{ .array = argv, .start = 2, .end = @intCast(argv.getLength(globalThis)) };
+        return .{ .array = argv, .start = 2, .end = @intCast(try argv.getLength(globalThis)) };
     }
 
     return .{
-        .array = .undefined,
+        .array = .js_undefined,
         .start = 0,
         .end = 0,
     };
@@ -285,7 +285,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         // values[long_option] starts out not present,
         // first value is added as new array [new_value],
         // subsequent values are pushed to existing array.
-        if (values.getOwn(globalThis, key)) |value_list| {
+        if (try values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
@@ -316,10 +316,10 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         try validators.validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
 
         // type field is required
-        const option_type = obj.getOwn(globalThis, "type") orelse JSValue.undefined;
+        const option_type: JSValue = try obj.getOwn(globalThis, "type") orelse .js_undefined;
         option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
 
-        if (obj.getOwn(globalThis, "short")) |short_option| {
+        if (try obj.getOwn(globalThis, "short")) |short_option| {
             try validators.validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
@@ -329,13 +329,13 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             option.short_name = short_option_str;
         }
 
-        if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
+        if (try obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
                 option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
             }
         }
 
-        if (obj.getOwn(globalThis, "default")) |default_value| {
+        if (try obj.getOwn(globalThis, "default")) |default_value| {
             if (!default_value.isUndefined()) {
                 switch (option.type) {
                     .string => {
@@ -382,7 +382,7 @@ fn tokenizeArgs(
     const num_args: u32 = args.end - args.start;
     var index: u32 = 0;
     while (index < num_args) : (index += 1) {
-        const arg_ref: ValueRef = ValueRef{ .jsvalue = args.get(globalThis, index) };
+        const arg_ref: ValueRef = ValueRef{ .jsvalue = try args.get(globalThis, index) };
         const arg = arg_ref.asBunString(globalThis);
 
         const token_rawtype = classifyToken(arg, options);
@@ -401,7 +401,7 @@ fn tokenizeArgs(
                 while (index < num_args) : (index += 1) {
                     try ctx.handleToken(.{ .positional = .{
                         .index = index,
-                        .value = ValueRef{ .jsvalue = args.get(globalThis, index) },
+                        .value = ValueRef{ .jsvalue = try args.get(globalThis, index) },
                     } });
                 }
                 break; // Finished processing args, leave while loop.
@@ -413,11 +413,11 @@ fn tokenizeArgs(
                 const short_option = arg.substringWithLen(1, 2);
                 const option_idx = findOptionByShortName(short_option, options);
                 const option_type: OptionValueType = if (option_idx) |idx| options[idx].type else .boolean;
-                var value = ValueRef{ .jsvalue = JSValue.undefined };
+                var value = ValueRef{ .jsvalue = .js_undefined };
                 var has_inline_value = true;
                 if (option_type == .string and index + 1 < num_args) {
                     // e.g. '-f', "bar"
-                    value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
+                    value = ValueRef{ .jsvalue = try args.get(globalThis, index + 1) };
                     has_inline_value = false;
                     log("   (lone_short_option consuming next token as value)", .{});
                 }
@@ -447,11 +447,11 @@ fn tokenizeArgs(
                         // Boolean option, or last short in group. Well formed.
 
                         // Immediately process as a lone_short_option (e.g. from input -abc, process -a -b -c)
-                        var value = ValueRef{ .jsvalue = JSValue.undefined };
+                        var value = ValueRef{ .jsvalue = .js_undefined };
                         var has_inline_value = true;
                         if (option_type == .string and index + 1 < num_args) {
                             // e.g. '-f', "bar"
-                            value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
+                            value = ValueRef{ .jsvalue = try args.get(globalThis, index + 1) };
                             has_inline_value = false;
                             log("   (short_option_group short option consuming next token as value)", .{});
                         }
@@ -520,13 +520,13 @@ fn tokenizeArgs(
                 var value: ?JSValue = null;
                 if (option_type == .string and index + 1 < num_args and !negative) {
                     // e.g. '--foo', "bar"
-                    value = args.get(globalThis, index + 1);
+                    value = try args.get(globalThis, index + 1);
                     log("  (consuming next as value)", .{});
                 }
 
                 try ctx.handleToken(.{ .option = .{
                     .index = index,
-                    .value = ValueRef{ .jsvalue = value orelse JSValue.jsUndefined() },
+                    .value = ValueRef{ .jsvalue = value orelse .js_undefined },
                     .inline_value = (value == null),
                     .name = ValueRef{ .bunstr = long_option },
                     .parse_type = .lone_long_option,
@@ -635,7 +635,7 @@ const ParseArgsState = struct {
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     var value = token.value.asJSValue(globalThis);
                     obj.put(globalThis, ZigString.static("value"), value);
-                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) JSValue.undefined else JSValue.jsBoolean(token.inline_value));
+                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
@@ -665,23 +665,23 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const config = if (config_value.isUndefined()) null else config_value;
 
     // Phase 0.A: Get and validate type of input args
-    const config_args: JSValue = if (config) |c| c.getOwn(globalThis, "args") orelse .undefined else .undefined;
+    const config_args: JSValue = if (config) |c| try c.getOwn(globalThis, "args") orelse .js_undefined else .js_undefined;
     const args: ArgsSlice = if (!config_args.isUndefinedOrNull()) args: {
         try validators.validateArray(globalThis, config_args, "args", .{}, null);
         break :args .{
             .array = config_args,
             .start = 0,
-            .end = @intCast(config_args.getLength(globalThis)),
+            .end = @intCast(try config_args.getLength(globalThis)),
         };
     } else try getDefaultArgs(globalThis);
 
     // Phase 0.B: Parse and validate config
 
-    const config_strict: JSValue = (if (config) |c| c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
-    var config_allow_positionals: JSValue = if (config) |c| c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
-    const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
-    const config_allow_negative: JSValue = if (config) |c| c.getOwn(globalThis, "allowNegative") orelse .false else .false;
-    const config_options: JSValue = if (config) |c| c.getOwn(globalThis, "options") orelse .undefined else .undefined;
+    const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
+    var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
+    const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
+    const config_allow_negative: JSValue = if (config) |c| try c.getOwn(globalThis, "allowNegative") orelse .false else .false;
+    const config_options: JSValue = if (config) |c| try c.getOwn(globalThis, "options") orelse .js_undefined else .js_undefined;
 
     const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
@@ -714,7 +714,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
     const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
     const positionals = try JSC.JSValue.createEmptyArray(globalThis, 0);
-    const tokens = if (return_tokens) try JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+    const tokens: JSValue = if (return_tokens) try JSC.JSValue.createEmptyArray(globalThis, 0) else .js_undefined;
 
     var state = ParseArgsState{
         .globalThis = globalThis,
@@ -739,7 +739,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     for (option_defs.items) |option| {
         if (option.default_value) |default_value| {
             if (!option.long_name.eqlComptime("__proto__")) {
-                if (state.values.getOwn(globalThis, option.long_name) == null) {
+                if (try state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{}\" to default value", .{option.long_name});
                     state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }

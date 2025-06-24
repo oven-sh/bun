@@ -27,9 +27,9 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                     switch (bun.sys.File.readFrom(manager.root_dir.fd, "package.json", allocator)) {
                         .err => {},
                         .result => |str| {
-                            const source = logger.Source.initPathString("package.json", str);
+                            const source = &logger.Source.initPathString("package.json", str);
                             var log = logger.Log.init(allocator);
-                            const json = JSON.parse(&source, &log, allocator, false) catch break :from_package_json;
+                            const json = JSON.parse(source, &log, allocator, false) catch break :from_package_json;
                             if (json.getStringCloned(allocator, "name") catch null) |name| {
                                 if (name.len > 0) {
                                     break :brk name;
@@ -99,8 +99,8 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("view.json", response_buf.list.items);
-    var json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("view.json", response_buf.list.items);
+    var json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         Output.err(err, "failed to parse response body as JSON", .{});
         Global.crash();
     };
@@ -241,7 +241,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 @TypeOf(&package_json_writer),
                 &package_json_writer,
                 value,
-                &source,
+                source,
                 .{
                     .mangled_props = null,
                 },
@@ -277,7 +277,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             @TypeOf(&package_json_writer),
             &package_json_writer,
             manifest,
-            &source,
+            source,
             .{
                 .mangled_props = null,
                 .indent = .{

@@ -607,4 +607,23 @@ error: Hello World`,
       },
     },
   });
+  itBundled("compile/BunBeBunEnvVar", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("This is compiled code");
+      `,
+    },
+    run: [
+      {
+        stdout: "This is compiled code",
+      },
+      {
+        env: { BUN_BE_BUN: "1" },
+        validate({ stdout }) {
+          expect(stdout).not.toContain("This is compiled code");
+        },
+      },
+    ],
+  });
 });

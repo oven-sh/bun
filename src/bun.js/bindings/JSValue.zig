@@ -1150,9 +1150,9 @@ pub const JSValue = enum(i64) {
             null;
     }
 
-    extern fn JSC__JSValue__isTerminationException(this: JSValue, vm: *VM) bool;
-    pub fn isTerminationException(this: JSValue, vm: *VM) bool {
-        return JSC__JSValue__isTerminationException(this, vm);
+    extern fn JSC__JSValue__isTerminationException(this: JSValue) bool;
+    pub fn isTerminationException(this: JSValue) bool {
+        return JSC__JSValue__isTerminationException(this);
     }
 
     extern fn JSC__JSValue__toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void;

@@ -1298,6 +1298,14 @@ const Writable = union(enum) {
                         subprocess.flags.deref_on_stdin_destroyed = true;
                         subprocess.flags.has_stdin_destructor_called = false;
 
+                        if (stdio.* == .readable_stream) {
+                            const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                            if (assign_result.toError()) |err| {
+                                pipe.deref();
+                                return event_loop.global.throwValue(err);
+                            }
+                        }
+
                         return Writable{
                             .pipe = pipe,
                         };
@@ -2481,7 +2489,7 @@ pub fn spawnMaybeSync(
         ipc_data.writeVersionPacket(globalThis);
     }
 
-    if (subprocess.stdin == .pipe) {
+    if (subprocess.stdin == .pipe and promise_for_stream == .zero) {
         subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 

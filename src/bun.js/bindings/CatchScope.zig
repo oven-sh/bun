@@ -150,6 +150,14 @@ pub fn clearException(self: *CatchScope) void {
     CatchScope__clearException(&self.bytes);
 }
 
+pub fn tryTakeException(self: *CatchScope) ?*jsc.Exception {
+    if (self.exception() != null) {
+        self.clearException();
+        return self.exception();
+    }
+    return null;
+}
+
 pub fn deinit(self: *CatchScope) void {
     if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return;

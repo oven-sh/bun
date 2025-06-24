@@ -520,6 +520,7 @@ src/import_record.zig
 src/ini.zig
 src/install/bin.zig
 src/install/dependency.zig
+src/install/external.zig
 src/install/extract_tarball.zig
 src/install/hoisted_install.zig
 src/install/install_binding.zig

@@ -553,6 +553,7 @@ src/install/patch_install.zig
 src/install/repository.zig
 src/install/resolution.zig
 src/install/resolvers/folder_resolver.zig
+src/install/Task.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig

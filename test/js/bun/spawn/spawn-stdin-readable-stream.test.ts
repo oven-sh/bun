@@ -1,7 +1,6 @@
 import { spawn } from "bun";
-import { heapStats } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {

@@ -168,6 +168,7 @@ test/js/bun/shell/commands/seq.test.ts
 test/js/bun/shell/commands/true.test.ts
 test/js/bun/shell/commands/which.test.ts
 test/js/bun/shell/commands/yes.test.ts
+test/js/bun/shell/commands/ls.test.ts
 test/js/bun/shell/env.positionals.test.ts
 test/js/bun/shell/exec.test.ts
 test/js/bun/shell/file-io.test.ts

@@ -1048,11 +1048,6 @@ pub const napi_async_work = struct {
     status: std.atomic.Value(Status) = .init(.pending),
     scheduled: bool = false,
     poll_ref: Async.KeepAlive = .{},
-    ref_count: RefCount,
-
-    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
 
     pub const Status = enum(u32) {
         pending = 0,
@@ -1061,7 +1056,7 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn new(env: *NapiEnv, execute: napi_async_execute_callback, complete: ?napi_async_complete_callback, data: ?*anyopaque) !*napi_async_work {
+    pub fn new(env: *NapiEnv, execute: napi_async_execute_callback, complete: ?napi_async_complete_callback, data: ?*anyopaque) *napi_async_work {
         const global = env.toJS();
 
         const work = bun.new(napi_async_work, .{
@@ -1071,13 +1066,11 @@ pub const napi_async_work = struct {
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
             .data = data,
-            .ref_count = .initExactRefs(1),
         });
         return work;
     }
 
     pub fn destroy(this: *napi_async_work) void {
-        bun.debugAssert(!this.poll_ref.isActive()); // we must always have unref'd it.
         bun.destroy(this);
     }
 
@@ -1109,12 +1102,10 @@ pub const napi_async_work = struct {
         return this.status.cmpxchgStrong(.pending, .cancelled, .seq_cst, .seq_cst) == null;
     }
 
-    fn runFromJSWithError(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) bun.JSError!void {
-        this.ref();
-        defer {
-            this.poll_ref.unref(vm);
-            this.deref();
-        }
+    pub fn runFromJS(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) void {
+        // Note: the "this" value here may already be freed by the user in `complete`
+        var poll_ref = this.poll_ref;
+        defer poll_ref.unref(vm);
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         const complete = this.complete orelse {
@@ -1137,15 +1128,8 @@ pub const napi_async_work = struct {
         );
 
         if (global.hasException()) {
-            return error.JSError;
+            global.reportActiveExceptionAsUnhandled(error.JSError);
         }
-    }
-
-    pub fn runFromJS(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) void {
-        this.runFromJSWithError(vm, global) catch |e| {
-            // Note: the "this" value here may already be freed.
-            global.reportActiveExceptionAsUnhandled(e);
-        };
     }
 };
 pub const napi_threadsafe_function = *ThreadSafeFunction;
@@ -1296,9 +1280,7 @@ pub export fn napi_create_async_work(
     const execute = execute_ orelse {
         return env.invalidArg();
     };
-    result.* = napi_async_work.new(env, execute, complete, data) catch {
-        return env.genericFailure();
-    };
+    result.* = napi_async_work.new(env, execute, complete, data);
     return env.ok();
 }
 pub export fn napi_delete_async_work(env_: napi_env, work_: ?*napi_async_work) napi_status {
@@ -1310,7 +1292,7 @@ pub export fn napi_delete_async_work(env_: napi_env, work_: ?*napi_async_work) n
         return env.invalidArg();
     };
     if (comptime bun.Environment.allow_assert) bun.assert(env.toJS() == work.global);
-    work.deref();
+    work.destroy();
     return env.ok();
 }
 pub export fn napi_queue_async_work(env_: napi_env, work_: ?*napi_async_work) napi_status {

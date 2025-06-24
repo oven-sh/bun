@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
+  isBroken,
   isMacOS,
   isPosix,
   isWindows,

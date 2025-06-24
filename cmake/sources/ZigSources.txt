@@ -545,6 +545,7 @@ src/install/NetworkTask.zig
 src/install/npm.zig
 src/install/PackageInstall.zig
 src/install/PackageInstaller.zig
+src/install/PackageManager.zig
 src/install/PackageManager/CommandLineArguments.zig
 src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerOptions.zig

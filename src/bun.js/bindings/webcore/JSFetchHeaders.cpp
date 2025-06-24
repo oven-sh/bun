@@ -131,6 +131,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 
+    if (!argument0.value() || argument0.value().isUndefined()) {
+        auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, FetchHeaders::create());
+        if constexpr (IsExceptionOr<decltype(jsValue)>)
+            RETURN_IF_EXCEPTION(throwScope, {});
+        setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSValue::encode(jsValue);
+    }
+
     auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
 
     if (argument0.value() && !argument0.value().isUndefined()) {

@@ -1908,6 +1908,9 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     NAPI_RETURN_IF_EXCEPTION(env);
 
     if (data != nullptr) {
+        // Node.js' code looks like this:
+        //    *data = node::Buffer::Data(buffer);
+        // That means they unconditionally update the data pointer.
         *data = length > 0 ? uint8Array->typedVector() : nullptr;
     }
 

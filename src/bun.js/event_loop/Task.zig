@@ -81,6 +81,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellTouchTask,
     Stat,
     StatFS,
+    StreamPending,
     Symlink,
     ThreadSafeFunction,
     TimeoutObject,
@@ -489,6 +490,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
                 any.runFromJSThread();
             },
+            @field(Task.Tag, @typeName(StreamPending)) => {
+                var any: *StreamPending = task.get(StreamPending).?;
+                any.runFromJSThread();
+            },
 
             .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -573,6 +578,7 @@ const Unlink = AsyncFS.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
 const NativeZstd = JSC.API.NativeZstd;
+const StreamPending = JSC.WebCore.streams.Result.Pending;
 
 const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;

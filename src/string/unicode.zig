@@ -1688,6 +1688,7 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
     return copyUTF16IntoUTF8Impl(buf, Type, utf16, false);
 }
 
+/// See comment on `copyUTF16IntoUTF8WithBufferImpl` on what `allow_truncated_utf8_sequence` should do
 pub fn copyUTF16IntoUTF8Impl(buf: []u8, comptime Type: type, utf16: Type, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {

@@ -79,7 +79,7 @@ pub const UTF8Fallback = struct {
 
         if (stack_size >= str.len * 2) {
             var buf: [stack_size]u8 = undefined;
-            const copied = bun.strings.copyUTF16IntoUTF8(&buf, []const u16, str);
+            const copied = bun.strings.copyUTF16IntoUTF8Impl(&buf, []const u16, str, true);
             bun.assert(copied.written <= stack_size);
             bun.assert(copied.read <= stack_size);
             if (input.isDone()) {

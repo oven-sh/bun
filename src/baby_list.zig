@@ -389,7 +389,18 @@ pub fn BabyList(comptime Type: type) type {
                     const orig_len = list_.items.len;
 
                     const slice_ = list_.items.ptr[orig_len..list_.capacity];
-                    const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len);
+                    const result = strings.copyUTF16IntoUTF8WithBufferImpl(
+                        slice_,
+                        []const u16,
+                        remain,
+                        trimmed,
+                        out_len,
+                        // FIXME: Unclear whether or not we should allow
+                        //        incomplete UTF-8 sequences. If you are solving a bug
+                        //        with invalid UTF-8 sequences, this may be the
+                        //        culprit...
+                        true,
+                    );
                     remain = remain[result.read..];
                     list_.items.len += @as(usize, result.written);
                     if (result.read == 0 or result.written == 0) break;

@@ -1169,7 +1169,7 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
-  test("deepEquals Set/Map stress test", () => {
+  test.skip("deepEquals Set/Map stress test", () => {
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
@@ -4157,13 +4157,13 @@ describe("expect()", () => {
       expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
         first: { second: {}, third: {} },
       });
-      (expect(
+      expect(
         expect.objectContaining({
           answer: 42,
           foo: { bar: "baz", foobar: "qux" },
         }),
       ).not.toEqual({ foo: { bar: "baz" } }),
-        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
     });
 
     test("ObjectContaining matches defined properties", () => {

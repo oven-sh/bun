@@ -1108,7 +1108,14 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void {
+        var scope: bun.JSC.CatchScope = undefined;
+        scope.init(global, @src(), .assertions_only);
+        defer scope.deinit();
         JSC__JSValue__getClassName(this, global, ret);
+        if (scope.exception() != null) {
+            scope.clearException();
+            ret.* = ZigString.Empty;
+        }
     }
 
     pub inline fn isCell(this: JSValue) bool {

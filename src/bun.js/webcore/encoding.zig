@@ -357,7 +357,12 @@ pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, compt
 
     switch (comptime encoding) {
         .utf8 => {
-            return strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written;
+            return strings.copyUTF16IntoUTF8Impl(
+                to[0..to_len],
+                []const u16,
+                input[0..len],
+                allow_partial_write,
+            ).written;
         },
         .latin1, .ascii, .buffer => {
             const out = @min(len, to_len);

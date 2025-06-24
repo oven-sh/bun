@@ -1685,6 +1685,10 @@ pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
 ///
 /// This may not encode everything if `buf` is not big enough.
 pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
+    return copyUTF16IntoUTF8Impl(buf, Type, utf16, false);
+}
+
+pub fn copyUTF16IntoUTF8Impl(buf: []u8, comptime Type: type, utf16: Type, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
             if (utf16.len == 0)
@@ -1698,14 +1702,33 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
             else
                 buf.len;
 
-            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len);
+            return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, trimmed, out_len, allow_truncated_utf8_sequence);
         }
     }
 
-    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len);
+    return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, utf16, utf16.len, allow_truncated_utf8_sequence);
 }
 
 pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize) EncodeIntoResult {
+    return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, trimmed, out_len, false);
+}
+
+/// Q: What does the `allow_truncated_utf8_sequence` parameter do?
+/// A: If the output buffer can't fit everything, this function will write
+///    incomplete utf-8 byte sequences if `allow_truncated_utf8_sequence` is
+///    enabled.
+///
+/// Q: Doesn't that mean this function would output invalid utf-8? Why would you
+///    ever want to do that?
+/// A: Yes. This is needed for writing a UTF-16 string to a node Buffer that
+///    doesn't have enough space for all the bytes:
+///
+/// ```js
+/// let buffer = Buffer.allocUnsafe(1);
+/// buffer.fill("\u0222");
+/// expect(buffer[0]).toBe(0xc8);
+/// ```
+pub fn copyUTF16IntoUTF8WithBufferImpl(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
@@ -1740,9 +1763,55 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
 
         const width: usize = replacement.utf8Width();
         bun.assert(width > 1);
-
         if (width > remaining.len) {
-            ended_on_non_ascii = true;
+            ended_on_non_ascii = width > 1;
+            if (comptime allow_truncated_utf8_sequence) switch (width) {
+                2 => {
+                    if (remaining.len > 0) {
+                        //only first will be written
+                        remaining[0] = @as(u8, @truncate(0xC0 | (replacement.code_point >> 6)));
+                        remaining = remaining[remaining.len..];
+                    }
+                },
+                3 => {
+                    //only first to second written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                },
+                4 => {
+                    //only 1 to 3 written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
+                            remaining = remaining[remaining.len..];
+                        },
+                        3 => {
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
+                            remaining[2] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                },
+
+                else => {},
+            };
             break;
         }
 

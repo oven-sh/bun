@@ -2247,6 +2247,7 @@ pub const copyU16IntoU8 = unicode.copyU16IntoU8;
 pub const copyU8IntoU16 = unicode.copyU8IntoU16;
 pub const copyU8IntoU16WithAlignment = unicode.copyU8IntoU16WithAlignment;
 pub const copyUTF16IntoUTF8 = unicode.copyUTF16IntoUTF8;
+pub const copyUTF16IntoUTF8Impl = unicode.copyUTF16IntoUTF8Impl;
 pub const copyUTF16IntoUTF8WithBuffer = unicode.copyUTF16IntoUTF8WithBuffer;
 pub const decodeCheck = unicode.decodeCheck;
 pub const decodeWTF8RuneT = unicode.decodeWTF8RuneT;

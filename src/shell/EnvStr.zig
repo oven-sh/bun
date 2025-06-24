@@ -46,7 +46,7 @@ pub const EnvStr = packed struct(u128) {
         if (old_str.len == 0)
             return .{ .tag = .empty, .ptr = 0, .len = 0 };
 
-        const str = bun.default_allocator.dupe(u8, old_str) catch unreachable;
+        const str = bun.default_allocator.dupe(u8, old_str) catch bun.outOfMemory();
         return .{
             .ptr = toPtr(RefCountedStr.init(str)),
             .len = str.len,

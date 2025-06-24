@@ -308,14 +308,12 @@ IF remote template
 1. GET `registry.npmjs.org/@bun-examples/${template}/latest` and parse it
 2. GET `registry.npmjs.org/@bun-examples/${template}/-/${template}-${latestVersion}.tgz`
 3. Decompress & extract `${template}-${latestVersion}.tgz` into `${destination}`
-
    - If there are files that would overwrite, warn and exit unless `--force` is passed
 
 IF GitHub repo
 
 1. Download the tarball from GitHub’s API
 2. Decompress & extract into `${destination}`
-
    - If there are files that would overwrite, warn and exit unless `--force` is passed
 
 ELSE IF local template
@@ -333,7 +331,6 @@ ELSE IF local template
 7. Run `${npmClient} install` unless `--no-install` is passed OR no dependencies are in package.json
 8. Run any tasks defined in `"bun-create": { "postinstall" }` with the npm client
 9. Run `git init; git add -A .; git commit -am "Initial Commit";`
-
    - Rename `gitignore` to `.gitignore`. NPM automatically removes `.gitignore` files from appearing in packages.
    - If there are dependencies, this runs in a separate thread concurrently while node_modules are being installed
    - Using libgit2 if available was tested and performed 3x slower in microbenchmarks

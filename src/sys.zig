@@ -424,14 +424,18 @@ pub const Error = struct {
         };
     }
 
-    /// Only call this after it's been .clone()'d
     pub fn deinit(this: *Error) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
         if (this.path.len > 0) {
-            bun.default_allocator.free(this.path);
+            allocator.free(this.path);
             this.path = "";
         }
         if (this.dest.len > 0) {
-            bun.default_allocator.free(this.dest);
+            allocator.free(this.dest);
             this.dest = "";
         }
     }
@@ -3434,10 +3438,16 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+        var path = if (std.meta.Child(@TypeOf(subpath)) == u16)
             bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
+
+        // trim leading .\
+        // NtQueryAttributesFile expects relative paths to not start with .\
+        if (path.len > 2 and path[0] == '.' and path[1] == '\\') {
+            path = path[2..];
+        }
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{

@@ -430,7 +430,17 @@ pub const StatWatcher = struct {
             .err => std.mem.zeroes(bun.Stat),
         };
 
-        if (std.mem.eql(u8, std.mem.asBytes(&res), std.mem.asBytes(&this.last_stat))) return;
+        var compare = res;
+        const StatT = @TypeOf(compare);
+        if (@hasField(StatT, "st_atim")) {
+            compare.st_atim = this.last_stat.st_atim;
+        } else if (@hasField(StatT, "st_atimespec")) {
+            compare.st_atimespec = this.last_stat.st_atimespec;
+        } else if (@hasField(StatT, "atim")) {
+            compare.atim = this.last_stat.atim;
+        }
+
+        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));

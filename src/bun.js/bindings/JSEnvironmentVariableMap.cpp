@@ -305,10 +305,13 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
+    auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
+
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
-        auto name = String::fromUTF8(std::span { chars, len });
+        // We can't really trust that the OS gives us valid UTF-8
+        auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
         keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
 #endif
@@ -347,7 +350,11 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             }
         }
 
-        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
+        // JSC::PropertyAttribute::CustomValue calls the getter ONCE (the first
+        // time) and then sets it onto the object, subsequent calls to the
+        // getter will not go through the getter and instead will just do the
+        // property lookup.
+        object->putDirectCustomAccessor(vm, identifier, cached_getter_setter, JSC::PropertyAttribute::CustomValue | 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

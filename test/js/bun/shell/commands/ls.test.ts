@@ -25,7 +25,7 @@ let allFiles: string[] = [];
 const sortedLsOutput = (s: string) =>
   s
     .split("\n")
-    .map(s => s.trim())
+    .map(s => s.trim().replaceAll("\\", "/"))
     .filter(
       s =>
         s.length > 0 &&

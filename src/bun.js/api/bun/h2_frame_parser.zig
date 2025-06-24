@@ -1384,7 +1384,10 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
-        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
+        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject) catch |err| {
+            this.dispatch(.onError, this.globalThis.takeException(err));
+            return;
+        };
 
         if (emitError) {
             if (rstCode != .NO_ERROR) {

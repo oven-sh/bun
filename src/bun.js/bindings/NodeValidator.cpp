@@ -663,6 +663,7 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     JSC::JSString* valueStr = value.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
     auto valueView = valueStr->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (ASCIILiteral oneOfStr : oneOf) {
 

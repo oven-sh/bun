@@ -332,12 +332,14 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
 extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
     JSString* pathValue = nullptr;
     if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
         auto view = (*previousPath)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (view == path->impl.wtf) {
             pathValue = *previousPath;
 

@@ -970,9 +970,6 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::VM& vm, JSC::JSGlobalObject*
 
     // we don't call JSC::createError() as it asserts the message is not an empty string ""
     auto* error = JSC::ErrorInstance::create(vm, globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
-    if (!error) {
-        return nullptr;
-    }
     if (!code.isNull()) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
     }

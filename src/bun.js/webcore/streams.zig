@@ -38,7 +38,7 @@ pub const Start = union(Tag) {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis)) catch .zero;
+                return globalThis.throwValue(err.toJS(globalThis));
             },
             .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);

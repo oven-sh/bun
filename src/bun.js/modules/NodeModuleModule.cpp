@@ -358,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             return {};
         }
 
-        RELEASE_AND_RETURN(scope, result);
+        return result;
     }
     }
 }

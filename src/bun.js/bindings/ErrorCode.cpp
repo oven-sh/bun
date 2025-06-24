@@ -263,7 +263,10 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     switch (cell->type()) {
     case JSC::JSType::StringType: {
         JSString* jsString = jsDynamicCast<JSString*>(cell);
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         auto str = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
             if (str->contains('\'')) {
                 builder.append('"');
@@ -366,6 +369,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         auto str = value.toStringOrNull(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         auto view = str->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
         builder.append("type bigint ("_s);
         builder.append(view);
         builder.append("n)"_s);
@@ -399,6 +403,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     if (cell->isString()) {
         auto* jsString = jsCast<JSString*>(cell);
         auto str = jsString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
 
         StringView view = str;
 
@@ -458,6 +463,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             RETURN_IF_EXCEPTION(scope, void());
             builder.append("an instance of "_s);
             auto view = str->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
             builder.append(view);
             return;
         }
@@ -548,26 +554,31 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
         auto* str = expected_types.at(0).toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         result.append(str->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (length == 2) {
         auto* str1 = expected_types.at(0).toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         result.append(str1->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
         result.append(" or "_s);
         auto* str2 = expected_types.at(1).toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         result.append(str2->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         for (unsigned i = 0, end = length - 1; i < end; i++) {
             JSValue expected_type = expected_types.at(i);
             auto* str = expected_type.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             result.append(str->view(globalObject));
+            RETURN_IF_EXCEPTION(scope, {});
             result.append(", "_s);
         }
         result.append("or "_s);
         auto* str = expected_types.at(length - 1).toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         result.append(str->view(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     result.append(". Received "_s);
@@ -903,6 +914,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
             RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
             builder.append('\'');
             builder.append(str->view(globalObject));
+            RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
             builder.append('\'');
         } else {
             JSValueToStringSafe(globalObject, builder, index);
@@ -1902,11 +1914,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str0 = arg0.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto view0 = str0->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto arg1 = callFrame->argument(2);
         auto str1 = arg1.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto view1 = str1->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto arg2 = callFrame->argument(3);
 

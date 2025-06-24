@@ -2149,7 +2149,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     auto& vm = JSC::getVM(globalObject);
 
-    WTF::String message = String(""_s);
+    WTF::String message = WTF::emptyString();
     if (err.message.tag != BunStringTag::Empty) {
         message = err.message.toWTFString();
     }
@@ -2209,11 +2209,9 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     auto syscallString = err.syscall.toWTFString();
     auto messageString = err.message.toWTFString();
 
-    JSC::JSValue message = JSC::jsString(vm, makeString("A system error occurred: "_s, syscallString, " returned "_s, codeString, " ("_s, messageString, ")"_s));
+    auto message = makeString("A system error occurred: "_s, syscallString, " returned "_s, codeString, " ("_s, messageString, ")"_s);
 
-    JSC::JSValue options = JSC::jsUndefined();
-    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSObject* result = JSC::ErrorInstance::create(vm, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, {});
     JSC::JSObject* info = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
     auto clientData = WebCore::clientData(vm);

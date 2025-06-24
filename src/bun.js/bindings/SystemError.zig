@@ -74,9 +74,9 @@ pub const SystemError = extern struct {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) bun.JSError!JSValue {
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-        return bun.jsc.fromJSHostCall(global, @src(), SystemError__toErrorInstanceWithInfoObject, .{ this, global });
+        return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

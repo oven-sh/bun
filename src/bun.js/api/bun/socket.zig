@@ -662,7 +662,10 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const output_value = handlers.binary_type.toJS(data, globalObject) catch .zero; // TODO: properly propagate exception upwards
+            const output_value = handlers.binary_type.toJS(data, globalObject) catch |err| {
+                this.handleError(globalObject.takeException(err));
+                return;
+            };
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can

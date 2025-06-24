@@ -425,7 +425,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
-                    return globalObject.throwValue(res) catch .zero;
+                    return globalObject.throwValue(res);
                 }
                 return res;
             },
@@ -459,7 +459,7 @@ pub const Encoding = enum(u8) {
             inline else => |enc| {
                 const res = JSC.WebCore.encoding.toStringComptime(input, globalObject, enc);
                 if (res.isError()) {
-                    return globalObject.throwValue(res) catch .zero;
+                    return globalObject.throwValue(res);
                 }
 
                 return res;

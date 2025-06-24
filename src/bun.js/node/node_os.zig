@@ -307,7 +307,7 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             },
             .syscall = bun.String.static("uv_os_getpriority"),
         };
-        return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+        return global.throwValue(err.toErrorInstanceWithInfoObject(global));
     }
     return result;
 }
@@ -830,7 +830,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         .ACCES => {
             const err = JSC.SystemError{
@@ -842,7 +842,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         .PERM => {
             const err = JSC.SystemError{
@@ -854,7 +854,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         else => {
             // no other error codes can be emitted

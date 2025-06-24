@@ -19,7 +19,7 @@ pub const ZigException = extern struct {
     runtime_type: JSRuntimeType,
 
     /// SystemError only
-    errno: c_int = 0,
+    errno: c_uint = 0,
     /// SystemError only
     syscall: String = String.empty,
     /// SystemError only

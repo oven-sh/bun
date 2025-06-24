@@ -307,7 +307,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+            var errno_: c_uint = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
             const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
@@ -315,7 +315,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
             const err = JSC.SystemError{
-                .errno = -errno_,
+                .errno = errno_,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
                 .code = code_,

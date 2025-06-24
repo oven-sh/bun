@@ -302,7 +302,7 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             .message = bun.String.static("no such process"),
             .code = bun.String.static("ESRCH"),
             .errno = comptime switch (bun.Environment.os) {
-                else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                else => @intFromEnum(std.posix.E.SRCH),
                 .windows => libuv.UV_ESRCH,
             },
             .syscall = bun.String.static("uv_os_getpriority"),
@@ -825,7 +825,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("no such process"),
                 .code = bun.String.static("ESRCH"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                    else => @intFromEnum(std.posix.E.SRCH),
                     .windows => libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
@@ -837,7 +837,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("permission denied"),
                 .code = bun.String.static("EACCES"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.ACCES)),
+                    else => @intFromEnum(std.posix.E.ACCES),
                     .windows => libuv.UV_EACCES,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
@@ -849,7 +849,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .message = bun.String.static("operation not permitted"),
                 .code = bun.String.static("EPERM"),
                 .errno = comptime switch (bun.Environment.os) {
-                    else => -@as(c_int, @intFromEnum(std.posix.E.SRCH)),
+                    else => @intFromEnum(std.posix.E.SRCH),
                     .windows => libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),

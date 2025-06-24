@@ -628,7 +628,7 @@ error: Hello World`,
   });
   // This test is only for Windows
   if (isWindows) {
-    itBundled.only("compile/WindowsHideConsole", {
+    itBundled("compile/WindowsHideConsole", {
       compile: true,
       windowsHideConsole: true,
       files: {

@@ -27,6 +27,7 @@ pub const Chunk = struct {
 
     is_executable: bool = false,
     has_html_chunk: bool = false,
+    is_browser_chunk_from_server_build: bool = false,
 
     output_source_map: sourcemap.SourceMapPieces,
 

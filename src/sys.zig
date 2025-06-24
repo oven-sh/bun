@@ -424,14 +424,18 @@ pub const Error = struct {
         };
     }
 
-    /// Only call this after it's been .clone()'d
     pub fn deinit(this: *Error) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
         if (this.path.len > 0) {
-            bun.default_allocator.free(this.path);
+            allocator.free(this.path);
             this.path = "";
         }
         if (this.dest.len > 0) {
-            bun.default_allocator.free(this.dest);
+            allocator.free(this.dest);
             this.dest = "";
         }
     }
@@ -515,6 +519,17 @@ pub const Error = struct {
             if (bun.tagName(SystemErrno, system_errno)) |errname| {
                 return .{ errname, system_errno };
             }
+        }
+        return null;
+    }
+
+    pub fn msg(this: Error) ?[]const u8 {
+        if (this.getErrorCodeTagName()) |resolved_errno| {
+            const code, const system_errno = resolved_errno;
+            if (coreutils_error_map.get(system_errno)) |label| {
+                return label;
+            }
+            return code;
         }
         return null;
     }
@@ -2947,6 +2962,7 @@ pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32
 
 pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
+        log("setNoSigpipe({})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
             .result => .{ .result = {} },
             .err => |err| .{ .err = err },
@@ -2957,13 +2973,49 @@ pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
 }
 
 const socketpair_t = if (Environment.isLinux) i32 else c_uint;
+const NonblockingStatus = enum { blocking, nonblocking };
 
 /// libc socketpair() except it defaults to:
 /// - SOCK_CLOEXEC on Linux
 /// - SO_NOSIGPIPE on macOS
 ///
 /// On POSIX it otherwise makes it do O_CLOEXEC.
-pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: enum { blocking, nonblocking }) Maybe([2]bun.FileDescriptor) {
+pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, false);
+}
+
+/// We can't actually use SO_NOSIGPIPE for the stdout of a
+/// subprocess we don't control because they have different
+/// semantics.
+///
+/// For example, when running the shell script:
+/// `grep hi src/js_parser/zig | echo hi`,
+///
+/// The `echo hi` command will terminate first and close its
+/// end of the socketpair.
+///
+/// With SO_NOSIGPIPE, when `grep` continues and tries to write to
+/// stdout, `ESIGPIPE` is returned and then `grep` handles this
+/// and prints `grep: stdout: Broken pipe`
+///
+/// So the solution is to NOT set SO_NOGSIGPIPE in that scenario.
+///
+/// I think this only applies to stdout/stderr, not stdin. `read(...)`
+/// and `recv(...)` do not return EPIPE as error codes.
+pub fn socketpairForShell(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus) Maybe([2]bun.FileDescriptor) {
+    return socketpairImpl(domain, socktype, protocol, nonblocking_status, true);
+}
+
+pub const ShellSigpipeConfig = enum {
+    /// Only SO_NOSIGPIPE for the socket in the pair
+    /// that *we're* going to use, don't touch the one
+    /// we hand off to the subprocess
+    spawn,
+    /// off completely
+    pipeline,
+};
+
+pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: socketpair_t, nonblocking_status: NonblockingStatus, for_shell: bool) Maybe([2]bun.FileDescriptor) {
     if (comptime !Environment.isPosix) @compileError("linux only!");
 
     var fds_i: [2]syscall.fd_t = .{ 0, 0 };
@@ -3005,10 +3057,15 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
             }
 
             if (comptime Environment.isMac) {
-                inline for (0..2) |i| {
-                    switch (setNoSigpipe(.fromNative(fds_i[i]))) {
-                        .err => |err| break :err err,
-                        else => {},
+                if (for_shell) {
+                    // see the comment on `socketpairForShell` for why we don't
+                    // set SO_NOSIGPIPE here
+                } else {
+                    inline for (0..2) |i| {
+                        switch (setNoSigpipe(.fromNative(fds_i[i]))) {
+                            .err => |err| break :err err,
+                            else => {},
+                        }
                     }
                 }
             }
@@ -3406,10 +3463,16 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
+        var path = if (std.meta.Child(@TypeOf(subpath)) == u16)
             bun.strings.toNTPath16(wbuf, subpath)
         else
             bun.strings.toNTPath(wbuf, subpath);
+
+        // trim leading .\
+        // NtQueryAttributesFile expects relative paths to not start with .\
+        if (path.len > 2 and path[0] == '.' and path[1] == '\\') {
+            path = path[2..];
+        }
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
@@ -3879,6 +3942,7 @@ pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
 }
 
 pub fn isPollable(mode: mode_t) bool {
+    if (comptime bun.Environment.isWindows) return false;
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 

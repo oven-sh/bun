@@ -1021,6 +1021,7 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
+
         this.reader.setParent(this);
         return this;
     }
@@ -1047,6 +1048,9 @@ pub const PipeReader = struct {
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.socket);
                     this.reader.flags.socket = true;
+                    this.reader.flags.nonblocking = true;
+                    this.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
                 }
 
                 return .{ .result = {} };
@@ -1543,18 +1547,34 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         }
     }
 
+    // We won't be sending any more data.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
-    }
-    if (this.stdout == .pipe) {
-        this.stdout.pipe.close();
-    }
-    if (this.stderr == .pipe) {
-        this.stderr.pipe.close();
     }
 
     if (existing_stdin_value != .zero) {
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+    }
+
+    if (this.flags.is_sync) {
+        // This doesn't match Node.js' behavior, but for synchronous
+        // subprocesses the streams should not keep the timers going.
+        if (this.stdout == .pipe) {
+            this.stdout.close();
+        }
+
+        if (this.stderr == .pipe) {
+            this.stderr.close();
+        }
+    } else {
+        // This matches Node.js behavior. Node calls resume() on the streams.
+        if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+            this.stdout.pipe.reader.read();
+        }
+
+        if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+            this.stderr.pipe.reader.read();
+        }
     }
 
     if (stdin) |pipe| {
@@ -1827,7 +1847,7 @@ fn getArgv0(globalThis: *JSC.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 }
 
 fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = args.arrayIterator(globalThis);
+    var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
     argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
@@ -1840,12 +1860,12 @@ fn getArgv(globalThis: *JSC.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
-    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, cmds_array.next().?, allocator);
+    const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
     argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
-    while (cmds_array.next()) |value| {
+    while (try cmds_array.next()) |value| {
         const arg = try value.toBunString(globalThis);
         defer arg.deref();
 
@@ -2031,16 +2051,16 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "stdio")) |stdio_val| {
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
+                        var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             try stdio[i].extract(globalThis, i, value);
                             if (i == 2)
                                 break;
                         }
                         i += 1;
 
-                        while (stdio_iter.next()) |value| : (i += 1) {
+                        while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
                             try new_item.extract(globalThis, i, value);
 
@@ -2433,6 +2453,13 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
+    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
+
     if (comptime !is_sync) {
         bun.debugAssert(out != .zero);
 
@@ -2488,12 +2515,6 @@ pub fn spawnMaybeSync(
     }
 
     should_close_memfd = false;
-
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
 
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener

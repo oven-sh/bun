@@ -95,7 +95,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return bun.jsc.toJSHostValue(this, getter(this, object));
+                return bun.jsc.toJSHostCall(this, @src(), getter, .{ this, object });
             }
         }.callback;
     }
@@ -381,7 +381,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
-    var table_printer = ConsoleObject.TablePrinter.init(
+    var table_printer = try ConsoleObject.TablePrinter.init(
         globalThis,
         .Log,
         value,
@@ -847,7 +847,7 @@ fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(errorable.result.err.value);
     }
 
     if (query_string.len > 0) {
@@ -905,7 +905,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithPaths(
@@ -934,12 +934,12 @@ export fn Bun__resolveSyncWithPaths(
     bun_vm.transpiler.resolver.custom_dir_paths = paths;
     defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source_str, is_esm, true, is_user_require_resolve });
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) JSC.JSValue {
     Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier.*, source.*, is_esm, true, false));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool, is_user_require_resolve: bool) JSC.JSValue {
@@ -948,7 +948,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     if (specifier_str.length() == 0) {
         return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
-    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
+    return JSC.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier_str, source.*, is_esm, true, is_user_require_resolve });
 }
 
 pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1315,7 +1315,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if (unsorted_files[index].loader.isJavaScriptLike()) continue;
+        if (!unsorted_files[index].appearsInEmbeddedFilesArray()) continue;
         sort_indices.appendAssumeCapacity(@intCast(index));
     }
 

@@ -225,79 +225,34 @@ pub fn create(
 }
 
 pub fn setup(this: *FileSink, options: *const FileSink.Options) JSC.Maybe(void) {
-    // TODO: this should be concurrent.
-    var isatty = false;
-    var is_nonblocking = false;
-    const fd = switch (switch (options.input_path) {
-        .path => |path| brk: {
-            is_nonblocking = true;
-            break :brk bun.sys.openA(path.slice(), options.flags(), options.mode);
-        },
-        .fd => |fd_| brk: {
-            const duped = bun.sys.dupWithFlags(fd_, 0);
+    const result = bun.io.openForWriting(
+        bun.FileDescriptor.cwd(),
+        options.input_path,
+        options.flags(),
+        options.mode,
+        &this.pollable,
+        &this.is_socket,
+        this.force_sync,
+        &this.nonblocking,
+        *FileSink,
+        this,
+        struct {
+            fn onForceSyncOrIsaTTY(fs: *FileSink) void {
+                if (comptime bun.Environment.isPosix) {
+                    fs.force_sync = true;
+                    fs.writer.force_sync = true;
+                }
+            }
+        }.onForceSyncOrIsaTTY,
+        bun.sys.isPollable,
+    );
 
-            break :brk duped;
+    const fd = switch (result) {
+        .err => |err| {
+            return .{ .err = err };
         },
-    }) {
-        .err => |err| return .{ .err = err },
         .result => |fd| fd,
     };
-
-    if (comptime Environment.isPosix) {
-        switch (bun.sys.fstat(fd)) {
-            .err => |err| {
-                fd.close();
-                return .{ .err = err };
-            },
-            .result => |stat| {
-                this.pollable = bun.sys.isPollable(stat.mode);
-                if (!this.pollable) {
-                    isatty = std.posix.isatty(fd.native());
-                }
-
-                if (isatty) {
-                    this.pollable = true;
-                }
-
-                this.fd = fd;
-                this.is_socket = std.posix.S.ISSOCK(stat.mode);
-
-                if (this.force_sync or isatty) {
-                    // Prevents interleaved or dropped stdout/stderr output for terminals.
-                    // As noted in the following reference, local TTYs tend to be quite fast and
-                    // this behavior has become expected due historical functionality on OS X,
-                    // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
-                    // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
-                    _ = bun.sys.updateNonblocking(fd, false);
-                    is_nonblocking = false;
-                    this.force_sync = true;
-                    this.writer.force_sync = true;
-                } else if (!is_nonblocking) {
-                    const flags = switch (bun.sys.getFcntlFlags(fd)) {
-                        .result => |flags| flags,
-                        .err => |err| {
-                            fd.close();
-                            return .{ .err = err };
-                        },
-                    };
-                    is_nonblocking = (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0;
-
-                    if (!is_nonblocking) {
-                        if (bun.sys.setNonblocking(fd) == .result) {
-                            is_nonblocking = true;
-                        }
-                    }
-                }
-
-                this.nonblocking = is_nonblocking and this.pollable;
-            },
-        }
-    } else if (comptime Environment.isWindows) {
-        this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync;
-        this.fd = fd;
-    } else {
-        @compileError("TODO: implement for this platform");
-    }
 
     if (comptime Environment.isWindows) {
         if (this.force_sync) {

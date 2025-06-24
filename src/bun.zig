@@ -123,6 +123,15 @@ pub const JSError = error{
     OutOfMemory,
 };
 
+pub const JSExecutionTerminated = error{
+    /// JavaScript execution has been terminated.
+    /// This condition is indicated by throwing an exception, so most code should still handle it
+    /// with JSError. If you expect that you will not throw any errors other than the termination
+    /// exception, you can catch JSError, assert that the exception is the termination exception,
+    /// and return error.JSExecutionTerminated.
+    JSExecutionTerminated,
+};
+
 pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("ci_info.zig").detectCI;
@@ -2978,7 +2987,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 

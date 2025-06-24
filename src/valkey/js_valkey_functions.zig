@@ -6,7 +6,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     if (!args_array.isObject() or !args_array.isArray()) {
         return globalObject.throw("Arguments must be an array", .{});
     }
-    var iter = args_array.arrayIterator(globalObject);
+    var iter = try args_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, iter.len);
     defer {
         for (args.items) |*item| {
@@ -15,7 +15,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
         args.deinit();
     }
 
-    while (iter.next()) |arg_js| {
+    while (try iter.next()) |arg_js| {
         args.appendAssumeCapacity(try fromJS(globalObject, arg_js) orelse {
             return globalObject.throwInvalidArgumentType("sendCommand", "argument", "string or buffer");
         });
@@ -390,7 +390,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Fields must be an array", .{});
     }
 
-    var iter = fields_array.arrayIterator(globalObject);
+    var iter = try fields_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSC.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
     defer {
         for (args.items) |item| {
@@ -402,7 +402,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(JSC.ZigString.Slice.fromUTF8NeverFree(key.slice()));
 
     // Add field names as arguments
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
 
@@ -495,7 +495,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }
 
-    var iter = array_arg.arrayIterator(globalObject);
+    var iter = try array_arg.arrayIterator(globalObject);
     if (iter.len % 2 != 0) {
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }
@@ -514,7 +514,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(key_slice);
 
     // Add field-value pairs
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         // Add field name
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
@@ -522,7 +522,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         args.appendAssumeCapacity(field_slice);
 
         // Add value
-        if (iter.next()) |value_js| {
+        if (try iter.next()) |value_js| {
             const value_str = try value_js.toBunString(globalObject);
             defer value_str.deref();
             const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);

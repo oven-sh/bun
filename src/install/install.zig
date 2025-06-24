@@ -827,6 +827,9 @@ pub const Task = struct {
                             return;
                         }
 
+                        this.err = err;
+                        this.status = Status.fail;
+                        this.data = .{ .git_clone = bun.invalid_fd };
                         attempt += 1;
                         break :brk null;
                     };
@@ -844,12 +847,12 @@ pub const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
-
                     return;
                 } else {
                     return;
                 };
 
+                this.err = null;
                 this.data = .{ .git_clone = .fromStdDir(dir) };
                 this.status = Status.success;
             },
@@ -6764,8 +6767,8 @@ pub const PackageManager = struct {
                 if (input_str.len > 0)
                     try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
-                var iter = input.arrayIterator(globalThis);
-                while (iter.next()) |item| {
+                var iter = try input.arrayIterator(globalThis);
+                while (try iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;

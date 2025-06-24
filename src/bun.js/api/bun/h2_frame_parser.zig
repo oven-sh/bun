@@ -2878,9 +2878,9 @@ pub const H2FrameParser = struct {
             var stream = std.io.fixedBufferStream(&buffer);
             const writer = stream.writer();
             stream.seekTo(FrameHeader.byteSize) catch {};
-            var value_iter = origin_arg.arrayIterator(globalObject);
+            var value_iter = try origin_arg.arrayIterator(globalObject);
 
-            while (value_iter.next()) |item| {
+            while (try value_iter.next()) |item| {
                 if (!item.isString()) {
                     return globalObject.throwInvalidArguments("Expected origin to be a string or an array of strings", .{});
                 }
@@ -3446,7 +3446,7 @@ pub const H2FrameParser = struct {
 
             if (js_value.jsType().isArray()) {
                 // https://github.com/oven-sh/bun/issues/8940
-                var value_iter = js_value.arrayIterator(globalObject);
+                var value_iter = try js_value.arrayIterator(globalObject);
 
                 if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                     if (value_iter.len > 1 or single_value_headers[idx]) {
@@ -3456,7 +3456,7 @@ pub const H2FrameParser = struct {
                     single_value_headers[idx] = true;
                 }
 
-                while (value_iter.next()) |item| {
+                while (try value_iter.next()) |item| {
                     if (item.isEmptyOrUndefinedOrNull()) {
                         const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name});
                         return globalObject.throwValue(exception);
@@ -3889,7 +3889,7 @@ pub const H2FrameParser = struct {
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
                     // https://github.com/oven-sh/bun/issues/8940
-                    var value_iter = js_value.arrayIterator(globalObject);
+                    var value_iter = try js_value.arrayIterator(globalObject);
 
                     if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                         if (value_iter.len > 1 or single_value_headers[idx]) {
@@ -3902,7 +3902,7 @@ pub const H2FrameParser = struct {
                         single_value_headers[idx] = true;
                     }
 
-                    while (value_iter.next()) |item| {
+                    while (try value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();

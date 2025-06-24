@@ -189,6 +189,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
 
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
@@ -197,7 +198,15 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     }
 
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
-    return JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        scope.clearException();
+        // TODO investigate what can throw here and whether it will throw non-objects
+        // (this is better than before where we would have returned nullptr from createError if any
+        // exception were thrown by ErrorInstance::create)
+        return jsCast<JSObject*>(thrown_exception->value());
+    }
+    return created_error;
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -268,7 +277,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
                         }
                     }
                 } else {
-                    const auto span = str->span<UChar>();
+                    const auto span = str->span<char16_t>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -415,7 +424,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                     }
                 }
             } else {
-                const auto span = view.span<UChar>();
+                const auto span = view.span<char16_t>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -1738,7 +1747,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
-            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
             if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
                 ASSERT(arr->length() > 0);
                 WTF::StringBuilder builder;
@@ -1746,7 +1755,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 for (unsigned i = 0, length = arr->length(); i < length; i++) {
                     JSValue index = arr->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (i == length - 1) builder.append("or "_s);
+                    if (i > 0) builder.append("or "_s);
                     builder.append('"');
                     auto* jsString = index.toString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1754,7 +1763,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                     RETURN_IF_EXCEPTION(scope, {});
                     builder.append(str);
                     builder.append('"');
-                    if (i != length - 1) builder.append(',');
                     builder.append(' ');
                 }
                 builder.append("argument must be specified"_s);

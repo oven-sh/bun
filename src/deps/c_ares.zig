@@ -1418,8 +1418,8 @@ pub const struct_any_reply = struct {
             reply.toJSResponse(allocator, globalThis, lookup_name);
 
         if (response.isArray()) {
-            var iterator = response.arrayIterator(globalThis);
-            while (iterator.next()) |item| {
+            var iterator = try response.arrayIterator(globalThis);
+            while (try iterator.next()) |item| {
                 try append(globalThis, array, i, item, lookup_name);
             }
         } else {

@@ -424,14 +424,18 @@ pub const Error = struct {
         };
     }
 
-    /// Only call this after it's been .clone()'d
     pub fn deinit(this: *Error) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
         if (this.path.len > 0) {
-            bun.default_allocator.free(this.path);
+            allocator.free(this.path);
             this.path = "";
         }
         if (this.dest.len > 0) {
-            bun.default_allocator.free(this.dest);
+            allocator.free(this.dest);
             this.dest = "";
         }
     }

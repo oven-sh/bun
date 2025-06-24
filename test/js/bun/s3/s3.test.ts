@@ -23,13 +23,13 @@ function isDockerEnabled(): boolean {
 }
 
 const allCredentials = [
-  // {
-  //   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
-  //   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
-  //   endpoint: getSecret("S3_R2_ENDPOINT"),
-  //   bucket: getSecret("S3_R2_BUCKET"),
-  //   service: "R2" as string,
-  // },
+  {
+    accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
+    secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+    endpoint: getSecret("S3_R2_ENDPOINT"),
+    bucket: getSecret("S3_R2_BUCKET"),
+    service: "R2" as string,
+  },
 ];
 
 if (isDockerEnabled()) {

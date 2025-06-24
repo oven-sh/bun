@@ -887,7 +887,14 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn writeBuffered(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                // TODO: should we separate unattached and detached? unattached shouldn't throw here
+                const err: JSC.SystemError = .{
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
+                    .code = .static("EBADF"),
+                    .message = .static("write EBADF"),
+                    .syscall = .static("write"),
+                };
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             }
 
             const args = callframe.argumentsUndef(2);

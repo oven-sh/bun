@@ -625,7 +625,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },

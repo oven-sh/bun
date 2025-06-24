@@ -3193,23 +3193,14 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
             auto* global = init.owner;
             auto& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            // if we get the termination exception, we'd still like to set a non-null Map so that
-            // we don't segfault
-            auto setEmpty = [&]() {
-                ASSERT(scope.exception());
-                init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
-            };
+            auto scope = DECLARE_CATCH_SCOPE(vm);
 
             JSMap* registry = nullptr;
             auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
             scope.assertNoExceptionExceptTermination();
-            RETURN_IF_EXCEPTION(scope, setEmpty());
             if (loaderValue) {
                 auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
                 scope.assertNoExceptionExceptTermination();
-                RETURN_IF_EXCEPTION(scope, setEmpty());
                 if (registryValue) {
                     registry = jsCast<JSC::JSMap*>(registryValue);
                 }

@@ -1,2 +1,3 @@
 [type.md]
 extend-ignore-words-re = ["^ba"]
+extend-exclude = ["docs/api/sqlite.md"]

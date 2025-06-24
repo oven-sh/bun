@@ -140,6 +140,9 @@ export interface BundlerTestInput {
   /** Use --compile */
   compile?: boolean;
 
+  // Windows options for --compile
+  windowsHideConsole?: boolean;
+
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
 
@@ -399,7 +402,7 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes("test/bundler/")) {
+  if (!new Error().stack!.includes(path.join("test", "bundler"))) {
     throw new Error(
       `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
     );
@@ -420,6 +423,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    windowsHideConsole,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -554,6 +558,9 @@ function expectBundled(
   if (ESBUILD && dotenv) {
     throw new Error("dotenv not implemented in esbuild");
   }
+  if (ESBUILD && windowsHideConsole) {
+    throw new Error("windowsHideConsole not implemented in esbuild");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }
@@ -683,6 +690,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              windowsHideConsole && "--windows-hide-console",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

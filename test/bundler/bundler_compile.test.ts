@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, readFileSync } from "fs";
 import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
@@ -626,4 +626,37 @@ error: Hello World`,
       },
     ],
   });
+  // This test is only for Windows
+  if (isWindows) {
+    itBundled.only("compile/WindowsHideConsole", {
+      compile: true,
+      windowsHideConsole: true,
+      files: {
+        "/entry.ts": /* js */ `
+          console.log("windows_hide_console test");
+        `,
+      },
+      outfile: "out.exe", // has to be set as `api.outfile` below defaults to `out`
+      run: {
+        stdout: "windows_hide_console test",
+      },
+      onAfterBundle(api) {
+        const file = readFileSync(api.outfile);
+
+        // see windows.zig editWin32BinarySubsystem()
+        const PE_HEADER_OFFSET_LOCATION = 0x3c;
+        const SUBSYSTEM_OFFSET = 0x5c;
+
+        // Read the PE header offset
+        const peHeaderOffset = file.readUInt32LE(PE_HEADER_OFFSET_LOCATION);
+        const subsystemOffset = peHeaderOffset + SUBSYSTEM_OFFSET;
+
+        // Read the subsystem value
+        const subsystem = file.readUInt16LE(subsystemOffset);
+
+        // Subsystem values: 2 for GUI, 3 for console
+        expect(subsystem).toBe(2);
+      },
+    });
+  }
 });

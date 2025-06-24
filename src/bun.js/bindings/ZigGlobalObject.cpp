@@ -265,7 +265,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
 
-    // std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+    std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)

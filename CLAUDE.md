@@ -98,7 +98,6 @@ test("my feature", async () => {
   - `server.zig` - HTTP server implementation
   - `FFI.zig` - Foreign Function Interface
   - `crypto.zig` - Cryptographic operations
-  - `sqlite.zig` - Native SQLite integration
   - `glob.zig` - File pattern matching
 - `node/` - Node.js compatibility layer
   - Module implementations (fs, path, crypto, etc.)

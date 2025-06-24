@@ -130,6 +130,12 @@ pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         .Bytes => |source| {
             source.parent().cancel();
         },
+        .CompressionStream => |source| {
+            source.parent().cancel();
+        },
+        .DecompressionStream => |source| {
+            source.parent().cancel();
+        },
         else => {},
     }
     this.detachIfPossible(globalThis);
@@ -181,6 +187,9 @@ pub const Tag = enum(i32) {
     Direct = 3,
 
     Bytes = 4,
+
+    CompressionStream = 5,
+    DecompressionStream = 6,
 };
 
 pub const Source = union(Tag) {
@@ -202,6 +211,9 @@ pub const Source = union(Tag) {
     Direct: void,
 
     Bytes: *webcore.ByteStream,
+    
+    CompressionStream: *webcore.CompressionStreamEncoder.Encoder,
+    DecompressionStream: *webcore.DecompressionStreamEncoder.Encoder,
 };
 
 extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: *JSValue, ptr: *?*anyopaque) Tag;
@@ -264,6 +276,20 @@ pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
             .value = out,
             .ptr = .{
                 .Bytes = @ptrCast(@alignCast(ptr.?)),
+            },
+        },
+
+        .CompressionStream => ReadableStream{
+            .value = out,
+            .ptr = .{
+                .CompressionStream = @ptrCast(@alignCast(ptr.?)),
+            },
+        },
+
+        .DecompressionStream => ReadableStream{
+            .value = out,
+            .ptr = .{
+                .DecompressionStream = @ptrCast(@alignCast(ptr.?)),
             },
         },
 

@@ -1668,6 +1668,32 @@ declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   { prototype: TextEncoderStream; new (): TextEncoderStream }
 >;
 
+type CompressionFormat = "gzip" | "deflate" | "deflate-raw";
+
+interface CompressionStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<BufferSource>;
+}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  { 
+    prototype: CompressionStream; 
+    new (format?: CompressionFormat): CompressionStream;
+  }
+>;
+
+interface DecompressionStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<BufferSource>;
+}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  { 
+    prototype: DecompressionStream; 
+    new (format?: CompressionFormat): DecompressionStream;
+  }
+>;
+
 interface URLSearchParams {}
 declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   "URLSearchParams",

@@ -330,3 +330,11 @@ pub fn Tagged(comptime U: type, comptime T: type) type {
     info.decls = &.{};
     return @Type(.{ .@"union" = info });
 }
+
+pub fn SliceChild(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    if (tyinfo == .pointer and tyinfo.pointer.size == .slice) {
+        return tyinfo.pointer.child;
+    }
+    return T;
+}

@@ -428,7 +428,9 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
 }
 
 pub const EncodeIntoResult = struct {
+    /// The number of u16s we read from the utf-16 buffer
     read: u32 = 0,
+    /// The number of u8s we wrote to the utf-8 buffer
     written: u32 = 0,
 };
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
@@ -1679,7 +1681,10 @@ pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
     return latin1_to_utf16_conversion_table[@as(u8, @truncate(char))];
 }
 
-pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime allow_partial_write: bool) EncodeIntoResult {
+/// Copy a UTF-16 string as UTF-8 into `buf`
+///
+/// This may not encode everything if `buf` is not big enough.
+pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
             if (utf16.len == 0)
@@ -1693,14 +1698,14 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime a
             else
                 buf.len;
 
-            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len, allow_partial_write);
+            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len);
         }
     }
 
-    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len, allow_partial_write);
+    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len);
 }
 
-pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize, comptime allow_partial_write: bool) EncodeIntoResult {
+pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
@@ -1734,55 +1739,10 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         const replacement = utf16CodepointWithFFFD(Type, utf16_remaining);
 
         const width: usize = replacement.utf8Width();
-        if (width > remaining.len) {
-            ended_on_non_ascii = width > 1;
-            if (comptime allow_partial_write) switch (width) {
-                2 => {
-                    if (remaining.len > 0) {
-                        //only first will be written
-                        remaining[0] = @as(u8, @truncate(0xC0 | (replacement.code_point >> 6)));
-                        remaining = remaining[remaining.len..];
-                    }
-                },
-                3 => {
-                    //only first to second written
-                    switch (remaining.len) {
-                        1 => {
-                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
-                            remaining = remaining[remaining.len..];
-                        },
-                        2 => {
-                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
-                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
-                            remaining = remaining[remaining.len..];
-                        },
-                        else => {},
-                    }
-                },
-                4 => {
-                    //only 1 to 3 written
-                    switch (remaining.len) {
-                        1 => {
-                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
-                            remaining = remaining[remaining.len..];
-                        },
-                        2 => {
-                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
-                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
-                            remaining = remaining[remaining.len..];
-                        },
-                        3 => {
-                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
-                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
-                            remaining[2] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
-                            remaining = remaining[remaining.len..];
-                        },
-                        else => {},
-                    }
-                },
+        bun.assert(width > 1);
 
-                else => {},
-            };
+        if (width > remaining.len) {
+            ended_on_non_ascii = true;
             break;
         }
 

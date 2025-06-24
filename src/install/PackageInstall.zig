@@ -1317,7 +1317,7 @@ pub const PackageInstall = struct {
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false);
             }
 
-            const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
+            const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i]);
             var offset: usize = res.written;
             if (dest_buf[offset - 1] != std.fs.path.sep_windows) {
                 dest_buf[offset] = std.fs.path.sep_windows;

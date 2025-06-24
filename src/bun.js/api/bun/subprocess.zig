@@ -1303,8 +1303,10 @@ const Writable = union(enum) {
                             const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                             if (assign_result.toError()) |err| {
                                 pipe.deref();
+                                subprocess.deref();
                                 return event_loop.global.throwValue(err);
                             }
+                            promise_for_stream.* = assign_result;
                         }
 
                         return Writable{

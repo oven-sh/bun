@@ -1,4 +1,4 @@
-#include "root.h"
+THIS SHOULD BE A LINTER ERROR#include "root.h"
 
 #include "ZigGlobalObject.h"
 #include "helpers.h"

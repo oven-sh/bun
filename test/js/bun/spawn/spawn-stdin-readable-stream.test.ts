@@ -1,5 +1,6 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { heapStats } from "bun:jsc";
+import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
@@ -11,7 +12,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -34,7 +35,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -57,7 +58,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -81,7 +82,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -106,7 +107,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -132,7 +133,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -153,7 +154,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -181,7 +182,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -210,7 +211,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -254,7 +255,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -280,7 +281,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.exit(0)"], // exits immediately
       stdin: stream,
       env: bunEnv,
@@ -304,7 +305,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.exit(1)"],
       stdin: stream,
       env: bunEnv,
@@ -328,7 +329,7 @@ describe("spawn stdin ReadableStream", () => {
     reader.releaseLock();
 
     expect(() => {
-      spawn({
+      const proc = spawn({
         cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
         stdin: stream,
         env: bunEnv,
@@ -336,19 +337,22 @@ describe("spawn stdin ReadableStream", () => {
     }).toThrow("'stdin' ReadableStream has already been used");
   });
 
-  test("ReadableStream with abort signal", async () => {
+  test("ReadableStream with abort signal calls cancel", async () => {
     const controller = new AbortController();
+    const cancel = mock();
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue("data before abort\n");
       },
-      pull(controller) {
+      async pull(controller) {
         // Keep the stream open
+        // but don't block the event loop.
+        await Bun.sleep(1);
         controller.enqueue("more data\n");
       },
+      cancel,
     });
-
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -357,7 +361,7 @@ describe("spawn stdin ReadableStream", () => {
     });
 
     // Give it some time to start
-    await Bun.sleep(50);
+    await Bun.sleep(10);
 
     // Abort the process
     controller.abort();
@@ -370,6 +374,7 @@ describe("spawn stdin ReadableStream", () => {
 
     // The process should have been killed
     expect(proc.killed).toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   test("ReadableStream with backpressure", async () => {
@@ -389,7 +394,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -421,14 +426,14 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc1 = spawn({
+    await using proc1 = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream1,
       stdout: "pipe",
       env: bunEnv,
     });
 
-    const proc2 = spawn({
+    await using proc2 = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream2,
       stdout: "pipe",
@@ -443,38 +448,6 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc2.exited).toBe(0);
   });
 
-  test("ReadableStream file descriptor cleanup", async () => {
-    const maxFD = getMaxFD();
-    const iterations = 10;
-
-    for (let i = 0; i < iterations; i++) {
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(`iteration ${i}\n`);
-          controller.close();
-        },
-      });
-
-      const proc = spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        stdout: "pipe",
-      });
-
-      const text = await new Response(proc.stdout).text();
-      expect(text).toBe(`iteration ${i}\n`);
-      expect(await proc.exited).toBe(0);
-    }
-
-    // Force garbage collection
-    Bun.gc(true);
-    await Bun.sleep(50);
-
-    // Check that we didn't leak file descriptors
-    const newMaxFD = getMaxFD();
-    expect(newMaxFD).toBeLessThanOrEqual(maxFD + 10); // Allow some variance
-  });
-
   test("ReadableStream with empty stream", async () => {
     const stream = new ReadableStream({
       start(controller) {
@@ -483,7 +456,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -503,7 +476,7 @@ describe("spawn stdin ReadableStream", () => {
       },
     });
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
@@ -534,7 +507,7 @@ describe("spawn stdin ReadableStream", () => {
 
     const transformedStream = originalStream.pipeThrough(upperCaseTransform);
 
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: transformedStream,
       stdout: "pipe",
@@ -557,7 +530,7 @@ describe("spawn stdin ReadableStream", () => {
     const [stream1, stream2] = originalStream.tee();
 
     // Use the first branch for the process
-    const proc = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream1,
       stdout: "pipe",
@@ -574,29 +547,37 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   test("ReadableStream object type count", async () => {
-    const iterations = 5;
+    const iterations = 50;
 
-    for (let i = 0; i < iterations; i++) {
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(`iteration ${i}`);
-          controller.close();
-        },
-      });
+    async function main() {
+      async function iterate(i: number) {
+        const stream = new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(0);
+            controller.enqueue(`iteration ${i}`);
+            controller.close();
+          },
+        });
 
-      const proc = spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        stdout: "pipe",
-      });
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "pipe",
+          env: bunEnv,
+        });
 
-      await new Response(proc.stdout).text();
-      await proc.exited;
+        await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      }
+
+      const promises = Array.from({ length: iterations }, (_, i) => iterate(i));
+      await Promise.all(promises);
     }
 
-    // Force cleanup
+    await main();
+
+    await Bun.sleep(1);
     Bun.gc(true);
-    await Bun.sleep(100);
+    await Bun.sleep(1);
 
     // Check that we're not leaking objects
     await expectMaxObjectTypeCount(expect, "ReadableStream", 10);

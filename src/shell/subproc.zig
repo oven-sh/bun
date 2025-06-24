@@ -251,7 +251,7 @@ pub const ShellSubprocess = struct {
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
-                        pipe.onAttachedProcessExit();
+                        pipe.onAttachedProcessExit(&subprocess.process.status);
                         return pipe.toJS(globalThis);
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;

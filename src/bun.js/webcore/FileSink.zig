@@ -75,20 +75,23 @@ comptime {
     @export(&Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio, .{ .name = "Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio" });
 }
 
-pub fn onAttachedProcessExit(this: *FileSink) void {
+pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) void {
     log("onAttachedProcessExit()", .{});
     this.done = true;
-    this.writer.close();
-
-    this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
-
     if (this.readable_stream.has()) {
         if (this.event_loop_handle.globalObject()) |global| {
-            if (this.readable_stream.get(global)) |stream| {
-                stream.cancel(global);
+            if (this.readable_stream.get(global)) |*stream| {
+                if (!status.isOK()) {
+                    stream.cancel(global);
+                } else {
+                    stream.done(global);
+                }
             }
         }
     }
+    this.writer.close();
+
+    this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
 
     this.runPending();
 
@@ -192,14 +195,15 @@ pub fn onReady(this: *FileSink) void {
 
 pub fn onClose(this: *FileSink) void {
     log("onClose()", .{});
-    this.signal.close(null);
     if (this.readable_stream.has()) {
         if (this.event_loop_handle.globalObject()) |global| {
             if (this.readable_stream.get(global)) |stream| {
-                stream.cancel(global);
+                stream.done(global);
             }
         }
     }
+
+    this.signal.close(null);
 }
 
 pub fn createWithPipe(

@@ -56,7 +56,8 @@ pub const Flags = packed struct(u8) {
     has_stdin_destructor_called: bool = false,
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
-    _: u3 = 0,
+    is_stdin_a_readable_stream: bool = false,
+    _: u2 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -1431,7 +1432,7 @@ const Writable = union(enum) {
                     // https://github.com/oven-sh/bun/pull/14092
                     bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
-                    pipe.onAttachedProcessExit();
+                    pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
                         bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
                     }
@@ -1557,7 +1558,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     jsc_vm.onSubprocessExit(process);
 
-    var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
+    var stdin: ?*JSC.WebCore.FileSink = if (this.stdin == .pipe) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = JSC.JSValue.zero;
     if (this_jsvalue != .zero) {
         if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
@@ -1567,7 +1568,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
-                existing_stdin_value = existing_value;
+                if (!this.flags.is_stdin_a_readable_stream) {
+                    existing_stdin_value = existing_value;
+                }
             }
         }
     }
@@ -1605,8 +1608,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     if (stdin) |pipe| {
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
+
         // It is okay if it does call deref() here, as in that case it was truly ref'd.
-        pipe.onAttachedProcessExit();
+        pipe.onAttachedProcessExit(&status);
     }
 
     var did_update_has_pending_activity = false;
@@ -2437,6 +2441,7 @@ pub fn spawnMaybeSync(
     subprocess.process.setExitHandler(subprocess);
 
     promise_for_stream.ensureStillAlive();
+    subprocess.flags.is_stdin_a_readable_stream = promise_for_stream != .zero;
 
     if (promise_for_stream != .zero and !globalThis.hasException()) {
         if (promise_for_stream.toError()) |err| {

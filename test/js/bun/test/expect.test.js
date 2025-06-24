@@ -4157,13 +4157,13 @@ describe("expect()", () => {
       expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
         first: { second: {}, third: {} },
       });
-      expect(
+      (expect(
         expect.objectContaining({
           answer: 42,
           foo: { bar: "baz", foobar: "qux" },
         }),
       ).not.toEqual({ foo: { bar: "baz" } }),
-        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
     });
 
     test("ObjectContaining matches defined properties", () => {

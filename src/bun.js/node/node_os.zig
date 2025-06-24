@@ -303,7 +303,7 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             .code = bun.String.static("ESRCH"),
             .errno = comptime switch (bun.Environment.os) {
                 else => @intFromEnum(std.posix.E.SRCH),
-                .windows => libuv.UV_ESRCH,
+                .windows => -libuv.UV_ESRCH,
             },
             .syscall = bun.String.static("uv_os_getpriority"),
         };
@@ -657,7 +657,7 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
             .message = bun.String.static("uv_interface_addresses failed"),
             .code = bun.String.static("ERR_SYSTEM_ERROR"),
             //.info = info,
-            .errno = err,
+            .errno = @intCast(-err),
             .syscall = bun.String.static("uv_interface_addresses"),
         };
         return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
@@ -826,7 +826,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .code = bun.String.static("ESRCH"),
                 .errno = comptime switch (bun.Environment.os) {
                     else => @intFromEnum(std.posix.E.SRCH),
-                    .windows => libuv.UV_ESRCH,
+                    .windows => -libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
@@ -838,7 +838,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .code = bun.String.static("EACCES"),
                 .errno = comptime switch (bun.Environment.os) {
                     else => @intFromEnum(std.posix.E.ACCES),
-                    .windows => libuv.UV_EACCES,
+                    .windows => -libuv.UV_EACCES,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
@@ -850,7 +850,7 @@ pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void 
                 .code = bun.String.static("EPERM"),
                 .errno = comptime switch (bun.Environment.os) {
                     else => @intFromEnum(std.posix.E.SRCH),
-                    .windows => libuv.UV_ESRCH,
+                    .windows => -libuv.UV_ESRCH,
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
@@ -897,19 +897,12 @@ pub fn totalmem() u64 {
 }
 
 pub fn uptime(global: *JSC.JSGlobalObject) bun.JSError!f64 {
+    _ = global;
     switch (Environment.os) {
         .windows => {
             var uptime_value: f64 = undefined;
-            const err = libuv.uv_uptime(&uptime_value);
-            if (err != 0) {
-                const sys_err = JSC.SystemError{
-                    .message = bun.String.static("failed to get system uptime"),
-                    .code = bun.String.static("ERR_SYSTEM_ERROR"),
-                    .errno = err,
-                    .syscall = bun.String.static("uv_uptime"),
-                };
-                return global.throwValue(sys_err.toErrorInstance(global));
-            }
+            _ = libuv.uv_uptime(&uptime_value);
+            // uv_uptime cannot fail on windows
             return uptime_value;
         },
         .mac => {

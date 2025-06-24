@@ -19,7 +19,8 @@ const kRemainingChunk = Symbol("remainingChunk");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
-  (_ = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1"), (dynamicallyAdjustChunkSize = () => _)
+  (_ = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1"),
+  (dynamicallyAdjustChunkSize = () => _)
 );
 
 type NativeReadable = typeof import("node:stream").Readable &

@@ -126,6 +126,81 @@ The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that erro
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
 
+## Full-stack executables
+
+{% note %}
+
+New in Bun v1.2.17
+
+{% /note %}
+
+Bun's `--compile` flag can create standalone executables that contain both server and client code, making it ideal for full-stack applications. When you import an HTML file in your server code, Bun automatically bundles all frontend assets (JavaScript, CSS, etc.) and embeds them into the executable. When Bun sees the HTML import on the server, it kicks off a frontend build process to bundle JavaScript, CSS, and other assets.
+
+{% codetabs %}
+
+```ts#server.ts
+import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    "/": index,
+    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
+  },
+});
+
+console.log(`Server running at http://localhost:${server.port}`);
+```
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My App</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <h1>Hello World</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>
+```
+
+```js#app.js
+console.log("Hello from the client!");
+```
+
+```css#styles.css
+body {
+  background-color: #f0f0f0;
+}
+```
+
+{% /codetabs %}
+
+To build this into a single executable:
+
+```sh
+bun build --compile ./server.ts --outfile myapp
+```
+
+This creates a self-contained binary that includes:
+
+- Your server code
+- The Bun runtime
+- All frontend assets (HTML, CSS, JavaScript)
+- Any npm packages used by your server
+
+The result is a single file that can be deployed anywhere without needing Node.js, Bun, or any dependencies installed. Just run:
+
+```sh
+./myapp
+```
+
+Bun automatically handles serving the frontend assets with proper MIME types and cache headers. The HTML import is replaced with a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets.
+
+For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
+
 ## Worker
 
 To use workers in a standalone executable, add the worker's entrypoint to the CLI arguments:
@@ -174,7 +249,7 @@ $ ./hello
 
 Standalone executables support embedding files.
 
-To embed files into an executable with `bun build --compile`, import the file in your code
+To embed files into an executable with `bun build --compile`, import the file in your code.
 
 ```ts
 // this becomes an internal file path
@@ -353,5 +428,4 @@ Currently, the `--compile` flag can only accept a single entrypoint at a time an
 - `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
-- `--format` - always outputs a binary executable. Internally, it's almost esm.
 - `--no-bundle` - we always bundle everything into the executable.

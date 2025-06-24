@@ -29,6 +29,8 @@ test/bundler/css/wpt/relative_color_out_of_gamut.test.ts
 test/bundler/esbuild/css.test.ts
 test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/extra.test.ts
+test/bundler/bundler_html_server.test.ts
+test/js/bun/http/bun-serve-html-manifest.test.ts
 test/bundler/esbuild/importstar_ts.test.ts
 test/bundler/esbuild/importstar.test.ts
 test/bundler/esbuild/loader.test.ts
@@ -69,6 +71,7 @@ test/cli/install/catalogs.test.ts
 test/cli/install/npmrc.test.ts
 test/cli/install/overrides.test.ts
 test/cli/run/env.test.ts
+test/cli/run/garbage-env.test.ts
 test/cli/run/esm-defineProperty.test.ts
 test/cli/run/jsx-namespaced-attributes.test.ts
 test/cli/run/log-test.test.ts
@@ -151,15 +154,12 @@ test/js/bun/s3/s3-insecure.test.ts
 test/js/bun/s3/s3-list-objects.test.ts
 test/js/bun/s3/s3-storage-class.test.ts
 test/js/bun/s3/s3.test.ts
-test/js/bun/shell/yield.test.ts
-test/js/bun/shell/file-io.test.ts
-test/js/bun/shell/commands/ls.test.ts
-test/js/bun/shell/commands/echo.test.ts
 test/js/bun/shell/bunshell-default.test.ts
 test/js/bun/shell/bunshell-file.test.ts
 test/js/bun/shell/bunshell-instance.test.ts
 test/js/bun/shell/commands/basename.test.ts
 test/js/bun/shell/commands/dirname.test.ts
+test/js/bun/shell/commands/echo.test.ts
 test/js/bun/shell/commands/exit.test.ts
 test/js/bun/shell/commands/false.test.ts
 test/js/bun/shell/commands/mv.test.ts
@@ -168,8 +168,10 @@ test/js/bun/shell/commands/seq.test.ts
 test/js/bun/shell/commands/true.test.ts
 test/js/bun/shell/commands/which.test.ts
 test/js/bun/shell/commands/yes.test.ts
+test/js/bun/shell/commands/ls.test.ts
 test/js/bun/shell/env.positionals.test.ts
 test/js/bun/shell/exec.test.ts
+test/js/bun/shell/file-io.test.ts
 test/js/bun/shell/lazy.test.ts
 test/js/bun/shell/leak.test.ts
 test/js/bun/shell/lex.test.ts
@@ -177,6 +179,7 @@ test/js/bun/shell/shell-hang.test.ts
 test/js/bun/shell/shell-load.test.ts
 test/js/bun/shell/shelloutput.test.ts
 test/js/bun/shell/throw.test.ts
+test/js/bun/shell/yield.test.ts
 test/js/bun/spawn/bun-ipc-inherit.test.ts
 test/js/bun/spawn/job-object-bug.test.ts
 test/js/bun/spawn/spawn_waiter_thread.test.ts
@@ -478,6 +481,7 @@ test/js/node/test/parallel/test-child-process-fork-args.js
 test/js/node/test/parallel/test-child-process-fork-close.js
 test/js/node/test/parallel/test-child-process-fork-closed-channel-segfault.js
 test/js/node/test/parallel/test-child-process-fork-detached.js
+test/js/node/test/parallel/test-child-process-fork-exec-argv.js
 test/js/node/test/parallel/test-child-process-fork-exec-path.js
 test/js/node/test/parallel/test-child-process-fork-no-shell.js
 test/js/node/test/parallel/test-child-process-fork-ref.js

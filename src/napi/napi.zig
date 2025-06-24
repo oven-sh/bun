@@ -1047,7 +1047,7 @@ pub const napi_async_work = struct {
     data: ?*anyopaque = null,
     status: std.atomic.Value(Status) = .init(.pending),
     scheduled: bool = false,
-    ref: Async.KeepAlive = .{},
+    poll_ref: Async.KeepAlive = .{},
 
     pub const Status = enum(u32) {
         pending = 0,
@@ -1056,30 +1056,36 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn new(env: *NapiEnv, execute: napi_async_execute_callback, complete: ?napi_async_complete_callback, data: ?*anyopaque) !*napi_async_work {
-        const work = try bun.default_allocator.create(napi_async_work);
+    pub fn new(env: *NapiEnv, execute: napi_async_execute_callback, complete: ?napi_async_complete_callback, data: ?*anyopaque) *napi_async_work {
         const global = env.toJS();
-        work.* = .{
+
+        const work = bun.new(napi_async_work, .{
             .global = global,
             .env = env,
             .execute = execute,
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
             .data = data,
-        };
+        });
         return work;
     }
 
     pub fn destroy(this: *napi_async_work) void {
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
+    }
+
+    pub fn schedule(this: *napi_async_work) void {
+        if (this.scheduled) return;
+        this.scheduled = true;
+        this.poll_ref.ref(this.global.bunVM());
+        WorkPool.schedule(&this.task);
     }
 
     pub fn runFromThreadPool(task: *WorkPoolTask) void {
         var this: *napi_async_work = @fieldParentPtr("task", task);
-
         this.run();
     }
-    pub fn run(this: *napi_async_work) void {
+    fn run(this: *napi_async_work) void {
         if (this.status.cmpxchgStrong(.pending, .started, .seq_cst, .seq_cst)) |state| {
             if (state == .cancelled) {
                 this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
@@ -1092,34 +1098,22 @@ pub const napi_async_work = struct {
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
     }
 
-    pub fn schedule(this: *napi_async_work) void {
-        if (this.scheduled) return;
-        this.scheduled = true;
-        this.ref.ref(this.global.bunVM());
-        WorkPool.schedule(&this.task);
-    }
-
     pub fn cancel(this: *napi_async_work) bool {
         return this.status.cmpxchgStrong(.pending, .cancelled, .seq_cst, .seq_cst) == null;
     }
 
-    fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
-
-        // likely `complete` will call `napi_delete_async_work`, so take a copy
-        // of `ref` beforehand
-        var ref = this.ref;
-        const env = this.env;
-        defer {
-            const global = env.toJS();
-            ref.unref(global.bunVM());
-        }
+    pub fn runFromJS(this: *napi_async_work, vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject) void {
+        // Note: the "this" value here may already be freed by the user in `complete`
+        var poll_ref = this.poll_ref;
+        defer poll_ref.unref(vm);
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         const complete = this.complete orelse {
             return;
         };
 
-        const handle_scope = NapiHandleScope.open(this.env, false);
+        const env = this.env;
+        const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 
         const status: NapiStatus = if (this.status.load(.seq_cst) == .cancelled)
@@ -1128,21 +1122,14 @@ pub const napi_async_work = struct {
             .ok;
 
         complete(
-            this.env,
+            env,
             @intFromEnum(status),
             this.data,
         );
 
-        const global = env.toJS();
         if (global.hasException()) {
-            return error.JSError;
+            global.reportActiveExceptionAsUnhandled(error.JSError);
         }
-    }
-
-    pub fn runFromJS(this: *napi_async_work) void {
-        this.runFromJSWithError() catch |e| {
-            this.global.reportActiveExceptionAsUnhandled(e);
-        };
     }
 };
 pub const napi_threadsafe_function = *ThreadSafeFunction;
@@ -1293,9 +1280,7 @@ pub export fn napi_create_async_work(
     const execute = execute_ orelse {
         return env.invalidArg();
     };
-    result.* = napi_async_work.new(env, execute, complete, data) catch {
-        return env.genericFailure();
-    };
+    result.* = napi_async_work.new(env, execute, complete, data);
     return env.ok();
 }
 pub export fn napi_delete_async_work(env_: napi_env, work_: ?*napi_async_work) napi_status {
@@ -1306,7 +1291,7 @@ pub export fn napi_delete_async_work(env_: napi_env, work_: ?*napi_async_work) n
     const work = work_ orelse {
         return env.invalidArg();
     };
-    bun.assert(env.toJS() == work.global);
+    if (comptime bun.Environment.allow_assert) bun.assert(env.toJS() == work.global);
     work.destroy();
     return env.ok();
 }
@@ -1318,7 +1303,7 @@ pub export fn napi_queue_async_work(env_: napi_env, work_: ?*napi_async_work) na
     const work = work_ orelse {
         return env.invalidArg();
     };
-    bun.assert(env.toJS() == work.global);
+    if (comptime bun.Environment.allow_assert) bun.assert(env.toJS() == work.global);
     work.schedule();
     return env.ok();
 }
@@ -1330,7 +1315,7 @@ pub export fn napi_cancel_async_work(env_: napi_env, work_: ?*napi_async_work) n
     const work = work_ orelse {
         return env.invalidArg();
     };
-    bun.assert(env.toJS() == work.global);
+    if (comptime bun.Environment.allow_assert) bun.assert(env.toJS() == work.global);
     if (work.cancel()) {
         return env.ok();
     }

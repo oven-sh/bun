@@ -2370,8 +2370,6 @@ pub const H2FrameParser = struct {
             }
         } else {
             if (isACK) {
-                defer _ = this.flush();
-                defer this.incrementWindowSizeIfNeeded();
                 // we received an ACK
                 log("settings frame ACK", .{});
 

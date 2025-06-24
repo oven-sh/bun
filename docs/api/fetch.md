@@ -204,7 +204,7 @@ To customize the TLS validation, use the `checkServerIdentity` option in `tls`
 await fetch("https://example.com", {
   tls: {
     checkServerIdentity: (hostname, peerCertificate) => {
-      // Return an error if the certificate is invalid
+      // Return an Error if the certificate is invalid
     },
   },
 });

@@ -31,7 +31,9 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 }
 #endif
 
+#if ENABLE(MALLOC_BREAKDOWN)
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
 
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
     : m_vm(vm)
@@ -56,12 +58,6 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     relaxAdoptionRequirement();
     addToContextsMap();
 }
-
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
-
-#if !ENABLE(MALLOC_BREAKDOWN)
-WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
-#endif
 
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
@@ -107,7 +103,7 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
         // but do not reject unauthorized
         opts.reject_unauthorized = false;
         enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts, &err);
+        this->m_ssl_client_websockets_ctx = us_create_bun_ssl_socket_context(loop, sizeof(size_t), opts, &err);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);
@@ -395,4 +391,17 @@ void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionCont
     postTaskOnTimeout(task, timeout);
 }
 
+// Zig bindings
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
 }
+
+extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
+{
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
+    if (!context) return nullptr;
+    return context->globalObject();
+}
+
+} // namespace WebCore

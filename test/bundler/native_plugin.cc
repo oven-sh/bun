@@ -1,8 +1,8 @@
 /*
-  Dummy plugin which counts the occurences of the word "foo" in the source code,
+  Dummy plugin which counts the occurrences of the word "foo" in the source code,
   replacing it with "boo".
 
-  It stores the number of occurences in the External struct.
+  It stores the number of occurrences in the External struct.
 */
 #include <atomic>
 #include <bun-native-bundler-plugin-api/bundler_plugin.h>
@@ -215,8 +215,8 @@ napi_value set_will_crash(napi_env env, napi_callback_info info) {
   napi_status status;
   External *external;
 
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   status = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to parse arguments");
@@ -235,7 +235,7 @@ napi_value set_will_crash(napi_env env, napi_callback_info info) {
   }
 
   bool throws;
-  status = napi_get_value_bool(env, args[0], &throws);
+  status = napi_get_value_bool(env, args[1], &throws);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to get boolean value");
     return nullptr;
@@ -250,8 +250,8 @@ napi_value set_throws_errors(napi_env env, napi_callback_info info) {
   napi_status status;
   External *external;
 
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   status = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to parse arguments");
@@ -270,7 +270,7 @@ napi_value set_throws_errors(napi_env env, napi_callback_info info) {
   }
 
   bool throws;
-  status = napi_get_value_bool(env, args[0], &throws);
+  status = napi_get_value_bool(env, args[1], &throws);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to get boolean value");
     return nullptr;

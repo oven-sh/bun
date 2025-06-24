@@ -1,11 +1,12 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
+const JSError = bun.JSError;
 
-pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.C.translated.AI_V4MAPPED;
-pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.C.translated.AI_ADDRCONFIG;
-pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.C.translated.AI_ALL;
+pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.c.AI_V4MAPPED;
+pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.c.AI_ADDRCONFIG;
+pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.c.AI_ALL;
 
 pub const GetAddrInfo = struct {
     name: []const u8 = "",
@@ -44,7 +45,7 @@ pub const GetAddrInfo = struct {
         return hasher.final();
     }
 
-    pub const Options = packed struct {
+    pub const Options = packed struct(u64) {
         family: Family = .unspecified,
         /// Leaving this unset leads to many duplicate addresses returned.
         /// Node hardcodes to `SOCK_STREAM`.
@@ -55,6 +56,7 @@ pub const GetAddrInfo = struct {
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
         flags: std.c.AI = .{},
+        _: u24 = 0,
 
         pub fn toLibC(this: Options) ?std.c.addrinfo {
             if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == std.c.AI{}) {
@@ -71,7 +73,15 @@ pub const GetAddrInfo = struct {
             return hints;
         }
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Options {
+        const FromJSError = Family.FromJSError ||
+            SocketType.FromJSError ||
+            Protocol.FromJSError ||
+            Backend.FromJSError || error{
+            InvalidFlags,
+            InvalidOptions,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Options {
             if (value.isEmptyOrUndefinedOrNull())
                 return Options{};
 
@@ -100,8 +110,10 @@ pub const GetAddrInfo = struct {
 
                     options.flags = flags.coerce(std.c.AI, globalObject);
 
-                    if (!options.flags.ALL and !options.flags.ADDRCONFIG and !options.flags.V4MAPPED)
-                        return error.InvalidFlags;
+                    // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                    const filter = ~@as(u32, @bitCast(std.c.AI{ .ALL = true, .ADDRCONFIG = true, .V4MAPPED = true }));
+                    const int = @as(u32, @bitCast(options.flags));
+                    if (int & filter != 0) return error.InvalidFlags;
                 }
 
                 return options;
@@ -125,7 +137,11 @@ pub const GetAddrInfo = struct {
             .{ "any", Family.unspecified },
         });
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Family {
+        const FromJSError = JSError || error{
+            InvalidFamily,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Family {
             if (value.isEmptyOrUndefinedOrNull())
                 return .unspecified;
 
@@ -139,7 +155,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0) {
                         return .unspecified;
                     }
@@ -181,7 +197,11 @@ pub const GetAddrInfo = struct {
             }
         }
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SocketType {
+        const FromJSError = JSError || error{
+            InvalidSocketType,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!SocketType {
             if (value.isEmptyOrUndefinedOrNull())
                 // Default to .stream
                 return .stream;
@@ -196,7 +216,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0)
                         return .unspecified;
 
@@ -218,7 +238,11 @@ pub const GetAddrInfo = struct {
             .{ "udp", Protocol.udp },
         });
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Protocol {
+        const FromJSError = JSError || error{
+            InvalidProtocol,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Protocol {
             if (value.isEmptyOrUndefinedOrNull())
                 return .unspecified;
 
@@ -232,7 +256,7 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                return map.fromJS(globalObject, value) orelse {
+                return try map.fromJS(globalObject, value) orelse {
                     const str = value.toString(globalObject);
                     if (str.length() == 0)
                         return .unspecified;
@@ -273,12 +297,16 @@ pub const GetAddrInfo = struct {
             else => .c_ares,
         };
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Backend {
+        pub const FromJSError = JSError || error{
+            InvalidBackend,
+        };
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) FromJSError!Backend {
             if (value.isEmptyOrUndefinedOrNull())
                 return default;
 
             if (value.isString()) {
-                return label.fromJS(globalObject, value) orelse {
+                return try label.fromJS(globalObject, value) orelse {
                     if (value.toString(globalObject).length() == 0) {
                         return default;
                     }
@@ -301,11 +329,11 @@ pub const GetAddrInfo = struct {
             addrinfo: ?*std.c.addrinfo,
             list: List,
 
-            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) bun.JSError!?JSC.JSValue {
                 return switch (this.*) {
-                    .addrinfo => |addrinfo| addrInfoToJSArray(addrinfo orelse return null, globalThis),
+                    .addrinfo => |addrinfo| try addrInfoToJSArray(addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
-                        const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
+                        const array = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
@@ -416,11 +444,8 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     return count;
 }
 
-pub fn addrInfoToJSArray(
-    addr_info: *std.c.addrinfo,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const array = JSC.JSValue.createEmptyArray(
+pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    const array = try JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
     );
@@ -444,4 +469,4 @@ pub fn addrInfoToJSArray(
     return array;
 }
 
-pub const internal = bun.JSC.DNS.InternalDNS;
+pub const internal = bun.api.DNS.InternalDNS;

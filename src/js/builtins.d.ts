@@ -1,6 +1,17 @@
 /// <reference types="../../build/debug/codegen/generated.d.ts" />
+/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
+/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
+/// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
+
+declare module "bun" {
+  interface Socket {
+    $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
+    $end(): void;
+  }
+}
 
 /** $debug is a preprocessor macro that works like a templated console.log, and only runs in debug mode if you pass
  * BUN_DEBUG_JS=<module>
@@ -22,7 +33,11 @@ declare function $debug(...args: any[]): void;
 declare function $assert(check: any, ...message: any[]): asserts check;
 
 /** Asserts the input is a promise. Returns `true` if the promise is resolved */
-declare function $isPromiseResolved(promise: Promise<any>): boolean;
+declare function $isPromiseFulfilled(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is rejected */
+declare function $isPromiseRejected(promise: Promise<any>): boolean;
+/** Asserts the input is a promise. Returns `true` if the promise is pending */
+declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
 
@@ -46,6 +61,50 @@ declare var $sloppy;
 declare var $alwaysInline;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
+/**
+ * Overrides **
+ */
+
+interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  $controlledReadableStream: ReadableStream<R>;
+  $underlyingSource: UnderlyingSource;
+  $queue: any;
+  $started: number;
+  $closeRequested: boolean;
+  $pullAgain: boolean;
+  $pulling: boolean;
+  $strategy: any;
+
+  $pullAlgorithm(): void;
+  $pull: typeof ReadableStreamDefaultController.prototype.pull;
+  $cancel: typeof ReadableStreamDefaultController.prototype.cancel;
+  $cancelAlgorithm: (reason?: any) => void;
+  $close: typeof ReadableStreamDefaultController.prototype.close;
+  $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
+  $error: typeof ReadableStreamDefaultController.prototype.error;
+}
+
+declare var ReadableStreamDefaultController: {
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
+};
+
+interface ReadableStream<R = any> extends _ReadableStream<R> {
+  $highWaterMark: number;
+  $bunNativePtr: undefined | TODO;
+  $asyncContext?: {};
+  $disturbed: boolean;
+  $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
+}
+
+declare var ReadableStream: {
+  prototype: ReadableStream;
+  new (): ReadableStream;
+};
+
+interface Console {
+  $writer: ReturnType<typeof Bun.stdout.writer>;
+}
 
 // JSC defines their intrinsics in a nice list here:
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecode/BytecodeIntrinsicRegistry.h
@@ -54,19 +113,12 @@ declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp
 
 /** returns `arguments[index]` */
-declare function $argument<T = any>(index: number): any;
+declare function $argument<T = any>(index: number): any | undefined;
 /** returns number of arguments */
 declare function $argumentCount(): number;
 /** array.push(item) */
 declare function $arrayPush(array: T[], item: T): void;
-/** gets a property on an object */
-declare function $getByIdDirect<T = any>(obj: any, key: string): T;
-/**
- * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
- *
- * TODO: clarify what private means exactly.
- */
-declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
+
 /**
  * gets a property on an object
  */
@@ -92,8 +144,8 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
 ): Fields[N];
 declare function $fulfillPromise(...args: any[]): TODO;
-declare function $evaluateCommonJSModule(...args: any[]): TODO;
-declare function $loadCJS2ESM(...args: any[]): TODO;
+declare function $rejectPromise(...args: any[]): TODO;
+declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
@@ -125,7 +177,6 @@ declare function $isProxyObject(obj: unknown): obj is Proxy;
 declare function $isDerivedArray(): TODO;
 declare function $isGenerator(obj: unknown): obj is Generator<any, any, any>;
 declare function $isAsyncGenerator(obj: unknown): obj is AsyncGenerator<any, any, any>;
-declare function $isPromise(obj: unknown): obj is Promise<any>;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -154,7 +205,21 @@ declare function $throwOutOfMemoryError(): never;
 declare function $tryGetById(): TODO;
 declare function $tryGetByIdWithWellKnownSymbol(obj: any, key: WellKnownSymbol): any;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
-declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): void;
+
+/**
+ * Sets a private property on an object.
+ * Translates to the `op_put_by_id_direct` bytecode.
+ *
+ * @param obj The object to set the private property on
+ * @param key The key of the private property (without the "$" prefix)
+ * @param value The value to set the private property to
+ */
+declare function $putByIdDirectPrivate<T extends Record<`$${K}`, unknown>, K extends string>(
+  obj: T,
+  key: K,
+  value: T[`$${K}`],
+): void;
+
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
@@ -356,7 +421,7 @@ declare function $importer(): TODO;
 declare function $inFlightCloseRequest(): TODO;
 declare function $inFlightWriteRequest(): TODO;
 declare function $initializeWith(): TODO;
-declare function $internalRequire(path: string): TODO;
+declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
 declare function $internalStream(): TODO;
 declare function $internalWritable(): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
@@ -365,7 +430,7 @@ declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazyStreamPrototypeMap(): TODO;
+declare const $lazyStreamPrototypeMap: Map<string, typeof import("node:stream/web").ReadableStreamDefaultController>;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
 declare function $main(): TODO;
@@ -419,10 +484,16 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, CommonJSModuleRecord>;
+declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
+declare function $resolveSync(
+  name: string,
+  from: string,
+  isESM?: boolean,
+  isUserRequireResolve?: boolean,
+  paths?: string[],
+): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
@@ -485,10 +556,14 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: CommonJSModuleRecord,
-): CommonJSModuleRecord;
+  parent: JSCommonJSModule | undefined,
+): JSCommonJSModule;
+declare function $evaluateCommonJSModule(
+  moduleToEvaluate: JSCommonJSModule,
+  sourceModule: JSCommonJSModule,
+): JSCommonJSModule[];
 
-declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
+declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
@@ -527,6 +602,7 @@ declare interface UnderlyingSource {
   $lazy?: boolean;
   $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
+  $stream?: ReadableStream;
 }
 
 declare class OutOfMemoryError {
@@ -580,6 +656,21 @@ interface String {
   // add others as needed
 }
 
+interface Set {
+  $add: Set["add"];
+  $clear: Set["clear"];
+  $delete: Set["delete"];
+  $has: Set["has"];
+}
+
+interface Map {
+  $clear: Map["clear"];
+  $delete: Map["delete"];
+  $has: Map["has"];
+  $set: Map["set"];
+  $get: Map["get"];
+}
+
 declare var $Buffer: {
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
@@ -597,22 +688,67 @@ declare function $makeAbortError(message?: string, options?: { cause: Error }): 
 /**
  * -- Error Codes with manual messages
  */
-declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: string): TypeError;
-declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: any[], actualValue: string): TypeError;
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: any): TypeError;
+declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string[], actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
 declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
-declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
+declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
+/**
+ * `The "foo" or "bar" or "baz" argument must be specified`
+ *
+ * Panics if `oneOf` is empty.
+ */
+declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
+declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
+declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(a: string, b: string): TypeError;
+declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
+declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
+declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
+declare function $ERR_BUFFER_TOO_LARGE(len: number): RangeError;
+declare function $ERR_BROTLI_INVALID_PARAM(p: number): RangeError;
+declare function $ERR_TLS_CERT_ALTNAME_INVALID(reason: string, host: string, cert): Error;
+declare function $ERR_USE_AFTER_CLOSE(name: string): Error;
+declare function $ERR_HTTP2_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
+declare function $ERR_INVALID_HTTP_TOKEN(name: string, value: string): TypeError;
+declare function $ERR_HTTP2_STATUS_INVALID(code: number): RangeError;
+declare function $ERR_HTTP2_INVALID_PSEUDOHEADER(name: string): TypeError;
+declare function $ERR_HTTP2_STREAM_ERROR(code): Error;
+declare function $ERR_HTTP2_SESSION_ERROR(code): Error;
+declare function $ERR_HTTP2_PAYLOAD_FORBIDDEN(status): Error;
+declare function $ERR_HTTP2_INVALID_INFO_STATUS(code): RangeError;
+declare function $ERR_INVALID_URL(input, base?): TypeError;
+declare function $ERR_INVALID_CHAR(name, field?): TypeError;
+declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
+declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_INVALID_STATE(message: string): Error;
+declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
+declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;
+declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
+declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
+declare function $ERR_UNHANDLED_ERROR(err?): Error;
+declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
+declare function $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(value, expected): TypeError;
+declare function $ERR_CRYPTO_INCOMPATIBLE_KEY(name, value): Error;
+declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
+declare function $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(message): Error;
+declare function $ERR_INVALID_ASYNC_ID(name, value): RangeError;
+declare function $ERR_ASYNC_TYPE(name): TypeError;
+declare function $ERR_ASYNC_CALLBACK(name): TypeError;
+declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
+declare function $ERR_INVALID_FD_TYPE(type): TypeError;
+declare function $ERR_IP_BLOCKED(ip): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
 declare function $ERR_ZLIB_INITIALIZATION_FAILED(): Error;
-declare function $ERR_BUFFER_OUT_OF_BOUNDS(): Error;
 declare function $ERR_IPC_ONE_PIPE(): Error;
 declare function $ERR_SOCKET_ALREADY_BOUND(): Error;
 declare function $ERR_SOCKET_BAD_BUFFER_SIZE(): Error;
@@ -629,6 +765,48 @@ declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
+declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
+declare function $ERR_SOCKET_CLOSED(): Error;
+declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
+declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
+declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
+declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
+declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
+declare function $ERR_INVALID_URI(): URIError;
+declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
+declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;
+declare function $ERR_HTTP2_HEADERS_SENT(): Error;
+declare function $ERR_HTTP2_INVALID_STREAM(): Error;
+declare function $ERR_HTTP2_NO_SOCKET_MANIPULATION(): Error;
+declare function $ERR_HTTP2_SOCKET_UNBOUND(): Error;
+declare function $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(): Error;
+declare function $ERR_HTTP2_INVALID_SESSION(): Error;
+declare function $ERR_HTTP2_TRAILERS_ALREADY_SENT(): Error;
+declare function $ERR_HTTP2_TRAILERS_NOT_READY(): Error;
+declare function $ERR_HTTP2_SEND_FILE(): Error;
+declare function $ERR_HTTP2_SEND_FILE_NOSEEK(): Error;
+declare function $ERR_HTTP2_PUSH_DISABLED(): Error;
+declare function $ERR_HTTP2_HEADERS_AFTER_RESPOND(): Error;
+declare function $ERR_HTTP2_STATUS_101(): Error;
+declare function $ERR_HTTP2_ALTSVC_INVALID_ORIGIN(): TypeError;
+declare function $ERR_HTTP2_INVALID_ORIGIN(): TypeError;
+declare function $ERR_HTTP2_ALTSVC_LENGTH(): TypeError;
+declare function $ERR_HTTP2_PING_LENGTH(): RangeError;
+declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
+declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
+declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
+declare function $ERR_DIR_CLOSED(): Error;
+declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, invalidIndex: number | -1): TypeError;
+declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
+declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;
+declare function $ERR_VM_MODULE_STATUS(reason: string): Error;
+declare function $ERR_VM_MODULE_ALREADY_LINKED(): Error;
+declare function $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA(): Error;
+declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
+declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
+declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 
 /**
  * Convert a function to a class-like object.
@@ -645,3 +823,51 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
+
+declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
+
+/**
+ * Schedules a callback to be invoked as a microtask.
+ */
+declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
+
+declare function $rejectPromise(promise: Promise<unknown>, reason: unknown): void;
+declare function $resolvePromise(promise: Promise<unknown>, value: unknown): void;
+
+interface Map<K, V> {
+  $get: typeof Map.prototype.get;
+  $set: typeof Map.prototype.set;
+}
+
+interface ObjectConstructor {
+  $defineProperty: typeof Object.defineProperty;
+  $defineProperties: typeof Object.defineProperties;
+}
+
+declare const $Object: ObjectConstructor;
+
+/** gets a property on an object */
+declare function $getByIdDirect<T = any>(obj: any, key: string): T;
+
+/**
+ * Gets a private property on an object.
+ * Translates to the `op_get_by_id_direct` bytecode.
+ *
+ * @param obj The object to get the private property from
+ * @param key The key of the private property (without the "$" prefix)
+ * @returns The value of the private property
+ */
+declare function $getByIdDirectPrivate<T = any, K extends string = string>(
+  obj: T,
+  key: K,
+): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
+
+declare var $Promise: PromiseConstructor;
+
+declare function $isPromise<T>(value: unknown): value is Promise<T>;
+
+declare type $ReadableStream = ReadableStream;
+declare type $ReadableStreamBYOBReader = ReadableStreamBYOBReader;
+declare type $ReadableStreamDefaultReader = ReadableStreamDefaultReader;
+declare type $ReadableStreamDefaultController = ReadableStreamDefaultController;
+declare type $ReadableStreamDirectController = ReadableStreamDirectController;

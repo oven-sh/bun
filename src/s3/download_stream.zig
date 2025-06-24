@@ -1,17 +1,18 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const picohttp = JSC.WebCore.picohttp;
 const S3Error = @import("./error.zig").S3Error;
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const SignResult = S3Credentials.SignResult;
 const strings = bun.strings;
 const log = bun.Output.scoped(.S3, true);
 pub const S3HttpDownloadStreamingTask = struct {
+    pub const new = bun.TrivialNew(@This());
+
     http: bun.http.AsyncHTTP,
     vm: *JSC.VirtualMachine,
     sign_result: SignResult,
-    headers: JSC.WebCore.Headers,
+    headers: bun.http.Headers,
     callback_context: *anyopaque,
     // this transfers ownership from the chunk
     callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?S3Error, *anyopaque) void,
@@ -41,7 +42,6 @@ pub const S3HttpDownloadStreamingTask = struct {
     range: ?[]const u8,
     proxy_url: []const u8,
 
-    pub usingnamespace bun.New(@This());
     pub const State = packed struct(u64) {
         pub const AtomicType = std.atomic.Value(u64);
         status_code: u32 = 0,
@@ -72,8 +72,7 @@ pub const S3HttpDownloadStreamingTask = struct {
         if (this.proxy_url.len > 0) {
             bun.default_allocator.free(this.proxy_url);
         }
-
-        this.destroy();
+        bun.destroy(this);
     }
 
     fn reportProgress(this: *@This(), state: State) void {

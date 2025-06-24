@@ -6,9 +6,10 @@
 // This is embedded in `DevServer.sendSerializedFailures`. SSR is
 // left unused for simplicity; a flash of unstyled content is
 // stopped by the fact this script runs synchronously.
-import { decodeAndAppendError, onErrorMessage, updateErrorOverlay } from "./client/overlay";
-import { DataViewReader } from "./client/reader";
+import { DataViewReader } from "./client/data-view";
+import { decodeAndAppendServerError, onServerErrorPayload, updateErrorOverlay } from "./client/overlay";
 import { initWebSocket } from "./client/websocket";
+import "./debug";
 import { MessageId } from "./generated";
 
 /** Injected by DevServer */
@@ -17,7 +18,12 @@ declare const error: Uint8Array<ArrayBuffer>;
 {
   const reader = new DataViewReader(new DataView(error.buffer), 0);
   while (reader.hasMoreData()) {
-    decodeAndAppendError(reader);
+    try {
+      decodeAndAppendServerError(reader);
+    } catch (e) {
+      console.error(e);
+      break;
+    }
   }
   updateErrorOverlay();
 }
@@ -34,8 +40,8 @@ const ws = initWebSocket({
       // ensure this bundle is enqueued.
       location.reload();
     }
-    ws.send("se"); // IncomingMessageId.subscribe with route_update
+    ws.send("se"); // IncomingMessageId.subscribe with errors
   },
 
-  [MessageId.errors]: onErrorMessage,
+  [MessageId.errors]: onServerErrorPayload,
 });

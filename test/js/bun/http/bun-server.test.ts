@@ -421,7 +421,7 @@ describe("Server", () => {
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
       expect.unreachable();
     } catch (err: any) {
-      expect(err.code).toBe("ConnectionClosed");
+      expect(err.code).toBe("ECONNRESET");
     }
 
     {
@@ -1099,5 +1099,189 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("");
     });
+
+    test("should allow Strict-Transport-Security", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("Hello World", {
+            status: 200,
+            headers: { "Strict-Transport-Security": "max-age=31536000" },
+          });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
+    });
   });
+});
+
+describe("websocket and routes test", () => {
+  const serverConfigurations = [
+    {
+      // main route for upgrade
+      routes: {
+        "/": (req: Request, server: Server) => {
+          if (server.upgrade(req)) return;
+          return new Response("Forbidden", { status: 403 });
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      testName: "main route for upgrade",
+    },
+    {
+      // Generic route for upgrade
+      routes: {
+        "/*": (req: Request, server: Server) => {
+          if (server.upgrade(req)) return;
+          return new Response("Forbidden", { status: 403 });
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      expectedPath: "/bun",
+      testName: "generic route for upgrade",
+    },
+    // GET route for upgrade
+    {
+      routes: {
+        "/ws": {
+          GET: (req: Request, server: Server) => {
+            if (server.upgrade(req)) return;
+            return new Response("Forbidden", { status: 403 });
+          },
+          POST: (req: Request) => {
+            return new Response(req.body);
+          },
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: true,
+      expectedPath: "/ws",
+      testName: "GET route for upgrade",
+    },
+    // POST route and fetch route for upgrade
+    {
+      routes: {
+        "/": {
+          POST: (req: Request, server: Server) => {
+            return new Response("Hello World");
+          },
+        },
+      },
+      fetch: (req: Request, server: Server) => {
+        if (server.upgrade(req)) return;
+        return new Response("Forbidden", { status: 403 });
+      },
+      shouldBeUpgraded: true,
+      hasPOST: true,
+      testName: "POST route + fetch route for upgrade",
+    },
+    // POST route for upgrade
+    {
+      routes: {
+        "/": {
+          POST: (req: Request, server: Server) => {
+            return new Response("Hello World");
+          },
+        },
+      },
+      shouldBeUpgraded: false,
+      hasPOST: true,
+      testName: "POST route for upgrade and no fetch",
+    },
+    // fetch only
+    {
+      fetch: (req: Request, server: Server) => {
+        if (server.upgrade(req)) return;
+        return new Response("Forbidden", { status: 403 });
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      testName: "fetch only for upgrade",
+    },
+  ];
+  for (const config of serverConfigurations) {
+    const { routes, fetch: serverFetch, shouldBeUpgraded, hasPOST, expectedPath, testName } = config;
+    test(testName, async () => {
+      using server = Bun.serve({
+        port: 0,
+        routes,
+        fetch: serverFetch,
+        websocket: {
+          message: (ws, message) => {
+            // PING PONG
+            ws.send(`recv: ${message}`);
+          },
+        },
+      });
+
+      {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const url = new URL(server.url);
+        url.pathname = expectedPath || "/";
+        url.hostname = "127.0.0.1";
+        const ws = new WebSocket(url.toString()); // bun crashes here
+        ws.onopen = () => {
+          ws.send("Hello server");
+        };
+        ws.onmessage = event => {
+          resolve(event.data);
+          ws.close();
+        };
+        ws.onerror = reject;
+        ws.onclose = event => {
+          reject(event.code);
+        };
+        if (shouldBeUpgraded) {
+          const result = await promise;
+          expect(result).toBe("recv: Hello server");
+        } else {
+          const result = await promise.catch(e => e);
+          expect(result).toBe(1002);
+        }
+        if (hasPOST) {
+          const result = await fetch(url, {
+            method: "POST",
+            body: "Hello World",
+          });
+          expect(result.status).toBe(200);
+          const body = await result.text();
+          expect(body).toBe("Hello World");
+        }
+      }
+    });
+  }
+});
+
+test("should be able to redirect when using empty streams #15320", async () => {
+  using server = Bun.serve({
+    port: 0,
+    websocket: void 0,
+    async fetch(req, server2) {
+      const url = new URL(req.url);
+      if (url.pathname === "/redirect") {
+        const emptyStream = new ReadableStream({
+          start(controller) {
+            // Immediately close the stream to make it empty
+            controller.close();
+          },
+        });
+
+        return new Response(emptyStream, {
+          status: 307,
+          headers: {
+            location: "/",
+          },
+        });
+      }
+
+      return new Response("Hello, World");
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}/redirect`);
+  expect(await response.text()).toBe("Hello, World");
 });

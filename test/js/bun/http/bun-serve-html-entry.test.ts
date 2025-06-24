@@ -487,3 +487,150 @@ test("bun *.html", async () => {
     // The process will be automatically cleaned up by 'await using'
   }
 });
+
+test("bun serve svg files with correct Content-Type", async () => {
+  const dir = tempDirWithFiles("svg-content-type-test", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>SVG Test</title>
+        </head>
+        <body>
+          <img src="logo.svg" alt="Logo">
+        </body>
+      </html>
+    `,
+    "logo.svg": /*svg*/ `
+      <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" />
+      </svg>
+    `,
+  });
+
+  // Start the server by running bun with the HTML file
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0"],
+    env: {
+      ...bunEnv,
+      NODE_ENV: "production",
+    },
+    cwd: dir,
+    stdout: "pipe",
+  });
+
+  const serverUrl = await getServerUrl(process);
+
+  try {
+    // First get the HTML and find the SVG path
+    const htmlResponse = await fetch(serverUrl);
+    expect(htmlResponse.status).toBe(200);
+    const html = await htmlResponse.text();
+
+    // Extract the SVG path from the img tag
+    const svgMatch = html.match(/<img[^>]+src="([^"]+)"/);
+    expect(svgMatch, "Should find img tag with SVG source").toBeTruthy();
+
+    // Test the SVG file using the path from HTML
+    const svgResponse = await fetch(new URL(svgMatch![1], serverUrl).href);
+    expect(svgResponse.status).toBe(200);
+    expect(svgResponse.headers.get("content-type")).toBe("image/svg+xml");
+
+    const svgContent = await svgResponse.text();
+    expect(svgContent).toContain("<svg");
+    expect(svgContent).toContain("circle");
+  } finally {
+    // The process will be automatically cleaned up by 'await using'
+  }
+});
+
+test("bun serve files with correct Content-Type headers", async () => {
+  const dir = tempDirWithFiles("content-type-test", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Content Type Test</title>
+        </head>
+        <body>
+          <img src="logo.svg" alt="Logo SVG">
+          <img src="photo.png" alt="Photo PNG">
+          <img src="document.pdf" alt="PDF">
+        </body>
+      </html>
+    `,
+    "logo.svg": /*svg*/ `
+      <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" />
+      </svg>
+    `,
+    // A small 1x1 black PNG
+    "photo.png": Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+    // A minimal valid PDF file
+    "document.pdf": Buffer.from(
+      "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj trailer<</Root 1 0 R>>",
+      "utf-8",
+    ),
+  });
+
+  // Start the server by running bun with the HTML file
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0"],
+    env: {
+      ...bunEnv,
+      NODE_ENV: "production",
+    },
+    cwd: dir,
+    stdout: "pipe",
+  });
+
+  const serverUrl = await getServerUrl(process);
+
+  try {
+    // First get the HTML and find all asset paths
+    const htmlResponse = await fetch(serverUrl);
+    expect(htmlResponse.status).toBe(200);
+    const html = await htmlResponse.text();
+
+    // Test each file type and its corresponding Content-Type header
+    const files = [
+      {
+        pattern: /<img[^>]+src="([^"]+\.svg)"/,
+        expectedType: "image/svg+xml",
+        expectedContent: "<svg",
+      },
+      {
+        pattern: /<img[^>]+src="([^"]+\.png)"/,
+        expectedType: "image/png",
+        expectedContent: Buffer.from([0x89, 0x50, 0x4e, 0x47]), // PNG magic number
+      },
+      {
+        pattern: /<img[^>]+src="([^"]+\.pdf)"/,
+        expectedType: "application/pdf",
+        expectedContent: "%PDF-",
+      },
+    ];
+
+    for (const file of files) {
+      const match = html.match(file.pattern);
+      expect(match, `Should find ${file.expectedType} reference in HTML`).toBeTruthy();
+
+      const response = await fetch(new URL(match![1], serverUrl).href);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(file.expectedType);
+
+      if (typeof file.expectedContent === "string") {
+        const content = await response.text();
+        expect(content).toContain(file.expectedContent);
+      } else {
+        const content = new Uint8Array(await response.arrayBuffer());
+        expect(content.slice(0, file.expectedContent.length)).toEqual(file.expectedContent);
+      }
+    }
+  } finally {
+    // The process will be automatically cleaned up by 'await using'
+  }
+});

@@ -1,13 +1,6 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const defines = @import("./defines.zig");
 
@@ -26,6 +19,13 @@ const defines = @import("./defines.zig");
 // these functions has any side effects. It only says something about
 // referencing these function without calling them.
 pub const GlobalDefinesKey = [_][]const string{
+
+    // Array: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array#Static_methods
+    &[_]string{ "Array", "from" },
+    &[_]string{ "Array", "of" },
+    &[_]string{ "Array", "isArray" },
+
     // Object: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object#Static_methods
     &[_]string{ "Object", "assign" },
@@ -40,6 +40,8 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "Object", "getOwnPropertyNames" },
     &[_]string{ "Object", "getOwnPropertySymbols" },
     &[_]string{ "Object", "getPrototypeOf" },
+    &[_]string{ "Object", "groupBy" },
+    &[_]string{ "Object", "hasOwn" },
     &[_]string{ "Object", "is" },
     &[_]string{ "Object", "isExtensible" },
     &[_]string{ "Object", "isFrozen" },
@@ -152,6 +154,9 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "Reflect", "preventExtensions" },
     &[_]string{ "Reflect", "set" },
     &[_]string{ "Reflect", "setPrototypeOf" },
+
+    &[_]string{ "JSON", "parse" },
+    &[_]string{ "JSON", "stringify" },
 
     // Console method references are assumed to have no side effects
     // https://developer.mozilla.org/en-US/docs/Web/API/console

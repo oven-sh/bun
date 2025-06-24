@@ -180,7 +180,8 @@ export function editCssContent(id: string, newContent: string) {
     // Disable the link tag if it exists
     const linkSheet = entry.link?.sheet;
     if (linkSheet) linkSheet.disabled = true;
-    return;
+    return false;
   }
   sheet!.replace(newContent);
+  return !sheet!.disabled;
 }

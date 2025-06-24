@@ -11,32 +11,32 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile, cp, stat, exists } from "fs/promises";
+import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isWindows,
+  readdirSorted,
+  runBunInstall,
   tempDirWithFiles,
+  textLockfile,
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
-  runBunInstall,
-  isWindows,
-  textLockfile,
-  readdirSorted,
 } from "harness";
-import { join, sep, resolve } from "path";
+import { join, resolve, sep } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  getPort,
   package_dir,
   requested,
   root_url,
   setHandler,
-  getPort,
 } from "./dummy.registry.js";
 
 expect.extend({
@@ -486,7 +486,7 @@ it("should work when moving workspace packages", async () => {
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 
-  await Bun.$/* sh */ `
+  await Bun.$ /* sh */ `
   mkdir config
 
   # change workspaces from "packages/*" to "config/*"
@@ -558,7 +558,7 @@ it("should work when renaming a single workspace package", async () => {
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 
-  await Bun.$/* sh */ `
+  await Bun.$ /* sh */ `
   echo ${JSON.stringify({
     "name": "my-workspace",
     version: "0.0.1",

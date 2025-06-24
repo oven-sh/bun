@@ -12,6 +12,7 @@
 #include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
+#include "NativeModuleImpl.h"
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
@@ -54,7 +55,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
@@ -70,8 +71,32 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     ASSERT(
         result && result.isCell() && jsDynamicCast<JSObject*>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().data());
+        moduleName.utf8().span().data());
     return result;
+}
+
+ALWAYS_INLINE JSC::JSValue generateNativeModule(
+    JSC::JSGlobalObject* globalObject,
+    JSC::VM& vm,
+    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+{
+    Vector<JSC::Identifier, 4> propertyNames;
+    JSC::MarkedArgumentBuffer arguments;
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    generator(
+        globalObject,
+        JSC::Identifier::EmptyIdentifier, // Our generators do not do anything with the key
+        propertyNames,
+        arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
+    // assigns the `default` export first.
+    ASSERT_WITH_MESSAGE(
+        propertyNames.at(0) == vm.propertyNames->defaultKeyword,
+        "The native module must export a default value first.");
+    JSValue defaultValue = arguments.at(0);
+    ASSERT(defaultValue);
+    return defaultValue;
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
@@ -89,7 +114,7 @@ JSValue initializeInternalModuleFromDisk(
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().data(), file.utf8().data());
+            moduleName.utf8().span().data(), file.utf8().span().data());
         CRASH();
     }
 }
@@ -142,9 +167,12 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
     }
     return value;

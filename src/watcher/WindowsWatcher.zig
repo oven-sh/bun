@@ -43,7 +43,7 @@ const DirWatcher = struct {
             const err = w.kernel32.GetLastError();
             log("failed to start watching directory: {s}", .{@tagName(err)});
             return .{ .err = .{
-                .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                .errno = @intFromEnum(bun.sys.SystemErrno.init(err) orelse bun.sys.SystemErrno.EINVAL),
                 .syscall = .watch,
             } };
         }
@@ -160,7 +160,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
             } else {
                 log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.init(err) orelse bun.sys.SystemErrno.EINVAL),
                     .syscall = .watch,
                 } };
             }
@@ -176,7 +176,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
                 // TODO close handles?
                 log("shutdown notification in WindowsWatcher.next", .{});
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.ESHUTDOWN),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.ESHUTDOWN),
                     .syscall = .watch,
                 } };
             }
@@ -184,7 +184,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
         } else {
             log("GetQueuedCompletionStatus returned no overlapped event", .{});
             return .{ .err = .{
-                .errno = @truncate(@intFromEnum(bun.C.E.INVAL)),
+                .errno = @truncate(@intFromEnum(bun.sys.E.INVAL)),
                 .syscall = .watch,
             } };
         }
@@ -229,19 +229,14 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            for (item_paths, 0..) |path_, item_idx| {
-                var path = path_;
-                if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
-                    path = path[0 .. path.len - 1];
-                }
-                // log("checking path: {s}\n", .{path});
+            for (item_paths, 0..) |path, item_idx| {
                 // check if the current change applies to this item
                 // if so, add it to the eventlist
-                const rel = bun.path.isParentOrEqual(eventpath, path);
+                const rel = bun.path.isParentOrEqual(path, eventpath);
+                log("checking path: {s} = .{s}", .{ path, @tagName(rel) });
                 // skip unrelated items
                 if (rel == .unrelated) continue;
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
-                if (rel == .parent and (event.action != .Removed or event.action != .RenamedOld)) continue;
                 this.watch_events[event_id] = createWatchEvent(event, @truncate(item_idx));
                 event_id += 1;
             }
@@ -289,11 +284,9 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
-const Environment = bun.Environment;
+const bun = @import("bun");
 const Output = bun.Output;
 const log = Output.scoped(.watcher, false);
-const Futex = bun.Futex;
 const Mutex = bun.Mutex;
 const w = std.os.windows;
 

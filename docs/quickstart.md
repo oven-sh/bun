@@ -58,7 +58,7 @@ Then add the following to your `compilerOptions` in `tsconfig.json`:
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

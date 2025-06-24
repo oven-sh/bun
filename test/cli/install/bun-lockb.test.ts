@@ -1,7 +1,7 @@
-import { spawn, write, file } from "bun";
-import { expect, it, beforeAll, afterAll } from "bun:test";
-import { copyFile, open, writeFile, exists } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall } from "harness";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { copyFile, exists, open, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();

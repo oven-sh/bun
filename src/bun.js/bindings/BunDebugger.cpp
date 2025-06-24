@@ -7,13 +7,14 @@
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
 #include "ScriptExecutionContext.h"
-#include "Strong.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 
 #include "InspectorLifecycleAgent.h"
 #include "InspectorTestReporterAgent.h"
+#include "InspectorBunFrontendDevServerAgent.h"
+#include "InspectorHTTPServerAgent.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
@@ -52,7 +53,7 @@ public:
     void pauseWaitingForAutomaticInspection() override
     {
     }
-    void unpauseForInitializedInspector() override
+    void unpauseForResolvedAutomaticInspection() override
     {
         if (waitingForConnection) {
             waitingForConnection = false;
@@ -112,6 +113,10 @@ public:
                 WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
                 WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
         this->hasEverConnected = true;
@@ -305,7 +310,7 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction->m_cell.get());
+        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
         auto& vm = debuggerGlobalObject->vm();
@@ -375,7 +380,7 @@ public:
 
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
-    Bun::StrongRef* jsBunDebuggerOnMessageFunction = nullptr;
+    JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
     WTF::Lock jsWaitForMessageFromInspectorLock;
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
@@ -392,7 +397,7 @@ class JSBunInspectorConnection final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSBunInspectorConnection* create(JSC::VM& vm, JSC::Structure* structure, BunInspectorConnection* connection)
     {
@@ -561,7 +566,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         connections.append(connection);
         inspectorConnections->set(targetContext->identifier(), connections);
     }
-    connection->jsBunDebuggerOnMessageFunction = new Bun::StrongRef(vm, onMessageFn);
+    connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
     connection->connect();
 
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));

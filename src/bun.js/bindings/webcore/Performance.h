@@ -77,7 +77,7 @@ struct PerformanceMarkOptions;
 struct PerformanceMeasureOptions;
 
 class Performance final : public RefCounted<Performance>, public ContextDestructionObserver, public EventTarget {
-    WTF_MAKE_ISO_ALLOCATED(Performance);
+    WTF_MAKE_TZONE_ALLOCATED(Performance);
 
 public:
     static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }

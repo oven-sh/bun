@@ -1,17 +1,16 @@
 const std = @import("std");
-const builtin = @import("builtin");
-const bun = @import("root").bun;
-const C = bun.C;
+const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
 const JSC = bun.JSC;
 const Environment = bun.Environment;
-const Global = bun.Global;
 const libuv = bun.windows.libuv;
 const gen = bun.gen.node_os;
+const sys = bun.sys;
+const c = bun.c;
 
-pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.create(.{
+pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return (try JSC.JSObject.create(.{
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),
@@ -25,7 +24,7 @@ pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         .userInfo = gen.createUserInfoCallback(global),
         .version = gen.createVersionCallback(global),
         .setPriority = gen.createSetPriorityCallback(global),
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 const CPUTimes = struct {
@@ -64,7 +63,7 @@ pub fn cpus(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
 
 fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     // Create the return array
-    const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+    const values = try JSC.JSValue.createEmptyArray(globalThis, 0);
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
@@ -130,7 +129,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         while (line_iter.next()) |line| {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
-                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    const cpu = try values.getIndex(globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
@@ -141,26 +140,26 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
             } else if (strings.hasPrefixComptime(line, key_model_name)) {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
-                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                const cpu = try values.getIndex(globalThis, cpu_index);
                 cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
-            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+            const cpu = try values.getIndex(globalThis, cpu_index);
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
-        var it = values.arrayIterator(globalThis);
-        while (it.next()) |cpu| {
+        var it = try values.arrayIterator(globalThis);
+        while (try it.next()) |cpu| {
             cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
     // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
     for (0..num_cpus) |cpu_index| {
-        const cpu = JSC.JSObject.getIndex(values, globalThis, @truncate(cpu_index));
+        const cpu = try values.getIndex(globalThis, @truncate(cpu_index));
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
@@ -186,20 +185,23 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
 
 extern fn bun_sysconf__SC_CLK_TCK() isize;
 fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
-    const local_bindings = @import("../../darwin_c.zig");
-    const c = std.c;
-
     // Fetch the CPU info structure
     var num_cpus: c.natural_t = 0;
-    var info: [*]local_bindings.processor_cpu_load_info = undefined;
+    var info: [*]bun.c.processor_cpu_load_info = undefined;
     var info_size: std.c.mach_msg_type_number_t = 0;
-    if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @as(*local_bindings.processor_info_array_t, @ptrCast(&info)), &info_size) != .SUCCESS) {
+    if (bun.c.host_processor_info(
+        std.c.mach_host_self(),
+        bun.c.PROCESSOR_CPU_LOAD_INFO,
+        &num_cpus,
+        @as(*bun.c.processor_info_array_t, @ptrCast(&info)),
+        &info_size,
+    ) != 0) {
         return error.no_processor_info;
     }
     defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @intFromPtr(info), info_size);
 
     // Ensure we got the amount of data we expected to guard against buffer overruns
-    if (info_size != C.PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus) {
+    if (info_size != bun.c.PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus) {
         return error.broken_process_info;
     }
 
@@ -233,7 +235,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     const multiplier = 1000 / @as(u64, @intCast(ticks));
 
     // Set up each CPU value in the return
-    const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
     var cpu_index: u32 = 0;
     while (cpu_index < num_cpus) : (cpu_index += 1) {
         const times = CPUTimes{
@@ -263,7 +265,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     }
     defer libuv.uv_free_cpu_info(cpu_infos, count);
 
-    const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
 
     for (cpu_infos[0..@intCast(count)], 0..@intCast(count)) |cpu_info, i| {
         const times = CPUTimes{
@@ -286,11 +288,16 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
 }
 
 pub fn freemem() u64 {
-    return C.getFreeMemory();
+    // OsBinding.cpp
+    return @extern(*const fn () callconv(.C) u64, .{
+        .name = "Bun__Os__getFreeMemory",
+    })();
 }
 
+extern fn get_process_priority(pid: i32) i32;
 pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
-    return C.getProcessPriority(pid) orelse {
+    const result = get_process_priority(pid);
+    if (result == std.math.maxInt(i32)) {
         const err = JSC.SystemError{
             .message = bun.String.static("no such process"),
             .code = bun.String.static("ESRCH"),
@@ -301,7 +308,8 @@ pub fn getPriority(global: *JSC.JSGlobalObject, pid: i32) bun.JSError!i32 {
             .syscall = bun.String.static("uv_os_getpriority"),
         };
         return global.throwValue(err.toErrorInstanceWithInfoObject(global));
-    };
+    }
+    return result;
 }
 
 pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
@@ -333,23 +341,23 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         defer if (string_bytes.ptr != &stack_string_bytes)
             bun.default_allocator.free(string_bytes);
 
-        var pw: bun.C.passwd = undefined;
-        var result: ?*bun.C.passwd = null;
+        var pw: bun.c.passwd = undefined;
+        var result: ?*bun.c.passwd = null;
 
         const ret = while (true) {
-            const ret = bun.C.getpwuid_r(
-                bun.C.geteuid(),
+            const ret = bun.c.getpwuid_r(
+                bun.c.geteuid(),
                 &pw,
                 string_bytes.ptr,
                 string_bytes.len,
                 &result,
             );
 
-            if (ret == @intFromEnum(bun.C.E.INTR))
+            if (ret == @intFromEnum(bun.sys.E.INTR))
                 continue;
 
             // If the system call wants more memory, double it.
-            if (ret == @intFromEnum(bun.C.E.RANGE)) {
+            if (ret == @intFromEnum(bun.sys.E.RANGE)) {
                 const len = string_bytes.len;
                 bun.default_allocator.free(string_bytes);
                 string_bytes = "";
@@ -408,7 +416,43 @@ pub fn hostname(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
 }
 
 pub fn loadavg(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-    const result = C.getSystemLoadavg();
+    const result = switch (bun.Environment.os) {
+        .mac => loadavg: {
+            var avg: c.struct_loadavg = undefined;
+            var size: usize = @sizeOf(@TypeOf(avg));
+
+            std.posix.sysctlbynameZ(
+                "vm.loadavg",
+                &avg,
+                &size,
+                null,
+                0,
+            ) catch |err| switch (err) {
+                else => break :loadavg [3]f64{ 0, 0, 0 },
+            };
+
+            const scale: f64 = @floatFromInt(avg.fscale);
+            break :loadavg .{
+                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[0])) / scale,
+                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[1])) / scale,
+                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[2])) / scale,
+            };
+        },
+        .linux => loadavg: {
+            var info: c.struct_sysinfo = undefined;
+            if (c.sysinfo(&info) == @as(c_int, 0)) {
+                break :loadavg [3]f64{
+                    std.math.ceil((@as(f64, @floatFromInt(info.loads[0])) / 65536.0) * 100.0) / 100.0,
+                    std.math.ceil((@as(f64, @floatFromInt(info.loads[1])) / 65536.0) * 100.0) / 100.0,
+                    std.math.ceil((@as(f64, @floatFromInt(info.loads[2])) / 65536.0) * 100.0) / 100.0,
+                };
+            }
+            break :loadavg [3]f64{ 0, 0, 0 };
+        },
+        .windows => .{ 0, 0, 0 },
+        .wasm => @compileError("TODO"),
+    };
+
     return JSC.JSArray.create(global, &.{
         JSC.JSValue.jsNumber(result[0]),
         JSC.JSValue.jsNumber(result[1]),
@@ -424,8 +468,8 @@ pub const networkInterfaces = switch (Environment.os) {
 
 fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     // getifaddrs sets a pointer to a linked list
-    var interface_start: ?*C.ifaddrs = null;
-    const rc = C.getifaddrs(&interface_start);
+    var interface_start: ?*c.ifaddrs = null;
+    const rc = c.getifaddrs(&interface_start);
     if (rc != 0) {
         const err = JSC.SystemError{
             .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
@@ -436,14 +480,14 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
 
         return globalThis.throwValue(err.toErrorInstance(globalThis));
     }
-    defer C.freeifaddrs(interface_start);
+    defer c.freeifaddrs(interface_start);
 
     const helpers = struct {
         // We'll skip interfaces that aren't actually available
-        pub fn skip(iface: *C.ifaddrs) bool {
+        pub fn skip(iface: *c.ifaddrs) bool {
             // Skip interfaces that aren't actually available
-            if (iface.ifa_flags & C.IFF_RUNNING == 0) return true;
-            if (iface.ifa_flags & C.IFF_UP == 0) return true;
+            if (iface.ifa_flags & c.IFF_RUNNING == 0) return true;
+            if (iface.ifa_flags & c.IFF_UP == 0) return true;
             if (iface.ifa_addr == null) return true;
 
             return false;
@@ -451,18 +495,18 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
 
         // We won't actually return link-layer interfaces but we need them for
         //  extracting the MAC address
-        pub fn isLinkLayer(iface: *C.ifaddrs) bool {
+        pub fn isLinkLayer(iface: *c.ifaddrs) bool {
             if (iface.ifa_addr == null) return false;
             return if (comptime Environment.isLinux)
                 return iface.ifa_addr.*.sa_family == std.posix.AF.PACKET
             else if (comptime Environment.isMac)
-                return iface.ifa_addr.?.*.family == std.posix.AF.LINK
+                return iface.ifa_addr.?.*.sa_family == std.posix.AF.LINK
             else
-                unreachable;
+                @compileError("unreachable");
         }
 
-        pub fn isLoopback(iface: *C.ifaddrs) bool {
-            return iface.ifa_flags & C.IFF_LOOPBACK == C.IFF_LOOPBACK;
+        pub fn isLoopback(iface: *c.ifaddrs) bool {
+            return iface.ifa_flags & c.IFF_LOOPBACK == c.IFF_LOOPBACK;
         }
     };
 
@@ -552,7 +596,7 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
                 if (comptime Environment.isLinux) {
                     break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                 } else if (comptime Environment.isMac) {
-                    break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
+                    break @as(?*c.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                 } else {
                     @compileError("unreachable");
                 }
@@ -588,14 +632,14 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
         }
 
         // Does this entry already exist?
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
             array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
@@ -702,14 +746,14 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
 
         // Does this entry already exist?
         const interface_name = bun.span(iface.name);
-        if (ret.get_unsafe(globalThis, interface_name)) |array| {
+        if (try ret.get(globalThis, interface_name)) |array| {
             // Add this interface entry to the existing array
-            const next_index = @as(u32, @intCast(array.getLength(globalThis)));
+            const next_index: u32 = @intCast(try array.getLength(globalThis));
             array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
             array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
@@ -720,11 +764,61 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
 
 pub fn release() bun.String {
     var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-    return bun.String.createUTF8(C.getRelease(&name_buffer));
+
+    const value = switch (Environment.os) {
+        .linux => slice: {
+            const uts = std.posix.uname();
+            const result = bun.sliceTo(&uts.release, 0);
+            bun.copy(u8, &name_buffer, result);
+
+            break :slice name_buffer[0..result.len];
+        },
+        .mac => slice: {
+            @memset(&name_buffer, 0);
+
+            var size: usize = name_buffer.len;
+
+            if (std.c.sysctlbyname(
+                "kern.osrelease",
+                &name_buffer,
+                &size,
+                null,
+                0,
+            ) == -1) break :slice "unknown";
+
+            break :slice bun.sliceTo(&name_buffer, 0);
+        },
+        .windows => slice: {
+            var info: bun.windows.libuv.uv_utsname_s = undefined;
+            const err = bun.windows.libuv.uv_os_uname(&info);
+            if (err != 0) {
+                break :slice "unknown";
+            }
+            const value = bun.sliceTo(&info.release, 0);
+            @memcpy(name_buffer[0..value.len], value);
+            break :slice name_buffer[0..value.len];
+        },
+        else => @compileError("unsupported os"),
+    };
+
+    return bun.String.createUTF8(value);
+}
+
+pub extern fn set_process_priority(pid: i32, priority: i32) i32;
+pub fn setProcessPriorityImpl(pid: i32, priority: i32) std.c.E {
+    if (pid < 0) return .SRCH;
+
+    const code: i32 = set_process_priority(pid, priority);
+
+    if (code == -2) return .SRCH;
+    if (code == 0) return .SUCCESS;
+
+    const errcode = bun.sys.getErrno(code);
+    return @enumFromInt(@intFromEnum(errcode));
 }
 
 pub fn setPriority1(global: *JSC.JSGlobalObject, pid: i32, priority: i32) !void {
-    const errcode = C.setProcessPriority(pid, priority);
+    const errcode = setProcessPriorityImpl(pid, priority);
     switch (errcode) {
         .SRCH => {
             const err = JSC.SystemError{
@@ -773,26 +867,75 @@ pub fn setPriority2(global: *JSC.JSGlobalObject, priority: i32) !void {
 }
 
 pub fn totalmem() u64 {
-    return C.getTotalMemory();
+    switch (bun.Environment.os) {
+        .mac => {
+            var memory_: [32]c_ulonglong = undefined;
+            var size: usize = memory_.len;
+
+            std.posix.sysctlbynameZ(
+                "hw.memsize",
+                &memory_,
+                &size,
+                null,
+                0,
+            ) catch |err| switch (err) {
+                else => return 0,
+            };
+
+            return memory_[0];
+        },
+        .linux => {
+            var info: c.struct_sysinfo = undefined;
+            if (c.sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
+            return 0;
+        },
+        .windows => {
+            return libuv.uv_get_total_memory();
+        },
+        else => @compileError("unsupported os"),
+    }
 }
 
 pub fn uptime(global: *JSC.JSGlobalObject) bun.JSError!f64 {
-    if (Environment.isWindows) {
-        var uptime_value: f64 = undefined;
-        const err = libuv.uv_uptime(&uptime_value);
-        if (err != 0) {
-            const sys_err = JSC.SystemError{
-                .message = bun.String.static("failed to get system uptime"),
-                .code = bun.String.static("ERR_SYSTEM_ERROR"),
-                .errno = err,
-                .syscall = bun.String.static("uv_uptime"),
-            };
-            return global.throwValue(sys_err.toErrorInstance(global));
-        }
-        return uptime_value;
-    }
+    switch (Environment.os) {
+        .windows => {
+            var uptime_value: f64 = undefined;
+            const err = libuv.uv_uptime(&uptime_value);
+            if (err != 0) {
+                const sys_err = JSC.SystemError{
+                    .message = bun.String.static("failed to get system uptime"),
+                    .code = bun.String.static("ERR_SYSTEM_ERROR"),
+                    .errno = err,
+                    .syscall = bun.String.static("uv_uptime"),
+                };
+                return global.throwValue(sys_err.toErrorInstance(global));
+            }
+            return uptime_value;
+        },
+        .mac => {
+            var boot_time: std.posix.timeval = undefined;
+            var size: usize = @sizeOf(@TypeOf(boot_time));
 
-    return @floatFromInt(C.getSystemUptime());
+            std.posix.sysctlbynameZ(
+                "kern.boottime",
+                &boot_time,
+                &size,
+                null,
+                0,
+            ) catch |err| switch (err) {
+                else => return 0,
+            };
+
+            return @floatFromInt(std.time.timestamp() - boot_time.sec);
+        },
+        .linux => {
+            var info: c.struct_sysinfo = undefined;
+            if (c.sysinfo(&info) == 0)
+                return @floatFromInt(info.uptime);
+            return 0;
+        },
+        else => @compileError("unsupported os"),
+    }
 }
 
 pub fn userInfo(globalThis: *JSC.JSGlobalObject, options: gen.UserInfoOptions) bun.JSError!JSC.JSValue {
@@ -815,8 +958,8 @@ pub fn userInfo(globalThis: *JSC.JSGlobalObject, options: gen.UserInfoOptions) b
 
         result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toJS(globalThis));
         result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.getuid()));
-        result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.getgid()));
+        result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(c.getuid()));
+        result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(c.getgid()));
     }
 
     return result;
@@ -824,7 +967,44 @@ pub fn userInfo(globalThis: *JSC.JSGlobalObject, options: gen.UserInfoOptions) b
 
 pub fn version() bun.JSError!bun.String {
     var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-    return bun.String.createUTF8(C.getVersion(&name_buffer));
+
+    const slice: []const u8 = switch (Environment.os) {
+        .mac => slice: {
+            @memset(&name_buffer, 0);
+
+            var size: usize = name_buffer.len;
+
+            if (std.c.sysctlbyname(
+                "kern.version",
+                &name_buffer,
+                &size,
+                null,
+                0,
+            ) == -1) break :slice "unknown";
+
+            break :slice bun.sliceTo(&name_buffer, 0);
+        },
+        .linux => slice: {
+            const uts = std.posix.uname();
+            const result = bun.sliceTo(&uts.version, 0);
+            bun.copy(u8, &name_buffer, result);
+
+            break :slice name_buffer[0..result.len];
+        },
+        .windows => slice: {
+            var info: bun.windows.libuv.uv_utsname_s = undefined;
+            const err = bun.windows.libuv.uv_os_uname(&info);
+            if (err != 0) {
+                break :slice "unknown";
+            }
+            const slice = bun.sliceTo(&info.version, 0);
+            @memcpy(name_buffer[0..slice.len], slice);
+            break :slice name_buffer[0..slice.len];
+        },
+        else => @compileError("unsupported os"),
+    };
+
+    return bun.String.createUTF8(slice);
 }
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.

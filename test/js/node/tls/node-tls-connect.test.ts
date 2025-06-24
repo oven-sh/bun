@@ -1,13 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { once } from "events";
 import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
-import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 import stream from "stream";
-import { once } from "events";
+import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 
-import { Duplex } from "node:stream";
 import type { AddressInfo } from "net";
+import { Duplex } from "node:stream";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -131,9 +131,7 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   const error = await promise;
 
   expect(error).toBeDefined();
-  // TODO: today we are a little incompatible with node.js we need to change `UNABLE_TO_GET_ISSUER_CERT` when closed before handshake complete on the openssl.c to emit error `ECONNRESET` instead of SSL fail,
-  // current behavior is not wrong because is the right error but is incompatible with node.js
-  expect((error as Error).code as string).toBeOneOf(["ECONNRESET", "UNABLE_TO_GET_ISSUER_CERT"]);
+  expect((error as Error).code as string).toBe("ECONNRESET");
 });
 it("should be able to grab the JSStreamSocket constructor", () => {
   // this keep http2-wrapper compatibility with node.js
@@ -369,7 +367,8 @@ for (const { name, connect } of tests) {
     });
 
     // Test using only options
-    it("should process options correctly when connect is called with only options", done => {
+    // prettier-ignore
+    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",

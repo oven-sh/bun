@@ -1,4 +1,4 @@
-import { t, fn } from "bindgen";
+import { fn, t } from "bindgen";
 
 export const add = fn({
   args: {

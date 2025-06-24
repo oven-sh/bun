@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -113,6 +113,32 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
+
+  describe("when filters are provided", () => {
+    let dir: string;
+    beforeAll(() => {
+      const makeTest = (name: string, pass = true) => `
+      import { test, expect } from "bun:test";
+      test("${name}", () => {
+        expect(1).toBe(${pass ? 1 : 0});
+      });
+      `;
+      dir = tempDirWithFiles("bun-test-filtering", {
+        "foo.test.js": makeTest("foo"),
+        bar: {
+          "bar1.spec.tsx": makeTest("bar1"),
+          "bar2.spec.ts": makeTest("bar2"),
+        },
+      });
+    });
+
+    it("if that filter is a path to a directory, will run all tests in that directory", () => {
+      const stderr = runTest({ cwd: dir, args: ["./bar"] });
+      expect(stderr).toContain("2 pass");
+      expect(stderr).not.toContain("foo");
+    });
+  });
+
   test("works with require", () => {
     const stderr = runTest({
       args: [],

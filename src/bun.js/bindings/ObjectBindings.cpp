@@ -24,7 +24,7 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
     JSObject* objectPrototype = nullptr;
     while (true) {
         Structure* structure = object->structureID().decode();
-        if (LIKELY(!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()))) {
+        if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
         } else {
@@ -32,13 +32,13 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
             RETURN_IF_EXCEPTION(scope, false);
             if (hasSlot)
                 return true;
-            if (UNLIKELY(slot.isVMInquiry() && slot.isTaintedByOpaqueObject()))
+            if (slot.isVMInquiry() && slot.isTaintedByOpaqueObject()) [[unlikely]]
                 return false;
             if (object->type() == ProxyObjectType && slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty)
                 return false;
         }
         JSValue prototype;
-        if (LIKELY(!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry))
+        if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
         else {
             prototype = object->getPrototype(vm, globalObject);
@@ -68,10 +68,12 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigationUnsafe(JSC::VM& vm, 
     auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
 
     if (!isDefined) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::decode(JSC::JSValue::ValueDeleted);
     }
 
-    scope.assertNoException();
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue value = propertySlot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
     return value;

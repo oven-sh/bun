@@ -7,7 +7,7 @@ import { PARAMTYPES_METADATA, SELF_DECLARED_DEPS_METADATA } from "@nestjs/common
 import { InstanceWrapper } from "@nestjs/core/injector/instance-wrapper";
 import { Module } from "@nestjs/core/injector/module";
 
-import { expect, it, describe, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 
 describe("Reflect metadata for nestjs", () => {
   @Injectable()

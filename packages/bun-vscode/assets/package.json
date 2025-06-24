@@ -785,6 +785,23 @@
               "items": {
                 "type": "string"
               }
+            },
+            "catalog": {
+              "type": "object",
+              "description": "A single default catalog for commonly used dependencies. Referenced with 'catalog:' in workspace package dependencies.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "catalogs": {
+              "type": "object",
+              "description": "Multiple named catalogs for grouping dependencies. Referenced with 'catalog:catalogName' in workspace package dependencies.",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

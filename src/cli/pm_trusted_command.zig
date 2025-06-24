@@ -1,6 +1,6 @@
 const std = @import("std");
 const Progress = bun.Progress;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Environment = bun.Environment;
 const Command = @import("../cli.zig").Command;
@@ -97,7 +97,7 @@ pub const UntrustedCommand = struct {
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-                    var not_lazy: PackageManager.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
+                    var not_lazy: PackageManager.PackageInstaller.LazyPackageDestinationDir = .{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
@@ -262,7 +262,7 @@ pub const TrustCommand = struct {
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
-                    var not_lazy = PackageManager.LazyPackageDestinationDir{ .dir = node_modules_dir };
+                    var not_lazy = PackageManager.PackageInstaller.LazyPackageDestinationDir{ .dir = node_modules_dir };
                     const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
@@ -339,15 +339,12 @@ pub const TrustCommand = struct {
 
                     const output_in_foreground = false;
                     const optional = false;
-                    switch (pm.options.log_level) {
-                        inline else => |log_level| try pm.spawnPackageLifecycleScripts(
-                            ctx,
-                            info.scripts_list,
-                            optional,
-                            log_level,
-                            output_in_foreground,
-                        ),
-                    }
+                    try pm.spawnPackageLifecycleScripts(
+                        ctx,
+                        info.scripts_list,
+                        optional,
+                        output_in_foreground,
+                    );
 
                     if (pm.options.log_level.showProgress()) {
                         scripts_node.activate();
@@ -419,12 +416,12 @@ pub const TrustCommand = struct {
 
         pm.lockfile.saveToDisk(&load_lockfile, &pm.options);
 
-        var buffer_writer = try bun.js_printer.BufferWriter.init(ctx.allocator);
+        var buffer_writer = bun.js_printer.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, package_json_contents.len + 1);
         buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
         var package_json_writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
-        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{}) catch |err| {
+        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{ .mangled_props = null }) catch |err| {
             Output.errGeneric("failed to print package.json: {s}", .{@errorName(err)});
             Global.crash();
         };

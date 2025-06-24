@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const js_ast = bun.JSAst;
 const OOM = bun.OOM;
 
@@ -800,9 +800,6 @@ pub const Api = struct {
         /// import_source
         import_source: []const u8,
 
-        /// react_fast_refresh
-        react_fast_refresh: bool = false,
-
         pub fn decode(reader: anytype) anyerror!Jsx {
             var this = std.mem.zeroes(Jsx);
 
@@ -811,7 +808,6 @@ pub const Api = struct {
             this.fragment = try reader.readValue([]const u8);
             this.development = try reader.readValue(bool);
             this.import_source = try reader.readValue([]const u8);
-            this.react_fast_refresh = try reader.readValue(bool);
             return this;
         }
 
@@ -821,7 +817,6 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
             try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
-            try writer.writeInt(@as(u8, @intFromBool(this.react_fast_refresh)));
         }
     };
 
@@ -1617,6 +1612,23 @@ pub const Api = struct {
         }
     };
 
+    pub const UnhandledRejections = enum(u8) {
+        strict = 0,
+        throw = 1,
+        warn = 2,
+        none = 3,
+        warn_with_error_code = 4,
+        bun = 5,
+
+        pub const map = bun.ComptimeStringMap(UnhandledRejections, .{
+            .{ "strict", .strict },
+            .{ "throw", .throw },
+            .{ "warn", .warn },
+            .{ "none", .none },
+            .{ "warn-with-error-code", .warn_with_error_code },
+        });
+    };
+
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -1709,6 +1721,13 @@ pub const Api = struct {
         serve_env_prefix: ?[]const u8 = null,
         serve_splitting: bool = false,
         serve_public_path: ?[]const u8 = null,
+        serve_hmr: ?bool = null,
+        serve_define: ?StringMap = null,
+
+        // from --no-addons. null == true
+        allow_addons: ?bool = null,
+        /// from --unhandled-rejections, default is 'bun'
+        unhandled_rejections: ?UnhandledRejections = null,
 
         bunfig_path: []const u8,
 
@@ -3001,6 +3020,8 @@ pub const Api = struct {
         } = null,
 
         ignore_scripts: ?bool = null,
+
+        link_workspace_packages: ?bool = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

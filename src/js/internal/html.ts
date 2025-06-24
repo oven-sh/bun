@@ -15,7 +15,7 @@ async function start() {
   const cwd = process.cwd();
   let hostname = "localhost";
   let port: number | undefined = undefined;
-
+  let enableConsoleLog = false;
   // Step 1. Resolve all HTML entry points
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
@@ -37,6 +37,10 @@ async function start() {
           hostname = host;
           port = parseInt(portString, 10);
         }
+      } else if (arg === "--console") {
+        enableConsoleLog = true;
+      } else if (arg === "--no-console") {
+        enableConsoleLog = false;
       }
 
       if (arg === "--help") {
@@ -50,7 +54,8 @@ Options:
 
   --port=<NUM>
   --host=<STR>, --hostname=<STR>
-
+  --console # print console logs from browser
+  --no-console # don't print console logs from browser
 Examples:
 
   bun index.html
@@ -58,6 +63,7 @@ Examples:
   bun index.html --host=localhost:3000
   bun index.html --hostname=localhost:3000
   bun ./*.html
+  bun index.html --console
 
 This is a small wrapper around Bun.serve() that automatically serves the HTML files you pass in without
 having to manually call Bun.serve() or write the boilerplate yourself. This runs Bun's bundler on
@@ -215,7 +221,13 @@ yourself with Bun.serve().
     try {
       server = Bun.serve({
         static: staticRoutes,
-        development: env.NODE_ENV !== "production",
+        development:
+          env.NODE_ENV !== "production"
+            ? {
+                console: enableConsoleLog,
+                hmr: undefined,
+              }
+            : false,
 
         hostname,
         port,
@@ -223,7 +235,7 @@ yourself with Bun.serve().
         // use the default port via existing port detection code.
         // port: 3000,
 
-        fetch(req: Request) {
+        fetch(_req: Request) {
           return new Response("Not found", { status: 404 });
         },
       });
@@ -235,14 +247,20 @@ yourself with Bun.serve().
           try {
             server = Bun.serve({
               static: staticRoutes,
-              development: env.NODE_ENV !== "production",
+              development:
+                env.NODE_ENV !== "production"
+                  ? {
+                      console: enableConsoleLog,
+                      hmr: undefined,
+                    }
+                  : false,
 
               hostname,
 
               // Retry with a different port up to 4 times.
               port: defaultPort++,
 
-              fetch(req: Request) {
+              fetch(_req: Request) {
                 return new Response("Not found", { status: 404 });
               },
             });
@@ -281,6 +299,9 @@ yourself with Bun.serve().
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
+      }
+      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_DevServer) {
+        topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
       }
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);

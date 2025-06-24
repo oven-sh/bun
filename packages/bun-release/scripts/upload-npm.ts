@@ -1,20 +1,19 @@
-import { join, copy, exists, chmod, write, writeJson } from "../src/fs";
-import { mkdtemp } from "fs/promises";
-import { rmSync, mkdirSync } from "fs";
-import { tmpdir } from "os";
-import { dirname } from "path";
-import { fetch } from "../src/fetch";
-import { spawn } from "../src/spawn";
-import type { Platform } from "../src/platform";
-import { platforms } from "../src/platform";
-import { getSemver } from "../src/github";
-import { getRelease } from "../src/github";
+import { expect } from "bun:test";
 import type { BuildOptions } from "esbuild";
 import { buildSync, formatMessagesSync } from "esbuild";
+import { mkdirSync, rmSync } from "fs";
+import { mkdtemp } from "fs/promises";
 import type { JSZipObject } from "jszip";
 import { loadAsync } from "jszip";
-import { debug, log, error } from "../src/console";
-import { expect } from "bun:test";
+import { tmpdir } from "os";
+import { dirname } from "path";
+import { debug, error, log } from "../src/console";
+import { fetch } from "../src/fetch";
+import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
+import { getRelease, getSemver } from "../src/github";
+import type { Platform } from "../src/platform";
+import { platforms } from "../src/platform";
+import { spawn } from "../src/spawn";
 
 const module = "bun";
 const owner = "@oven";
@@ -73,6 +72,7 @@ async function buildRootModule(dryRun?: boolean) {
     },
   });
   write(join(cwd, "bin", "bun.exe"), "");
+  write(join(cwd, "bin", "bunx.exe"), "");
   write(
     join(cwd, "bin", "README.txt"),
     `The 'bun.exe' file is a placeholder for the binary file, which
@@ -106,7 +106,7 @@ without *requiring* a postinstall script.
     ),
     bin: {
       bun: "bin/bun.exe",
-      bunx: "bin/bun.exe",
+      bunx: "bin/bunx.exe",
     },
     os,
     cpu,

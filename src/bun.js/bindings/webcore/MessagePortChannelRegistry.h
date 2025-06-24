@@ -31,12 +31,11 @@
 #include "ProcessIdentifier.h"
 #include <wtf/HashMap.h>
 #include <wtf/CheckedRef.h>
-#include <wtf/IsoMalloc.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry final : public CanMakeWeakPtr<MessagePortChannelRegistry>, public CanMakeCheckedPtr<MessagePortChannelRegistry> {
-    WTF_MAKE_ISO_ALLOCATED(MessagePortChannelRegistry);
+    WTF_MAKE_TZONE_ALLOCATED(MessagePortChannelRegistry);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MessagePortChannelRegistry);
 
 public:

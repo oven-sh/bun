@@ -1,18 +1,18 @@
 import { $, file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
+import { chmodSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
   bunEnv as env,
   isWindows,
+  readdirSorted,
+  stderrForInstall,
   tempDirWithFiles,
   tmpdirSync,
-  stderrForInstall,
-  readdirSorted,
 } from "harness";
 import { join } from "path";
-import { chmodSync } from "fs";
 
 let run_dir: string;
 
@@ -38,7 +38,7 @@ for (let withRun of [false, true]) {
           }`,
         );
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cmd: [bunExe(), ...(withRun ? ["run"] : []), "."].filter(Boolean),
           cwd: run_dir,
           env: bunEnv,
         });
@@ -59,7 +59,7 @@ for (let withRun of [false, true]) {
         );
 
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cmd: [bunExe(), ...(withRun ? ["run"] : []), "."].filter(Boolean),
           cwd: run_dir,
           env: bunEnv,
         });
@@ -84,7 +84,7 @@ for (let withRun of [false, true]) {
         await writeFile(join(run_dir, "tsconfig.json"), "!!!bad!!!");
 
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "--silent", withRun ? "run" : "", "boop"].filter(Boolean),
+          cmd: [bunExe(), "--silent", ...(withRun ? ["run"] : []), "boop"].filter(Boolean),
           cwd: run_dir,
           env: bunEnv,
         });
@@ -135,7 +135,7 @@ for (let withRun of [false, true]) {
         it.skipIf(isWindows)("exit signal works", async () => {
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
               cwd: run_dir,
               env: bunEnv,
             });
@@ -152,7 +152,7 @@ for (let withRun of [false, true]) {
           }
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -9 $$"],
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -9 $$"],
               cwd: run_dir,
               env: bunEnv,
             });
@@ -204,7 +204,9 @@ logLevel = "debug"
 
             const { stdout, stderr, exitCode } = spawnSync({
               // TODO: figure out why -c is necessary here.
-              cmd: [bunExe(), withRun ? "run" : "", "-c=" + join(run_dir, "bunfig.toml"), "./index.js"].filter(Boolean),
+              cmd: [bunExe(), ...(withRun ? ["run"] : []), "-c=" + join(run_dir, "bunfig.toml"), "./index.js"].filter(
+                Boolean,
+              ),
               cwd: run_dir,
               env: bunEnv,
             });
@@ -225,7 +227,7 @@ logLevel = "debug"
         await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
 
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cmd: [bunExe(), ...(withRun ? ["run"] : []), "."].filter(Boolean),
           cwd: run_dir,
           env: bunEnv,
         });

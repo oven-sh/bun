@@ -148,7 +148,7 @@ std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStrea
 void ReadableStream::lock()
 {
     auto& builtinNames = WebCore::builtinNames(m_globalObject->vm());
-    invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
+    auto result = invokeConstructor(*m_globalObject, builtinNames.ReadableStreamDefaultReaderPrivateName(), [this](auto& args, auto&, auto&) {
         args.append(readableStream());
     });
 }
@@ -163,7 +163,7 @@ void ReadableStream::cancel(const Exception& exception)
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto value = createDOMException(&lexicalGlobalObject, exception.code(), exception.message());
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }
@@ -184,7 +184,7 @@ void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadable
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto value = createDOMException(&globalObject, exception.code(), exception.message());
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }

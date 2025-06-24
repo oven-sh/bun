@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins, readdirSorted } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -112,7 +112,7 @@ it("should reject missing package", async () => {
   });
   const err = await new Response(stderr).text();
   expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
+  expect(err).toContain(`note: error occurred while resolving file:${add_path}`);
 
   const out = await new Response(stdout).text();
   expect(out).toEqual(expect.stringContaining("bun add v1."));
@@ -2266,6 +2266,6 @@ it("should add local tarball dependency", async () => {
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
-  expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
-    await access(join(package_dir, "bun.lockb"));
+  (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
+    await access(join(package_dir, "bun.lockb")));
 });

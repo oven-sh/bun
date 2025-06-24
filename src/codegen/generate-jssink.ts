@@ -26,7 +26,7 @@ function header() {
             static constexpr SinkID Sink = SinkID::${name};
                                                                                                                                                                                     
             static constexpr unsigned StructureFlags = Base::StructureFlags;                                                                                                        
-            static constexpr bool needsDestruction = false;                                                                                                                         
+            static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;                                                                                                                         
                                                                                                                                                                                     
             DECLARE_EXPORT_INFO;                                                                                                                                                    
             template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
@@ -380,7 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -391,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -908,7 +908,7 @@ default:
     const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
 
     templ += `
-extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
+extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
@@ -916,18 +916,18 @@ extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* s
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
 }
 
-extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
+extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(value)))
         return sink->wrapped();
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(value)))
         return controller->wrapped();
 
-    return nullptr;
+    return (void*)1;
 }
 
-extern "C" void ${name}__detachPtr(JSC__JSValue JSValue0)
+extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
 {
     if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue0))) {
         sink->detach();
@@ -941,7 +941,7 @@ extern "C" void ${name}__detachPtr(JSC__JSValue JSValue0)
     }
 }
 
-extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
+extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
@@ -952,7 +952,7 @@ extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__
     return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
 }
 
-extern "C" void ${name}__onReady(JSC__JSValue controllerValue, JSC__JSValue amt, JSC__JSValue offset)
+extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
 {
     WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
 
@@ -970,12 +970,12 @@ extern "C" void ${name}__onReady(JSC__JSValue controllerValue, JSC__JSValue amt,
     RELEASE_AND_RETURN(scope, void());
 }
 
-extern "C" void ${name}__onStart(JSC__JSValue controllerValue)
+extern "C" void ${name}__onStart(JSC::EncodedJSValue controllerValue)
 {
 
 }
 
-extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
+extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
     WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
 

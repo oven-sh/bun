@@ -2,17 +2,24 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
-pub usingnamespace JSC.Codegen.JSHTMLBundle;
-// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
-pub usingnamespace bun.NewRefCounted(HTMLBundle, deinit, null);
+pub const js = JSC.Codegen.JSHTMLBundle;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
-ref_count: u32 = 1,
+/// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+ref_count: RefCount,
 global: *JSGlobalObject,
 path: []const u8,
 
 /// Initialize an HTMLBundle given a path.
 pub fn init(global: *JSGlobalObject, path: []const u8) !*HTMLBundle {
-    return HTMLBundle.new(.{
+    return bun.new(HTMLBundle, .{
+        .ref_count = .init(),
         .global = global,
         .path = try bun.default_allocator.dupe(u8, path),
     });
@@ -22,25 +29,30 @@ pub fn finalize(this: *HTMLBundle) void {
     this.deref();
 }
 
-pub fn deinit(this: *HTMLBundle) void {
+fn deinit(this: *HTMLBundle) void {
     bun.default_allocator.free(this.path);
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
-    var str = bun.String.createUTF8(this.path);
-    return str.transferToJS(globalObject);
+    return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
-// TODO: Rename to `Route`
+/// Deprecated: use Route instead.
+pub const HTMLBundleRoute = Route;
+
 /// An HTMLBundle can be used across multiple server instances, an
 /// HTMLBundle.Route can only be used on one server, but is also
 /// reference-counted because a server can have multiple instances of the same
 /// html file on multiple endpoints.
-pub const HTMLBundleRoute = struct {
-    /// Rename to `bundle`
-    html_bundle: *HTMLBundle,
-    ref_count: u32 = 1,
+pub const Route = struct {
+    /// One HTMLBundle.Route can be specified multiple times
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" });
+    pub const ref = Route.RefCount.ref;
+    pub const deref = Route.RefCount.deref;
+
+    bundle: RefPtr(HTMLBundle),
+    ref_count: Route.RefCount,
     // TODO: attempt to remove the null case. null is only present during server
     // initialization as only a ServerConfig object is present.
     server: ?AnyServer = null,
@@ -52,26 +64,35 @@ pub const HTMLBundleRoute = struct {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
 
-    /// One HTMLBundle.Route can be specified multiple times
-    pub usingnamespace bun.NewRefCounted(@This(), _deinit, null);
+    method: union(enum) {
+        any: void,
+        method: bun.http.Method.Set,
+    } = .any,
 
-    pub fn memoryCost(this: *const HTMLBundleRoute) usize {
+    pub fn memoryCost(this: *const Route) usize {
         var cost: usize = 0;
-        cost += @sizeOf(HTMLBundleRoute);
+        cost += @sizeOf(Route);
         cost += this.pending_responses.items.len * @sizeOf(PendingResponse);
         cost += this.state.memoryCost();
         return cost;
     }
 
-    pub fn init(html_bundle: *HTMLBundle) *HTMLBundleRoute {
-        html_bundle.ref();
-        return HTMLBundleRoute.new(.{
-            .html_bundle = html_bundle,
+    pub fn init(html_bundle: *HTMLBundle) RefPtr(Route) {
+        return .new(.{
+            .bundle = .initRef(html_bundle),
             .pending_responses = .{},
-            .ref_count = 1,
+            .ref_count = .init(),
             .server = null,
             .state = .pending,
         });
+    }
+
+    fn deinit(this: *Route) void {
+        bun.assert(this.pending_responses.items.len == 0); // pending responses keep a ref to the route
+        this.pending_responses.deinit(bun.default_allocator);
+        this.bundle.deref();
+        this.state.deinit();
+        bun.destroy(this);
     }
 
     pub const State = union(enum) {
@@ -106,25 +127,15 @@ pub const HTMLBundleRoute = struct {
         }
     };
 
-    fn _deinit(this: *HTMLBundleRoute) void {
-        for (this.pending_responses.items) |pending_response| {
-            pending_response.deref();
-        }
-        this.pending_responses.deinit(bun.default_allocator);
-        this.html_bundle.deref();
-        this.state.deinit();
-        this.destroy();
-    }
-
-    pub fn onRequest(this: *HTMLBundleRoute, req: *uws.Request, resp: HTTPResponse) void {
+    pub fn onRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, false);
     }
 
-    pub fn onHEADRequest(this: *HTMLBundleRoute, req: *uws.Request, resp: HTTPResponse) void {
+    pub fn onHEADRequest(this: *Route, req: *uws.Request, resp: HTTPResponse) void {
         this.onAnyRequest(req, resp, true);
     }
 
-    fn onAnyRequest(this: *HTMLBundleRoute, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
+    fn onAnyRequest(this: *Route, req: *uws.Request, resp: HTTPResponse, is_head: bool) void {
         this.ref();
         defer this.deref();
         const server: AnyServer = this.server orelse {
@@ -160,7 +171,7 @@ pub const HTMLBundleRoute = struct {
                     debug("onRequest: {s} - building", .{req.url()});
 
                 // create the PendingResponse, add it to the list
-                var pending = PendingResponse.new(.{
+                const pending = bun.new(PendingResponse, .{
                     .method = bun.http.Method.which(req.method()) orelse {
                         resp.writeStatus("405 Method Not Allowed");
                         resp.endWithoutBody(true);
@@ -169,13 +180,11 @@ pub const HTMLBundleRoute = struct {
                     .resp = resp,
                     .server = this.server,
                     .route = this,
-                    .ref_count = 1,
                 });
 
                 this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
 
                 this.ref();
-                pending.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
                 req.setYield(false);
             },
@@ -199,7 +208,7 @@ pub const HTMLBundleRoute = struct {
 
     /// Schedule a bundle to be built.
     /// If success, bumps the ref count and returns true;
-    fn scheduleBundle(this: *HTMLBundleRoute, server: AnyServer) !void {
+    fn scheduleBundle(this: *Route, server: AnyServer) !void {
         switch (server.getOrLoadPlugins(.{ .html_bundle_route = this })) {
             .err => this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) },
             .ready => |plugins| try onPluginsResolved(this, plugins),
@@ -207,15 +216,15 @@ pub const HTMLBundleRoute = struct {
         }
     }
 
-    pub fn onPluginsResolved(this: *HTMLBundleRoute, plugins: ?*JSC.API.JSBundler.Plugin) !void {
-        const global = this.html_bundle.global;
+    pub fn onPluginsResolved(this: *Route, plugins: ?*JSC.API.JSBundler.Plugin) !void {
+        const global = this.bundle.data.global;
         const server = this.server.?;
         const development = server.config().development;
         const vm = global.bunVM();
 
         var config: JSBundler.Config = .{};
         errdefer config.deinit(bun.default_allocator);
-        try config.entry_points.insert(this.html_bundle.path);
+        try config.entry_points.insert(this.bundle.data.path);
         if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
             if (public_path.len > 0) {
                 try config.public_path.appendSlice(public_path);
@@ -259,6 +268,17 @@ pub const HTMLBundleRoute = struct {
             config.minify.syntax = true;
         }
 
+        if (bun.CLI.Command.get().args.serve_define) |define| {
+            bun.assert(define.keys.len == define.values.len);
+            try config.define.map.ensureUnusedCapacity(define.keys.len);
+            config.define.map.unmanaged.entries.len = define.keys.len;
+            @memcpy(config.define.map.keys(), define.keys);
+            for (config.define.map.values(), define.values) |*to, from| {
+                to.* = config.define.map.allocator.dupe(u8, from) catch bun.outOfMemory();
+            }
+            try config.define.map.reIndex();
+        }
+
         if (!is_development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;
@@ -283,13 +303,13 @@ pub const HTMLBundleRoute = struct {
         this.ref();
     }
 
-    pub fn onPluginsRejected(this: *HTMLBundleRoute) !void {
+    pub fn onPluginsRejected(this: *Route) !void {
         debug("HTMLBundleRoute(0x{x}) plugins rejected", .{@intFromPtr(this)});
         this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) };
         this.resumePendingResponses();
     }
 
-    pub fn onComplete(this: *HTMLBundleRoute, completion_task: *bun.BundleV2.JSBundleCompletionTask) void {
+    pub fn onComplete(this: *Route, completion_task: *bun.BundleV2.JSBundleCompletionTask) void {
         // For the build task.
         defer this.deref();
 
@@ -332,7 +352,7 @@ pub const HTMLBundleRoute = struct {
                         byte_length += output_file.size_without_sourcemap;
                     }
 
-                    bun.Output.prettyErrorln(" <green>bundle<r> {s} <d>{d:.2} KB<r>", .{ std.fs.path.basename(this.html_bundle.path), @as(f64, @floatFromInt(byte_length)) / 1000.0 });
+                    bun.Output.prettyErrorln(" <green>bundle<r> {s} <d>{d:.2} KB<r>", .{ std.fs.path.basename(this.bundle.data.path), @as(f64, @floatFromInt(byte_length)) / 1000.0 });
                     bun.Output.flush();
                 }
 
@@ -340,9 +360,13 @@ pub const HTMLBundleRoute = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
-                    var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
-                    headers.append("Content-Type", blob.Blob.contentTypeOrMimeType() orelse output_file.loader.toMimeType().value) catch bun.outOfMemory();
+                    const blob = JSC.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    var headers = bun.http.Headers{ .allocator = bun.default_allocator };
+                    const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
+                        bun.debugAssert(false); // should be populated by `output_file.toBlob`
+                        break :brk output_file.loader.toMimeType(&.{}).value;
+                    };
+                    headers.append("Content-Type", content_type) catch bun.outOfMemory();
                     // Do not apply etags to html.
                     if (output_file.loader != .html and output_file.value == .buffer) {
                         var hashbuf: [64]u8 = undefined;
@@ -364,7 +388,8 @@ pub const HTMLBundleRoute = struct {
                         }
                     }
 
-                    const static_route = StaticRoute.new(.{
+                    const static_route = bun.new(StaticRoute, .{
+                        .ref_count = .init(),
                         .blob = blob,
                         .server = server,
                         .status_code = 200,
@@ -385,7 +410,7 @@ pub const HTMLBundleRoute = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .StaticRoute = static_route }) catch bun.outOfMemory();
+                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
@@ -404,12 +429,12 @@ pub const HTMLBundleRoute = struct {
         this.resumePendingResponses();
     }
 
-    pub fn resumePendingResponses(this: *HTMLBundleRoute) void {
+    pub fn resumePendingResponses(this: *Route) void {
         var pending = this.pending_responses;
         defer pending.deinit(bun.default_allocator);
         this.pending_responses = .{};
         for (pending.items) |pending_response| {
-            defer pending_response.deref(); // First ref for being in the pending items array.
+            defer pending_response.deinit();
 
             const resp = pending_response.resp;
             const method = pending_response.method;
@@ -417,9 +442,6 @@ pub const HTMLBundleRoute = struct {
                 // Aborted
                 continue;
             }
-            // Second ref for UWS abort callback.
-            defer pending_response.deref();
-
             pending_response.is_response_pending = false;
             resp.clearAborted();
 
@@ -452,25 +474,21 @@ pub const HTMLBundleRoute = struct {
     pub const PendingResponse = struct {
         method: bun.http.Method,
         resp: HTTPResponse,
-        ref_count: u32 = 1,
         is_response_pending: bool = true,
         server: ?AnyServer = null,
-        route: *HTMLBundleRoute,
+        route: *Route,
 
-        pub usingnamespace bun.NewRefCounted(@This(), destroyInternal, null);
-
-        fn destroyInternal(this: *PendingResponse) void {
+        pub fn deinit(this: *PendingResponse) void {
             if (this.is_response_pending) {
                 this.resp.clearAborted();
                 this.resp.clearOnWritable();
                 this.resp.endWithoutBody(true);
             }
             this.route.deref();
-            this.destroy();
+            bun.destroy(this);
         }
 
-        pub fn onAborted(this: *PendingResponse, resp: HTTPResponse) void {
-            _ = resp; // autofix
+        pub fn onAborted(this: *PendingResponse, _: HTTPResponse) void {
             bun.debugAssert(this.is_response_pending == true);
             this.is_response_pending = false;
 
@@ -482,24 +500,21 @@ pub const HTMLBundleRoute = struct {
                 _ = this.route.pending_responses.orderedRemove(index);
                 this.route.deref();
             }
-
-            this.deref();
         }
     };
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSString = JSC.JSString;
-const JSValueRef = JSC.JSValueRef;
 const JSBundler = JSC.API.JSBundler;
 const HTTPResponse = bun.uws.AnyResponse;
 const uws = bun.uws;
 const AnyServer = JSC.API.AnyServer;
 const StaticRoute = @import("./StaticRoute.zig");
+const RefPtr = bun.ptr.RefPtr;
 
 const debug = bun.Output.scoped(.HTMLBundle, true);
 const strings = bun.strings;

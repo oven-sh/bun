@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { color } from "bun";
+import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];

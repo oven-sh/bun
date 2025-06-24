@@ -12,7 +12,8 @@ Local<External> External::New(Isolate* isolate, void* value)
     auto globalObject = isolate->globalObject();
     auto& vm = JSC::getVM(globalObject);
     auto structure = globalObject->NapiExternalStructure();
-    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr);
+    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value,
+        nullptr /* hint */, nullptr /* env */, nullptr /* callback */);
     return isolate->currentHandleScope()->createLocal<External>(vm, val);
 }
 

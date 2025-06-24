@@ -7,18 +7,15 @@ export default function LandingPage() {
   const features = [
     {
       title: "Auto Dependencies",
-      description:
-        "Automatically detects and installs required dependencies for your component",
+      description: "Automatically detects and installs required dependencies for your component",
     },
     {
       title: "Tool Detection",
-      description:
-        "Seamlessly integrates with Tailwind CSS, shadcn/ui, and other popular tools",
+      description: "Seamlessly integrates with Tailwind CSS, shadcn/ui, and other popular tools",
     },
     {
       title: "Zero Config",
-      description:
-        "No setup required. Start developing instantly with hot reload enabled",
+      description: "No setup required. Start developing instantly with hot reload enabled",
     },
   ];
 
@@ -35,8 +32,7 @@ export default function LandingPage() {
             <span className="text-primary"> Seconds</span>
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Start a complete dev server from a single React component. No config
-            needed.
+            Start a complete dev server from a single React component. No config needed.
           </p>
 
           <div className="flex flex-wrap justify-center gap-4 pt-4">
@@ -70,10 +66,7 @@ export default function LandingPage() {
         {/* Features Grid */}
         <section className="grid md:grid-cols-3 gap-8 mb-16">
           {features.map((feature, index) => (
-            <Card
-              key={index}
-              className="p-6 hover:shadow-lg transition-shadow duration-200"
-            >
+            <Card key={index} className="p-6 hover:shadow-lg transition-shadow duration-200">
               <div className="flex items-center gap-2 mb-4">
                 <CheckCircle className="h-5 w-5 text-primary shrink-0" />
                 <h3 className="font-semibold text-lg">{feature.title}</h3>
@@ -86,12 +79,9 @@ export default function LandingPage() {
         {/* CTA Section */}
         <section className="text-center">
           <Card className="p-8 bg-primary/5 border-primary/10">
-            <h2 className="text-2xl md:text-3xl font-bold mb-4">
-              Ready to streamline your React development?
-            </h2>
+            <h2 className="text-2xl md:text-3xl font-bold mb-4">Ready to streamline your React development?</h2>
             <p className="text-muted-foreground mb-6">
-              Get started with Bun's powerful component development workflow
-              today.
+              Get started with Bun's powerful component development workflow today.
             </p>
             <Button size="lg" className="min-w-[160px]">
               Install Bun
@@ -102,4 +92,3 @@ export default function LandingPage() {
     </div>
   );
 }
-

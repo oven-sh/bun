@@ -1,16 +1,12 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Lockfile = @import("./lockfile.zig");
 const std = @import("std");
-const Async = bun.Async;
-const PosixSpawn = bun.posix.spawn;
 const PackageManager = @import("./install.zig").PackageManager;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Global = bun.Global;
 const JSC = bun.JSC;
-const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
-const String = bun.Semver.String;
 const string = bun.string;
 
 const Process = bun.spawn.Process;
@@ -45,7 +41,7 @@ pub const LifecycleScriptSubprocess = struct {
         return a.started_at < b.started_at;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub const min_milliseconds_to_log = 500;
 
@@ -100,6 +96,22 @@ pub const LifecycleScriptSubprocess = struct {
 
     // This is only used on the main thread.
     var cwd_z_buf: bun.PathBuffer = undefined;
+
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+        output.flags.nonblocking = true;
+        output.flags.socket = true;
+        output.flags.memfd = false;
+        output.flags.received_eof = false;
+        output.flags.closed_without_reporting = false;
+
+        if (comptime Environment.allow_assert) {
+            const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
+
+            const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
+        }
+    }
 
     fn ensureNotInHeap(this: *LifecycleScriptSubprocess) void {
         if (this.heap.child != null or this.heap.next != null or this.heap.prev != null or this.manager.active_lifecycle_scripts.root == this) {
@@ -223,7 +235,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stdout.setParent(this);
                     _ = bun.sys.setNonblocking(stdout);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stdout, stdout);
                     try this.stdout.start(stdout, true).unwrap();
+                    if (this.stdout.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stdout.setParent(this);
                     this.stdout.startMemfd(stdout);
@@ -234,7 +251,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stderr.setParent(this);
                     _ = bun.sys.setNonblocking(stderr);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stderr, stderr);
                     try this.stderr.start(stderr, true).unwrap();
+                    if (this.stderr.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stderr.setParent(this);
                     this.stderr.startMemfd(stderr);
@@ -460,7 +482,7 @@ pub const LifecycleScriptSubprocess = struct {
             this.stderr.deinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {
@@ -485,8 +507,8 @@ pub const LifecycleScriptSubprocess = struct {
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]const u8,
         optional: bool,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime foreground: bool,
+        log_level: PackageManager.Options.LogLevel,
+        foreground: bool,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
@@ -497,7 +519,7 @@ pub const LifecycleScriptSubprocess = struct {
             .optional = optional,
         });
 
-        if (comptime log_level.isVerbose()) {
+        if (log_level.isVerbose()) {
             Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });

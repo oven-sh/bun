@@ -35,12 +35,10 @@
 
 #include "JSDOMWrapper.h"
 
-// #include <wtf/IsoMalloc.h>
-
 namespace WebCore {
 
 class ScriptWrappable {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ScriptWrappable);
 
 public:
     JSDOMObject* wrapper() const;

@@ -11,14 +11,13 @@ const posix = std.posix;
 
 const Dir = std.fs.Dir;
 const JSC = bun.JSC;
-const PathString = JSC.PathString;
-const bun = @import("root").bun;
+const PathString = bun.PathString;
+const bun = @import("bun");
 
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
 const mem = std.mem;
 const strings = bun.strings;
 const Maybe = JSC.Maybe;
-const File = std.fs.File;
 
 pub const IteratorResult = struct {
     name: PathString,
@@ -53,7 +52,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
             dir: Dir,
             seek: i64,
-            buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
+            buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
             index: usize,
             end_index: usize,
             received_eof: bool = false,
@@ -260,30 +259,30 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.toFD(self.dir.fd)});
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.FD.fromStdDir(self.dir)});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
                             return .{
                                 .err = .{
-                                    .errno = @intFromEnum(bun.C.SystemErrno.ENOTDIR),
+                                    .errno = @intFromEnum(bun.sys.SystemErrno.ENOTDIR),
                                     .syscall = .NtQueryDirectoryFile,
                                 },
                             };
                         }
 
                         if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -296,13 +295,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                             return .{
                                 .err = .{
-                                    .errno = @intFromEnum(bun.C.SystemErrno.EUNKNOWN),
+                                    .errno = @intFromEnum(bun.sys.SystemErrno.EUNKNOWN),
                                     .syscall = .NtQueryDirectoryFile,
                                 },
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.toFD(self.dir.fd), self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.FD.fromStdDir(self.dir), self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));

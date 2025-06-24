@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Walker = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const path = std.fs.path;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
@@ -111,7 +111,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         .kind = base.kind,
                     };
                 } else {
-                    var item = self.stack.pop();
+                    var item = self.stack.pop().?;
                     if (self.stack.items.len != 0) {
                         item.iter.iter.dir.close();
                     }

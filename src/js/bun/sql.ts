@@ -1,4 +1,4 @@
-const { hideFromStack } = require("internal/shared");
+import type * as BunTypes from "bun";
 
 const enum QueryStatus {
   active = 1 << 1,
@@ -18,10 +18,17 @@ const enum SSLMode {
   verify_full = 4,
 }
 
+const { hideFromStack } = require("internal/shared");
+const defineProperties = Object.defineProperties;
+
 function connectionClosedError() {
   return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
 }
+function notTaggedCallError() {
+  return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
+}
 hideFromStack(connectionClosedError);
+hideFromStack(notTaggedCallError);
 
 enum SQLQueryResultMode {
   objects = 0,
@@ -34,9 +41,19 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  command;
-  count;
+  constructor() {
+    super();
+    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
+    Object.defineProperties(this, {
+      count: { value: null, writable: true },
+      command: { value: null, writable: true },
+    });
+  }
+  static get [Symbol.species]() {
+    return Array;
+  }
 }
+
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
@@ -47,15 +64,11 @@ const _strings = Symbol("strings");
 const _values = Symbol("values");
 const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
+const _results = Symbol("results");
 const PublicPromise = Promise;
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
 
-const {
-  createConnection: _createConnection,
-  createQuery,
-  PostgresSQLConnection,
-  init,
-} = $zig("postgres.zig", "createBinding");
+const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
 function normalizeSSLMode(value: string): SSLMode {
   if (!value) {
@@ -90,6 +103,8 @@ enum SQLQueryFlags {
   allowUnsafeTransaction = 1 << 0,
   unsafe = 1 << 1,
   bigint = 1 << 2,
+  simple = 1 << 3,
+  notTagged = 1 << 4,
 }
 
 function getQueryHandle(query) {
@@ -102,6 +117,7 @@ function getQueryHandle(query) {
         query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
         query[_poolSize],
         query[_flags] & SQLQueryFlags.bigint,
+        query[_flags] & SQLQueryFlags.simple,
       );
     } catch (err) {
       query[_queryStatus] |= QueryStatus.error | QueryStatus.invalidHandle;
@@ -110,6 +126,307 @@ function getQueryHandle(query) {
   }
   return handle;
 }
+
+enum SQLCommand {
+  insert = 0,
+  update = 1,
+  updateSet = 2,
+  where = 3,
+  whereIn = 4,
+  none = -1,
+}
+
+function commandToString(command: SQLCommand): string {
+  switch (command) {
+    case SQLCommand.insert:
+      return "INSERT";
+    case SQLCommand.updateSet:
+    case SQLCommand.update:
+      return "UPDATE";
+    case SQLCommand.whereIn:
+    case SQLCommand.where:
+      return "WHERE";
+    default:
+      return "";
+  }
+}
+
+function detectCommand(query: string): SQLCommand {
+  const text = query.toLowerCase().trim();
+  const text_len = text.length;
+
+  let token = "";
+  let command = SQLCommand.none;
+  let quoted = false;
+  for (let i = 0; i < text_len; i++) {
+    const char = text[i];
+    switch (char) {
+      case " ": // Space
+      case "\n": // Line feed
+      case "\t": // Tab character
+      case "\r": // Carriage return
+      case "\f": // Form feed
+      case "\v": {
+        switch (token) {
+          case "insert": {
+            if (command === SQLCommand.none) {
+              return SQLCommand.insert;
+            }
+            return command;
+          }
+          case "update": {
+            if (command === SQLCommand.none) {
+              command = SQLCommand.update;
+              token = "";
+              continue; // try to find SET
+            }
+            return command;
+          }
+          case "where": {
+            command = SQLCommand.where;
+            token = "";
+            continue; // try to find IN
+          }
+          case "set": {
+            if (command === SQLCommand.update) {
+              command = SQLCommand.updateSet;
+              token = "";
+              continue; // try to find WHERE
+            }
+            return command;
+          }
+          case "in": {
+            if (command === SQLCommand.where) {
+              return SQLCommand.whereIn;
+            }
+            return command;
+          }
+          default: {
+            token = "";
+            continue;
+          }
+        }
+      }
+      default: {
+        // skip quoted commands
+        if (char === '"') {
+          quoted = !quoted;
+          continue;
+        }
+        if (!quoted) {
+          token += char;
+        }
+      }
+    }
+  }
+  if (token) {
+    switch (command) {
+      case SQLCommand.none: {
+        switch (token) {
+          case "insert":
+            return SQLCommand.insert;
+          case "update":
+            return SQLCommand.update;
+          case "where":
+            return SQLCommand.where;
+          default:
+            return SQLCommand.none;
+        }
+      }
+      case SQLCommand.update: {
+        if (token === "set") {
+          return SQLCommand.updateSet;
+        }
+        return SQLCommand.update;
+      }
+      case SQLCommand.where: {
+        if (token === "in") {
+          return SQLCommand.whereIn;
+        }
+        return SQLCommand.where;
+      }
+    }
+  }
+
+  return command;
+}
+
+function normalizeQuery(strings, values, binding_idx = 1) {
+  if (typeof strings === "string") {
+    // identifier or unsafe query
+    return [strings, values || []];
+  }
+  if (!$isArray(strings)) {
+    // we should not hit this path
+    throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+  }
+  const str_len = strings.length;
+  if (str_len === 0) {
+    return ["", []];
+  }
+  let binding_values: any[] = [];
+  let query = "";
+  for (let i = 0; i < str_len; i++) {
+    const string = strings[i];
+
+    if (typeof string === "string") {
+      query += string;
+      if (values.length > i) {
+        const value = values[i];
+        if (value instanceof Query) {
+          const [sub_query, sub_values] = normalizeQuery(value[_strings], value[_values], binding_idx);
+          query += sub_query;
+          for (let j = 0; j < sub_values.length; j++) {
+            binding_values.push(sub_values[j]);
+          }
+          binding_idx += sub_values.length;
+        } else if (value instanceof SQLArrayParameter) {
+          const command = detectCommand(query);
+          // only selectIn, insert, update, updateSet are allowed
+          if (command === SQLCommand.none || command === SQLCommand.where) {
+            throw new SyntaxError("Helper are only allowed for INSERT, UPDATE and WHERE IN commands");
+          }
+          const { columns, value: items } = value as SQLArrayParameter;
+          const columnCount = columns.length;
+          if (columnCount === 0 && command !== SQLCommand.whereIn) {
+            throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
+          }
+          const lastColumnIndex = columns.length - 1;
+
+          if (command === SQLCommand.insert) {
+            //
+            // insert into users ${sql(users)} or insert into users ${sql(user)}
+            //
+
+            query += "(";
+            for (let j = 0; j < columnCount; j++) {
+              query += escapeIdentifier(columns[j]);
+              if (j < lastColumnIndex) {
+                query += ", ";
+              }
+            }
+            query += ") VALUES";
+            if ($isArray(items)) {
+              const itemsCount = items.length;
+              const lastItemIndex = itemsCount - 1;
+              for (let j = 0; j < itemsCount; j++) {
+                query += "(";
+                const item = items[j];
+                for (let k = 0; k < columnCount; k++) {
+                  const column = columns[k];
+                  const columnValue = item[column];
+                  query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
+                  if (typeof columnValue === "undefined") {
+                    binding_values.push(null);
+                  } else {
+                    binding_values.push(columnValue);
+                  }
+                }
+                if (j < lastItemIndex) {
+                  query += "),";
+                } else {
+                  query += ") "; // the user can add RETURNING * or RETURNING id
+                }
+              }
+            } else {
+              query += "(";
+              const item = items;
+              for (let j = 0; j < columnCount; j++) {
+                const column = columns[j];
+                const columnValue = item[column];
+                query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
+                if (typeof columnValue === "undefined") {
+                  binding_values.push(null);
+                } else {
+                  binding_values.push(columnValue);
+                }
+              }
+              query += ") "; // the user can add RETURNING * or RETURNING id
+            }
+          } else if (command === SQLCommand.whereIn) {
+            // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
+            if (!$isArray(items)) {
+              throw new SyntaxError("An array of values is required for WHERE IN helper");
+            }
+            const itemsCount = items.length;
+            const lastItemIndex = itemsCount - 1;
+            query += "(";
+            for (let j = 0; j < itemsCount; j++) {
+              query += `$${binding_idx++}${j < lastItemIndex ? ", " : ""}`;
+              if (columnCount > 0) {
+                // we must use a key from a object
+                if (columnCount > 1) {
+                  // we should not pass multiple columns here
+                  throw new SyntaxError("Cannot use WHERE IN helper with multiple columns");
+                }
+                // SELECT * FROM users WHERE id IN (${sql(users, "id")})
+                const value = items[j];
+                if (typeof value === "undefined") {
+                  binding_values.push(null);
+                } else {
+                  const value_from_key = value[columns[0]];
+
+                  if (typeof value_from_key === "undefined") {
+                    binding_values.push(null);
+                  } else {
+                    binding_values.push(value_from_key);
+                  }
+                }
+              } else {
+                const value = items[j];
+                if (typeof value === "undefined") {
+                  binding_values.push(null);
+                } else {
+                  binding_values.push(value);
+                }
+              }
+            }
+            query += ") "; // more conditions can be added after this
+          } else {
+            // UPDATE users SET ${sql({ name: "John", age: 31 })} WHERE id = 1
+            let item;
+            if ($isArray(items)) {
+              if (items.length > 1) {
+                throw new SyntaxError("Cannot use array of objects for UPDATE");
+              }
+              item = items[0];
+            } else {
+              item = items;
+            }
+            // no need to include if is updateSet
+            if (command === SQLCommand.update) {
+              query += " SET ";
+            }
+            for (let i = 0; i < columnCount; i++) {
+              const column = columns[i];
+              const columnValue = item[column];
+              query += `${escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+              if (typeof columnValue === "undefined") {
+                binding_values.push(null);
+              } else {
+                binding_values.push(columnValue);
+              }
+            }
+            query += " "; // the user can add where clause after this
+          }
+        } else {
+          //TODO: handle sql.array parameters
+          query += `$${binding_idx++} `;
+          if (typeof value === "undefined") {
+            binding_values.push(null);
+          } else {
+            binding_values.push(value);
+          }
+        }
+      }
+    } else {
+      throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+    }
+  }
+
+  return [query, binding_values];
+}
+
 class Query extends PublicPromise {
   [_resolve];
   [_reject];
@@ -128,13 +445,19 @@ class Query extends PublicPromise {
     return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
   }
 
-  constructor(strings, values, allowUnsafeTransaction, poolSize, handler) {
+  constructor(strings, values, flags, poolSize, handler) {
     var resolve_, reject_;
     super((resolve, reject) => {
       resolve_ = resolve;
       reject_ = reject;
     });
-
+    if (typeof strings === "string") {
+      if (!(flags & SQLQueryFlags.unsafe)) {
+        // identifier (cannot be executed in safe mode)
+        flags |= SQLQueryFlags.notTagged;
+        strings = escapeIdentifier(strings);
+      }
+    }
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;
@@ -143,7 +466,9 @@ class Query extends PublicPromise {
     this[_poolSize] = poolSize;
     this[_strings] = strings;
     this[_values] = values;
-    this[_flags] = allowUnsafeTransaction;
+    this[_flags] = flags;
+
+    this[_results] = null;
   }
 
   async [_run](async: boolean) {
@@ -152,12 +477,18 @@ class Query extends PublicPromise {
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      this.reject(notTaggedCallError());
+      return;
+    }
     this[_queryStatus] |= QueryStatus.executed;
 
     const handle = getQueryHandle(this);
     if (!handle) return this;
 
     if (async) {
+      // Ensure it's actually async
+      // eslint-disable-next-line
       await 1;
     }
 
@@ -168,7 +499,6 @@ class Query extends PublicPromise {
       this.reject(err);
     }
   }
-
   get active() {
     return (this[_queryStatus] & QueryStatus.active) != 0;
   }
@@ -237,6 +567,11 @@ class Query extends PublicPromise {
     return this;
   }
 
+  simple() {
+    this[_flags] |= SQLQueryFlags.simple;
+    return this;
+  }
+
   values() {
     const handle = getQueryHandle(this);
     if (!handle) return this;
@@ -245,6 +580,9 @@ class Query extends PublicPromise {
   }
 
   then() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -252,6 +590,9 @@ class Query extends PublicPromise {
   }
 
   catch() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -259,6 +600,9 @@ class Query extends PublicPromise {
   }
 
   finally() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     return super.finally.$apply(this, arguments);
   }
@@ -266,7 +610,51 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries) {
+  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+    /// simple queries
+    if (query[_flags] & SQLQueryFlags.simple) {
+      // simple can have multiple results or a single result
+      if (is_last) {
+        if (queries) {
+          const queriesIndex = queries.indexOf(query);
+          if (queriesIndex !== -1) {
+            queries.splice(queriesIndex, 1);
+          }
+        }
+        try {
+          query.resolve(query[_results]);
+        } catch {}
+        return;
+      }
+      $assert(result instanceof SQLResultArray, "Invalid result array");
+      // prepare for next query
+      query[_handle].setPendingValue(new SQLResultArray());
+
+      if (typeof commandTag === "string") {
+        if (commandTag.length > 0) {
+          result.command = commandTag;
+        }
+      } else {
+        result.command = cmds[commandTag];
+      }
+
+      result.count = count || 0;
+      const last_result = query[_results];
+
+      if (!last_result) {
+        query[_results] = result;
+      } else {
+        if (last_result instanceof SQLResultArray) {
+          // multiple results
+          query[_results] = [last_result, result];
+        } else {
+          // 3 or more results
+          last_result.push(result);
+        }
+      }
+      return;
+    }
+    /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
@@ -277,17 +665,15 @@ init(
     }
 
     result.count = count || 0;
-
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
         queries.splice(queriesIndex, 1);
       }
     }
-
     try {
       query.resolve(result);
-    } catch (e) {}
+    } catch {}
   },
   function onRejectPostgresQuery(query, reject, queries) {
     if (queries) {
@@ -299,7 +685,7 @@ init(
 
     try {
       query.reject(reject);
-    } catch (e) {}
+    } catch {}
   },
 );
 
@@ -324,7 +710,7 @@ enum PooledConnectionFlags {
 
 class PooledConnection {
   pool: ConnectionPool;
-  connection: ReturnType<typeof createConnection>;
+  connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -354,7 +740,7 @@ class PooledConnection {
       if (err) {
         onFinish(err);
       } else {
-        this.connection.close();
+        this.connection?.close();
       }
       return;
     }
@@ -388,10 +774,17 @@ class PooledConnection {
     this.pool.release(this, true);
   }
   constructor(connectionInfo, pool: ConnectionPool) {
-    this.connection = createConnection(connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
+    this.#startConnection();
+  }
+  async #startConnection() {
+    this.connection = (await createConnection(
+      this.connectionInfo,
+      this.#onConnected.bind(this),
+      this.#onClose.bind(this),
+    )) as $ZigGeneratedClasses.PostgresSQLConnection;
   }
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
@@ -409,7 +802,7 @@ class PooledConnection {
     this.storedError = null;
     this.state = PooledConnectionState.pending;
     // retry connection
-    this.connection = createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
+    this.#startConnection();
   }
   close() {
     try {
@@ -636,7 +1029,7 @@ class ConnectionPool {
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         if (connection.state === PooledConnectionState.connected) {
-          connection.connection.flush();
+          connection.connection?.flush();
         }
       }
     }
@@ -665,7 +1058,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
-              connection.connection.close();
+              connection.connection?.close();
             }
             break;
           case PooledConnectionState.connected:
@@ -673,7 +1066,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
-              connection.connection.close();
+              connection.connection?.close();
             }
             break;
         }
@@ -844,12 +1237,11 @@ class ConnectionPool {
   }
 }
 
-function createConnection(
-  {
+async function createConnection(options, onConnected, onClose) {
+  const {
     hostname,
     port,
     username,
-    password,
     tls,
     query,
     database,
@@ -857,163 +1249,46 @@ function createConnection(
     idleTimeout = 0,
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
-  },
-  onConnected,
-  onClose,
-) {
-  return _createConnection(
-    hostname,
-    Number(port),
-    username || "",
-    password || "",
-    database || "",
-    // > The default value for sslmode is prefer. As is shown in the table, this
-    // makes no sense from a security point of view, and it only promises
-    // performance overhead if possible. It is only provided as the default for
-    // backward compatibility, and is not recommended in secure deployments.
-    sslMode || SSLMode.disable,
-    tls || null,
-    query || "",
-    onConnected,
-    onClose,
-    idleTimeout,
-    connectionTimeout,
-    maxLifetime,
-  );
+    prepare = true,
+    path,
+  } = options;
+
+  let password = options.password;
+  try {
+    if (typeof password === "function") {
+      password = password();
+      if (password && $isPromise(password)) {
+        password = await password;
+      }
+    }
+    return _createConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password || "",
+      database || "",
+      // > The default value for sslmode is prefer. As is shown in the table, this
+      // makes no sense from a security point of view, and it only promises
+      // performance overhead if possible. It is only provided as the default for
+      // backward compatibility, and is not recommended in secure deployments.
+      sslMode || SSLMode.disable,
+      tls || null,
+      query || "",
+      path || "",
+      onConnected,
+      onClose,
+      idleTimeout,
+      connectionTimeout,
+      maxLifetime,
+      !prepare,
+    ) as $ZigGeneratedClasses.PostgresSQLConnection;
+  } catch (e) {
+    onClose(e);
+  }
 }
 
-var hasSQLArrayParameter = false;
-function normalizeStrings(strings, values) {
-  hasSQLArrayParameter = false;
-
-  if ($isArray(strings)) {
-    const count = strings.length;
-
-    if (count === 0) {
-      return "";
-    }
-
-    var out = strings[0];
-
-    // For now, only support insert queries with array parameters
-    //
-    // insert into users ${sql(users)}
-    //
-    if (values.length > 0 && typeof values[0] === "object" && values[0] && values[0] instanceof SQLArrayParameter) {
-      if (values.length > 1) {
-        throw new Error("Cannot mix array parameters with other values");
-      }
-      hasSQLArrayParameter = true;
-      const { columns, value } = values[0];
-      const groupCount = value.length;
-      out += `values `;
-
-      let columnIndex = 1;
-      let columnCount = columns.length;
-      let lastColumnIndex = columnCount - 1;
-
-      for (var i = 0; i < groupCount; i++) {
-        out += i > 0 ? `, (` : `(`;
-
-        for (var j = 0; j < lastColumnIndex; j++) {
-          out += `$${columnIndex++}, `;
-        }
-
-        out += `$${columnIndex++})`;
-      }
-
-      for (var i = 1; i < count; i++) {
-        out += strings[i];
-      }
-
-      return out;
-    }
-
-    for (var i = 1; i < count; i++) {
-      out += `$${i}${strings[i]}`;
-    }
-    return out;
-  }
-
-  return strings + "";
-}
-function hasQuery(value: any) {
-  return value instanceof Query;
-}
-function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint) {
-  let sqlString;
-  let final_values: Array<any>;
-  if ($isArray(strings) && values.some(hasQuery)) {
-    // we need to handle fragments of queries
-    final_values = [];
-    const final_strings = [];
-    let strings_idx = 0;
-
-    for (let i = 0; i < values.length; i++) {
-      const value = values[i];
-      if (value instanceof Query) {
-        let sub_strings = value[_strings];
-        var is_unsafe = value[_flags] & SQLQueryFlags.unsafe;
-
-        if (typeof sub_strings === "string") {
-          if (!is_unsafe) {
-            // identifier
-            sub_strings = escapeIdentifier(sub_strings);
-          }
-          //@ts-ignore
-          final_strings.push(strings[strings_idx] + sub_strings + strings[strings_idx + 1]);
-          strings_idx += 2; // we merged 2 strings into 1
-          // in this case we dont have values to merge
-        } else {
-          // complex fragment, we need to merge values
-          const sub_values = value[_values];
-
-          if (final_strings.length > 0) {
-            // complex not the first
-            const current_idx = final_strings.length - 1;
-            final_strings[current_idx] = final_strings[current_idx] + sub_strings[0];
-
-            if (sub_strings.length > 1) {
-              final_strings.push(...sub_strings.slice(1));
-            }
-            final_values.push(...sub_values);
-          } else {
-            // complex the first
-            final_strings.push(strings[strings_idx] + sub_strings[0]);
-            strings_idx += 1;
-            final_values.push(...sub_values);
-            if (sub_strings.length > 1) {
-              final_strings.push(...sub_strings.slice(1));
-            }
-          }
-        }
-      } else {
-        // for each value we have 2 strings
-        //@ts-ignore
-        final_strings.push(strings[strings_idx]);
-        strings_idx += 1;
-        if (strings_idx + 1 < strings.length) {
-          //@ts-ignore
-          final_strings.push(strings[strings_idx + 1]);
-          strings_idx += 1;
-        }
-
-        final_values.push(value);
-      }
-    }
-
-    sqlString = normalizeStrings(final_strings, final_values);
-  } else {
-    sqlString = normalizeStrings(strings, values);
-    final_values = values;
-  }
-  let columns;
-  if (hasSQLArrayParameter) {
-    hasSQLArrayParameter = false;
-    const v = final_values[0];
-    columns = v.columns;
-    final_values = v.value;
-  }
+function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint, simple) {
+  const [sqlString, final_values] = normalizeQuery(strings, values);
   if (!allowUnsafeTransaction) {
     if (poolSize !== 1) {
       const upperCaseSqlString = sqlString.toUpperCase().trim();
@@ -1022,7 +1297,7 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
       }
     }
   }
-  return createQuery(sqlString, final_values, new SQLResultArray(), columns, !!bigint);
+  return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
 class SQLArrayParameter {
@@ -1049,7 +1324,7 @@ class SQLArrayParameter {
           }
         }
 
-        throw new Error(`Invalid key: ${key}`);
+        throw new Error(`Keys must be strings or numbers: ${key}`);
       }
     }
 
@@ -1080,7 +1355,9 @@ function loadOptions(o) {
     onconnect,
     onclose,
     max,
-    bigint;
+    bigint,
+    path;
+  let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
 
@@ -1116,6 +1393,8 @@ function loadOptions(o) {
     url = new URL(o);
   }
   o ||= {};
+  query = "";
+
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
@@ -1130,22 +1409,42 @@ function loadOptions(o) {
     }
 
     const queryObject = url.searchParams.toJSON();
-    query = "";
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
+      } else if (key.toLowerCase() === "path") {
+        path = queryObject[key];
       } else {
-        query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+        // this is valid for postgres for other databases it might not be valid
+        // check adapter then implement for other databases
+        // encode string with \0 as finalizer
+        // must be key\0value\0
+        query += `${key}\0${queryObject[key]}\0`;
       }
     }
     query = query.trim();
   }
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
+
   port ||= Number(o.port || env.PGPORT || 5432);
+
+  path ||= o.path || "";
+  // add /.s.PGSQL.${port} if it doesn't exist
+  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
+    path = `${path}/.s.PGSQL.${port}`;
+  }
+
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
   database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
-
+  const connection = o.connection;
+  if (connection && $isObject(connection)) {
+    for (const key in connection) {
+      if (connection[key] !== undefined) {
+        query += `${key}\0${connection[key]}\0`;
+      }
+    }
+  }
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;
@@ -1157,6 +1456,10 @@ function loadOptions(o) {
   maxLifetime ??= o.maxLifetime;
   maxLifetime ??= o.max_lifetime;
   bigint ??= o.bigint;
+  // we need to explicitly set prepare to false if it is false
+  if (o.prepare === false) {
+    prepare = false;
+  }
 
   onconnect ??= o.onconnect;
   onclose ??= o.onclose;
@@ -1218,12 +1521,12 @@ function loadOptions(o) {
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
-    } else if (!!tls) {
+    } else if (tls) {
       tls = true;
     }
   }
 
-  if (!!tls && sslMode === SSLMode.disable) {
+  if (tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
   port = Number(port);
@@ -1240,7 +1543,7 @@ function loadOptions(o) {
     default:
       throw new Error(`Unsupported adapter: ${adapter}. Only \"postgres\" is supported for now`);
   }
-  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter };
+  const ret: any = { hostname, port, username, password, database, tls, query, sslMode, adapter, prepare, bigint };
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;
   }
@@ -1257,8 +1560,6 @@ function loadOptions(o) {
     ret.onclose = onclose;
   }
   ret.max = max || 10;
-
-  ret.bigint = bigint;
 
   return ret;
 }
@@ -1337,13 +1638,11 @@ function SQL(o, e = {}) {
 
   function unsafeQuery(strings, values) {
     try {
-      return new Query(
-        strings,
-        values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe,
-        connectionInfo.max,
-        queryFromPoolHandler,
-      );
+      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
+      return new Query(strings, values, flags, connectionInfo.max, queryFromPoolHandler);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -1387,12 +1686,17 @@ function SQL(o, e = {}) {
   }
   function unsafeQueryFromTransaction(strings, values, pooledConnection, transactionQueries) {
     try {
+      let flags = connectionInfo.bigint
+        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
+        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
+
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
       const query = new Query(
         strings,
         values,
-        connectionInfo.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe,
+        flags,
         connectionInfo.max,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
       );
@@ -1416,7 +1720,7 @@ function SQL(o, e = {}) {
   }
 
   function onReserveConnected(err, pooledConnection) {
-    const { promise, resolve, reject } = this;
+    const { resolve, reject } = this;
     if (err) {
       return reject(err);
     }
@@ -1440,7 +1744,8 @@ function SQL(o, e = {}) {
         return Promise.reject(connectionClosedError());
       }
       if ($isArray(strings)) {
-        if (strings[0] && typeof strings[0] === "object") {
+        // detect if is tagged template
+        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
           return new SQLArrayParameter(strings, values);
         }
       } else if (
@@ -1456,6 +1761,13 @@ function SQL(o, e = {}) {
     reserved_sql.unsafe = (string, args = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
+    reserved_sql.file = async (path: string, args = []) => {
+      return await Bun.file(path)
+        .text()
+        .then(text => {
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+        });
+    };
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
@@ -1468,9 +1780,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await reserved_sql(`COMMIT PREPARED '${name}'`);
+          return await reserved_sql.unsafe(`COMMIT PREPARED '${name}'`);
         case "mysql":
-          return await reserved_sql(`XA COMMIT '${name}'`);
+          return await reserved_sql.unsafe(`XA COMMIT '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
@@ -1484,9 +1796,9 @@ function SQL(o, e = {}) {
       const adapter = connectionInfo.adapter;
       switch (adapter) {
         case "postgres":
-          return await reserved_sql(`ROLLBACK PREPARED '${name}'`);
+          return await reserved_sql.unsafe(`ROLLBACK PREPARED '${name}'`);
         case "mysql":
-          return await reserved_sql(`XA ROLLBACK '${name}'`);
+          return await reserved_sql.unsafe(`XA ROLLBACK '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
@@ -1751,11 +2063,11 @@ function SQL(o, e = {}) {
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function run_internal_transaction_sql(strings, ...values) {
+    function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
     function transaction_sql(strings, ...values) {
       if (
@@ -1765,7 +2077,8 @@ function SQL(o, e = {}) {
         return Promise.reject(connectionClosedError());
       }
       if ($isArray(strings)) {
-        if (strings[0] && typeof strings[0] === "object") {
+        // detect if is tagged template
+        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
           return new SQLArrayParameter(strings, values);
         }
       } else if (
@@ -1780,6 +2093,13 @@ function SQL(o, e = {}) {
     }
     transaction_sql.unsafe = (string, args = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+    };
+    transaction_sql.file = async (path: string, args = []) => {
+      return await Bun.file(path)
+        .text()
+        .then(text => {
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+        });
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
@@ -1796,9 +2116,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await transaction_sql(`COMMIT PREPARED '${name}'`);
+          return await run_internal_transaction_sql(`COMMIT PREPARED '${name}'`);
         case "mysql":
-          return await transaction_sql(`XA COMMIT '${name}'`);
+          return await run_internal_transaction_sql(`XA COMMIT '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
@@ -1811,9 +2131,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await transaction_sql(`ROLLBACK PREPARED '${name}'`);
+          return await run_internal_transaction_sql(`ROLLBACK PREPARED '${name}'`);
         case "mysql":
-          return await transaction_sql(`XA ROLLBACK '${name}'`);
+          return await run_internal_transaction_sql(`XA ROLLBACK '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
@@ -1925,7 +2245,7 @@ function SQL(o, e = {}) {
       }
     }
     if (distributed) {
-      transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
+      transaction_sql.savepoint = async (_fn: TransactionCallback, _name?: string): Promise<any> => {
         throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call savepoint inside a distributed transaction");
       };
     } else {
@@ -1990,21 +2310,9 @@ function SQL(o, e = {}) {
     }
   }
   function sql(strings, ...values) {
-    /**
-     * const users = [
-     * {
-     *   name: "Alice",
-     *   age: 25,
-     * },
-     * {
-     *   name: "Bob",
-     *   age: 30,
-     * },
-     * ]
-     * sql`insert into users ${sql(users)}`
-     */
     if ($isArray(strings)) {
-      if (strings[0] && typeof strings[0] === "object") {
+      // detect if is tagged template
+      if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
         return new SQLArrayParameter(strings, values);
       }
     } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLArrayParameter)) {
@@ -2017,7 +2325,13 @@ function SQL(o, e = {}) {
   sql.unsafe = (string, args = []) => {
     return unsafeQuery(string, args);
   };
-
+  sql.file = async (path: string, args = []) => {
+    return await Bun.file(path)
+      .text()
+      .then(text => {
+        return unsafeQuery(text, args);
+      });
+  };
   sql.reserve = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
@@ -2035,9 +2349,9 @@ function SQL(o, e = {}) {
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":
-        return await sql(`ROLLBACK PREPARED '${name}'`);
+        return await sql.unsafe(`ROLLBACK PREPARED '${name}'`);
       case "mysql":
-        return await sql(`XA ROLLBACK '${name}'`);
+        return await sql.unsafe(`XA ROLLBACK '${name}'`);
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically rolled back.`);
       case "sqlite":
@@ -2055,9 +2369,9 @@ function SQL(o, e = {}) {
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":
-        return await sql(`COMMIT PREPARED '${name}'`);
+        return await sql.unsafe(`COMMIT PREPARED '${name}'`);
       case "mysql":
-        return await sql(`XA COMMIT '${name}'`);
+        return await sql.unsafe(`XA COMMIT '${name}'`);
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically committed.`);
       case "sqlite":
@@ -2144,7 +2458,7 @@ function SQL(o, e = {}) {
   return sql;
 }
 
-var lazyDefaultSQL;
+var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
@@ -2159,8 +2473,7 @@ function ensureDefaultSQL() {
   }
 }
 
-var initialDefaultSQL;
-var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
+var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
@@ -2168,7 +2481,7 @@ var defaultSQLObject = (initialDefaultSQL = function sql(strings, ...values) {
     resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-});
+} as typeof BunTypes.SQL;
 
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
@@ -2197,21 +2510,26 @@ defaultSQLObject.unsafe = (...args) => {
   return lazyDefaultSQL.unsafe(...args);
 };
 
-defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {
+defaultSQLObject.file = (filename: string, ...args) => {
   ensureDefaultSQL();
-  return lazyDefaultSQL.begin(...args);
+  return lazyDefaultSQL.file(filename, ...args);
 };
 
-defaultSQLObject.end = defaultSQLObject.close = (...args) => {
+defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.begin(...args);
+} as (typeof BunTypes.SQL)["begin"];
+
+defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.close(...args);
 };
-defaultSQLObject.flush = (...args) => {
+defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
 };
 //define lazy properties
-Object.defineProperties(defaultSQLObject, {
+defineProperties(defaultSQLObject, {
   options: {
     get: () => {
       ensureDefaultSQL();

@@ -53,19 +53,11 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     // We are JSX-only for now.
     // The versions of react & react-dom need to match up, and it's SO easy to mess that up.
     // So we have to be a little opinionated here.
-    if (needs_to_inject_shadcn_ui) {
-        // Use react 18 instead of 19 if shadcn is in use.
-        _ = result.dependencies.swapRemove("react");
-        _ = result.dependencies.swapRemove("react-dom");
-        try result.dependencies.insert("react@^18");
-        try result.dependencies.insert("react-dom@^18");
-    } else {
-        // Add react-dom if react is used
-        _ = result.dependencies.swapRemove("react");
-        _ = result.dependencies.swapRemove("react-dom");
-        try result.dependencies.insert("react-dom@19");
-        try result.dependencies.insert("react@19");
-    }
+    // Add react-dom if react is used
+    _ = result.dependencies.swapRemove("react");
+    _ = result.dependencies.swapRemove("react-dom");
+    try result.dependencies.insert("react-dom@19");
+    try result.dependencies.insert("react@19");
 
     // Choose template based on dependencies and example type
     const template: Template = brk: {
@@ -79,7 +71,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
     };
 
     // Generate project files from template
-    try generateFiles(default_allocator, entry_point, result, template, react_component_export);
+    try generateFiles(default_allocator, entry_point, result.dependencies.keys(), template, react_component_export);
 
     Global.exit(0);
 }
@@ -87,7 +79,7 @@ pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result:
 // Create a file with given contents, returns if file was newly created
 fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     // Check if file exists and has same contents
-    if (bun.sys.File.readFrom(bun.toFD(std.fs.cwd()), filename, default_allocator).asValue()) |source_contents| {
+    if (bun.sys.File.readFrom(bun.FD.cwd(), filename, default_allocator).asValue()) |source_contents| {
         defer default_allocator.free(source_contents);
         if (strings.eqlLong(source_contents, contents, true)) {
             return .{ .result = false };
@@ -100,11 +92,11 @@ fn createFile(filename: []const u8, contents: []const u8) bun.JSC.Maybe(bool) {
     }
 
     // Open file for writing
-    const fd = switch (bun.sys.openatA(bun.toFD(std.fs.cwd()), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+    const fd = switch (bun.sys.openatA(.cwd(), filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
-    defer _ = bun.sys.close(fd);
+    defer fd.close();
 
     // Write contents
     switch (bun.sys.File.writeAll(.{ .handle = fd }, contents)) {
@@ -168,7 +160,7 @@ fn stringWithReplacements(original_input: []const u8, basename: []const u8, rela
 }
 
 // Generate all project files from template
-fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *BundleV2.DependenciesScanner.Result, template: Template, react_component_export: []const u8) !void {
+pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependencies: []const []const u8, template: Template, react_component_export: []const u8) !void {
     var log = template.logger();
     var basename = std.fs.path.basename(entry_point);
     const extension = std.fs.path.extension(basename);
@@ -179,9 +171,9 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
     // Normalize file paths
     var normalized_buf: bun.PathBuffer = undefined;
     var normalized_name: []const u8 = if (std.fs.path.isAbsolute(entry_point))
-        bun.path.relativeNormalizedBuf(&normalized_buf, bun.fs.FileSystem.instance.top_level_dir, entry_point, .posix, true)
+        bun.path.relativeNormalizedBuf(&normalized_buf, bun.fs.FileSystem.instance.top_level_dir, entry_point, .loose, true)
     else
-        bun.path.normalizeBuf(entry_point, &normalized_buf, .posix);
+        bun.path.normalizeBuf(entry_point, &normalized_buf, .loose);
 
     if (extension.len > 0) {
         normalized_name = normalized_name[0 .. normalized_name.len - extension.len];
@@ -226,60 +218,62 @@ fn generateFiles(allocator: std.mem.Allocator, entry_point: string, result: *Bun
         },
     }
 
-    // Install dependencies
-    var argv = std.ArrayList([]const u8).init(default_allocator);
-    try argv.append("bun");
-    try argv.append("--only-missing");
-    try argv.append("install");
-    try argv.appendSlice(result.dependencies.keys());
-    if (log.has_written_initial_message) {
-        Output.print("\n", .{});
-    }
-    Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{result.dependencies.keys().len});
+    if (dependencies.len > 0) {
+        // Install dependencies
+        var argv = std.ArrayList([]const u8).init(default_allocator);
+        try argv.append("bun");
+        try argv.append("--only-missing");
+        try argv.append("install");
+        try argv.appendSlice(dependencies);
+        if (log.has_written_initial_message) {
+            Output.print("\n", .{});
+        }
+        Output.pretty("<r>📦 <b>Auto-installing {d} detected dependencies<r>\n", .{dependencies.len});
 
-    // print "bun" but use bun.selfExePath()
-    Output.commandOut(argv.items);
+        // print "bun" but use bun.selfExePath()
+        Output.commandOut(argv.items);
 
-    Output.flush();
+        Output.flush();
 
-    argv.items[0] = try bun.selfExePath();
+        argv.items[0] = try bun.selfExePath();
 
-    const process = bun.spawnSync(&.{
-        .argv = argv.items,
-        .envp = null,
-        .cwd = bun.fs.FileSystem.instance.top_level_dir,
-        .stderr = .inherit,
-        .stdout = .inherit,
-        .stdin = .inherit,
+        const process = bun.spawnSync(&.{
+            .argv = argv.items,
+            .envp = null,
+            .cwd = bun.fs.FileSystem.instance.top_level_dir,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
 
-        .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-        },
-    }) catch |err| {
-        Output.err(err, "failed to install dependencies", .{});
-        Global.crash();
-    };
-
-    switch (process) {
-        .err => |err| {
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            },
+        }) catch |err| {
             Output.err(err, "failed to install dependencies", .{});
             Global.crash();
-        },
-        .result => |spawn_result| {
-            if (!spawn_result.status.isOK()) {
-                if (spawn_result.status.signalCode()) |signal| {
-                    if (signal.toExitCode()) |exit_code| {
-                        Global.exit(exit_code);
-                    }
-                }
+        };
 
-                if (spawn_result.status == .exited) {
-                    Global.exit(spawn_result.status.exited.code);
-                }
-
+        switch (process) {
+            .err => |err| {
+                Output.err(err, "failed to install dependencies", .{});
                 Global.crash();
-            }
-        },
+            },
+            .result => |spawn_result| {
+                if (!spawn_result.status.isOK()) {
+                    if (spawn_result.status.signalCode()) |signal| {
+                        if (signal.toExitCode()) |exit_code| {
+                            Global.exit(exit_code);
+                        }
+                    }
+
+                    if (spawn_result.status == .exited) {
+                        Global.exit(spawn_result.status.exited.code);
+                    }
+
+                    Global.crash();
+                }
+            },
+        }
     }
 
     // Show success message and start dev server
@@ -622,28 +616,22 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
     return null;
 }
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
-const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
+const std = @import("std");
+
 const logger = bun.logger;
 
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.CLI.Command;
 const Example = @import("../cli/create_command.zig").Example;
@@ -704,6 +692,8 @@ const ReactTailwindSpa = struct {
             .overwrite = false,
         },
     };
+
+    pub const init_files = &[_]TemplateFile{};
 };
 
 const shared_build_ts = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts");
@@ -736,7 +726,6 @@ const ReactSpa = struct {
             .content = shared_client_tsx,
             .reason = .bun,
         },
-
         .{
             .name = "package.json",
             .content = @embedFile("projects/react-spa/package.json"),
@@ -755,7 +744,7 @@ const ReactShadcnSpa = struct {
             .reason = .shadcn,
         },
         .{
-            .name = "src/index.css",
+            .name = "index.css",
             .content = @embedFile("projects/react-shadcn-spa/styles/index.css"),
             .reason = .shadcn,
         },
@@ -812,7 +801,7 @@ const ReactShadcnSpa = struct {
 };
 
 // Template type to handle different project types
-const Template = union(Tag) {
+pub const Template = union(Tag) {
     ReactTailwindSpa: void,
     ReactSpa: void,
     ReactShadcnSpa: struct {

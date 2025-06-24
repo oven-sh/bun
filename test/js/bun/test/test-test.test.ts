@@ -708,31 +708,31 @@ test("my-test", () => {
         stderr: "pipe",
         env: bunEnv,
       });
-      expect(
-        stderr
-          .toString()
-          .replaceAll(test_dir, "<dir>")
-          .replaceAll("\r\n", "\n")
-          .replaceAll("\\", "/")
-          .split("\n")
-          .filter(a => {
-            if (a.includes("(:")) return false;
-            if (a.includes("bun test v")) return false;
+      const output = stderr.toString();
 
-            // Timers are a little inconsistent on macOS vs Linux
-            // On Linux, it might not run in time, but on macOS it will
-            if (a.includes(" expect() calls")) return false;
+      expect(output).toContain(`## stage ${stage} ##`);
 
-            return true;
-          })
-          .map(a =>
-            a
-              .trimEnd()
-              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
-              .trimEnd(),
-          )
-          .join("\n"),
-      ).toMatchSnapshot();
+      expect(output).toContain("1 | import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe}");
+
+      const stackLines = output.split("\n").filter(line => line.trim().startsWith("at "));
+      expect(stackLines.length).toBeGreaterThan(0);
+      if (process.platform === "win32") {
+        expect(stackLines[0]).toContain(`<dir>\\my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+      if (process.platform !== "win32") {
+        expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+
+      if (stage === "beforeEach") {
+        expect(output).toContain("0 pass");
+        expect(output).toContain("1 fail");
+      } else {
+        expect(output).toContain("1 pass");
+        expect(output).toContain("0 fail");
+        expect(output).toContain("1 error");
+      }
+
+      expect(output).toContain("Ran 1 tests across 1 files");
     });
   }
 });

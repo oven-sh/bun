@@ -1,8 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
+const Symbol = bun.JSAst.Symbol;
 
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
@@ -49,7 +48,7 @@ pub const DashedIdentReference = struct {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         if (dest.css_module) |*css_module| {
             if (css_module.config.dashed_idents) {
-                if (css_module.referenceDashed(dest.allocator, this.ident.v, &this.from, dest.loc.source_index)) |name| {
+                if (try css_module.referenceDashed(W, dest, this.ident.v, &this.from, dest.loc.source_index)) |name| {
                     try dest.writeStr("--");
                     css.serializer.serializeName(name, dest) catch return dest.addFmtError();
                     return;
@@ -141,6 +140,135 @@ pub const Ident = struct {
     }
 };
 
+/// Encodes an `Ident` or the bundler's `Ref` into 16 bytes.
+///
+/// It uses the top bit of the pointer to denote whether it's an ident or a ref
+///
+/// If it's an `Ident`, then `__ref_bit == false` and `__len` is the length of the slice.
+///
+/// If it's `Ref`, then `__ref_bit == true` and `__len` is the bit pattern of the `Ref`.
+///
+/// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
+/// []const u8 so we can debug the string. This should be fine since we use arena
+pub const IdentOrRef = packed struct(u128) {
+    __ptrbits: u63 = 0,
+    __ref_bit: bool = false,
+    __len: u64 = 0,
+
+    const Tag = enum {
+        ident,
+        ref,
+    };
+
+    const DebugIdent = if (bun.Environment.isDebug) struct { []const u8, Allocator } else void;
+
+    pub fn debugIdent(this: @This()) []const u8 {
+        if (comptime !bun.Environment.isDebug) {
+            @compileError("debugIdent is only available in debug mode");
+        }
+
+        if (this.__ref_bit) {
+            const ptr: *const []const u8 = @ptrFromInt(@as(usize, @intCast(this.__ptrbits)));
+            return ptr.*;
+        }
+
+        return this.asIdent().?.v;
+    }
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.__ref_bit) {
+            const ref = this.asRef().?;
+            return writer.print("Ref({})", .{ref});
+        }
+        return writer.print("Ident({s})", .{this.asIdent().?.v});
+    }
+
+    pub fn fromIdent(ident: Ident) @This() {
+        return @This(){
+            .__ptrbits = @intCast(@intFromPtr(ident.v.ptr)),
+            .__len = ident.v.len,
+            .__ref_bit = false,
+        };
+    }
+
+    pub fn fromRef(ref: bun.bundle_v2.Ref, debug_ident: DebugIdent) @This() {
+        var this = @This(){
+            .__len = @bitCast(ref),
+            .__ref_bit = true,
+        };
+
+        if (comptime bun.Environment.isDebug) {
+            const heap_ptr: *[]const u8 = debug_ident[1].create([]const u8) catch bun.outOfMemory();
+            heap_ptr.* = debug_ident[0];
+            this.__ptrbits = @intCast(@intFromPtr(heap_ptr));
+        }
+
+        return this;
+    }
+
+    pub inline fn isIdent(this: @This()) bool {
+        return !this.__ref_bit;
+    }
+
+    pub inline fn isRef(this: @This()) bool {
+        return this.__ref_bit;
+    }
+
+    pub inline fn asIdent(this: @This()) ?Ident {
+        if (!this.__ref_bit) {
+            const ptr: [*]const u8 = @ptrFromInt(@as(usize, @intCast(this.__ptrbits)));
+            return Ident{ .v = ptr[0..this.__len] };
+        }
+        return null;
+    }
+
+    pub inline fn asRef(this: @This()) ?bun.bundle_v2.Ref {
+        if (this.__ref_bit) {
+            const out: bun.bundle_v2.Ref = @bitCast(this.__len);
+            return out;
+        }
+        return null;
+    }
+
+    pub fn asStr(this: @This(), map: *const bun.JSAst.Symbol.Map, local_names: ?*const css.LocalsResultsMap) ?[]const u8 {
+        if (this.isIdent()) return this.asIdent().?.v;
+        const ref = this.asRef().?;
+        const final_ref = map.follow(ref);
+        return local_names.?.get(final_ref);
+    }
+
+    pub fn asOriginalString(this: @This(), symbols: *const Symbol.List) []const u8 {
+        if (this.isIdent()) return this.asIdent().?.v;
+        const ref = this.asRef().?;
+        return symbols.at(ref.inner_index).original_name;
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        if (this.isIdent()) {
+            hasher.update(this.asIdent().?.v);
+        } else {
+            const slice: [*]const u64 = @ptrCast(this);
+            const slice_u8: [*]align(8) const u8 = @ptrCast(@alignCast(slice));
+            hasher.update(slice_u8[0..2]);
+        }
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        if (this.isIdent() and other.isIdent()) {
+            return bun.strings.eql(this.asIdent().?.v, other.asIdent().?.v);
+        } else if (this.isRef() and other.isRef()) {
+            const a = this.asRef().?;
+            const b = other.asRef().?;
+            return a.eql(b);
+        }
+        return false;
+    }
+
+    pub fn deepClone(this: *const @This(), _: std.mem.Allocator) @This() {
+        return this.*;
+    }
+};
+
 pub const CustomIdentFns = CustomIdent;
 pub const CustomIdent = struct {
     v: []const u8,
@@ -178,9 +306,9 @@ pub const CustomIdent = struct {
     ) PrintErr!void {
         const css_module_custom_idents_enabled = enabled_css_modules and
             if (dest.css_module) |*css_module|
-            css_module.config.custom_idents
-        else
-            false;
+                css_module.config.custom_idents
+            else
+                false;
         return dest.writeIdent(this.v, css_module_custom_idents_enabled);
     }
 

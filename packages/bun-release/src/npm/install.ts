@@ -1,10 +1,10 @@
-import { fetch } from "../fetch";
-import { spawn } from "../spawn";
-import { chmod, join, rename, rm, tmp, write } from "../fs";
 import { unzipSync } from "zlib";
-import type { Platform } from "../platform";
-import { os, arch, abi, supportedPlatforms } from "../platform";
 import { debug, error } from "../console";
+import { fetch } from "../fetch";
+import { chmod, join, link, rename, rm, tmp, write } from "../fs";
+import type { Platform } from "../platform";
+import { abi, arch, os, supportedPlatforms } from "../platform";
+import { spawn } from "../spawn";
 
 declare const version: string;
 declare const module: string;
@@ -125,6 +125,7 @@ export function optimizeBun(path: string): void {
     os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
   try {
     rename(path, join(__dirname, "bin", "bun.exe"));
+    link(join(__dirname, "bin", "bun.exe"), join(__dirname, "bin", "bunx.exe"));
     return;
   } catch (error) {
     debug("optimizeBun failed", error);

@@ -24,7 +24,7 @@ class JSEventListener;
 
 struct EventEmitterData {
     WTF_MAKE_NONCOPYABLE(EventEmitterData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitterData);
 
 public:
     EventEmitterData() = default;
@@ -33,7 +33,7 @@ public:
 };
 
 class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(EventEmitter);
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
 
 public:
     static Ref<EventEmitter> create(ScriptExecutionContext&);
@@ -93,8 +93,6 @@ public:
             m_thisObject = JSC::Weak<JSC::JSObject>(thisObject.getObject());
         }
     }
-
-    bool m_hasIPCRef { false };
 
 private:
     EventEmitter(ScriptExecutionContext& context)

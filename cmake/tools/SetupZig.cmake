@@ -20,12 +20,15 @@ else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
-optionx(ZIG_VERSION STRING "The zig version of the compiler to download" DEFAULT "0.14.0-dev.2987+183bb8b08")
-optionx(ZIG_COMMIT STRING "The zig commit to use in oven-sh/zig" DEFAULT "02c57c7ee3b8fde7528c74dd06490834d2d6fae9")
+set(ZIG_COMMIT "0a0120fa92cd7f6ab244865688b351df634f0707")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  if(ENABLE_ASAN)
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+  else()
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -52,6 +55,14 @@ optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEF
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
+if(CI)
+  set(ZIG_COMPILER_SAFE_DEFAULT ON)
+else()
+  set(ZIG_COMPILER_SAFE_DEFAULT OFF)
+endif()
+
+optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})
+
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})
 
@@ -77,9 +88,9 @@ register_command(
   COMMAND
     ${CMAKE_COMMAND}
       -DZIG_PATH=${ZIG_PATH}
-      -DZIG_VERSION=${ZIG_VERSION}
       -DZIG_COMMIT=${ZIG_COMMIT}
       -DENABLE_ASAN=${ENABLE_ASAN}
+      -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
       -P ${CWD}/cmake/scripts/DownloadZig.cmake
   SOURCES
     ${CWD}/cmake/scripts/DownloadZig.cmake

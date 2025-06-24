@@ -2,8 +2,6 @@
 'use strict';
 const common = require('../common');
 const assert = require('assert');
-// const { codes: { ERR_OUT_OF_RANGE } } = require('internal/errors');
-// const { internalBinding } = require('internal/test/binding');
 const SIZE = 28;
 
 const buf1 = Buffer.allocUnsafe(SIZE);
@@ -366,7 +364,7 @@ Buffer.alloc(8, '');
 
 // Testing process.binding. Make sure "end" is properly checked for range errors.
 // assert.throws(
-//   () => { internalBinding('buffer').fill(Buffer.alloc(1), 1, 1, -2, 1); },
+//   () => { process.binding('buffer').fill(Buffer.alloc(1), 1, 1, -2, 1); },
 //   { code: 'ERR_OUT_OF_RANGE' }
 // );
 

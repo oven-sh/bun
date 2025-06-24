@@ -1,4 +1,5 @@
 const EditorContext = @import("../open.zig").EditorContext;
+const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
 const Blob = JSC.WebCore.Blob;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
@@ -6,24 +7,21 @@ const RareData = @This();
 const Syscall = bun.sys;
 const JSC = bun.JSC;
 const std = @import("std");
-const BoringSSL = bun.BoringSSL;
-const bun = @import("root").bun;
-const FDImpl = bun.FDImpl;
-const Environment = bun.Environment;
-const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
+const BoringSSL = bun.BoringSSL.c;
+const bun = @import("bun");
 const UUID = @import("./uuid.zig");
 const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
 const uws = bun.uws;
-
+const api = bun.api;
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
-postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 
 entropy_cache: ?*EntropyCache = null,
 
@@ -35,13 +33,13 @@ cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
-global_dns_data: ?*JSC.DNS.GlobalData = null,
+global_dns_data: ?*bun.api.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
-node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
+node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
@@ -50,7 +48,10 @@ temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
 
-s3_default_client: JSC.Strong = .{},
+s3_default_client: JSC.Strong.Optional = .empty,
+default_csrf_secret: []const u8 = "",
+
+valkey_context: ValkeyContext = .{},
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -130,7 +131,7 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
     for (this.listening_sockets_for_watch_mode.items) |socket| {
         // Prevent TIME_WAIT state
         Syscall.disableLinger(socket);
-        _ = Syscall.close(socket);
+        socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
 }
@@ -200,8 +201,11 @@ pub const HotMap = struct {
 
     pub fn remove(this: *HotMap, key: []const u8) void {
         const entry = this._map.getEntry(key) orelse return;
-        bun.default_allocator.free(entry.key_ptr.*);
+        const key_to_free = entry.key_ptr.*;
+        const is_same_slice = key_to_free.ptr == key.ptr and key_to_free.len == key.len;
         _ = this._map.orderedRemove(key);
+        bun.debugAssert(!is_same_slice);
+        bun.default_allocator.free(key_to_free);
     }
 };
 
@@ -244,7 +248,7 @@ pub const EntropyCache = struct {
     }
 
     pub fn fill(this: *EntropyCache) void {
-        bun.rand(&this.cache);
+        bun.csprng(&this.cache);
         this.index = 0;
     }
 
@@ -319,7 +323,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+        const fd = bun.FD.fromUV(2);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -332,7 +336,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
-                .file = Blob.FileStore{
+                .file = .{
                     .pathlike = .{
                         .fd = fd,
                     },
@@ -351,7 +355,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+        const fd = bun.FD.fromUV(1);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -363,7 +367,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
-                .file = Blob.FileStore{
+                .file = .{
                     .pathlike = .{
                         .fd = fd,
                     },
@@ -381,7 +385,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
-        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+        const fd = bun.FD.fromUV(0);
 
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
@@ -393,11 +397,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
-                .file = Blob.FileStore{
-                    .pathlike = .{
-                        .fd = fd,
-                    },
-                    .is_atty = if (bun.STDIN_FD.isValid()) std.posix.isatty(bun.STDIN_FD.cast()) else false,
+                .file = .{
+                    .pathlike = .{ .fd = fd },
+                    .is_atty = if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false,
                     .mode = mode,
                 },
             },
@@ -429,34 +431,31 @@ pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) Std
     }
 }
 
-const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
-
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
         return ctx;
     }
 
-    const opts: uws.us_socket_context_options_t = .{};
-    const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    const ctx = uws.SocketContext.createNoSSLContext(vm.event_loop_handle.?, @sizeOf(usize)).?;
+    IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }
 
-pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
+pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *api.DNS.DNSResolver {
     if (rare.global_dns_data == null) {
-        rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+        rare.global_dns_data = api.DNS.GlobalData.init(vm.allocator, vm);
         rare.global_dns_data.?.resolver.ref(); // live forever
     }
 
     return &rare.global_dns_data.?.resolver;
 }
 
-pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *StatWatcherScheduler {
-    return rare.node_fs_stat_watcher_scheduler orelse {
-        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
-        return rare.node_fs_stat_watcher_scheduler.?;
-    };
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) bun.ptr.RefPtr(StatWatcherScheduler) {
+    return (rare.node_fs_stat_watcher_scheduler orelse init: {
+        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm);
+        break :init rare.node_fs_stat_watcher_scheduler.?;
+    }).dupeRef();
 }
 
 pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -472,9 +471,18 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSV
         });
         const js_client = client.toJS(globalThis);
         js_client.ensureStillAlive();
-        rare.s3_default_client = JSC.Strong.create(js_client, globalThis);
+        rare.s3_default_client = .create(js_client, globalThis);
         return js_client;
     };
+}
+
+pub fn defaultCSRFSecret(this: *RareData) []const u8 {
+    if (this.default_csrf_secret.len == 0) {
+        const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
+        bun.csprng(secret);
+        this.default_csrf_secret = secret;
+    }
+    return this.default_csrf_secret;
 }
 
 pub fn deinit(this: *RareData) void {
@@ -487,8 +495,13 @@ pub fn deinit(this: *RareData) void {
 
     this.s3_default_client.deinit();
     if (this.boring_ssl_engine) |engine| {
-        _ = bun.BoringSSL.ENGINE_free(engine);
+        _ = bun.BoringSSL.c.ENGINE_free(engine);
+    }
+    if (this.default_csrf_secret.len > 0) {
+        bun.default_allocator.free(this.default_csrf_secret);
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    this.valkey_context.deinit();
 }

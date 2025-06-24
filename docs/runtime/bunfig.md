@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -197,7 +197,6 @@ Set path where coverage reports will be saved. Please notice, that it works only
 [test]
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
-
 
 ## Package manager
 
@@ -381,6 +380,17 @@ registry = "https://registry.npmjs.org"
 registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
 registry = "https://username:password@registry.npmjs.org"
+```
+
+### `install.linkWorkspacePackages`
+
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
+
+Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
+
+```toml
+[install]
+linkWorkspacePackages = true
 ```
 
 ### `install.scopes`

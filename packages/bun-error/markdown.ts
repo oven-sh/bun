@@ -1,5 +1,5 @@
-import { normalizedFilename, StackFrameIdentifier, thisCwd, StackFrameScope } from "./index";
 import type { JSException, JSException as JSExceptionType, Message, Problems } from "../../src/api/schema";
+import { normalizedFilename, StackFrameIdentifier, StackFrameScope, thisCwd } from "./index";
 
 export function problemsToMarkdown(problems: Problems) {
   var markdown = "";

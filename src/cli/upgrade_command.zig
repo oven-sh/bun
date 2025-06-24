@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,23 +7,14 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const std = @import("std");
 const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
@@ -31,14 +22,9 @@ const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 
 pub var initialized_store = false;
 pub fn initializeStore() void {
@@ -113,57 +99,15 @@ pub const Version = struct {
         return strings.eqlComptime(this.tag, current_version);
     }
 
-    comptime {
-        _ = Bun__githubURL;
-    }
-};
-
-pub const UpgradeCheckerThread = struct {
-    pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
-            env_loader.map.get("CI") != null or
-            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
-            return;
-        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        update_checker_thread.detach();
-    }
-
-    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
-        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
-        std.time.sleep(std.time.ns_per_ms * delay);
-
-        Output.Source.configureThread();
-        HTTP.HTTPThread.init(&.{});
-
-        defer {
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
-        }
-
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
-
-        if (!version.isCurrent()) {
-            if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
-                Output.flush();
-            }
-        }
-
-        version.buf.deinit();
-    }
-
-    fn run(env_loader: *DotEnv.Loader) void {
-        _run(env_loader) catch |err| {
-            if (Environment.isDebug) {
-                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
-                Output.flush();
-            }
-        };
+    pub fn @"export"() void {
+        _ = &Bun__githubURL;
+        _ = &Bun__githubBaselineURL;
     }
 };
 
 pub const UpgradeCommand = struct {
+    pub const Bun__githubBaselineURL = Version.Bun__githubBaselineURL;
+
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -265,9 +209,9 @@ pub const UpgradeCommand = struct {
 
         var log = logger.Log.init(allocator);
         defer if (comptime silent) log.deinit();
-        var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
+        const source = &logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
@@ -574,7 +518,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            const tmpdir_path = bun.FD.fromStdDir(save_dir).getFdPath(&tmpdir_path_buf) catch |err| {
                 Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
@@ -656,14 +600,14 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
-                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
-                        if (bun.sys.exists(hardcoded_system_powershell)) {
-                            break :hardcoded_system_powershell hardcoded_system_powershell;
-                        }
-                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
-                        Global.exit(1);
-                    };
+                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                            if (bun.sys.exists(hardcoded_system_powershell)) {
+                                break :hardcoded_system_powershell hardcoded_system_powershell;
+                            }
+                            Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                            Global.exit(1);
+                        };
 
                     var unzip_argv = [_]string{
                         powershell_path,
@@ -853,7 +797,7 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                bun.sys.moveFileZ(.fromStdDir(save_dir), exe, .fromStdDir(target_dir), target_filename) catch |err| {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (comptime Environment.isWindows) {
@@ -995,13 +939,13 @@ pub const upgrade_js_bindings = struct {
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
     pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+        if (comptime !Environment.isWindows) return .js_undefined;
         const w = std.os.windows;
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
         const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
-            .err => return .undefined,
+            .err => return .js_undefined,
             .result => |norm| norm,
         };
 
@@ -1041,20 +985,25 @@ pub const upgrade_js_bindings = struct {
         );
 
         switch (bun.windows.Win32Error.fromNTStatus(rc)) {
-            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            .SUCCESS => tempdir_fd = .fromNative(fd),
             else => {},
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        if (comptime !Environment.isWindows) return .undefined;
+        if (comptime !Environment.isWindows) return .js_undefined;
 
         if (tempdir_fd) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 };
+
+pub fn @"export"() void {
+    _ = &upgrade_js_bindings;
+    Version.@"export"();
+}

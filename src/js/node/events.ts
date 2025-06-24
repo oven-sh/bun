@@ -32,7 +32,8 @@ const {
   validateFunction,
 } = require("internal/validators");
 
-const { inspect, types } = require("node:util");
+const types = require("node:util/types");
+let inspect: typeof import("node:util").inspect | undefined;
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -61,8 +62,18 @@ function EventEmitter(opts) {
   }
 
   this._maxListeners ??= undefined;
-  if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
+  if (opts?.captureRejections) {
+    // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
+    validateBoolean(opts.captureRejections, "options.captureRejections");
+    this[kCapture] = !!opts.captureRejections;
     this.emit = emitWithRejectionCapture;
+  } else {
+    this[kCapture] = EventEmitterPrototype[kCapture];
+    const capture = EventEmitterPrototype[kCapture];
+    this[kCapture] = capture;
+    if (capture) {
+      this.emit = emitWithRejectionCapture;
+    }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
@@ -102,22 +113,23 @@ function emitError(emitter, args) {
     }
   }
 
-  let er;
+  let er: Error | undefined;
   if (args.length > 0) er = args[0];
 
-  if (er instanceof Error) {
+  if (Error.isError(er)) {
     throw er; // Unhandled 'error' event
   }
 
   let stringifiedEr;
   try {
-    stringifiedEr = inspect(er);
+    if (!inspect) inspect = require("internal/util/inspect").inspect;
+    stringifiedEr = inspect!(er);
   } catch {
     stringifiedEr = er;
   }
 
   // At least give some kind of context to the user
-  const err = $ERR_UNHANDLED_ERROR(stringifiedEr);
+  const err = $ERR_UNHANDLED_ERROR(stringifiedEr) as Error & { context: unknown };
   err.context = er;
   throw err; // Unhandled 'error' event
 }
@@ -146,6 +158,8 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
 }
 
 const emitWithoutRejectionCapture = function emit(type, ...args) {
+  $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
+
   if (type === "error") {
     return emitError(this, args);
   }
@@ -182,6 +196,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
 };
 
 const emitWithRejectionCapture = function emit(type, ...args) {
+  $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   if (type === "error") {
     return emitError(this, args);
   }
@@ -272,9 +287,10 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 };
 
 function overflowWarning(emitter, type, handlers) {
+  if (!inspect) inspect = require("internal/util/inspect").inspect;
   handlers.warned = true;
   const warn = new Error(
-    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
+    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
   );
   warn.name = "MaxListenersExceededWarning";
   warn.emitter = emitter;
@@ -697,7 +713,7 @@ function listenerCountSlow(emitter, type) {
   return 0;
 }
 
-function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
+function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
   } else if (typeof emitter.removeEventListener === "function") {
@@ -844,4 +860,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-export default EventEmitter;
+export default EventEmitter as any as typeof import("node:events");

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const lshpack_header = extern struct {
     name: [*]const u8 = undefined,

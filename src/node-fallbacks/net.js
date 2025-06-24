@@ -1,9 +1,3 @@
-/**
- * Browser polyfill for the `"net"` module.
- *
- * Imported on usage in `bun build --target=browser`
- */
-// -----------------------------------------------------------------------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,11 +22,11 @@
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
 const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-const IPv4Reg = new RegExp(`^${v4Str}$`);
+const IPv4Reg = /* @__PURE__ */ new RegExp(`^${v4Str}$`);
 
 // IPv6 Segment
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-const IPv6Reg = new RegExp(
+const IPv6Reg = /* @__PURE__ */ new RegExp(
   "^(?:" +
     `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
     `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
@@ -58,9 +52,3 @@ export function isIP(s) {
   if (isIPv6(s)) return 6;
   return 0;
 }
-
-export default {
-  isIP,
-  isIPv4,
-  isIPv6,
-};

@@ -18,16 +18,16 @@ Common Options:
   --source-map <type>      Sourcemap type: none|linked|inline|external
   --target <target>        Build target: browser|bun|node
   --format <format>        Output format: esm|cjs|iife
-  --splitting             Enable code splitting
+  --splitting              Enable code splitting
   --packages <type>        Package handling: bundle|external
   --public-path <path>     Public path for assets
-  --env <mode>            Environment handling: inline|disable|prefix*
+  --env <mode>             Environment handling: inline|disable|prefix*
   --conditions <list>      Package.json export conditions (comma separated)
   --external <list>        External packages (comma separated)
-  --banner <text>         Add banner text to output
-  --footer <text>         Add footer text to output
-  --define <obj>          Define global constants (e.g. --define.VERSION=1.0.0)
-  --help, -h              Show this help message
+  --banner <text>          Add banner text to output
+  --footer <text>          Add footer text to output
+  --define <obj>           Define global constants (e.g. --define.VERSION=1.0.0)
+  --help, -h               Show this help message
 
 Example:
   bun run build.ts --outdir=dist --minify --source-map=linked --external=react,react-dom

@@ -2678,7 +2678,7 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
     JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
-    auto* existing_tag = napiTypeTagValue ? jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue) : nullptr;
+    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue);
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
@@ -2698,8 +2698,7 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
 
     bool match = false;
-    JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
-    auto* found_tag = napiTypeTagValue ? jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue) : nullptr;
+    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
     if (found_tag && found_tag->matches(*type_tag)) {
         match = true;
     }

@@ -1189,10 +1189,10 @@ else
 const Futex = switch (@import("builtin").os.tag) {
     .linux => struct {
         fn wait(ptr: *const i32, cmp: i32) void {
-            switch (system.getErrno(system.futex_wait(
+            switch (system.getErrno(system.futex_4arg(
                 ptr,
-                system.FUTEX.PRIVATE_FLAG | system.FUTEX.WAIT,
-                cmp,
+                .{ .cmd = .WAIT, .private = true },
+                @bitCast(cmp),
                 null,
             ))) {
                 0 => {},
@@ -1203,10 +1203,10 @@ const Futex = switch (@import("builtin").os.tag) {
         }
 
         fn wake(ptr: *const i32) void {
-            switch (system.getErrno(system.futex_wake(
+            switch (system.getErrno(system.futex_3arg(
                 ptr,
-                system.FUTEX.PRIVATE_FLAG | system.FUTEX.WAKE,
-                @as(i32, 1),
+                .{ .cmd = .WAKE, .private = true },
+                1,
             ))) {
                 0 => {},
                 std.posix.EFAULT => {},

@@ -88,6 +88,8 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
                 }
             }
         }
+        // Clean up the readable stream reference
+        this.readable_stream.deinit();
     }
     this.writer.close();
 

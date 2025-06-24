@@ -94,8 +94,8 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
-                auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
+                auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<char16_t>);
+                auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<char16_t>);
 
                 if (nameView.isEmpty()) {
                     continue;

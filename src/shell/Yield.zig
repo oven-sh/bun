@@ -2,8 +2,8 @@
 /// general:
 /// 1. We try to keep everything in the Bun process as much as possible for
 ///    performance reasons and also to leverage Bun's existing IO/FS code
-/// 2. We try to use non-blocking operations as much as possible so the shell
-///    does not interfere with the JS event loop
+/// 2. We try to use non-blocking IO as much as possible so the shell
+///    does not block the main JS thread
 /// 3. Zig does not have coroutines (yet)
 ///
 /// These cause two problems:

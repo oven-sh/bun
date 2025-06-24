@@ -576,8 +576,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         ASSERT(pair->canGetIndexQuickly(1u));
         workerData = pair->getIndexQuickly(0);
         RETURN_IF_EXCEPTION(scope, {});
+        auto environmentDataValue = pair->getIndexQuickly(1);
         // it might not be a Map if the parent had not set up environmentData yet
-        environmentData = jsDynamicCast<JSMap*>(pair->getIndexQuickly(1));
+        environmentData = environmentDataValue ? jsDynamicCast<JSMap*>(environmentDataValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1

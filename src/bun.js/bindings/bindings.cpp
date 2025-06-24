@@ -3093,7 +3093,7 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGloba
     }
 
     if (isTaggedUTF16Ptr(arg0->ptr)) {
-        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const UChar*>(untag(arg0->ptr)), arg0->len })) {
+        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const char16_t*>(untag(arg0->ptr)), arg0->len })) {
             return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
         }
     } else {
@@ -3117,7 +3117,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
         return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
     }
 
-    auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
+    auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
         global->vm(), WTFMove(ref))));
@@ -3132,7 +3132,7 @@ JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlo
     }
 
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
 
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(), WTFMove(ref))));
@@ -3190,7 +3190,7 @@ JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObje
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
@@ -3206,7 +3206,7 @@ JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const ZigString* arg0
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
@@ -4097,7 +4097,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         }
 
         while (i < length) {
-            UChar ic = pathString.characterAt(i);
+            char16_t ic = pathString.characterAt(i);
             while (ic == '[' || ic == ']' || ic == '.') {
                 i += 1;
                 if (i == length) {
@@ -4118,7 +4118,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                     return JSValue::encode(currProp);
                 }
 
-                UChar previous = ic;
+                char16_t previous = ic;
                 ic = pathString.characterAt(i);
                 if (previous == '.' && ic == '.') {
                     auto* currPropObject = currProp.toObject(globalObject);
@@ -4133,7 +4133,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             j = i;
-            UChar jc = pathString.characterAt(j);
+            char16_t jc = pathString.characterAt(j);
             while (!(jc == '[' || jc == ']' || jc == '.')) {
                 j += 1;
                 if (j == length) {

@@ -2187,7 +2187,7 @@ private:
         unsigned length = str.length();
 
         // Guard against overflow
-        if (length > (std::numeric_limits<uint32_t>::max() - sizeof(uint32_t)) / sizeof(UChar)) {
+        if (length > (std::numeric_limits<uint32_t>::max() - sizeof(uint32_t)) / sizeof(char16_t)) {
             fail();
             return;
         }
@@ -3338,7 +3338,7 @@ private:
 
     static bool readString(const uint8_t*& ptr, const uint8_t* end, String& str, unsigned length, bool is8Bit)
     {
-        if (length >= std::numeric_limits<int32_t>::max() / sizeof(UChar))
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t))
             return false;
 
         if (is8Bit) {
@@ -3349,15 +3349,15 @@ private:
             return true;
         }
 
-        unsigned size = length * sizeof(UChar);
+        unsigned size = length * sizeof(char16_t);
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = String({ reinterpret_cast<const UChar*>(ptr), length });
-        ptr += length * sizeof(UChar);
+        str = String({ reinterpret_cast<const char16_t*>(ptr), length });
+        ptr += length * sizeof(char16_t);
 #else
-        std::span<UChar> characters;
+        std::span<char16_t> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -3384,7 +3384,7 @@ private:
 
     static bool readIdentifier(JSC::VM& vm, const uint8_t*& ptr, const uint8_t* end, Identifier& str, unsigned length, bool is8Bit)
     {
-        if (length >= std::numeric_limits<int32_t>::max() / sizeof(UChar))
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t))
             return false;
 
         if (is8Bit) {
@@ -3395,15 +3395,15 @@ private:
             return true;
         }
 
-        unsigned size = length * sizeof(UChar);
+        unsigned size = length * sizeof(char16_t);
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
-        ptr += length * sizeof(UChar);
+        str = Identifier::fromString(vm, { reinterpret_cast<const char16_t*>(ptr), length });
+        ptr += length * sizeof(char16_t);
 #else
-        std::span<UChar> characters;
+        std::span<char16_t> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;

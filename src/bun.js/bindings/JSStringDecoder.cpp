@@ -200,7 +200,7 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
         if (length == offset)
             RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
         if ((length - offset) % 2 == 0) {
-            UChar c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
+            char16_t c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
             if (c >= 0xD800 && c <= 0xDBFF) {
                 m_lastNeed = 2;
                 m_lastTotal = 4;

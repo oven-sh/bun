@@ -506,6 +506,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransitionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTreeWalker;

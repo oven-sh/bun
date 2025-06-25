@@ -5,7 +5,7 @@ const args = process.argv.slice(2);
 
 const filePaths = args.filter(arg => !arg.startsWith("-"));
 const usage = `Usage: bun scripts/sortImports [...files]
-Args: --include-pub --remove-unused`;
+Args: --no-include-pub --no-remove-unused`;
 if (filePaths.length === 0) {
   console.error(usage);
   process.exit(1);
@@ -16,8 +16,8 @@ if (args.includes("--help")) {
 }
 
 const config = {
-  includePub: args.includes("--include-pub"),
-  removeUnused: args.includes("--remove-unused"),
+  includePub: !args.includes("--no-include-pub"),
+  removeUnused: !args.includes("--no-remove-unused"),
 };
 
 // Type definitions

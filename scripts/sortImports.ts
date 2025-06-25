@@ -298,19 +298,22 @@ async function processFile(filePath: string): Promise<void> {
     fileContents = sortedLines.join("\n");
   }
 
+  // Remove any leading newlines
+  fileContents = fileContents.replace(/^\n+/, "");
+
+  // Maximum of one empty line
+  fileContents = fileContents.replace(/\n\n+/g, "\n\n");
+
+  // Ensure exactly one trailing newline
+  fileContents = fileContents.replace(/\s*$/, "\n");
+
+  // If the file is empty, remove the trailing newline
+  if (fileContents === "\n") fileContents = "";
+
   // Write the sorted file
   await Bun.write(filePath, fileContents);
 
-  // Format with zig fmt, revert on error
-  try {
-    await $`zig fmt ${filePath}`.quiet();
-    console.log(`✓ Formatted: ${filePath}`);
-  } catch (error) {
-    await Bun.write(filePath, fileContents); // Revert the file
-    console.error(`✗ Error formatting: ${filePath}`);
-    console.error(error);
-    throw error;
-  }
+  console.log(`✓ Done: ${filePath}`);
 }
 
 // Process all files

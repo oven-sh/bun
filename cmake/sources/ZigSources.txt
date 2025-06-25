@@ -550,6 +550,7 @@ src/install/PackageManager.zig
 src/install/PackageManager/CommandLineArguments.zig
 src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerOptions.zig
+src/install/PackageManager/UpdateRequest.zig
 src/install/PackageManifestMap.zig
 src/install/padding_checker.zig
 src/install/patch_install.zig

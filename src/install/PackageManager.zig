@@ -2076,9 +2076,9 @@ pub const processDependencyListItem = @import("PackageManager/processDependencyL
 pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
 pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
 
-const updatePackageJSONAndInstall = @import("PackageManager/update_package_json_and_install.zig").updatePackageJSONAndInstall;
-pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/update_package_json_and_install.zig").updatePackageJSONAndInstallCatchError;
-pub const updatePackageJSONAndInstallWithManager = @import("PackageManager/update_package_json_and_install.zig").updatePackageJSONAndInstallWithManager;
+const updatePackageJSONAndInstall = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
+pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
+pub const updatePackageJSONAndInstallWithManager = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;

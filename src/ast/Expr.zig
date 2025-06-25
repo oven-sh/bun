@@ -3204,7 +3204,7 @@ const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-pub const BabyList = bun.BabyList;
+const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const JSONParser = bun.JSON;

@@ -1415,7 +1415,6 @@ pub const Import = struct {
 const std = @import("std");
 
 const bun = @import("bun");
-pub const BabyList = bun.BabyList;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;

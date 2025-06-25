@@ -13,6 +13,7 @@ src/api/schema.zig
 src/ast/base.zig
 src/ast/E.zig
 src/ast/Expr.zig
+src/ast/S.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig
 src/async/windows_event_loop.zig

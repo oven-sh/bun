@@ -2042,6 +2042,7 @@ test/js/node/test/parallel/test-timers-immediate-unref.js
 test/js/node/test/parallel/test-timers-immediate.js
 test/js/node/test/parallel/test-timers-interval-promisified.js
 test/js/node/test/parallel/test-timers-interval-throw.js
+test/js/node/test/parallel/test-timers-invalid-clear.js
 test/js/node/test/parallel/test-timers-linked-list.js
 test/js/node/test/parallel/test-timers-max-duration-warning.js
 test/js/node/test/parallel/test-timers-nan-duration-emit-once-per-process.js

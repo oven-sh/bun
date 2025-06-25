@@ -3283,13 +3283,8 @@ const Return = struct {
                     var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
-                        const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        if (res == .zero) return .zero;
-                        array.putIndex(
-                            globalObject,
-                            @truncate(i),
-                            res,
-                        );
+                        const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
+                        array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },

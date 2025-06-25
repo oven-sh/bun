@@ -1126,8 +1126,8 @@ pub const Dirent = struct {
     pub const getConstructor = Bun__JSDirentObjectConstructor;
 
     extern fn Bun__Dirent__toJS(*JSC.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue;
-    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) JSC.JSValue {
-        return Bun__Dirent__toJS(
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject, cached_previous_path_jsvalue: ?*?*JSC.JSString) bun.JSError!JSC.JSValue {
+        return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__Dirent__toJS, .{
             globalObject,
             switch (this.kind) {
                 .file => bun.windows.libuv.UV_DIRENT_FILE,
@@ -1136,19 +1136,17 @@ pub const Dirent = struct {
                 .directory => bun.windows.libuv.UV_DIRENT_DIR,
                 // event_port is deliberate there.
                 .event_port, .named_pipe => bun.windows.libuv.UV_DIRENT_FIFO,
-
                 .unix_domain_socket => bun.windows.libuv.UV_DIRENT_SOCKET,
                 .sym_link => bun.windows.libuv.UV_DIRENT_LINK,
-
                 .whiteout, .door, .unknown => bun.windows.libuv.UV_DIRENT_UNKNOWN,
             },
             &this.name,
             &this.path,
             cached_previous_path_jsvalue,
-        );
+        });
     }
 
-    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *Dirent, globalObject: *JSC.JSGlobalObject, previous_jsstring: ?*?*JSC.JSString) bun.JSError!JSC.JSValue {
         // Shouldn't techcnically be necessary.
         defer this.deref();
         return this.toJS(globalObject, previous_jsstring);

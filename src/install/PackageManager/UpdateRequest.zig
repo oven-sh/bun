@@ -252,5 +252,5 @@ pub const CommandLineArguments = PackageManager.CommandLineArguments;
 pub const Options = PackageManager.Options;
 pub const PackageInstaller = PackageManager.PackageInstaller;
 pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const Subcommand = PackageManager.Subcommand;
+pub const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;

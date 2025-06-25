@@ -3,6 +3,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 
 pub const RemoveCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try PackageManager.remove(ctx);
+        try PackageManager.CLI.remove(ctx);
     }
 };

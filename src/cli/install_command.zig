@@ -4,7 +4,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 
 pub const InstallCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        PackageManager.install(ctx) catch |err| switch (err) {
+        PackageManager.CLI.install(ctx) catch |err| switch (err) {
             error.InstallFailed,
             error.InvalidPackageJSON,
             => {

@@ -547,6 +547,7 @@ src/install/npm.zig
 src/install/PackageInstall.zig
 src/install/PackageInstaller.zig
 src/install/PackageManager.zig
+src/install/PackageManager/cli.zig
 src/install/PackageManager/CommandLineArguments.zig
 src/install/PackageManager/enqueue.zig
 src/install/PackageManager/install_with_manager.zig

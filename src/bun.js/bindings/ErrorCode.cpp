@@ -1519,7 +1519,7 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {
-        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, JSC::JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationWasAbortedString(globalObject)));
     }
 
     auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);

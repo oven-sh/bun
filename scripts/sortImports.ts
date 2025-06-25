@@ -5,15 +5,32 @@ import path from "path";
 const args = process.argv.slice(2);
 
 const filePaths = args.filter(arg => !arg.startsWith("-"));
-const usage = `Usage: bun scripts/sortImports [...files]
-Args: --no-include-pub --no-remove-unused --include-unsorted`;
+const usage = String.raw`
+                      __           .__                              __
+ ____________________/  |_  _______|__| _____ ______   ____________/  |_  ______
+ \___   /  _ \_  __ \   __\ \___   /  |/     \\____ \ /  _ \_  __ \   __\/  ___/
+  /    (  <_> )  | \/|  |    /    /|  |  Y Y  \  |_> >  <_> )  | \/|  |  \___ \
+ /_____ \____/|__|   |__|   /_____ \__|__|_|  /   __/ \____/|__|   |__| /____  >
+       \/                         \/        \/|__|                           \/
+
+Usage: bun run sortImports [options] <files...>
+
+Options:
+  --help                   Show this help message
+  --no-include-pub         Exclude pub imports from sorting
+  --no-remove-unused       Don't remove unused imports
+  --include-unsorted       Process files even if they don't have @sortImports marker
+
+Examples:
+  bun scripts/sortImports src
+`.slice(1);
+if (args.includes("--help")) {
+  console.log(usage);
+  process.exit(0);
+}
 if (filePaths.length === 0) {
   console.error(usage);
   process.exit(1);
-}
-if (args.includes("--help")) {
-  console.error(usage);
-  process.exit(0);
 }
 
 const config = {

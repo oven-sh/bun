@@ -229,15 +229,15 @@ pub const Resolution = @import("./resolution.zig").Resolution;
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
-pub const Dependency = @import("./dependency.zig");
-pub const Behavior = @import("./dependency.zig").Behavior;
-
-pub const external = @import("./external.zig");
+pub const external = @import("./ExternalSlice.zig");
 pub const ExternalPackageNameHashList = external.ExternalPackageNameHashList;
 pub const ExternalSlice = external.ExternalSlice;
 pub const ExternalStringList = external.ExternalStringList;
 pub const ExternalStringMap = external.ExternalStringMap;
 pub const VersionSlice = external.VersionSlice;
+
+pub const Dependency = @import("./dependency.zig");
+pub const Behavior = @import("./dependency.zig").Behavior;
 
 pub const Lockfile = @import("./lockfile.zig");
 const Package = Lockfile.Package;

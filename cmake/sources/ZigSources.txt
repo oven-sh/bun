@@ -11,6 +11,7 @@ src/analytics/analytics_schema.zig
 src/analytics/analytics_thread.zig
 src/api/schema.zig
 src/ast/base.zig
+src/ast/Expr.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig
 src/async/windows_event_loop.zig
@@ -102,6 +103,8 @@ src/bun.js/bindings/Exception.zig
 src/bun.js/bindings/FetchHeaders.zig
 src/bun.js/bindings/FFI.zig
 src/bun.js/bindings/generated_classes_list.zig
+src/bun.js/bindings/GeneratedBindings.zig
+src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GetterSetter.zig
 src/bun.js/bindings/HTTPServerAgent.zig
 src/bun.js/bindings/JSArray.zig

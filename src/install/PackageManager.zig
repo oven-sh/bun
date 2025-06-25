@@ -2021,6 +2021,10 @@ pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
 pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
 pub const runTasks = @import("PackageManager/run_tasks.zig").runTasks;
 
+pub const PatchCommitResult = @import("PackageManager/patchPackage.zig").PatchCommitResult;
+pub const doPatchCommit = @import("PackageManager/patchPackage.zig").doPatchCommit;
+pub const preparePatch = @import("PackageManager/patchPackage.zig").preparePatch;
+
 pub const CLI = @import("PackageManager/cli.zig");
 pub const Subcommand = CLI.Subcommand;
 
@@ -2065,10 +2069,6 @@ pub const enqueuePatchTask = @import("PackageManager/enqueue.zig").enqueuePatchT
 pub const enqueuePatchTaskPre = @import("PackageManager/enqueue.zig").enqueuePatchTaskPre;
 pub const enqueueTarballForDownload = @import("PackageManager/enqueue.zig").enqueueTarballForDownload;
 pub const enqueueTarballForReading = @import("PackageManager/enqueue.zig").enqueueTarballForReading;
-
-pub const PatchCommitResult = @import("PackageManager/patch.zig").PatchCommitResult;
-pub const doPatchCommit = @import("PackageManager/patch.zig").doPatchCommit;
-pub const preparePatch = @import("PackageManager/patch.zig").preparePatch;
 
 pub const GitResolver = @import("PackageManager/process.zig").GitResolver;
 pub const processDependencyList = @import("PackageManager/process.zig").processDependencyList;

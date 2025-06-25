@@ -2764,7 +2764,7 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (function != nullptr && !env->globalObject()->vm().hasTerminationRequest()) [[likely]] {
+    if (function != nullptr && !env->isVMTerminating()) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 
@@ -2778,7 +2778,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
 
     NAPI_PREAMBLE(env);
 
-    if (!env->globalObject()->vm().hasTerminationRequest()) {
+    if (!env->isVMTerminating()) {
         env->removeAsyncCleanupHook(handle);
     }
 

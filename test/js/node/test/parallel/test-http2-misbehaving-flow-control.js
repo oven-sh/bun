@@ -73,7 +73,7 @@ server.on('stream', (stream) => {
   }));
   stream.on('close', common.mustCall(() => {
     server.close(common.mustCall());
-    client.end();
+    client.destroy();
   }));
   stream.resume();
   stream.respond();

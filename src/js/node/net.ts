@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -1105,6 +1105,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;

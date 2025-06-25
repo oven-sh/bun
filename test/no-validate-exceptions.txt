@@ -1518,6 +1518,7 @@ test/js/node/test/parallel/test-net-autoselectfamily-default.js
 test/js/node/test/parallel/test-net-autoselectfamily-ipv4first.js
 test/js/node/test/parallel/test-net-better-error-messages-listen-path.js
 test/js/node/test/parallel/test-net-better-error-messages-listen.js
+test/js/node/test/parallel/test-net-better-error-messages-path.js
 test/js/node/test/parallel/test-net-better-error-messages-port-hostname.js
 test/js/node/test/parallel/test-net-bind-twice.js
 test/js/node/test/parallel/test-net-blocklist.js

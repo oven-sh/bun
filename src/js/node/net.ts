@@ -1514,6 +1514,8 @@ function lookupAndConnect(self, options) {
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
 
+  validateString(host, "options.host");
+
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);
   }

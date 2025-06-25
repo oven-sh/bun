@@ -1513,6 +1513,7 @@ test/js/node/test/parallel/test-module-wrap.js
 test/js/node/test/parallel/test-module-wrapper.js
 test/js/node/test/parallel/test-net-access-byteswritten.js
 test/js/node/test/parallel/test-net-after-close.js
+test/js/node/test/parallel/test-net-allow-half-open.js
 test/js/node/test/parallel/test-net-autoselectfamily-attempt-timeout-default-value.js
 test/js/node/test/parallel/test-net-autoselectfamily-default.js
 test/js/node/test/parallel/test-net-autoselectfamily-ipv4first.js

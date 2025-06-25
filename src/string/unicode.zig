@@ -428,7 +428,9 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
 }
 
 pub const EncodeIntoResult = struct {
+    /// The number of u16s we read from the utf-16 buffer
     read: u32 = 0,
+    /// The number of u8s we wrote to the utf-8 buffer
     written: u32 = 0,
 };
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
@@ -1679,7 +1681,15 @@ pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
     return latin1_to_utf16_conversion_table[@as(u8, @truncate(char))];
 }
 
-pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime allow_partial_write: bool) EncodeIntoResult {
+/// Copy a UTF-16 string as UTF-8 into `buf`
+///
+/// This may not encode everything if `buf` is not big enough.
+pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
+    return copyUTF16IntoUTF8Impl(buf, Type, utf16, false);
+}
+
+/// See comment on `copyUTF16IntoUTF8WithBufferImpl` on what `allow_truncated_utf8_sequence` should do
+pub fn copyUTF16IntoUTF8Impl(buf: []u8, comptime Type: type, utf16: Type, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
             if (utf16.len == 0)
@@ -1693,14 +1703,33 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime a
             else
                 buf.len;
 
-            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len, allow_partial_write);
+            return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, trimmed, out_len, allow_truncated_utf8_sequence);
         }
     }
 
-    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len, allow_partial_write);
+    return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, utf16, utf16.len, allow_truncated_utf8_sequence);
 }
 
-pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize, comptime allow_partial_write: bool) EncodeIntoResult {
+pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize) EncodeIntoResult {
+    return copyUTF16IntoUTF8WithBufferImpl(buf, Type, utf16, trimmed, out_len, false);
+}
+
+/// Q: What does the `allow_truncated_utf8_sequence` parameter do?
+/// A: If the output buffer can't fit everything, this function will write
+///    incomplete utf-8 byte sequences if `allow_truncated_utf8_sequence` is
+///    enabled.
+///
+/// Q: Doesn't that mean this function would output invalid utf-8? Why would you
+///    ever want to do that?
+/// A: Yes. This is needed for writing a UTF-16 string to a node Buffer that
+///    doesn't have enough space for all the bytes:
+///
+/// ```js
+/// let buffer = Buffer.allocUnsafe(1);
+/// buffer.fill("\u0222");
+/// expect(buffer[0]).toBe(0xc8);
+/// ```
+pub fn copyUTF16IntoUTF8WithBufferImpl(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize, comptime allow_truncated_utf8_sequence: bool) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
@@ -1734,9 +1763,10 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         const replacement = utf16CodepointWithFFFD(Type, utf16_remaining);
 
         const width: usize = replacement.utf8Width();
+        bun.assert(width > 1);
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
-            if (comptime allow_partial_write) switch (width) {
+            if (comptime allow_truncated_utf8_sequence) switch (width) {
                 2 => {
                     if (remaining.len > 0) {
                         //only first will be written

@@ -640,7 +640,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
         unsigned length = array->length();
         for (size_t i = 0; i < length; i++) {
             JSValue element = array->getIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+            RETURN_IF_EXCEPTION(scope, {});
             if (JSC::sameValue(globalObject, value, element)) {
                 return JSValue::encode(jsUndefined());
             }
@@ -661,7 +661,7 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     }
 
     JSC::JSString* valueStr = value.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     auto valueView = valueStr->view(globalObject);
 
     for (ASCIILiteral oneOfStr : oneOf) {

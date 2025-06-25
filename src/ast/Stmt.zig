@@ -408,11 +408,7 @@ pub fn caresAboutScope(self: *Stmt) bool {
 
 // @sortImports
 
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
-
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -421,9 +417,7 @@ const string = bun.string;
 
 const js_ast = bun.js_ast;
 const ASTMemoryAllocator = js_ast.ASTMemoryAllocator;
-const E = js_ast.E;
 const Expr = js_ast.Expr;
-const Macro = js_ast.Macro;
 const NewBatcher = js_ast.NewBatcher;
 const NewStore = js_ast.NewStore;
 const S = js_ast.S;

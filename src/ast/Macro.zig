@@ -632,11 +632,10 @@ pub const Runner = struct {
 // @sortImports
 
 const DotEnv = @import("../env_loader.zig");
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
 
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
+const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const ResolveResult = @import("../resolver/resolver.zig").Result;
 const Resolver = @import("../resolver/resolver.zig").Resolver;
@@ -645,8 +644,6 @@ const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-const JavaScript = bun.JSC;
 const Output = bun.Output;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
@@ -657,13 +654,16 @@ const Loader = bun.options.Loader;
 const MimeType = bun.http.MimeType;
 const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 
+const JSC = bun.JSC;
+const JavaScript = bun.JSC;
+const js = bun.JSC.C;
+
 const js_ast = bun.js_ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeList = js_ast.ExprNodeList;
 const G = js_ast.G;
 const Macro = js_ast.Macro;
-const Ref = js_ast.Ref;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
 const ToJSError = js_ast.ToJSError;

@@ -283,18 +283,11 @@ pub const Table = brk: {
 
 // @sortImports
 
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
-
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const bun = @import("bun");
 const string = bun.string;
 
 const js_ast = bun.js_ast;
 const AssignTarget = js_ast.AssignTarget;
-const E = js_ast.E;
-const Macro = js_ast.Macro;
 const Op = js_ast.Op;
-const S = js_ast.S;

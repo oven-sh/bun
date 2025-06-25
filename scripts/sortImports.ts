@@ -88,8 +88,9 @@ function parseDeclarations(
 
     // Skip unused declarations (non-public declarations that appear only once)
     if (config.removeUnused && !line.includes("pub ")) {
-      const expectedCount = line.split(name).length - 1;
-      const actualCount = fileContents.split(name).length - 1;
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expectedCount = (line.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
+      const actualCount = (fileContents.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
       if (expectedCount === actualCount) {
         // unused decl
         unusedLineIndices.push(i);

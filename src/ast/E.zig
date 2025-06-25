@@ -1435,7 +1435,6 @@ const Flags = js_ast.Flags;
 const Op = js_ast.Op;
 const OptionalChain = js_ast.OptionalChain;
 const Ref = js_ast.Ref;
-const S = js_ast.S;
 const ToJSError = js_ast.ToJSError;
 
 const G = js_ast.G;

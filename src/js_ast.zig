@@ -5,166 +5,6 @@
 /// although it may contain no statements if there is nothing to export.
 pub const namespace_export_part_index = 0;
 
-/// This "Store" is a specialized memory allocation strategy very similar to an
-/// arena, used for allocating expression and statement nodes during JavaScript
-/// parsing and visiting. Allocations are grouped into large blocks, where each
-/// block is treated as a fixed-buffer allocator. When a block runs out of
-/// space, a new one is created; all blocks are joined as a linked list.
-///
-/// Similarly to an arena, you can call .reset() to reset state, reusing memory
-/// across operations.
-pub fn NewStore(comptime types: []const type, comptime count: usize) type {
-    const largest_size, const largest_align = brk: {
-        var largest_size = 0;
-        var largest_align = 1;
-        for (types) |T| {
-            if (@sizeOf(T) == 0) {
-                @compileError("NewStore does not support 0 size type: " ++ @typeName(T));
-            }
-            largest_size = @max(@sizeOf(T), largest_size);
-            largest_align = @max(@alignOf(T), largest_align);
-        }
-        break :brk .{ largest_size, largest_align };
-    };
-
-    const backing_allocator = bun.default_allocator;
-
-    const log = Output.scoped(.Store, true);
-
-    return struct {
-        const Store = @This();
-
-        current: *Block,
-        debug_lock: std.debug.SafetyLock = .{},
-
-        pub const Block = struct {
-            pub const size = largest_size * count * 2;
-            pub const Size = std.math.IntFittingRange(0, size + largest_size);
-
-            buffer: [size]u8 align(largest_align) = undefined,
-            bytes_used: Size = 0,
-            next: ?*Block = null,
-
-            pub fn tryAlloc(block: *Block, comptime T: type) ?*T {
-                const start = std.mem.alignForward(usize, block.bytes_used, @alignOf(T));
-                if (start + @sizeOf(T) > block.buffer.len) return null;
-                defer block.bytes_used = @intCast(start + @sizeOf(T));
-
-                // it's simpler to use @ptrCast, but as a sanity check, we also
-                // try to compute the slice. Zig will report an out of bounds
-                // panic if the null detection logic above is wrong
-                if (Environment.isDebug) {
-                    _ = block.buffer[block.bytes_used..][0..@sizeOf(T)];
-                }
-
-                return @alignCast(@ptrCast(&block.buffer[start]));
-            }
-        };
-
-        const PreAlloc = struct {
-            metadata: Store,
-            first_block: Block,
-        };
-
-        pub fn firstBlock(store: *Store) *Block {
-            return &@as(*PreAlloc, @fieldParentPtr("metadata", store)).first_block;
-        }
-
-        pub fn init() *Store {
-            log("init", .{});
-            const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
-
-            prealloc.first_block.bytes_used = 0;
-            prealloc.first_block.next = null;
-
-            prealloc.metadata = .{
-                .current = &prealloc.first_block,
-            };
-
-            return &prealloc.metadata;
-        }
-
-        pub fn deinit(store: *Store) void {
-            log("deinit", .{});
-            var it = store.firstBlock().next; // do not free `store.head`
-            while (it) |next| {
-                if (Environment.isDebug or Environment.enable_asan)
-                    @memset(next.buffer, undefined);
-                it = next.next;
-                backing_allocator.destroy(next);
-            }
-
-            const prealloc: PreAlloc = @fieldParentPtr("metadata", store);
-            bun.assert(&prealloc.first_block == store.head);
-            backing_allocator.destroy(prealloc);
-        }
-
-        pub fn reset(store: *Store) void {
-            log("reset", .{});
-
-            if (Environment.isDebug or Environment.enable_asan) {
-                var it: ?*Block = store.firstBlock();
-                while (it) |next| : (it = next.next) {
-                    next.bytes_used = undefined;
-                    @memset(&next.buffer, undefined);
-                }
-            }
-
-            store.current = store.firstBlock();
-            store.current.bytes_used = 0;
-        }
-
-        fn allocate(store: *Store, comptime T: type) *T {
-            comptime bun.assert(@sizeOf(T) > 0); // don't allocate!
-            comptime if (!supportsType(T)) {
-                @compileError("Store does not know about type: " ++ @typeName(T));
-            };
-
-            if (store.current.tryAlloc(T)) |ptr|
-                return ptr;
-
-            // a new block is needed
-            const next_block = if (store.current.next) |next| brk: {
-                next.bytes_used = 0;
-                break :brk next;
-            } else brk: {
-                const new_block = backing_allocator.create(Block) catch
-                    bun.outOfMemory();
-                new_block.next = null;
-                new_block.bytes_used = 0;
-                store.current.next = new_block;
-                break :brk new_block;
-            };
-
-            store.current = next_block;
-
-            return next_block.tryAlloc(T) orelse
-                unreachable; // newly initialized blocks must have enough space for at least one
-        }
-
-        pub inline fn append(store: *Store, comptime T: type, data: T) *T {
-            const ptr = store.allocate(T);
-            if (Environment.isDebug) {
-                log("append({s}) -> 0x{x}", .{ bun.meta.typeName(T), @intFromPtr(ptr) });
-            }
-            ptr.* = data;
-            return ptr;
-        }
-
-        pub fn lock(store: *Store) void {
-            store.debug_lock.lock();
-        }
-
-        pub fn unlock(store: *Store) void {
-            store.debug_lock.unlock();
-        }
-
-        fn supportsType(T: type) bool {
-            return std.mem.indexOfScalar(type, types, T) != null;
-        }
-    };
-}
-
 // There are three types.
 // 1. Expr (expression)
 // 2. Stmt (statement)
@@ -192,7 +32,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 // But it could also be better memory locality due to smaller in-memory size (more likely to hit the cache)
 // only benchmarks will provide an answer!
 // But we must have pointers somewhere in here because can't have types that contain themselves
-pub const BindingNodeIndex = Binding;
 
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub const ExprNodeList = BabyList(Expr);
@@ -274,157 +113,6 @@ pub const Flags = struct {
         pub const Fields = std.enums.EnumFieldStruct(Function, bool, false);
         pub const Set = std.enums.EnumSet(Function);
     };
-};
-
-pub const Binding = struct {
-    loc: logger.Loc,
-    data: B,
-
-    const Serializable = struct {
-        type: Tag,
-        object: string,
-        value: B,
-        loc: logger.Loc,
-    };
-
-    pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc });
-    }
-
-    pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
-        const ExprType = expr_type;
-        return struct {
-            context: *ExprType,
-            allocator: std.mem.Allocator,
-            pub const Context = @This();
-
-            pub fn wrapIdentifier(ctx: *const Context, loc: logger.Loc, ref: Ref) Expr {
-                return func_type(ctx.context, loc, ref);
-            }
-
-            pub fn init(context: *ExprType) Context {
-                return Context{ .context = context, .allocator = context.allocator };
-            }
-        };
-    }
-
-    pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
-        const loc = binding.loc;
-
-        switch (binding.data) {
-            .b_missing => {
-                return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = loc };
-            },
-            .b_identifier => |b| {
-                return wrapper.wrapIdentifier(loc, b.ref);
-            },
-            .b_array => |b| {
-                var exprs = wrapper.allocator.alloc(Expr, b.items.len) catch unreachable;
-                var i: usize = 0;
-                while (i < exprs.len) : (i += 1) {
-                    const item = b.items[i];
-                    exprs[i] = convert: {
-                        const expr = toExpr(&item.binding, wrapper);
-                        if (b.has_spread and i == exprs.len - 1) {
-                            break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
-                        } else if (item.default_value) |default| {
-                            break :convert Expr.assign(expr, default);
-                        } else {
-                            break :convert expr;
-                        }
-                    };
-                }
-
-                return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
-            },
-            .b_object => |b| {
-                const properties = wrapper
-                    .allocator
-                    .alloc(G.Property, b.properties.len) catch unreachable;
-                for (properties, b.properties) |*property, item| {
-                    property.* = .{
-                        .flags = item.flags,
-                        .key = item.key,
-                        .kind = if (item.flags.contains(.is_spread))
-                            .spread
-                        else
-                            .normal,
-                        .value = toExpr(&item.value, wrapper),
-                        .initializer = item.default_value,
-                    };
-                }
-                return Expr.init(
-                    E.Object,
-                    E.Object{
-                        .properties = G.Property.List.init(properties),
-                        .is_single_line = b.is_single_line,
-                    },
-                    loc,
-                );
-            },
-        }
-    }
-
-    pub const Tag = enum(u5) {
-        b_identifier,
-        b_array,
-        b_object,
-        b_missing,
-
-        pub fn jsonStringify(self: @This(), writer: anytype) !void {
-            return try writer.write(@tagName(self));
-        }
-    };
-
-    pub var icount: usize = 0;
-
-    pub fn init(t: anytype, loc: logger.Loc) Binding {
-        icount += 1;
-        switch (@TypeOf(t)) {
-            *B.Identifier => {
-                return Binding{ .loc = loc, .data = B{ .b_identifier = t } };
-            },
-            *B.Array => {
-                return Binding{ .loc = loc, .data = B{ .b_array = t } };
-            },
-            *B.Object => {
-                return Binding{ .loc = loc, .data = B{ .b_object = t } };
-            },
-            B.Missing => {
-                return Binding{ .loc = loc, .data = B{ .b_missing = t } };
-            },
-            else => {
-                @compileError("Invalid type passed to Binding.init");
-            },
-        }
-    }
-
-    pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding {
-        icount += 1;
-        switch (@TypeOf(t)) {
-            B.Identifier => {
-                const data = allocator.create(B.Identifier) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_identifier = data } };
-            },
-            B.Array => {
-                const data = allocator.create(B.Array) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_array = data } };
-            },
-            B.Object => {
-                const data = allocator.create(B.Object) catch unreachable;
-                data.* = t;
-                return Binding{ .loc = loc, .data = B{ .b_object = data } };
-            },
-            B.Missing => {
-                return Binding{ .loc = loc, .data = B{ .b_missing = .{} } };
-            },
-            else => {
-                @compileError("Invalid type passed to Binding.alloc");
-            },
-        }
-    }
 };
 
 /// B is for Binding! Bindings are on the left side of variable
@@ -1362,152 +1050,6 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.print(format, args);
 }
 
-pub const ASTMemoryAllocator = struct {
-    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min));
-
-    stack_allocator: SFA = undefined,
-    bump_allocator: std.mem.Allocator = undefined,
-    allocator: std.mem.Allocator,
-    previous: ?*ASTMemoryAllocator = null,
-
-    pub fn enter(this: *ASTMemoryAllocator, allocator: std.mem.Allocator) ASTMemoryAllocator.Scope {
-        this.allocator = allocator;
-        this.stack_allocator = SFA{
-            .buffer = undefined,
-            .fallback_allocator = allocator,
-            .fixed_buffer_allocator = undefined,
-        };
-        this.bump_allocator = this.stack_allocator.get();
-        this.previous = null;
-        var ast_scope = ASTMemoryAllocator.Scope{
-            .current = this,
-            .previous = Stmt.Data.Store.memory_allocator,
-        };
-        ast_scope.enter();
-        return ast_scope;
-    }
-    pub const Scope = struct {
-        current: ?*ASTMemoryAllocator = null,
-        previous: ?*ASTMemoryAllocator = null,
-
-        pub fn enter(this: *@This()) void {
-            bun.debugAssert(Expr.Data.Store.memory_allocator == Stmt.Data.Store.memory_allocator);
-
-            this.previous = Expr.Data.Store.memory_allocator;
-
-            const current = this.current;
-
-            Expr.Data.Store.memory_allocator = current;
-            Stmt.Data.Store.memory_allocator = current;
-
-            if (current == null) {
-                Stmt.Data.Store.begin();
-                Expr.Data.Store.begin();
-            }
-        }
-
-        pub fn exit(this: *const @This()) void {
-            Expr.Data.Store.memory_allocator = this.previous;
-            Stmt.Data.Store.memory_allocator = this.previous;
-        }
-    };
-
-    pub fn reset(this: *ASTMemoryAllocator) void {
-        this.stack_allocator = SFA{
-            .buffer = undefined,
-            .fallback_allocator = this.allocator,
-            .fixed_buffer_allocator = undefined,
-        };
-        this.bump_allocator = this.stack_allocator.get();
-    }
-
-    pub fn push(this: *ASTMemoryAllocator) void {
-        Stmt.Data.Store.memory_allocator = this;
-        Expr.Data.Store.memory_allocator = this;
-    }
-
-    pub fn pop(this: *ASTMemoryAllocator) void {
-        const prev = this.previous;
-        bun.assert(prev != this);
-        Stmt.Data.Store.memory_allocator = prev;
-        Expr.Data.Store.memory_allocator = prev;
-        this.previous = null;
-    }
-
-    pub fn append(this: ASTMemoryAllocator, comptime ValueType: type, value: anytype) *ValueType {
-        const ptr = this.bump_allocator.create(ValueType) catch unreachable;
-        ptr.* = value;
-        return ptr;
-    }
-
-    /// Initialize ASTMemoryAllocator as `undefined`, and call this.
-    pub fn initWithoutStack(this: *ASTMemoryAllocator, arena: std.mem.Allocator) void {
-        this.stack_allocator = SFA{
-            .buffer = undefined,
-            .fallback_allocator = arena,
-            .fixed_buffer_allocator = .init(&.{}),
-        };
-        this.bump_allocator = this.stack_allocator.get();
-    }
-};
-
-pub const UseDirective = enum(u2) {
-    // TODO: Remove this, and provide `UseDirective.Optional` instead
-    none,
-    /// "use client"
-    client,
-    /// "use server"
-    server,
-
-    pub const Boundering = enum(u2) {
-        client = @intFromEnum(UseDirective.client),
-        server = @intFromEnum(UseDirective.server),
-    };
-
-    pub const Flags = struct {
-        has_any_client: bool = false,
-    };
-
-    pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
-        if (this == other or other == .none)
-            return false;
-
-        return true;
-    }
-
-    pub fn boundering(this: UseDirective, other: UseDirective) ?Boundering {
-        if (this == other or other == .none)
-            return null;
-        return @enumFromInt(@intFromEnum(other));
-    }
-
-    pub fn parse(contents: []const u8) ?UseDirective {
-        const truncated = std.mem.trimLeft(u8, contents, " \t\n\r;");
-
-        if (truncated.len < "'use client';".len)
-            return .none;
-
-        const directive_string = truncated[0.."'use client';".len].*;
-
-        const first_quote = directive_string[0];
-        const last_quote = directive_string[directive_string.len - 2];
-        if (first_quote != last_quote or (first_quote != '"' and first_quote != '\'' and first_quote != '`'))
-            return .none;
-
-        const unquoted = directive_string[1 .. directive_string.len - 2];
-
-        if (strings.eqlComptime(unquoted, "use client")) {
-            return .client;
-        }
-
-        if (strings.eqlComptime(unquoted, "use server")) {
-            return .server;
-        }
-
-        return null;
-    }
-};
-
 // test "Binding.init" {
 //     var binding = Binding.alloc(
 //         std.heap.page_allocator,
@@ -1745,6 +1287,9 @@ pub fn NewBatcher(comptime Type: type) type {
 
 // @sortImports
 
+pub const ASTMemoryAllocator = @import("ast/ASTMemoryAllocator.zig");
+pub const Binding = @import("ast/Binding.zig");
+pub const BindingNodeIndex = Binding;
 pub const BundledAst = @import("ast/BundledAst.zig");
 pub const E = @import("ast/E.zig");
 pub const Expr = @import("ast/Expr.zig");
@@ -1760,8 +1305,10 @@ pub const StmtNodeIndex = Stmt;
 pub const Symbol = @import("ast/Symbol.zig");
 const std = @import("std");
 const ImportRecord = @import("import_record.zig").ImportRecord;
+pub const NewStore = @import("ast/NewStore.zig").NewStore;
 const Runtime = @import("runtime.zig").Runtime;
 const TypeScript = @import("./js_parser.zig").TypeScript;
+pub const UseDirective = @import("ast/UseDirective.zig").UseDirective;
 
 pub const Index = @import("ast/base.zig").Index;
 pub const Ref = @import("ast/base.zig").Ref;
@@ -1770,7 +1317,6 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const bun = @import("bun");
 pub const BabyList = bun.BabyList;
 const Environment = bun.Environment;
-const JSC = bun.JSC;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;

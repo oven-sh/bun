@@ -210,11 +210,7 @@ pub const Arg = struct {
 
 // @sortImports
 
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
-
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
@@ -224,14 +220,11 @@ const TypeScript = bun.js_parser.TypeScript;
 
 const js_ast = bun.js_ast;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
-const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const Flags = js_ast.Flags;
-const Index = js_ast.Index;
 const LocRef = js_ast.LocRef;
-const Macro = js_ast.Macro;
 const Ref = js_ast.Ref;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;

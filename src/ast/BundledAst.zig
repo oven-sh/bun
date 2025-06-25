@@ -203,11 +203,7 @@ pub fn addUrlForCss(
 
 // @sortImports
 
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
-
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
@@ -219,12 +215,9 @@ const MimeType = bun.http.MimeType;
 const js_ast = bun.js_ast;
 const BundledAst = js_ast.BundledAst;
 const CharFreq = js_ast.CharFreq;
-const E = js_ast.E;
 const ExportsKind = js_ast.ExportsKind;
-const Macro = js_ast.Macro;
 const Part = js_ast.Part;
 const Ref = js_ast.Ref;
-const S = js_ast.S;
 const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;

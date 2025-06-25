@@ -114,19 +114,10 @@ pub const List = struct {
 
 // @sortImports
 
+const bun = @import("bun");
 const std = @import("std");
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
-
-const bun = @import("bun");
-const js = bun.JSC.C;
-
 const js_ast = bun.js_ast;
-const E = js_ast.E;
 const Index = js_ast.Index;
-const Macro = js_ast.Macro;
-const Ref = js_ast.Ref;
-const S = js_ast.S;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 const UseDirective = js_ast.UseDirective;

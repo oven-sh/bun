@@ -207,22 +207,14 @@ pub inline fn kindStopsHoisting(s: *const Scope) bool {
 
 // @sortImports
 
-const js = @import("../bun.js/javascript_core_c_api.zig");
 const std = @import("std");
-
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-pub const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const logger = bun.logger;
 
 const js_ast = bun.js_ast;
-const E = js_ast.E;
-const G = js_ast.G;
-const Macro = js_ast.Macro;
 const Ref = js_ast.Ref;
-const S = js_ast.S;
 const Scope = js_ast.Scope;
 const StrictModeKind = js_ast.StrictModeKind;
 const Symbol = js_ast.Symbol;

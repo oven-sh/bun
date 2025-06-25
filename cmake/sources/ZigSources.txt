@@ -557,7 +557,7 @@ src/install/PackageManager/PackageManagerOptions.zig
 src/install/PackageManager/patchPackage.zig
 src/install/PackageManager/processDependencyList.zig
 src/install/PackageManager/ProgressStrings.zig
-src/install/PackageManager/run_tasks.zig
+src/install/PackageManager/runTasks.zig
 src/install/PackageManager/updatePackageJSONAndInstall.zig
 src/install/PackageManager/UpdateRequest.zig
 src/install/PackageManagerTask.zig

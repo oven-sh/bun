@@ -1904,15 +1904,15 @@ pub const processDependencyListItem = @import("PackageManager/processDependencyL
 pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
 pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
 
-pub const decrementPendingTasks = @import("PackageManager/run_tasks.zig").decrementPendingTasks;
-pub const drainDependencyList = @import("PackageManager/run_tasks.zig").drainDependencyList;
-pub const flushDependencyQueue = @import("PackageManager/run_tasks.zig").flushDependencyQueue;
-pub const flushNetworkQueue = @import("PackageManager/run_tasks.zig").flushNetworkQueue;
-pub const flushPatchTaskQueue = @import("PackageManager/run_tasks.zig").flushPatchTaskQueue;
-pub const incrementPendingTasks = @import("PackageManager/run_tasks.zig").incrementPendingTasks;
-pub const pendingTaskCount = @import("PackageManager/run_tasks.zig").pendingTaskCount;
-pub const runTasks = @import("PackageManager/run_tasks.zig").runTasks;
-pub const scheduleTasks = @import("PackageManager/run_tasks.zig").scheduleTasks;
+pub const decrementPendingTasks = @import("PackageManager/runTasks.zig").decrementPendingTasks;
+pub const drainDependencyList = @import("PackageManager/runTasks.zig").drainDependencyList;
+pub const flushDependencyQueue = @import("PackageManager/runTasks.zig").flushDependencyQueue;
+pub const flushNetworkQueue = @import("PackageManager/runTasks.zig").flushNetworkQueue;
+pub const flushPatchTaskQueue = @import("PackageManager/runTasks.zig").flushPatchTaskQueue;
+pub const incrementPendingTasks = @import("PackageManager/runTasks.zig").incrementPendingTasks;
+pub const pendingTaskCount = @import("PackageManager/runTasks.zig").pendingTaskCount;
+pub const runTasks = @import("PackageManager/runTasks.zig").runTasks;
+pub const scheduleTasks = @import("PackageManager/runTasks.zig").scheduleTasks;
 
 const updatePackageJSONAndInstall = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
 pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;

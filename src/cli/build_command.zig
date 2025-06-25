@@ -225,6 +225,7 @@ pub const BuildCommand = struct {
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;
+        this_transpiler.resolver.env_loader = this_transpiler.env;
         this_transpiler.options.jsx.development = !this_transpiler.options.production;
         this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
 
@@ -268,7 +269,9 @@ pub const BuildCommand = struct {
             try bun.bake.addImportMetaDefines(allocator, client_transpiler.options.define, .development, .client);
 
             this_transpiler.resolver.opts = this_transpiler.options;
+            this_transpiler.resolver.env_loader = this_transpiler.env;
             client_transpiler.resolver.opts = client_transpiler.options;
+            client_transpiler.resolver.env_loader = client_transpiler.env;
         }
 
         // var env_loader = this_transpiler.env;

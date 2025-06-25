@@ -1576,6 +1576,7 @@ test/js/node/test/parallel/test-net-reuseport.js
 test/js/node/test/parallel/test-net-server-async-dispose.mjs
 test/js/node/test/parallel/test-net-server-blocklist.js
 test/js/node/test/parallel/test-net-server-call-listen-multiple-times.js
+test/js/node/test/parallel/test-net-server-capture-rejection.js
 test/js/node/test/parallel/test-net-server-close-before-calling-lookup-callback.js
 test/js/node/test/parallel/test-net-server-close-before-ipc-response.js
 test/js/node/test/parallel/test-net-server-close.js

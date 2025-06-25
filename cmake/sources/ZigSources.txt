@@ -554,6 +554,7 @@ src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerDirectories.zig
 src/install/PackageManager/PackageManagerEnqueue.zig
 src/install/PackageManager/PackageManagerOptions.zig
+src/install/PackageManager/PackageManagerPreinstall.zig
 src/install/PackageManager/patchPackage.zig
 src/install/PackageManager/processDependencyList.zig
 src/install/PackageManager/ProgressStrings.zig

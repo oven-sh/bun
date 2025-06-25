@@ -1,14 +1,10 @@
 'use strict';
 const common = require('../common');
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-}
 
-const { opensslCli } = require('../common/crypto');
-
-if (opensslCli === false) {
+if (common.opensslCli === false)
   common.skip('node compiled without OpenSSL CLI.');
-}
 
 const assert = require('assert');
 const tls = require('tls');
@@ -27,7 +23,7 @@ server.listen(0, '127.0.0.1', function() {
                 '-ssl3',
                 '-connect', address];
 
-  const client = spawn(opensslCli, args, { stdio: 'pipe' });
+  const client = spawn(common.opensslCli, args, { stdio: 'pipe' });
   client.stdout.pipe(process.stdout);
   client.stderr.pipe(process.stderr);
   client.stderr.setEncoding('utf8');

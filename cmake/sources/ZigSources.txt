@@ -11,6 +11,7 @@ src/analytics/analytics_schema.zig
 src/analytics/analytics_thread.zig
 src/api/schema.zig
 src/ast/base.zig
+src/ast/E.zig
 src/ast/Expr.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig

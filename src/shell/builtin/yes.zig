@@ -168,5 +168,4 @@ const Builtin = Interpreter.Builtin;
 const IO = shell.IO;
 const Yes = @This();
 const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 const std = @import("std");

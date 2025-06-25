@@ -2070,11 +2070,11 @@ pub const enqueuePatchTaskPre = @import("PackageManager/enqueue.zig").enqueuePat
 pub const enqueueTarballForDownload = @import("PackageManager/enqueue.zig").enqueueTarballForDownload;
 pub const enqueueTarballForReading = @import("PackageManager/enqueue.zig").enqueueTarballForReading;
 
-pub const GitResolver = @import("PackageManager/process.zig").GitResolver;
-pub const processDependencyList = @import("PackageManager/process.zig").processDependencyList;
-pub const processDependencyListItem = @import("PackageManager/process.zig").processDependencyListItem;
-pub const processExtractedTarballPackage = @import("PackageManager/process.zig").processExtractedTarballPackage;
-pub const processPeerDependencyList = @import("PackageManager/process.zig").processPeerDependencyList;
+pub const GitResolver = @import("PackageManager/processDependencyList.zig").GitResolver;
+pub const processDependencyList = @import("PackageManager/processDependencyList.zig").processDependencyList;
+pub const processDependencyListItem = @import("PackageManager/processDependencyList.zig").processDependencyListItem;
+pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
+pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
 
 const updatePackageJSONAndInstall = @import("PackageManager/update_package_json_and_install.zig").updatePackageJSONAndInstall;
 pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/update_package_json_and_install.zig").updatePackageJSONAndInstallCatchError;

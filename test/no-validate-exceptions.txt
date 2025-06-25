@@ -669,6 +669,7 @@ test/js/node/test/parallel/test-crypto-oaep-zero-length.js
 test/js/node/test/parallel/test-crypto-oneshot-hash.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 test/js/node/test/parallel/test-crypto-padding.js
+test/js/node/test/parallel/test-crypto-padding-aes256.js
 test/js/node/test/parallel/test-crypto-pbkdf2.js
 test/js/node/test/parallel/test-crypto-prime.js
 test/js/node/test/parallel/test-crypto-private-decrypt-gh32240.js

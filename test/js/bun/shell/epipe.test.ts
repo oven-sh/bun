@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "./test_builder";
+import { describe, expect, test } from "bun:test";
 import { isPosix } from "harness";
+import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 describe.if(isPosix)("IOWriter epipe", () => {

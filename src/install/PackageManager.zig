@@ -761,28 +761,6 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
     ) orelse &this.options.scope;
 }
 
-pub fn setNodeName(
-    this: *PackageManager,
-    node: *Progress.Node,
-    name: string,
-    emoji: string,
-    comptime is_first: bool,
-) void {
-    if (Output.isEmojiEnabled()) {
-        if (is_first) {
-            @memcpy(this.progress_name_buf[0..emoji.len], emoji);
-            @memcpy(this.progress_name_buf[emoji.len..][0..name.len], name);
-            node.name = this.progress_name_buf[0 .. emoji.len + name.len];
-        } else {
-            @memcpy(this.progress_name_buf[emoji.len..][0..name.len], name);
-            node.name = this.progress_name_buf[0 .. emoji.len + name.len];
-        }
-    } else {
-        @memcpy(this.progress_name_buf[0..name.len], name);
-        node.name = this.progress_name_buf[0..name.len];
-    }
-}
-
 pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
 pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
@@ -1192,53 +1170,6 @@ pub fn drainDependencyList(this: *PackageManager) void {
     // It's only network requests here because we don't store tarballs.
     _ = this.scheduleTasks();
 }
-
-pub const ProgressStrings = struct {
-    pub const download_no_emoji_ = "Resolving";
-    const download_no_emoji: string = download_no_emoji_ ++ "\n";
-    const download_with_emoji: string = download_emoji ++ download_no_emoji_;
-    pub const download_emoji: string = "  🔍 ";
-
-    pub const extract_no_emoji_ = "Resolving & extracting";
-    const extract_no_emoji: string = extract_no_emoji_ ++ "\n";
-    const extract_with_emoji: string = extract_emoji ++ extract_no_emoji_;
-    pub const extract_emoji: string = "  🚚 ";
-
-    pub const install_no_emoji_ = "Installing";
-    const install_no_emoji: string = install_no_emoji_ ++ "\n";
-    const install_with_emoji: string = install_emoji ++ install_no_emoji_;
-    pub const install_emoji: string = "  📦 ";
-
-    pub const save_no_emoji_ = "Saving lockfile";
-    const save_no_emoji: string = save_no_emoji_;
-    const save_with_emoji: string = save_emoji ++ save_no_emoji_;
-    pub const save_emoji: string = "  🔒 ";
-
-    pub const script_no_emoji_ = "Running script";
-    const script_no_emoji: string = script_no_emoji_ ++ "\n";
-    const script_with_emoji: string = script_emoji ++ script_no_emoji_;
-    pub const script_emoji: string = "  ⚙️  ";
-
-    pub inline fn download() string {
-        return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
-    }
-
-    pub inline fn save() string {
-        return if (Output.isEmojiEnabled()) save_with_emoji else save_no_emoji;
-    }
-
-    pub inline fn extract() string {
-        return if (Output.isEmojiEnabled()) extract_with_emoji else extract_no_emoji;
-    }
-
-    pub inline fn install() string {
-        return if (Output.isEmojiEnabled()) install_with_emoji else install_no_emoji;
-    }
-
-    pub inline fn script() string {
-        return if (Output.isEmojiEnabled()) script_with_emoji else script_no_emoji;
-    }
-};
 
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
@@ -1823,31 +1754,6 @@ pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
     return manager.pending_tasks.fetchSub(1, .monotonic);
 }
 
-pub fn startProgressBarIfNone(manager: *PackageManager) void {
-    if (manager.downloads_node == null) {
-        manager.startProgressBar();
-    }
-}
-pub fn startProgressBar(manager: *PackageManager) void {
-    manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-    manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
-    manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
-    manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
-    manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pendingTaskCount());
-    manager.downloads_node.?.activate();
-    manager.progress.refresh();
-}
-
-pub fn endProgressBar(manager: *PackageManager) void {
-    var downloads_node = manager.downloads_node orelse return;
-    downloads_node.setEstimatedTotalItems(downloads_node.unprotected_estimated_total_items);
-    downloads_node.setCompletedItems(downloads_node.unprotected_estimated_total_items);
-    manager.progress.refresh();
-    manager.progress.root.end();
-    manager.progress = .{};
-    manager.downloads_node = null;
-}
-
 pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
     const binding_dot_gyp_path = Path.joinAbsStringZ(
         Fs.FileSystem.instance.top_level_dir,
@@ -2069,6 +1975,13 @@ pub const enqueuePatchTask = enqueue.enqueuePatchTask;
 pub const enqueuePatchTaskPre = enqueue.enqueuePatchTaskPre;
 pub const enqueueTarballForDownload = enqueue.enqueueTarballForDownload;
 pub const enqueueTarballForReading = enqueue.enqueueTarballForReading;
+
+pub const progress_zig = @import("PackageManager/ProgressStrings.zig");
+pub const ProgressStrings = progress_zig.ProgressStrings;
+pub const endProgressBar = progress_zig.endProgressBar;
+pub const setNodeName = progress_zig.setNodeName;
+pub const startProgressBar = progress_zig.startProgressBar;
+pub const startProgressBarIfNone = progress_zig.startProgressBarIfNone;
 
 pub const PatchCommitResult = @import("PackageManager/patchPackage.zig").PatchCommitResult;
 pub const doPatchCommit = @import("PackageManager/patchPackage.zig").doPatchCommit;

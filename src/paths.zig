@@ -38,6 +38,7 @@ const Error = error{MaxPathExceeded};
 const Options = struct {
     check_length: CheckLength = .assume_always_less_than_max_path,
     normalize_slashes: bool = false,
+    // buf_type: enum { pool, array_list },
 
     const CheckLength = enum {
         assume_always_less_than_max_path,
@@ -54,31 +55,57 @@ const Options = struct {
             }
         }.Result;
     }
+
+    // pub fn BufType(comptime opts: @This()) type {
+    //     return switch (opts.buf_type) {
+    //         .pool => struct {
+    //             buf: *PathBuffer,
+    //             len: u16,
+    //         },
+    //         .array_list => struct {
+    //             list: std.ArrayListUnmanaged(u8),
+    //         },
+    //     };
+    // }
 };
 
 pub fn RelPath(comptime opts: Options) type {
     const Result = opts.ResultFn();
+
+    const log = bun.Output.scoped(.RelPath, false);
+    _ = log;
+
     return struct {
-        buf: *PathBuffer,
+        _buf: *PathBuffer,
         len: u16,
 
         pub fn slice(this: *const @This()) callconv(bun.callconv_inline) string {
-            bun.debugAssert(this.len == 0 or this.buf[this.len - 1] != std.fs.path.sep);
-            return this.buf[0..this.len];
+            bun.debugAssert(this.len == 0 or this._buf[this.len - 1] != std.fs.path.sep);
+            return this._buf[0..this.len];
         }
 
         pub fn sliceZ(this: *const @This()) callconv(bun.callconv_inline) stringZ {
-            bun.debugAssert(this.len == 0 or this.buf[this.len - 1] != std.fs.path.sep);
-            this.buf[this.len] = 0;
-            return this.buf[0..this.len :0];
+            bun.debugAssert(this.len == 0 or this._buf[this.len - 1] != std.fs.path.sep);
+            this._buf[this.len] = 0;
+            return this._buf[0..this.len :0];
+        }
+
+        pub fn buf(this: *@This()) []u8 {
+            return this._buf;
         }
 
         pub fn init() callconv(bun.callconv_inline) @This() {
-            return .{ .buf = bun.PathBufferPool.get(), .len = 0 };
+            return .{ ._buf = bun.PathBufferPool.get(), .len = 0 };
         }
 
-        pub fn deinit(this: *@This()) void {
-            bun.PathBufferPool.put(this.buf);
+        pub fn from(input: string) callconv(bun.callconv_inline) @This() {
+            var new: @This() = .init();
+            new.append(input);
+            return new;
+        }
+
+        pub fn deinit(this: *const @This()) void {
+            bun.PathBufferPool.put(this._buf);
         }
 
         /// Append a component
@@ -97,7 +124,7 @@ pub fn RelPath(comptime opts: Options) type {
             }
 
             if (needs_separator) {
-                this.buf[this.len] = std.fs.path.sep;
+                this._buf[this.len] = std.fs.path.sep;
                 this.len += 1;
             }
 
@@ -109,13 +136,13 @@ pub fn RelPath(comptime opts: Options) type {
             if (opts.normalize_slashes) {
                 for (bytes) |c| {
                     switch (c) {
-                        '/', '\\' => this.buf[this.len] = std.fs.path.sep,
-                        else => this.buf[this.len] = c,
+                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
+                        else => this._buf[this.len] = c,
                     }
                     this.len += 1;
                 }
             } else {
-                @memcpy(this.buf[this.len..][0..bytes.len], bytes);
+                @memcpy(this._buf[this.len..][0..bytes.len], bytes);
                 this.len += @intCast(bytes.len);
             }
         }
@@ -131,12 +158,12 @@ pub fn RelPath(comptime opts: Options) type {
             }
 
             if (needs_separator) {
-                this.buf[this.len] = std.fs.path.sep;
+                this._buf[this.len] = std.fs.path.sep;
                 this.len += 1;
             }
 
             const printed = std.fmt.bufPrint(
-                this.buf[this.len..],
+                this._buf[this.len..],
                 component_fmt,
                 component_args,
             ) catch {
@@ -157,7 +184,7 @@ pub fn RelPath(comptime opts: Options) type {
                 return;
             }
             this.len -= @intCast(trimmed.len - 1);
-            bun.debugAssert(this.buf[this.len] == std.fs.path.sep);
+            bun.debugAssert(this._buf[this.len] == std.fs.path.sep);
         }
 
         pub const ResetScope = struct {
@@ -180,19 +207,25 @@ pub fn RelPath(comptime opts: Options) type {
 pub fn AbsPath(comptime opts: Options) type {
     const Result = opts.ResultFn();
 
+    const log = bun.Output.scoped(.AbsPath, false);
+
     return struct {
-        buf: *PathBuffer,
+        _buf: *PathBuffer,
         len: u16,
 
         pub fn slice(this: *const @This()) callconv(bun.callconv_inline) string {
-            bun.debugAssert(this.buf[this.len - 1] != std.fs.path.sep);
-            return this.buf[0..this.len];
+            bun.debugAssert(this._buf[this.len - 1] != std.fs.path.sep);
+            return this._buf[0..this.len];
         }
 
         pub fn sliceZ(this: *const @This()) callconv(bun.callconv_inline) stringZ {
-            bun.debugAssert(this.buf[this.len - 1] != std.fs.path.sep);
-            this.buf[this.len] = 0;
-            return this.buf[0..this.len :0];
+            bun.debugAssert(this._buf[this.len - 1] != std.fs.path.sep);
+            this._buf[this.len] = 0;
+            return this._buf[0..this.len :0];
+        }
+
+        pub fn buf(this: *@This()) []u8 {
+            return this._buf;
         }
 
         pub fn reset(this: *@This(), abs_input_path: string) callconv(bun.callconv_inline) void {
@@ -206,7 +239,7 @@ pub fn AbsPath(comptime opts: Options) type {
 
         pub fn initEmpty() callconv(bun.callconv_inline) @This() {
             return .{
-                .buf = bun.PathBufferPool.get(),
+                ._buf = bun.PathBufferPool.get(),
                 .len = 0,
             };
         }
@@ -222,14 +255,19 @@ pub fn AbsPath(comptime opts: Options) type {
                 }
             }
 
-            var this: @This() = .{ .buf = bun.PathBufferPool.get(), .len = 0 };
+            var this: @This() = .{ ._buf = bun.PathBufferPool.get(), .len = 0 };
             this.appendCharacters(trimmed);
 
             return this;
         }
 
+        pub fn initTopLevelDir() callconv(bun.callconv_inline) Result(@This()) {
+            bun.debugAssert(bun.fs.FileSystem.instance_loaded);
+            return init(bun.fs.FileSystem.instance.top_level_dir);
+        }
+
         pub fn deinit(this: *const @This()) void {
-            bun.PathBufferPool.put(this.buf);
+            bun.PathBufferPool.put(this._buf);
             @constCast(this).* = undefined;
         }
 
@@ -240,8 +278,8 @@ pub fn AbsPath(comptime opts: Options) type {
         }
 
         pub fn clone(original: *const @This()) callconv(bun.callconv_inline) @This() {
-            var this: @This() = .{ .buf = bun.PathBufferPool.get(), .len = original.len };
-            @memcpy(this.buf[0..original.len], original.buf[0..original.len]);
+            var this: @This() = .{ ._buf = bun.PathBufferPool.get(), .len = original.len };
+            @memcpy(this._buf[0..original.len], original._buf[0..original.len]);
             return this;
         }
 
@@ -261,7 +299,7 @@ pub fn AbsPath(comptime opts: Options) type {
                 }
             }
 
-            this.buf[this.len] = std.fs.path.sep;
+            this._buf[this.len] = std.fs.path.sep;
             this.len += 1;
 
             this.appendCharacters(trimmed);
@@ -272,13 +310,13 @@ pub fn AbsPath(comptime opts: Options) type {
             if (opts.normalize_slashes) {
                 for (bytes) |c| {
                     switch (c) {
-                        '/', '\\' => this.buf[this.len] = std.fs.path.sep,
-                        else => this.buf[this.len] = c,
+                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
+                        else => this._buf[this.len] = c,
                     }
                     this.len += 1;
                 }
             } else {
-                @memcpy(this.buf[this.len..][0..bytes.len], bytes);
+                @memcpy(this._buf[this.len..][0..bytes.len], bytes);
                 this.len += @intCast(bytes.len);
             }
         }
@@ -293,11 +331,11 @@ pub fn AbsPath(comptime opts: Options) type {
                 }
             }
 
-            this.buf[this.len] = std.fs.path.sep;
+            this._buf[this.len] = std.fs.path.sep;
             this.len += 1;
 
             const printed = std.fmt.bufPrint(
-                this.buf[this.len..],
+                this._buf[this.len..],
                 component_fmt,
                 component_args,
             ) catch {
@@ -319,7 +357,7 @@ pub fn AbsPath(comptime opts: Options) type {
                 return;
             }
             this.len -= @intCast(trimmed.len + 1);
-            bun.debugAssert(this.buf[this.len] == std.fs.path.sep);
+            bun.debugAssert(this._buf[this.len] == std.fs.path.sep);
         }
 
         pub fn undo(this: *@This(), n_components: usize) callconv(bun.callconv_inline) void {
@@ -333,10 +371,32 @@ pub fn AbsPath(comptime opts: Options) type {
             }
         }
 
+        pub fn basename(this: *@This()) string {
+            return std.fs.path.basename(this.slice());
+        }
+
+        pub fn basenameZ(this: *@This()) stringZ {
+            const full = this.sliceZ();
+            const base = std.fs.path.basename(full);
+            return full[full.len - base.len ..][0..base.len :0];
+        }
+
         pub fn relative(from: *const @This(), to: *const @This(), output: *RelPath(opts)) void {
-            const rel = path.relativeBufZ(output.buf, from.slice(), to.slice());
+            const rel = path.relativeBufZ(output._buf, from.slice(), to.slice());
             const trimmed = trimTrailingSlashes(rel);
             output.len = @intCast(trimmed.len);
+
+            log(
+                \\relative:
+                \\  from: '{s}'
+                \\    to: '{s}'
+                \\   rel: '{s}'
+                \\
+            , .{
+                from.slice(),
+                to.slice(),
+                output.slice(),
+            });
         }
 
         pub const ResetScope = struct {

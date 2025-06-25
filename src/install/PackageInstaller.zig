@@ -594,40 +594,25 @@ pub const PackageInstaller = struct {
     /// Install versions of a package which are waiting on a network request
     pub fn installEnqueuedPackagesAfterExtraction(
         this: *PackageInstaller,
+        task_id: Task.Id,
         dependency_id: DependencyID,
         data: *const ExtractData,
         log_level: Options.LogLevel,
     ) void {
         const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
         const name = this.names[package_id];
-        const resolution = &this.resolutions[package_id];
-        const task_id = switch (resolution.tag) {
-            .git => Task.Id.forGitCheckout(data.url, data.resolved),
-            .github => Task.Id.forTarball(data.url),
-            .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
-            .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
-            .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
-            else => unreachable,
-        };
 
-        if (!this.installEnqueuedPackagesImpl(name, task_id, log_level)) {
-            if (comptime Environment.allow_assert) {
-                Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
-                    bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
-                    bun.fmt.quote(data.url),
-                    dependency_id,
-                });
-            }
-        }
-    }
+        // const resolution = &this.resolutions[package_id];
+        // const task_id = switch (resolution.tag) {
+        //     .git => Task.Id.forGitCheckout(data.url, data.resolved),
+        //     .github => Task.Id.forTarball(data.url),
+        //     .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
+        //     .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
+        //     .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
+        //     else => unreachable,
+        // };
 
-    pub fn installEnqueuedPackagesImpl(
-        this: *PackageInstaller,
-        name: String,
-        task_id: Task.Id.Type,
-        log_level: Options.LogLevel,
-    ) bool {
-        if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+        if (this.manager.task_queue.fetchRemove(task_id.get())) |removed| {
             var callbacks = removed.value;
             defer callbacks.deinit(this.manager.allocator);
 
@@ -638,7 +623,7 @@ pub const PackageInstaller = struct {
 
             if (callbacks.items.len == 0) {
                 debug("Unexpected state: no callbacks for async task.", .{});
-                return true;
+                return;
             }
 
             for (callbacks.items) |*cb| {
@@ -664,9 +649,16 @@ pub const PackageInstaller = struct {
                 );
                 this.node_modules.deinit();
             }
-            return true;
+            return;
         }
-        return false;
+
+        if (comptime Environment.allow_assert) {
+            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+                bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
+                bun.fmt.quote(data.url),
+                dependency_id,
+            });
+        }
     }
 
     fn getInstalledPackageScriptsCount(
@@ -835,11 +827,10 @@ pub const PackageInstaller = struct {
             .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
             .allocator = this.lockfile.allocator,
             .package_name = pkg_name,
-            .patch = if (patch_patch) |p| PackageInstall.Patch{
-                .patch_contents_hash = patch_contents_hash.?,
-                .patch_path = p,
-                .root_project_dir = FileSystem.instance.top_level_dir,
-            } else PackageInstall.Patch.NULL,
+            .patch = if (patch_patch) |p| .{
+                .contents_hash = patch_contents_hash.?,
+                .path = p,
+            } else null,
             .package_version = package_version,
             .node_modules = &this.node_modules,
             .lockfile = this.lockfile,
@@ -848,7 +839,6 @@ pub const PackageInstaller = struct {
             pkg_name.slice(this.lockfile.buffers.string_bytes.items),
             resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
         });
-        const pkg_has_patch = !installer.patch.isNull();
 
         switch (resolution.tag) {
             .npm => {
@@ -940,7 +930,7 @@ pub const PackageInstaller = struct {
                     Output.flush();
                     this.summary.fail += 1;
 
-                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                     return;
                 };
 
@@ -971,7 +961,7 @@ pub const PackageInstaller = struct {
                 if (comptime Environment.allow_assert) {
                     @panic("Internal assertion failure: unexpected resolution tag");
                 }
-                if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             },
         }
@@ -983,7 +973,7 @@ pub const PackageInstaller = struct {
         this.summary.skipped += @intFromBool(!needs_install);
 
         if (needs_install) {
-            if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
+            if (resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                 if (comptime Environment.allow_assert) {
                     bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                 }
@@ -1017,7 +1007,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1041,7 +1030,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1070,7 +1058,6 @@ pub const PackageInstaller = struct {
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(
-                                pkg_has_patch,
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1080,7 +1067,7 @@ pub const PackageInstaller = struct {
                         if (comptime Environment.allow_assert) {
                             @panic("unreachable, handled above");
                         }
-                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                         this.summary.fail += 1;
                     },
                 }
@@ -1090,12 +1077,12 @@ pub const PackageInstaller = struct {
 
             // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
             // into cache, then install into node_modules
-            if (!installer.patch.isNull()) {
+            if (installer.patch) |patch| {
                 if (installer.patchedPackageMissingFromCache(this.manager, package_id)) {
                     const task = PatchTask.newApplyPatchHash(
                         this.manager,
                         package_id,
-                        installer.patch.patch_contents_hash,
+                        patch.contents_hash,
                         patch_name_and_version_hash.?,
                     );
                     task.callback.apply.install_context = .{
@@ -1126,7 +1113,7 @@ pub const PackageInstaller = struct {
                     });
                 }
                 this.summary.fail += 1;
-                if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             };
 
@@ -1234,7 +1221,7 @@ pub const PackageInstaller = struct {
                         },
                     }
 
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
                 },
                 .failure => |cause| {
                     if (comptime Environment.allow_assert) {
@@ -1243,7 +1230,7 @@ pub const PackageInstaller = struct {
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
 
                     if (cause.err == error.DanglingSymlink) {
                         Output.prettyErrorln(
@@ -1333,7 +1320,7 @@ pub const PackageInstaller = struct {
                 destination_dir.close();
             }
 
-            defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, &destination_dir, !is_pending_package_install, log_level);
+            defer this.incrementTreeInstallCount(this.current_tree_id, &destination_dir, !is_pending_package_install, log_level);
 
             const dep = this.lockfile.buffers.dependencies.items[dependency_id];
             const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
@@ -1375,12 +1362,11 @@ pub const PackageInstaller = struct {
 
     fn failWithInvalidUrl(
         this: *PackageInstaller,
-        pkg_has_patch: bool,
         comptime is_pending_package_install: bool,
         log_level: Options.LogLevel,
     ) void {
         this.summary.fail += 1;
-        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+        this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
     }
 
     // returns true if scripts are enqueued

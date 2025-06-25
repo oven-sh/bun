@@ -546,22 +546,30 @@ pub const FD = packed struct(backing_int) {
         };
     }
 
-    // pub fn makeOpenPath(dir: FD, comptime T: type, subpath: []const T) !FD {
-    //     return switch (T) {
-    //         u8 => {
-    //             if (comptime Environment.isWindows) {
-    //                 return bun.sys.openDirAtWindowsA(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
-    //             }
+    pub fn makeOpenPath(dir: FD, comptime T: type, subpath: []const T) !FD {
+        return switch (T) {
+            u8 => {
+                if (comptime Environment.isWindows) {
+                    return bun.sys.openDirAtWindowsA(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
+                }
 
-    //             return FD.fromStdDir(try dir.stdDir().makeOpenPath(subpath, .{ .iterate = true, .access_sub_paths = true }));
-    //         },
-    //         u16 => {
-    //             if (comptime !Environment.isWindows) @compileError("unexpected type");
-    //             return bun.sys.openDirAtWindows(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
-    //         },
-    //         else => @compileError("unexpected type"),
-    //     };
-    // }
+                return FD.fromStdDir(try dir.stdDir().makeOpenPath(subpath, .{ .iterate = true, .access_sub_paths = true }));
+            },
+            u16 => {
+                if (comptime !Environment.isWindows) @compileError("unexpected type");
+                return bun.sys.openDirAtWindows(dir, subpath, .{ .can_rename_or_delete = false, .create = true, .read_only = false }).unwrap();
+            },
+            else => @compileError("unexpected type"),
+        };
+    }
+
+    pub fn open(path: [:0]const u8, flags: i32, perm: bun.Mode) bun.Maybe(FD) {
+        if (comptime Environment.isWindows) {
+            @compileError("oops");
+        }
+
+        return openat(cwd(), path, flags, perm);
+    }
 
     // The following functions are from bun.sys but with the 'f' prefix dropped
     // where it is relevant. These functions all take FD as the first argument,

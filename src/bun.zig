@@ -3736,8 +3736,9 @@ pub fn PathBufferPoolT(comptime T: type) type {
             return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
-        pub fn put(buffer: *T) void {
-            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+        pub fn put(buffer: *const T) void {
+            // there's no deinit function on T so @constCast is fine
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", @constCast(buffer)));
             node.release();
         }
 

@@ -110,7 +110,7 @@ pub const Scripts = extern struct {
 
     pub fn getScriptEntries(
         this: *const Package.Scripts,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         lockfile_buf: string,
         resolution_tag: Resolution.Tag,
         add_node_gyp_rebuild_script: bool,
@@ -206,7 +206,7 @@ pub const Scripts = extern struct {
 
     pub fn createList(
         this: *const Package.Scripts,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         lockfile_buf: []const u8,
         cwd_: string,
         package_name: string,
@@ -274,7 +274,7 @@ pub const Scripts = extern struct {
     pub fn getList(
         this: *Package.Scripts,
         log: *logger.Log,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
         abs_node_modules_path: string,
         folder_name: string,
@@ -362,7 +362,7 @@ pub const Scripts = extern struct {
     pub fn createFromPackageJSON(
         this: *Package.Scripts,
         log: *logger.Log,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
         abs_folder_path: string,
         folder_name: string,

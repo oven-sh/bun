@@ -2001,7 +2001,7 @@ pub const default_trusted_dependencies = brk: {
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);

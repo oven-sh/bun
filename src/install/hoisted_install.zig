@@ -300,7 +300,6 @@ pub fn installHoistedPackages(
                         &installer,
                         .{
                             .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                            .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
@@ -323,7 +322,6 @@ pub fn installHoistedPackages(
                 &installer,
                 .{
                     .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                    .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                     .onResolve = {},
                     .onPackageManifestError = {},
                     .onPackageDownloadError = {},
@@ -350,7 +348,6 @@ pub fn installHoistedPackages(
                         closure.installer,
                         .{
                             .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                            .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},

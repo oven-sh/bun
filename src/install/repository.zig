@@ -499,14 +499,14 @@ pub const Repository = extern struct {
         env: DotEnv.Map,
         log: *logger.Log,
         cache_dir: std.fs.Dir,
-        task_id: u64,
+        task_id: Install.Task.Id,
         name: string,
         url: string,
         attempt: u8,
     ) !std.fs.Dir {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
@@ -564,10 +564,10 @@ pub const Repository = extern struct {
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
-        task_id: u64,
+        task_id: Install.Task.Id,
     ) !string {
         const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
-            bun.fmt.hexIntLower(task_id),
+            bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 
         _ = repo_dir;

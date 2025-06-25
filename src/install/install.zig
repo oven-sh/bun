@@ -268,7 +268,7 @@ pub const Aligner = struct {
 pub const NetworkTask = struct {
     unsafe_http_client: AsyncHTTP = undefined,
     response: bun.http.HTTPClientResult = .{},
-    task_id: u64,
+    task_id: Task.Id,
     url_buf: []const u8 = &[_]u8{},
     retried: u16 = 0,
     allocator: std.mem.Allocator,
@@ -655,64 +655,66 @@ pub const Task = struct {
     status: Status = Status.waiting,
     threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = &callback },
     log: logger.Log,
-    id: u64,
+    id: Id,
     err: ?anyerror = null,
     package_manager: *PackageManager,
     apply_patch_task: ?*PatchTask = null,
     next: ?*Task = null,
 
     /// An ID that lets us register a callback without keeping the same pointer around
-    pub fn NewID(comptime Hasher: type, comptime IDType: type) type {
-        return struct {
-            pub const Type = IDType;
-            pub fn forNPMPackage(package_name: string, package_version: Semver.Version) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update("npm-package:");
-                hasher.update(package_name);
-                hasher.update("@");
-                hasher.update(std.mem.asBytes(&package_version));
-                return hasher.final();
-            }
+    pub const Id = enum(u64) {
+        _,
 
-            pub fn forBinLink(package_id: PackageID) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update("bin-link:");
-                hasher.update(std.mem.asBytes(&package_id));
-                return hasher.final();
-            }
+        pub fn get(this: @This()) u64 {
+            return @intFromEnum(this);
+        }
 
-            pub fn forManifest(name: string) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update("manifest:");
-                hasher.update(name);
-                return hasher.final();
-            }
+        pub fn forNPMPackage(package_name: string, package_version: Semver.Version) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update("npm-package:");
+            hasher.update(package_name);
+            hasher.update("@");
+            hasher.update(std.mem.asBytes(&package_version));
+            return @enumFromInt(hasher.final());
+        }
 
-            pub fn forTarball(url: string) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update("tarball:");
-                hasher.update(url);
-                return hasher.final();
-            }
+        pub fn forBinLink(package_id: PackageID) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update("bin-link:");
+            hasher.update(std.mem.asBytes(&package_id));
+            return @enumFromInt(hasher.final());
+        }
 
-            // These cannot change:
-            // We persist them to the filesystem.
-            pub fn forGitClone(url: string) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update(url);
-                return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-            }
+        pub fn forManifest(name: string) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update("manifest:");
+            hasher.update(name);
+            return @enumFromInt(hasher.final());
+        }
 
-            pub fn forGitCheckout(url: string, resolved: string) IDType {
-                var hasher = Hasher.init(0);
-                hasher.update(url);
-                hasher.update("@");
-                hasher.update(resolved);
-                return @as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-            }
-        };
-    }
-    pub const Id = NewID(bun.Wyhash11, u64);
+        pub fn forTarball(url: string) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update("tarball:");
+            hasher.update(url);
+            return @enumFromInt(hasher.final());
+        }
+
+        // These cannot change:
+        // We persist them to the filesystem.
+        pub fn forGitClone(url: string) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update(url);
+            return @enumFromInt(@as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
+        }
+
+        pub fn forGitCheckout(url: string, resolved: string) Id {
+            var hasher = bun.Wyhash11.init(0);
+            hasher.update(url);
+            hasher.update("@");
+            hasher.update(resolved);
+            return @enumFromInt(@as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
+        }
+    };
 
     pub fn callback(task: *ThreadPool.Task) void {
         Output.Source.configureThread();
@@ -926,6 +928,9 @@ pub const Task = struct {
                 this.data = .{ .extract = result };
                 this.status = Status.success;
             },
+            // .install_task => {
+            // const install_task = this
+            // },
         }
     }
 
@@ -1018,9 +1023,12 @@ pub const DependencyInstallContext = struct {
     dependency_id: DependencyID,
 };
 
+pub const Store = @import("./workspaces.zig").Store;
+
 pub const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
     dependency_install_context: DependencyInstallContext,
+    isolated_package_install_context: Store.Entry.Id,
     root_dependency: DependencyID,
     root_request_id: PackageID,
 };
@@ -1898,6 +1906,11 @@ pub const PackageManager = struct {
         return this.global_link_dir_path;
     }
 
+    pub fn globalLinkDirAndPath(this: *PackageManager) !struct { std.fs.Dir, []const u8 } {
+        const dir = try this.globalLinkDir();
+        return .{ dir, this.global_link_dir_path };
+    }
+
     pub fn formatLaterVersionInCache(
         this: *PackageManager,
         package_name: string,
@@ -1943,7 +1956,7 @@ pub const PackageManager = struct {
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
-    pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
+    pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *const Lockfile, value: PreinstallState) void {
         this.ensurePreinstallStateListCapacity(lockfile.packages.len);
         this.preinstall_state.items[package_id] = value;
     }
@@ -1954,6 +1967,48 @@ pub const PackageManager = struct {
         }
         return this.preinstall_state.items[package_id];
     }
+
+    // pub fn packageMissingFromCache(
+    //     manager: *PackageManager,
+    //     package_id: PackageID,
+    //     cache_subpath: *bun.RelPath(.{}),
+    //     resolution_tag: Resolution.Tag,
+    //     patch_info: *const PackageInstall.Patch,
+    // ) bool {
+    //     const state = manager.getPreinstallState(package_id);
+    //     return switch (state) {
+    //         .done => false,
+    //         else => {
+    //             if (patch_info.isNull()) {
+    //                 const exists = switch (resolution_tag) {
+    //                     .npm => package_json_exists: {
+    //                         var buf = &PackageManager.cached_package_folder_name_buf;
+
+    //                         if (comptime Environment.isDebug) {
+    //                             bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
+    //                         }
+
+    //                         const subpath_len = strings.withoutTrailingSlash(this.cache_dir_subpath).len;
+    //                         buf[subpath_len] = std.fs.path.sep;
+    //                         defer buf[subpath_len] = 0;
+    //                         @memcpy(buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
+    //                         const subpath = buf[0 .. subpath_len + 1 + "package.json".len :0];
+    //                         break :package_json_exists Syscall.existsAt(.fromStdDir(this.cache_dir), subpath);
+    //                     },
+    //                     else => Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false,
+    //                 };
+    //                 if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+    //                 return !exists;
+    //             }
+    //             const cache_dir_subpath_without_patch_hash = this.cache_dir_subpath[0 .. std.mem.lastIndexOf(u8, this.cache_dir_subpath, "_patch_hash=") orelse @panic("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")];
+    //             @memcpy(bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len], cache_dir_subpath_without_patch_hash);
+    //             bun.path.join_buf[cache_dir_subpath_without_patch_hash.len] = 0;
+    //             const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
+    //             if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+    //             return !exists;
+    //         },
+    //     };
+    // }
 
     pub fn determinePreinstallState(
         manager: *PackageManager,
@@ -2073,7 +2128,7 @@ pub const PackageManager = struct {
         }
     }
 
-    pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+    pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
     pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
         return this.cache_directory_ orelse brk: {
@@ -2892,7 +2947,7 @@ pub const PackageManager = struct {
             // Do we need to download the tarball?
             .extract => extract: {
                 const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
-                bun.debugAssert(!this.network_dedupe_map.contains(task_id));
+                bun.debugAssert(!this.network_dedupe_map.contains(task_id.get()));
 
                 break :extract .{
                     .package = package,
@@ -2942,8 +2997,8 @@ pub const PackageManager = struct {
         };
     }
 
-    pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
-        const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+    pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: Task.Id, is_required: bool) bool {
+        const gpe = this.network_dedupe_map.getOrPut(task_id.get()) catch bun.outOfMemory();
 
         // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
         gpe.value_ptr.is_required = if (!gpe.found_existing)
@@ -2954,13 +3009,13 @@ pub const PackageManager = struct {
         return gpe.found_existing;
     }
 
-    pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
-        return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
+    pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: Task.Id) bool {
+        return (this.network_dedupe_map.get(task_id.get()) orelse return true).is_required;
     }
 
     pub fn generateNetworkTaskForTarball(
         this: *PackageManager,
-        task_id: u64,
+        task_id: Task.Id,
         url: string,
         is_required: bool,
         dependency_id: DependencyID,
@@ -3404,7 +3459,7 @@ pub const PackageManager = struct {
 
     fn enqueueParseNPMPackage(
         this: *PackageManager,
-        task_id: u64,
+        task_id: Task.Id,
         name: strings.StringOrTinyString,
         network_task: *NetworkTask,
     ) *ThreadPool.Task {
@@ -3450,7 +3505,7 @@ pub const PackageManager = struct {
 
     fn enqueueGitClone(
         this: *PackageManager,
-        task_id: u64,
+        task_id: Task.Id,
         name: string,
         repository: *const Repository,
         dep_id: DependencyID,
@@ -3500,7 +3555,7 @@ pub const PackageManager = struct {
 
     fn enqueueGitCheckout(
         this: *PackageManager,
-        task_id: u64,
+        task_id: Task.Id,
         dir: bun.FileDescriptor,
         dependency_id: DependencyID,
         name: string,
@@ -3556,7 +3611,7 @@ pub const PackageManager = struct {
 
     fn enqueueLocalTarball(
         this: *PackageManager,
-        task_id: u64,
+        task_id: Task.Id,
         dependency_id: DependencyID,
         name: string,
         path: string,
@@ -3909,7 +3964,7 @@ pub const PackageManager = struct {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(name_str);
 
-                            if (comptime Environment.allow_assert) bun.assert(task_id != 0);
+                            if (comptime Environment.allow_assert) bun.assert(task_id.get() != 0);
 
                             if (comptime Environment.allow_assert)
                                 debug(
@@ -3919,7 +3974,7 @@ pub const PackageManager = struct {
                                         @tagName(version.tag),
                                         this.lockfile.str(&name),
                                         this.lockfile.str(&version.literal),
-                                        task_id,
+                                        task_id.get(),
                                     },
                                 );
 
@@ -3953,7 +4008,7 @@ pub const PackageManager = struct {
                                                         successFn,
                                                     ) catch null) |new_resolve_result| {
                                                         resolve_result_ = new_resolve_result;
-                                                        _ = this.network_dedupe_map.remove(task_id);
+                                                        _ = this.network_dedupe_map.remove(task_id.get());
                                                         continue :retry_with_new_resolve_result;
                                                     }
                                                 }
@@ -3961,7 +4016,7 @@ pub const PackageManager = struct {
 
                                             // Was it recent enough to just load it without the network call?
                                             if (this.options.enable.manifest_cache_control and !expired) {
-                                                _ = this.network_dedupe_map.remove(task_id);
+                                                _ = this.network_dedupe_map.remove(task_id.get());
                                                 continue :retry_from_manifests_ptr;
                                             }
                                         }
@@ -3992,7 +4047,7 @@ pub const PackageManager = struct {
                                 return;
                             }
 
-                            var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
+                            var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id.get(), .{});
                             if (!manifest_entry_parse.found_existing) {
                                 manifest_entry_parse.value_ptr.* = TaskCallbackList{};
                             }
@@ -4041,7 +4096,7 @@ pub const PackageManager = struct {
                         },
                     );
 
-                if (this.git_repositories.get(clone_id)) |repo_fd| {
+                if (this.git_repositories.get(clone_id.get())) |repo_fd| {
                     const resolved = try Repository.findCommit(
                         this.allocator,
                         this.env,
@@ -4053,7 +4108,7 @@ pub const PackageManager = struct {
                     );
                     const checkout_id = Task.Id.forGitCheckout(url, resolved);
 
-                    var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
+                    var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id.get(), .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
                     if (this.lockfile.buffers.resolutions.items[id] == invalid_package_id) {
                         try entry.value_ptr.append(this.allocator, ctx);
@@ -4078,7 +4133,7 @@ pub const PackageManager = struct {
                         null,
                     )));
                 } else {
-                    var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
+                    var entry = this.task_queue.getOrPutContext(this.allocator, clone_id.get(), .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
                     try entry.value_ptr.append(this.allocator, ctx);
 
@@ -4112,7 +4167,7 @@ pub const PackageManager = struct {
                 const url = this.allocGitHubURL(dep);
                 defer this.allocator.free(url);
                 const task_id = Task.Id.forTarball(url);
-                var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
+                var entry = this.task_queue.getOrPutContext(this.allocator, task_id.get(), .{}) catch unreachable;
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
@@ -4299,7 +4354,7 @@ pub const PackageManager = struct {
                     .remote => |url| this.lockfile.str(&url),
                 };
                 const task_id = Task.Id.forTarball(url);
-                var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
+                var entry = this.task_queue.getOrPutContext(this.allocator, task_id.get(), .{}) catch unreachable;
                 if (!entry.found_existing) {
                     entry.value_ptr.* = TaskCallbackList{};
                 }
@@ -4566,8 +4621,8 @@ pub const PackageManager = struct {
     fn processDependencyList(
         this: *PackageManager,
         dep_list: TaskCallbackList,
-        comptime Context: type,
-        ctx: Context,
+        comptime Ctx: type,
+        ctx: Ctx,
         comptime callbacks: anytype,
         install_peer: bool,
     ) !void {
@@ -4854,8 +4909,8 @@ pub const PackageManager = struct {
 
     pub fn runTasks(
         manager: *PackageManager,
-        comptime ExtractCompletionContext: type,
-        extract_ctx: ExtractCompletionContext,
+        comptime Ctx: type,
+        extract_ctx: Ctx,
         comptime callbacks: anytype,
         install_peer: bool,
         log_level: Options.LogLevel,
@@ -4896,7 +4951,7 @@ pub const PackageManager = struct {
                         if (ptask.callback.apply.task_id) |task_id| {
                             _ = task_id; // autofix
 
-                        } else if (ExtractCompletionContext == *PackageInstaller) {
+                        } else if (Ctx == *PackageInstaller) {
                             if (ptask.callback.apply.install_context) |*ctx| {
                                 var installer: *PackageInstaller = extract_ctx;
                                 const path = ctx.path;
@@ -5103,14 +5158,14 @@ pub const PackageManager = struct {
                                 continue;
                             }
 
-                            const dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
+                            const dependency_list_entry = manager.task_queue.getEntry(task.task_id.get()).?;
 
                             const dependency_list = dependency_list_entry.value_ptr.*;
                             dependency_list_entry.value_ptr.* = .{};
 
                             try manager.processDependencyList(
                                 dependency_list,
-                                ExtractCompletionContext,
+                                Ctx,
                                 extract_ctx,
                                 callbacks,
                                 install_peer,
@@ -5350,11 +5405,11 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                    const dependency_list_entry = manager.task_queue.getEntry(task.id.get()).?;
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
 
                     if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -5415,20 +5470,32 @@ pub const PackageManager = struct {
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages += 1;
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                        extract_ctx.fixCachedLockfilePackageSlices();
-                        callbacks.onExtract(
-                            extract_ctx,
-                            dependency_id,
-                            &task.data.extract,
-                            log_level,
-                        );
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
+                        switch (Ctx) {
+                            *PackageInstaller => {
+                                extract_ctx.fixCachedLockfilePackageSlices();
+                                callbacks.onExtract(
+                                    extract_ctx,
+                                    task.id,
+                                    dependency_id,
+                                    &task.data.extract,
+                                    log_level,
+                                );
+                            },
+                            *Store.Installer => {
+                                callbacks.onExtract(
+                                    extract_ctx,
+                                    task.id,
+                                );
+                            },
+                            else => @compileError("unexpected context type"),
+                        }
                     } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id.get()) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -5470,7 +5537,7 @@ pub const PackageManager = struct {
                         }
                     } else if (manager.task_queue.getEntry(Task.Id.forManifest(
                         manager.lockfile.str(&manager.lockfile.packages.items(.name)[package_id]),
-                    ))) |dependency_list_entry| {
+                    ).get())) |dependency_list_entry| {
                         // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
                         const dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
@@ -5479,11 +5546,6 @@ pub const PackageManager = struct {
                     }
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
-
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
-                        // handled *PackageInstaller above
-                        callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, log_level);
-                    }
 
                     if (log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -5498,7 +5560,7 @@ pub const PackageManager = struct {
                     const name = clone.name.slice();
                     const url = clone.url.slice();
 
-                    manager.git_repositories.put(manager.allocator, task.id, repo_fd) catch unreachable;
+                    manager.git_repositories.put(manager.allocator, task.id.get(), repo_fd) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -5525,7 +5587,7 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
                         // Installing!
                         // this dependency might be something other than a git dependency! only need the name and
                         // behavior, use the resolution from the task.
@@ -5562,11 +5624,11 @@ pub const PackageManager = struct {
                         )));
                     } else {
                         // Resolving!
-                        const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                        const dependency_list_entry = manager.task_queue.getEntry(task.id.get()).?;
                         const dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
-                        try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                        try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
                     }
 
                     if (log_level.showProgress()) {
@@ -5599,20 +5661,32 @@ pub const PackageManager = struct {
                         continue;
                     }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
                         // We've populated the cache, package already exists in memory. Call the package installer callback
                         // and don't enqueue dependencies
+                        switch (Ctx) {
+                            *PackageInstaller => {
 
-                        // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
-                        // keeping just in case for now
-                        extract_ctx.fixCachedLockfilePackageSlices();
+                                // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                                // keeping just in case for now
+                                extract_ctx.fixCachedLockfilePackageSlices();
 
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            log_level,
-                        );
+                                callbacks.onExtract(
+                                    extract_ctx,
+                                    task.id,
+                                    git_checkout.dependency_id,
+                                    &task.data.git_checkout,
+                                    log_level,
+                                );
+                            },
+                            *Store.Installer => {
+                                callbacks.onExtract(
+                                    extract_ctx,
+                                    task.id,
+                                );
+                            },
+                            else => @compileError("unexpected context type"),
+                        }
                     } else if (manager.processExtractedTarballPackage(
                         &package_id,
                         git_checkout.dependency_id,
@@ -5621,7 +5695,7 @@ pub const PackageManager = struct {
                         log_level,
                     )) |pkg| handle_pkg: {
                         var any_root = false;
-                        var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
+                        var dependency_list_entry = manager.task_queue.getEntry(task.id.get()) orelse break :handle_pkg;
                         var dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
@@ -5649,13 +5723,8 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (comptime @TypeOf(callbacks.onExtract) != void) {
-                            callbacks.onExtract(
-                                extract_ctx,
-                                git_checkout.dependency_id,
-                                &task.data.git_checkout,
-                                log_level,
-                            );
+                        if (@TypeOf(callbacks.onExtract) != void) {
+                            @compileError("ctx should be void");
                         }
                     }
 
@@ -9365,7 +9434,6 @@ pub const PackageManager = struct {
                                 this,
                                 .{
                                     .onExtract = {},
-                                    .onPatch = {},
                                     .onResolve = {},
                                     .onPackageManifestError = {},
                                     .onPackageDownloadError = {},
@@ -10017,7 +10085,7 @@ pub const PackageManager = struct {
         patch_name_and_version_hash: ?u64,
     ) EnqueueTarballForDownloadError!void {
         const task_id = Task.Id.forTarball(url);
-        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id);
+        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id.get());
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
         }
@@ -10054,7 +10122,7 @@ pub const PackageManager = struct {
     ) void {
         const path = this.lockfile.str(&resolution.value.local_tarball);
         const task_id = Task.Id.forTarball(path);
-        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        var task_queue = this.task_queue.getOrPut(this.allocator, task_id.get()) catch unreachable;
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
         }
@@ -10088,7 +10156,7 @@ pub const PackageManager = struct {
         const clone_id = Task.Id.forGitClone(url);
         const resolved = this.lockfile.str(&repository.resolved);
         const checkout_id = Task.Id.forGitCheckout(url, resolved);
-        var checkout_queue = this.task_queue.getOrPut(this.allocator, checkout_id) catch unreachable;
+        var checkout_queue = this.task_queue.getOrPut(this.allocator, checkout_id.get()) catch unreachable;
         if (!checkout_queue.found_existing) {
             checkout_queue.value_ptr.* = .{};
         }
@@ -10100,10 +10168,10 @@ pub const PackageManager = struct {
 
         if (checkout_queue.found_existing) return;
 
-        if (this.git_repositories.get(clone_id)) |repo_fd| {
+        if (this.git_repositories.get(clone_id.get())) |repo_fd| {
             this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(checkout_id, repo_fd, dependency_id, alias, resolution.*, resolved, patch_name_and_version_hash)));
         } else {
-            var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id) catch unreachable;
+            var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id.get()) catch unreachable;
             if (!clone_queue.found_existing) {
                 clone_queue.value_ptr.* = .{};
             }
@@ -10140,7 +10208,7 @@ pub const PackageManager = struct {
         patch_name_and_version_hash: ?u64,
     ) EnqueuePackageForDownloadError!void {
         const task_id = Task.Id.forNPMPackage(name, version);
-        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id);
+        var task_queue = try this.task_queue.getOrPut(this.allocator, task_id.get());
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
         }

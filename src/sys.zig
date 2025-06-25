@@ -57,6 +57,7 @@ const Environment = bun.Environment;
 const JSC = bun.JSC;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const SystemError = JSC.SystemError;
+const FD = bun.FD;
 
 const linux = syscall;
 
@@ -215,6 +216,7 @@ pub const Tag = enum(u8) {
     chmod,
     chown,
     clonefile,
+    clonefileat,
     close,
     copy_file_range,
     copyfile,
@@ -2641,7 +2643,8 @@ pub const WindowsSymlinkOptions = packed struct {
 /// is saying `target` is already absolute.
 pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8, abs_fallback_junction_target: ?[:0]const u8) Maybe(void) {
     if (comptime !Environment.isWindows) {
-        return symlink(target, dest);
+        // return symlink(target, dest);
+        @compileError("windows only plz!!");
     }
 
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
@@ -2739,9 +2742,43 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(c.clonefile(from, to, 0), .clonefile)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("clonefile({s}, {s}) = {s}", .{ from, to, @tagName(err.getErrno()) });
             return err;
         }
+        log("clonefile({s}, {s}) = 0", .{ from, to });
         return Maybe(void).success;
+    }
+}
+
+pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isMac) {
+        @compileError("macOS only");
+    }
+
+    while (true) {
+        if (Maybe(void).errnoSys(c.clonefileat(from.cast(), from_path, to.cast(), to_path, 0), .clonefileat)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log(
+                \\clonefileat(
+                \\  {},
+                \\  {s},
+                \\  {},
+                \\  {s},
+                \\) = {s}
+                \\
+            , .{ from, from_path, to, to_path, @tagName(err.getErrno()) });
+            return err;
+        }
+        log(
+            \\clonefileat(
+            \\  {},
+            \\  {s},
+            \\  {},
+            \\  {s},
+            \\) = 0
+            \\
+        , .{ from, from_path, to, to_path });
+        return .success;
     }
 }
 

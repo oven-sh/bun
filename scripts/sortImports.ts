@@ -1,11 +1,12 @@
-import { $ } from "bun";
+import { readdirSync } from "fs";
+import path from "path";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 
 const filePaths = args.filter(arg => !arg.startsWith("-"));
 const usage = `Usage: bun scripts/sortImports [...files]
-Args: --no-include-pub --no-remove-unused`;
+Args: --no-include-pub --no-remove-unused --include-unsorted`;
 if (filePaths.length === 0) {
   console.error(usage);
   process.exit(1);
@@ -18,6 +19,7 @@ if (args.includes("--help")) {
 const config = {
   includePub: !args.includes("--no-include-pub"),
   removeUnused: !args.includes("--no-remove-unused"),
+  includeUnsorted: args.includes("--include-unsorted"),
 };
 
 // Type definitions
@@ -47,6 +49,12 @@ function parseDeclarations(
 
   for (const i of sortedLineKeys) {
     const line = lines[i];
+
+    if (line === "// @sortImports") {
+      lines[i] = "";
+      continue;
+    }
+
     const inlineDeclPattern = /^(?:pub )?const ([a-zA-Z0-9_]+) = (.+);$/;
     const match = line.match(inlineDeclPattern);
 
@@ -250,6 +258,7 @@ function sortGroupsAndDeclarations(groups: Map<string, Group>): string[] {
 function generateSortedOutput(lines: string[], groups: Map<string, Group>, sortedGroupKeys: string[]): string[] {
   const outputLines = [...lines];
   outputLines.push("");
+  outputLines.push("// @sortImports");
 
   for (const groupKey of sortedGroupKeys) {
     const groupDeclarations = groups.get(groupKey)!;
@@ -270,9 +279,14 @@ function generateSortedOutput(lines: string[], groups: Map<string, Group>, sorte
 
 // Main execution function for a single file
 async function processFile(filePath: string): Promise<void> {
-  console.log(`Processing: ${filePath}`);
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
+
+  if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
+    return;
+  }
+  console.log(`Processing: ${filePath}`);
+
   let needsRecurse = true;
   while (needsRecurse) {
     needsRecurse = false;
@@ -310,6 +324,11 @@ async function processFile(filePath: string): Promise<void> {
   // If the file is empty, remove the trailing newline
   if (fileContents === "\n") fileContents = "";
 
+  if (fileContents === originalFileContents) {
+    console.log(`✓ No changes: ${filePath}`);
+    return;
+  }
+
   // Write the sorted file
   await Bun.write(filePath, fileContents);
 
@@ -322,6 +341,22 @@ async function main() {
   let errorCount = 0;
 
   for (const filePath of filePaths) {
+    const stat = await Bun.file(filePath).stat();
+    if (stat.isDirectory()) {
+      const files = readdirSync(filePath, { recursive: true });
+      for (const file of files) {
+        if (typeof file !== "string" || !file.endsWith(".zig")) continue;
+        try {
+          await processFile(path.join(filePath, file));
+          successCount++;
+        } catch (error) {
+          errorCount++;
+          console.error(`Failed to process ${filePath}`);
+        }
+      }
+      continue;
+    }
+
     try {
       await processFile(filePath);
       successCount++;

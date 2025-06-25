@@ -1607,6 +1607,7 @@ test/js/node/test/parallel/test-net-socket-ready-without-cb.js
 test/js/node/test/parallel/test-net-socket-reset-twice.js
 test/js/node/test/parallel/test-net-socket-timeout-unref.js
 test/js/node/test/parallel/test-net-socket-timeout.js
+test/js/node/test/parallel/test-net-socket-write-after-close.js
 test/js/node/test/parallel/test-net-socket-write-error.js
 test/js/node/test/parallel/test-net-sync-cork.js
 test/js/node/test/parallel/test-net-throttle.js

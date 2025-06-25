@@ -826,7 +826,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         auto value = String::tryCreateUninitialized(pair.second.length(), data);
         if (value.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
-            return JSValue::encode({});
+            return {};
         }
         if (pair.second.length() > 0)
             memcpy(data.data(), pair.second.data(), pair.second.length());

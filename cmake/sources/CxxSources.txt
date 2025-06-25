@@ -100,6 +100,9 @@ src/bun.js/bindings/napi_finalizer.cpp
 src/bun.js/bindings/napi_handle_scope.cpp
 src/bun.js/bindings/napi_type_tag.cpp
 src/bun.js/bindings/napi.cpp
+src/bun.js/bindings/NapiClass.cpp
+src/bun.js/bindings/NapiRef.cpp
+src/bun.js/bindings/NapiWeakValue.cpp
 src/bun.js/bindings/ncrpyto_engine.cpp
 src/bun.js/bindings/ncrypto.cpp
 src/bun.js/bindings/node/crypto/CryptoDhJob.cpp

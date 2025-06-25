@@ -30,8 +30,7 @@ pub const Scope = struct {
     handlers: *Handlers,
 
     pub fn exit(this: *Scope) void {
-        var vm = this.handlers.vm;
-        defer vm.eventLoop().exit();
+        this.handlers.vm.eventLoop().exit();
         this.handlers.markInactive();
     }
 };
@@ -39,9 +38,7 @@ pub const Scope = struct {
 pub fn enter(this: *Handlers) Scope {
     this.markActive();
     this.vm.eventLoop().enter();
-    return .{
-        .handlers = this,
-    };
+    return .{ .handlers = this };
 }
 
 // corker: Corker = .{},

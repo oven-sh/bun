@@ -163,17 +163,8 @@ describe("clear", () => {
     const interval1 = setInterval(() => {
       throw new Error("interval not cleared");
     }, 1);
-    // TODO: this may become wrong once https://github.com/nodejs/node/pull/57069 is merged
-    const timeout2 = setTimeout(() => {
-      throw new Error("timeout not cleared");
-    }, 1);
-    const interval2 = setInterval(() => {
-      throw new Error("interval not cleared");
-    }, 1);
     clearInterval(timeout1);
     clearTimeout(interval1);
-    clearImmediate(timeout2);
-    clearImmediate(interval2);
   });
 
   it("interval/timeout do not affect immediates", async () => {

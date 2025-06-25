@@ -1,3 +1,53 @@
+pub const LifecycleScriptTimeLog = struct {
+    const Entry = struct {
+        package_name: string,
+        script_id: u8,
+
+        // nanosecond duration
+        duration: u64,
+    };
+
+    mutex: bun.Mutex = .{},
+    list: std.ArrayListUnmanaged(Entry) = .{},
+
+    pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
+        log.mutex.lock();
+        defer log.mutex.unlock();
+        log.list.append(allocator, entry) catch bun.outOfMemory();
+    }
+
+    /// this can be called if .start was never called
+    pub fn printAndDeinit(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator) void {
+        if (Environment.isDebug) {
+            if (!log.mutex.tryLock()) @panic("LifecycleScriptTimeLog.print is not intended to be thread-safe");
+            log.mutex.unlock();
+        }
+
+        if (log.list.items.len > 0) {
+            const longest: Entry = longest: {
+                var i: usize = 0;
+                var longest: u64 = log.list.items[0].duration;
+                for (log.list.items[1..], 1..) |item, j| {
+                    if (item.duration > longest) {
+                        i = j;
+                        longest = item.duration;
+                    }
+                }
+                break :longest log.list.items[i];
+            };
+
+            // extra \n will print a blank line after this one
+            Output.warn("{s}'s {s} script took {}\n\n", .{
+                longest.package_name,
+                Lockfile.Scripts.names[longest.script_id],
+                bun.fmt.fmtDurationOneDecimal(longest.duration),
+            });
+            Output.flush();
+        }
+        log.list.deinit(allocator);
+    }
+};
+
 pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) void {
     if (this.preinstall_state.items.len >= count) {
         return;
@@ -259,6 +309,7 @@ const DirInfo = @import("../../resolver/dir_info.zig");
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const Output = bun.Output;
 const Path = bun.path;
 const default_allocator = bun.default_allocator;

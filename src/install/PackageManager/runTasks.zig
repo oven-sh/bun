@@ -904,6 +904,110 @@ pub fn drainDependencyList(this: *PackageManager) void {
     _ = this.scheduleTasks();
 }
 
+pub fn getNetworkTask(this: *PackageManager) *NetworkTask {
+    return this.preallocated_network_tasks.get();
+}
+
+pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
+    var github_api_url: string = "https://api.github.com";
+    if (this.env.get("GITHUB_API_URL")) |url| {
+        if (url.len > 0) {
+            github_api_url = url;
+        }
+    }
+
+    const owner = this.lockfile.str(&repository.owner);
+    const repo = this.lockfile.str(&repository.repo);
+    const committish = this.lockfile.str(&repository.committish);
+
+    return std.fmt.allocPrint(
+        this.allocator,
+        "{s}/repos/{s}/{s}{s}tarball/{s}",
+        .{
+            strings.withoutTrailingSlash(github_api_url),
+            owner,
+            repo,
+            // repo might be empty if dep is https://github.com/... style
+            if (repo.len > 0) "/" else "",
+            committish,
+        },
+    ) catch unreachable;
+}
+
+pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
+    const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+
+    // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
+    gpe.value_ptr.is_required = if (!gpe.found_existing)
+        is_required
+    else
+        gpe.value_ptr.is_required or is_required;
+
+    return gpe.found_existing;
+}
+
+pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
+    return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
+}
+
+pub fn generateNetworkTaskForTarball(
+    this: *PackageManager,
+    task_id: u64,
+    url: string,
+    is_required: bool,
+    dependency_id: DependencyID,
+    package: Lockfile.Package,
+    patch_name_and_version_hash: ?u64,
+    authorization: NetworkTask.Authorization,
+) NetworkTask.ForTarballError!?*NetworkTask {
+    if (this.hasCreatedNetworkTask(task_id, is_required)) {
+        return null;
+    }
+
+    var network_task = this.getNetworkTask();
+
+    network_task.* = .{
+        .task_id = task_id,
+        .callback = undefined,
+        .allocator = this.allocator,
+        .package_manager = this,
+        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+            const task = PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
+            task.callback.apply.task_id = task_id;
+            break :brk task;
+        } else null,
+    };
+
+    const scope = this.scopeForPackageName(this.lockfile.str(&package.name));
+
+    try network_task.forTarball(
+        this.allocator,
+        &.{
+            .package_manager = this,
+            .name = strings.StringOrTinyString.initAppendIfNeeded(
+                this.lockfile.str(&package.name),
+                *FileSystem.FilenameStore,
+                FileSystem.FilenameStore.instance,
+            ) catch bun.outOfMemory(),
+            .resolution = package.resolution,
+            .cache_dir = this.getCacheDirectory(),
+            .temp_dir = this.getTemporaryDirectory(),
+            .dependency_id = dependency_id,
+            .integrity = package.meta.integrity,
+            .url = strings.StringOrTinyString.initAppendIfNeeded(
+                url,
+                *FileSystem.FilenameStore,
+                FileSystem.FilenameStore.instance,
+            ) catch bun.outOfMemory(),
+        },
+        scope,
+        authorization,
+    );
+
+    return network_task;
+}
+
 // @sortImports
 
 const std = @import("std");
@@ -921,16 +1025,21 @@ const strings = bun.strings;
 const Semver = bun.Semver;
 const String = Semver.String;
 
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;
+
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
 const Dependency = bun.install.Dependency;
+const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageInstall = bun.install.PackageInstall;
 const PackageManifestError = bun.install.PackageManifestError;
+const PatchTask = bun.install.PatchTask;
 const PreinstallState = bun.install.PreinstallState;
 const Repository = bun.install.Repository;
 const Resolution = bun.install.Resolution;

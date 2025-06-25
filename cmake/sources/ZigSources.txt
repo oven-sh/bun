@@ -562,6 +562,7 @@ src/install/PackageManager/ProgressStrings.zig
 src/install/PackageManager/runTasks.zig
 src/install/PackageManager/updatePackageJSONAndInstall.zig
 src/install/PackageManager/UpdateRequest.zig
+src/install/PackageManager/WorkspacePackageJSONCache.zig
 src/install/PackageManagerTask.zig
 src/install/PackageManifestMap.zig
 src/install/padding_checker.zig

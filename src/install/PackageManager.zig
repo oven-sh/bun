@@ -219,160 +219,6 @@ const TrackInstalledBin = union(enum) {
     basename: []const u8,
 };
 
-// maybe rename to `PackageJSONCache` if we cache more than workspaces
-pub const WorkspacePackageJSONCache = struct {
-    const js_ast = bun.JSAst;
-    const Expr = js_ast.Expr;
-
-    pub const MapEntry = struct {
-        root: Expr,
-        source: logger.Source,
-        indentation: JSPrinter.Options.Indentation = .{},
-    };
-
-    pub const Map = bun.StringHashMapUnmanaged(MapEntry);
-
-    pub const GetJSONOptions = struct {
-        init_reset_store: bool = true,
-        guess_indentation: bool = false,
-    };
-
-    pub const GetResult = union(enum) {
-        entry: *MapEntry,
-        read_err: anyerror,
-        parse_err: anyerror,
-
-        pub fn unwrap(this: GetResult) !*MapEntry {
-            return switch (this) {
-                .entry => |entry| entry,
-                inline else => |err| err,
-            };
-        }
-    };
-
-    map: Map = .{},
-
-    /// Given an absolute path to a workspace package.json, return the AST
-    /// and contents of the file. If the package.json is not present in the
-    /// cache, it will be read from disk and parsed, and stored in the cache.
-    pub fn getWithPath(
-        this: *@This(),
-        allocator: std.mem.Allocator,
-        log: *logger.Log,
-        abs_package_json_path: anytype,
-        comptime opts: GetJSONOptions,
-    ) GetResult {
-        bun.assertWithLocation(std.fs.path.isAbsolute(abs_package_json_path), @src());
-
-        var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
-        const path = if (comptime !Environment.isWindows)
-            abs_package_json_path
-        else brk: {
-            @memcpy(buf[0..abs_package_json_path.len], abs_package_json_path);
-            bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..abs_package_json_path.len]);
-            break :brk buf[0..abs_package_json_path.len];
-        };
-
-        const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
-        if (entry.found_existing) {
-            return .{ .entry = entry.value_ptr };
-        }
-
-        const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
-        entry.key_ptr.* = key;
-
-        const source = &(bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
-            _ = this.map.remove(key);
-            allocator.free(key);
-            return .{ .read_err = err };
-        });
-
-        if (comptime opts.init_reset_store)
-            initializeStore();
-
-        const json = JSON.parsePackageJSONUTF8WithOpts(
-            source,
-            log,
-            allocator,
-            .{
-                .is_json = true,
-                .allow_comments = true,
-                .allow_trailing_commas = true,
-                .guess_indentation = opts.guess_indentation,
-            },
-        ) catch |err| {
-            _ = this.map.remove(key);
-            allocator.free(source.contents);
-            allocator.free(key);
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            return .{ .parse_err = err };
-        };
-
-        entry.value_ptr.* = .{
-            .root = json.root.deepClone(bun.default_allocator) catch bun.outOfMemory(),
-            .source = source.*,
-            .indentation = json.indentation,
-        };
-
-        return .{ .entry = entry.value_ptr };
-    }
-
-    /// source path is used as the key, needs to be absolute
-    pub fn getWithSource(
-        this: *@This(),
-        allocator: std.mem.Allocator,
-        log: *logger.Log,
-        source: *const logger.Source,
-        comptime opts: GetJSONOptions,
-    ) GetResult {
-        bun.assertWithLocation(std.fs.path.isAbsolute(source.path.text), @src());
-
-        var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
-        const path = if (comptime !Environment.isWindows)
-            source.path.text
-        else brk: {
-            @memcpy(buf[0..source.path.text.len], source.path.text);
-            bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..source.path.text.len]);
-            break :brk buf[0..source.path.text.len];
-        };
-
-        const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
-        if (entry.found_existing) {
-            return .{ .entry = entry.value_ptr };
-        }
-
-        if (comptime opts.init_reset_store)
-            initializeStore();
-
-        const json_result = JSON.parsePackageJSONUTF8WithOpts(
-            source,
-            log,
-            allocator,
-            .{
-                .is_json = true,
-                .allow_comments = true,
-                .allow_trailing_commas = true,
-                .guess_indentation = opts.guess_indentation,
-            },
-        );
-
-        const json = json_result catch |err| {
-            _ = this.map.remove(path);
-            return .{ .parse_err = err };
-        };
-
-        entry.value_ptr.* = .{
-            .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
-            .source = source.*,
-            .indentation = json.indentation,
-        };
-
-        entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
-
-        return .{ .entry = entry.value_ptr };
-    }
-};
-
 pub var verbose_install = false;
 
 pub const PatchTaskQueue = bun.UnboundedQueue(PatchTask, .next);
@@ -385,56 +231,6 @@ pub const ScriptRunEnvironment = struct {
 
 const TimePasser = struct {
     pub var last_time: u64 = 0;
-};
-
-pub const LifecycleScriptTimeLog = struct {
-    const Entry = struct {
-        package_name: string,
-        script_id: u8,
-
-        // nanosecond duration
-        duration: u64,
-    };
-
-    mutex: bun.Mutex = .{},
-    list: std.ArrayListUnmanaged(Entry) = .{},
-
-    pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
-        log.mutex.lock();
-        defer log.mutex.unlock();
-        log.list.append(allocator, entry) catch bun.outOfMemory();
-    }
-
-    /// this can be called if .start was never called
-    pub fn printAndDeinit(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator) void {
-        if (Environment.isDebug) {
-            if (!log.mutex.tryLock()) @panic("LifecycleScriptTimeLog.print is not intended to be thread-safe");
-            log.mutex.unlock();
-        }
-
-        if (log.list.items.len > 0) {
-            const longest: Entry = longest: {
-                var i: usize = 0;
-                var longest: u64 = log.list.items[0].duration;
-                for (log.list.items[1..], 1..) |item, j| {
-                    if (item.duration > longest) {
-                        i = j;
-                        longest = item.duration;
-                    }
-                }
-                break :longest log.list.items[i];
-            };
-
-            // extra \n will print a blank line after this one
-            Output.warn("{s}'s {s} script took {}\n\n", .{
-                longest.package_name,
-                Lockfile.Scripts.names[longest.script_id],
-                bun.fmt.fmtDurationOneDecimal(longest.duration),
-            });
-            Output.flush();
-        }
-        log.list.deinit(allocator);
-    }
 };
 
 pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
@@ -654,110 +450,6 @@ pub fn allocatePackageManager() void {
 
 pub fn get() *PackageManager {
     return Holder.ptr;
-}
-
-pub fn getNetworkTask(this: *PackageManager) *NetworkTask {
-    return this.preallocated_network_tasks.get();
-}
-
-pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
-    var github_api_url: string = "https://api.github.com";
-    if (this.env.get("GITHUB_API_URL")) |url| {
-        if (url.len > 0) {
-            github_api_url = url;
-        }
-    }
-
-    const owner = this.lockfile.str(&repository.owner);
-    const repo = this.lockfile.str(&repository.repo);
-    const committish = this.lockfile.str(&repository.committish);
-
-    return std.fmt.allocPrint(
-        this.allocator,
-        "{s}/repos/{s}/{s}{s}tarball/{s}",
-        .{
-            strings.withoutTrailingSlash(github_api_url),
-            owner,
-            repo,
-            // repo might be empty if dep is https://github.com/... style
-            if (repo.len > 0) "/" else "",
-            committish,
-        },
-    ) catch unreachable;
-}
-
-pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
-    const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
-
-    // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
-    gpe.value_ptr.is_required = if (!gpe.found_existing)
-        is_required
-    else
-        gpe.value_ptr.is_required or is_required;
-
-    return gpe.found_existing;
-}
-
-pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
-    return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
-}
-
-pub fn generateNetworkTaskForTarball(
-    this: *PackageManager,
-    task_id: u64,
-    url: string,
-    is_required: bool,
-    dependency_id: DependencyID,
-    package: Lockfile.Package,
-    patch_name_and_version_hash: ?u64,
-    authorization: NetworkTask.Authorization,
-) NetworkTask.ForTarballError!?*NetworkTask {
-    if (this.hasCreatedNetworkTask(task_id, is_required)) {
-        return null;
-    }
-
-    var network_task = this.getNetworkTask();
-
-    network_task.* = .{
-        .task_id = task_id,
-        .callback = undefined,
-        .allocator = this.allocator,
-        .package_manager = this,
-        .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
-            const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const task = PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
-            task.callback.apply.task_id = task_id;
-            break :brk task;
-        } else null,
-    };
-
-    const scope = this.scopeForPackageName(this.lockfile.str(&package.name));
-
-    try network_task.forTarball(
-        this.allocator,
-        &.{
-            .package_manager = this,
-            .name = strings.StringOrTinyString.initAppendIfNeeded(
-                this.lockfile.str(&package.name),
-                *FileSystem.FilenameStore,
-                FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
-            .resolution = package.resolution,
-            .cache_dir = this.getCacheDirectory(),
-            .temp_dir = this.getTemporaryDirectory(),
-            .dependency_id = dependency_id,
-            .integrity = package.meta.integrity,
-            .url = strings.StringOrTinyString.initAppendIfNeeded(
-                url,
-                *FileSystem.FilenameStore,
-                FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
-        },
-        scope,
-        authorization,
-    );
-
-    return network_task;
 }
 
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
@@ -1363,6 +1055,7 @@ const DirInfo = @import("../resolver/dir_info.zig");
 pub const Options = @import("./PackageManager/PackageManagerOptions.zig");
 pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.zig");
 pub const UpdateRequest = @import("PackageManager/UpdateRequest.zig");
+pub const WorkspacePackageJSONCache = @import("PackageManager/WorkspacePackageJSONCache.zig");
 const std = @import("std");
 pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
 pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
@@ -1415,6 +1108,7 @@ pub const enqueueTarballForDownload = enqueue.enqueueTarballForDownload;
 pub const enqueueTarballForReading = enqueue.enqueueTarballForReading;
 
 const lifecycle = @import("PackageManager/PackageManagerLifecycle.zig");
+const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 pub const determinePreinstallState = lifecycle.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = lifecycle.ensurePreinstallStateListCapacity;
 pub const getPreinstallState = lifecycle.getPreinstallState;
@@ -1452,12 +1146,17 @@ pub const processDependencyListItem = @import("PackageManager/processDependencyL
 pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
 pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
 
+pub const allocGithubURL = @import("PackageManager/runTasks.zig").allocGithubURL;
 pub const decrementPendingTasks = @import("PackageManager/runTasks.zig").decrementPendingTasks;
 pub const drainDependencyList = @import("PackageManager/runTasks.zig").drainDependencyList;
 pub const flushDependencyQueue = @import("PackageManager/runTasks.zig").flushDependencyQueue;
 pub const flushNetworkQueue = @import("PackageManager/runTasks.zig").flushNetworkQueue;
 pub const flushPatchTaskQueue = @import("PackageManager/runTasks.zig").flushPatchTaskQueue;
+pub const generateNetworkTaskForTarball = @import("PackageManager/runTasks.zig").generateNetworkTaskForTarball;
+pub const getNetworkTask = @import("PackageManager/runTasks.zig").getNetworkTask;
+pub const hasCreatedNetworkTask = @import("PackageManager/runTasks.zig").hasCreatedNetworkTask;
 pub const incrementPendingTasks = @import("PackageManager/runTasks.zig").incrementPendingTasks;
+pub const isNetworkTaskRequired = @import("PackageManager/runTasks.zig").isNetworkTaskRequired;
 pub const pendingTaskCount = @import("PackageManager/runTasks.zig").pendingTaskCount;
 pub const runTasks = @import("PackageManager/runTasks.zig").runTasks;
 pub const scheduleTasks = @import("PackageManager/runTasks.zig").scheduleTasks;
@@ -1470,10 +1169,8 @@ const bun = @import("bun");
 const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSAst = bun.JSAst;
 const JSC = bun.JSC;
 const JSON = bun.JSON;
-const JSPrinter = bun.js_printer;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;

@@ -1606,7 +1606,7 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {
-        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, JSC::JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationWasAbortedString(globalObject)));
     }
 
     auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
@@ -1834,7 +1834,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
-            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
             if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
                 ASSERT(arr->length() > 0);
                 WTF::StringBuilder builder;
@@ -1842,7 +1842,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 for (unsigned i = 0, length = arr->length(); i < length; i++) {
                     JSValue index = arr->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (i == length - 1) builder.append("or "_s);
+                    if (i > 0) builder.append("or "_s);
                     builder.append('"');
                     auto* jsString = index.toString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1850,7 +1850,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                     RETURN_IF_EXCEPTION(scope, {});
                     builder.append(str);
                     builder.append('"');
-                    if (i != length - 1) builder.append(',');
                     builder.append(' ');
                 }
                 builder.append("argument must be specified"_s);

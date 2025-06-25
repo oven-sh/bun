@@ -1464,7 +1464,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
-        log("HTTP_FRAME_SETTINGS ack true", .{});
+        log("send HTTP_FRAME_SETTINGS ack true", .{});
         var buffer: [FrameHeader.byteSize]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -2389,7 +2389,7 @@ pub const H2FrameParser = struct {
                 if (this.remoteSettings == null) {
 
                     // ok empty settings so default settings
-                    const remoteSettings: FullSettingsPayload = .{};
+                    var remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
 
@@ -2402,6 +2402,7 @@ pub const H2FrameParser = struct {
                             }
                         }
                     }
+                    this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
                 }
             }
 
@@ -3788,6 +3789,7 @@ pub const H2FrameParser = struct {
 
     pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
+        log("request", .{});
 
         const args_list = callframe.arguments_old(5);
         if (args_list.len < 4) {

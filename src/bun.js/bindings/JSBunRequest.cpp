@@ -278,7 +278,7 @@ extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisVal
         return JSValue::encode(params);
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 } // namespace Bun

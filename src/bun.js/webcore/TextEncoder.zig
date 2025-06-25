@@ -51,7 +51,7 @@ pub export fn TextEncoder__encode16(
 
     // max utf16 -> utf8 length
     if (slice.len <= buf.len / 4) {
-        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice, true);
+        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
         if (result.read == 0 or result.written == 0) {
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -97,7 +97,7 @@ pub export fn c(
 
     // max utf16 -> utf8 length
     if (slice.len <= buf.len / 4) {
-        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice, true);
+        const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
         if (result.read == 0 or result.written == 0) {
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3) catch return .zero;
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -220,7 +220,7 @@ pub export fn TextEncoder__encodeInto16(
 ) u64 {
     const output = buf_ptr[0..buf_len];
     const input = input_ptr[0..input_len];
-    var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, false);
+    var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input);
     if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
         const replacement_char = [_]u8{ 239, 191, 189 };
         @memcpy(buf_ptr[0..replacement_char.len], &replacement_char);

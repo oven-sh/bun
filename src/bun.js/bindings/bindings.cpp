@@ -2176,7 +2176,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     }
 
     if (err.fd >= 0) {
-        JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
+        JSC::JSValue fd = jsNumber(err.fd);
         result->putDirect(vm, names.fdPublicName(), fd, JSC::PropertyAttribute::DontDelete | 0);
     }
 
@@ -2190,10 +2190,10 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
         result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    return JSC::JSValue::encode(JSC::JSValue(result));
+    return JSC::JSValue::encode(result);
 }
 
 JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
@@ -2216,8 +2216,8 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     auto clientData = WebCore::clientData(vm);
 
-    result->putDirect(vm, vm.propertyNames->name, JSC::JSValue(jsString(vm, String("SystemError"_s))), JSC::PropertyAttribute::DontEnum | 0);
-    result->putDirect(vm, clientData->builtinNames().codePublicName(), JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))), JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SystemError"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, String("ERR_SYSTEM_ERROR"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
 
@@ -2231,9 +2231,9 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString), JSC::PropertyAttribute::DontDelete | 0);
 
     info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
-    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(result)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC::EncodedJSValue
@@ -2452,8 +2452,7 @@ JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0)
 JSC::EncodedJSValue JSC__JSValue__createInternalPromise(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    return JSC::JSValue::encode(
-        JSC::JSValue(JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure())));
+    return JSC::JSValue::encode(JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure()));
 }
 
 void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0)
@@ -2505,7 +2504,7 @@ CPP_DECL JSC::JSString* JSC__jsTypeStringForValue(JSC::JSGlobalObject* globalObj
 
 JSC::EncodedJSValue JSC__JSPromise__asValue(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1)
 {
-    JSValue value = JSC::JSValue(arg0);
+    JSValue value = arg0;
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "JSPromise.asValue() called on a empty JSValue");
     ASSERT_WITH_MESSAGE(value.inherits<JSC::JSPromise>(), "JSPromise::asValue() called on a non-promise object");
     return JSC::JSValue::encode(value);
@@ -2668,7 +2667,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSContextRef ctx, JSC::Encoded
     ASSERT(jsObject.isCallable());
     ASSERT(callData.type != JSC::CallData::Type::None);
     if (callData.type == JSC::CallData::Type::None)
-        return JSC::JSValue::encode(JSC::JSValue());
+        return {};
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
@@ -2696,7 +2695,7 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
 #endif
 
     if (!object)
-        return JSC::JSValue::encode(JSC::JSValue());
+        return {};
 
     JSC::JSObject* jsObject = toJS(object);
     JSC::JSObject* jsThisObject = toJS(thisObject);
@@ -2710,13 +2709,13 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
 
     auto callData = getCallData(jsObject);
     if (callData.type == JSC::CallData::Type::None)
-        return JSC::JSValue::encode(JSC::JSValue());
+        return {};
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
-        return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
+        return JSC::JSValue::encode(returnedException.get());
     }
 
     return JSC::JSValue::encode(result);
@@ -3054,7 +3053,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue message = JSC::JSValue(JSC::jsOwnedString(vm, Zig::toString(*arg3)));
+    JSC::JSValue message = JSC::jsOwnedString(vm, Zig::toString(*arg3));
     JSC::JSValue options = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
     {
@@ -3102,13 +3101,13 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGloba
         }
     }
 
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), makeAtomString(Zig::toStringCopy(*arg0)))));
+    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), makeAtomString(Zig::toStringCopy(*arg0))));
 }
 
 JSC::EncodedJSValue ZigString__to16BitValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
     auto str = WTF::String::fromUTF8(std::span { arg0->ptr, arg0->len });
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
+    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), str));
 }
 
 JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC::JSGlobalObject* global)
@@ -3119,8 +3118,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 
     auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-        global->vm(), WTFMove(ref))));
+    return JSC::JSValue::encode(JSC::jsString(global->vm(), WTFMove(ref)));
 }
 // This must be a globally allocated string
 JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
@@ -3134,13 +3132,10 @@ JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlo
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
 
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(), WTFMove(ref))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
     } else {
         auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTFMove(ref))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
     }
 }
 
@@ -3151,7 +3146,7 @@ VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0)
 
 JSC::EncodedJSValue ZigString__toValueGC(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0))));
+    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
 }
 
 void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2)
@@ -3188,13 +3183,9 @@ JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObje
     ZigString str
         = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     }
 }
 
@@ -3204,13 +3195,9 @@ JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const ZigString* arg0
     ZigString str
         = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
+        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-            arg1->vm(),
-            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
+        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     }
 }
 
@@ -3887,7 +3874,7 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 
 JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* globalObject, int64_t val)
 {
-    return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+    return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
@@ -3919,7 +3906,7 @@ JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, J
 
 JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t val)
 {
-    return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+    return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
@@ -4053,7 +4040,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     if (value.getOwnPropertySlot(globalObject, property, slot)) {
         RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, property)));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    RELEASE_AND_RETURN(scope, {});
 }
 
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
@@ -4112,7 +4099,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
                     // nothing found.
                     if (j == 0) {
-                        return JSValue::encode({});
+                        return {};
                     }
 
                     return JSValue::encode(currProp);
@@ -4190,7 +4177,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         return JSValue::encode(currProp);
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::JSGlobalObject* arg1, ZigString* arg2)
@@ -5166,7 +5153,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (value.isEmpty() || !value.isCell())
-        return JSC::JSValue::encode({});
+        return {};
 
     JSC::JSCell* cell = value.asCell();
 
@@ -5183,7 +5170,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     }
     }
 
-    return JSC::JSValue::encode({});
+    return {};
 }
 
 void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
@@ -5588,7 +5575,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSVa
         return JSValue::encode(slot.getValue(globalObject, name));
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
@@ -6083,7 +6070,7 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__reasonIfAborted(WebCore::Ab
         return JSValue::encode(signal->jsReason(*globalObject));
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 extern "C" bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0)
@@ -6158,7 +6145,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     if (property.getUInt32(index)) {
         if (!object->getOwnPropertySlotByIndex(object, globalObject, index, slot))
-            return JSC::JSValue::encode({});
+            return {};
 
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -6167,7 +6154,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
         auto propertyName = property.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot))
-            return JSC::JSValue::encode({});
+            return {};
 
         RETURN_IF_EXCEPTION(scope, {});
 

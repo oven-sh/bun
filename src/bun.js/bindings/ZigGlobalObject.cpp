@@ -3493,8 +3493,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdoutValue)
-        return JSValue::encode({});
+    if (!stdoutValue) return {};
 
     console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stdoutValue);
@@ -3509,8 +3508,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stderrValue)
-        return JSValue::encode({});
+    if (!stderrValue) return {};
 
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stderrValue);

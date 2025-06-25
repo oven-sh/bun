@@ -1056,7 +1056,7 @@ static JSValue fetchESMSourceCode(
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
-            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            return reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
@@ -1071,7 +1071,7 @@ static JSValue fetchESMSourceCode(
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
-            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            return reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"

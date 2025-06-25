@@ -252,13 +252,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
             ERR::INVALID_ARG_VALUE(scope, globalObject,
                 "filename"_s, argument,
                 "must be a file URL object, file URL string, or absolute path string"_s);
-            RELEASE_AND_RETURN(scope, JSValue::encode({}));
+            RELEASE_AND_RETURN(scope, {});
         }
         if (!url.protocolIsFile()) {
             ERR::INVALID_ARG_VALUE(scope, globalObject,
                 "filename"_s, argument,
                 "must be a file URL object, file URL string, or absolute path string"_s);
-            RELEASE_AND_RETURN(scope, JSValue::encode({}));
+            RELEASE_AND_RETURN(scope, {});
         }
         val = url.fileSystemPath();
     }

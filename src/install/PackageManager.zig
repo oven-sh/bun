@@ -356,90 +356,6 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
 
 pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
-pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-    if (this.node_gyp_tempdir_name.len > 0) return;
-
-    const tempdir = this.getTemporaryDirectory();
-    var path_buf: bun.PathBuffer = undefined;
-    const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
-
-    // used later for adding to path for scripts
-    this.node_gyp_tempdir_name = try this.allocator.dupe(u8, node_gyp_tempdir_name);
-
-    var node_gyp_tempdir = tempdir.makeOpenPath(this.node_gyp_tempdir_name, .{}) catch |err| {
-        if (err == error.EEXIST) {
-            // it should not exist
-            Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
-            Global.crash();
-        }
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_tempdir.close();
-
-    const file_name = switch (Environment.os) {
-        else => "node-gyp",
-        .windows => "node-gyp.cmd",
-    };
-    const mode = switch (Environment.os) {
-        else => 0o755,
-        .windows => 0, // windows does not have an executable bit
-    };
-
-    var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_file.close();
-
-    const content = switch (Environment.os) {
-        .windows =>
-        \\if not defined npm_config_node_gyp (
-        \\  bun x --silent node-gyp %*
-        \\) else (
-        \\  node "%npm_config_node_gyp%" %*
-        \\)
-        \\
-        ,
-        else =>
-        \\#!/bin/sh
-        \\if [ "x$npm_config_node_gyp" = "x" ]; then
-        \\  bun x --silent node-gyp $@
-        \\else
-        \\  "$npm_config_node_gyp" $@
-        \\fi
-        \\
-        ,
-    };
-
-    node_gyp_file.writeAll(content) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
-        Global.crash();
-    };
-
-    // Add our node-gyp tempdir to the path
-    const existing_path = this.env.get("PATH") orelse "";
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.temp_dir_name.len + 1 + this.node_gyp_tempdir_name.len);
-    try PATH.appendSlice(existing_path);
-    if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
-        try PATH.append(std.fs.path.delimiter);
-    try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
-    try PATH.append(std.fs.path.sep);
-    try PATH.appendSlice(this.node_gyp_tempdir_name);
-    try this.env.map.put("PATH", PATH.items);
-
-    const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-        strings.withoutTrailingSlash(this.temp_dir_name),
-        std.fs.path.sep_str,
-        strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
-        std.fs.path.sep_str,
-        file_name,
-    });
-
-    const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
-    try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
-}
-
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
 };
@@ -1078,6 +994,7 @@ pub const cachedNPMPackageFolderPrintBasename = directories.cachedNPMPackageFold
 pub const cachedTarballFolderName = directories.cachedTarballFolderName;
 pub const cachedTarballFolderNamePrint = directories.cachedTarballFolderNamePrint;
 pub const computeCacheDirAndSubpath = directories.computeCacheDirAndSubpath;
+pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 pub const fetchCacheDirectoryPath = directories.fetchCacheDirectoryPath;
 pub const getCacheDirectory = directories.getCacheDirectory;
 pub const getTemporaryDirectory = directories.getTemporaryDirectory;
@@ -1146,7 +1063,7 @@ pub const processDependencyListItem = @import("PackageManager/processDependencyL
 pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
 pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
 
-pub const allocGithubURL = @import("PackageManager/runTasks.zig").allocGithubURL;
+pub const allocGitHubURL = @import("PackageManager/runTasks.zig").allocGitHubURL;
 pub const decrementPendingTasks = @import("PackageManager/runTasks.zig").decrementPendingTasks;
 pub const drainDependencyList = @import("PackageManager/runTasks.zig").drainDependencyList;
 pub const flushDependencyQueue = @import("PackageManager/runTasks.zig").flushDependencyQueue;

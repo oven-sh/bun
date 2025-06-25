@@ -525,6 +525,7 @@ src/install/extract_tarball.zig
 src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig
+src/install/InstallCLI.zig
 src/install/integrity.zig
 src/install/lifecycle_script_runner.zig
 src/install/lockfile.zig
@@ -547,12 +548,11 @@ src/install/npm.zig
 src/install/PackageInstall.zig
 src/install/PackageInstaller.zig
 src/install/PackageManager.zig
-src/install/PackageManager/cli.zig
 src/install/PackageManager/CommandLineArguments.zig
-src/install/PackageManager/directories.zig
-src/install/PackageManager/enqueue.zig
 src/install/PackageManager/install_with_manager.zig
 src/install/PackageManager/PackageJSONEditor.zig
+src/install/PackageManager/PackageManagerDirectories.zig
+src/install/PackageManager/PackageManagerEnqueue.zig
 src/install/PackageManager/PackageManagerOptions.zig
 src/install/PackageManager/patchPackage.zig
 src/install/PackageManager/processDependencyList.zig

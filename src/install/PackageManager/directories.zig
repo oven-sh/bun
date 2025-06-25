@@ -721,6 +721,8 @@ const PatchHashFmt = struct {
 
 var using_fallback_temp_dir: bool = false;
 
+// @sortImports
+
 const std = @import("std");
 
 const bun = @import("bun");

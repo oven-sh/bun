@@ -961,6 +961,8 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
+// @sortImports
+
 const std = @import("std");
 
 const bun = @import("bun");

@@ -554,6 +554,7 @@ src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerOptions.zig
 src/install/PackageManager/patch.zig
 src/install/PackageManager/run_tasks.zig
+src/install/PackageManager/update_package_json_and_install.zig
 src/install/PackageManager/UpdateRequest.zig
 src/install/PackageManifestMap.zig
 src/install/padding_checker.zig

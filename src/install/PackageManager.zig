@@ -2522,102 +2522,6 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
-pub fn printInstallSummary(
-    this: *PackageManager,
-    ctx: Command.Context,
-    install_summary: *const PackageInstall.Summary,
-    did_meta_hash_change: bool,
-    log_level: Options.LogLevel,
-) !void {
-    var printed_timestamp = false;
-    if (this.options.do.summary) {
-        var printer = Lockfile.Printer{
-            .lockfile = this.lockfile,
-            .options = this.options,
-            .updates = this.update_requests,
-            .successfully_installed = install_summary.successfully_installed,
-        };
-
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-            },
-        }
-
-        if (!did_meta_hash_change) {
-            this.summary.remove = 0;
-            this.summary.add = 0;
-            this.summary.update = 0;
-        }
-
-        if (install_summary.success > 0) {
-            // it's confusing when it shows 3 packages and says it installed 1
-            const pkgs_installed = @max(
-                install_summary.success,
-                @as(
-                    u32,
-                    @truncate(this.update_requests.len),
-                ),
-            );
-            Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
-            Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-            printed_timestamp = true;
-            printBlockedPackagesInfo(install_summary, this.options.global);
-
-            if (this.summary.remove > 0) {
-                Output.pretty("Removed: <cyan>{d}<r>\n", .{this.summary.remove});
-            }
-        } else if (this.summary.remove > 0) {
-            if (this.subcommand == .remove) {
-                for (this.update_requests) |request| {
-                    Output.prettyln("<r><red>-<r> {s}", .{request.name});
-                }
-            }
-
-            Output.pretty("<r><b>{d}<r> package{s} removed ", .{ this.summary.remove, if (this.summary.remove == 1) "" else "s" });
-            Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-            printed_timestamp = true;
-            printBlockedPackagesInfo(install_summary, this.options.global);
-        } else if (install_summary.skipped > 0 and install_summary.fail == 0 and this.update_requests.len == 0) {
-            const count = @as(PackageID, @truncate(this.lockfile.packages.len));
-            if (count != install_summary.skipped) {
-                if (!this.options.enable.only_missing) {
-                    Output.pretty("Checked <green>{d} install{s}<r> across {d} package{s} <d>(no changes)<r> ", .{
-                        install_summary.skipped,
-                        if (install_summary.skipped == 1) "" else "s",
-                        count,
-                        if (count == 1) "" else "s",
-                    });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                }
-                printed_timestamp = true;
-                printBlockedPackagesInfo(install_summary, this.options.global);
-            } else {
-                Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
-                    install_summary.skipped,
-                    if (install_summary.skipped == 1) "" else "s",
-                });
-                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                printed_timestamp = true;
-                printBlockedPackagesInfo(install_summary, this.options.global);
-            }
-        }
-
-        if (install_summary.fail > 0) {
-            Output.prettyln("<r>Failed to install <red><b>{d}<r> package{s}\n", .{ install_summary.fail, if (install_summary.fail == 1) "" else "s" });
-            Output.flush();
-        }
-    }
-
-    if (this.options.do.summary) {
-        if (!printed_timestamp) {
-            Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-            Output.prettyln("<d> done<r>", .{});
-            printed_timestamp = true;
-        }
-    }
-}
-
 pub fn saveLockfile(
     this: *PackageManager,
     load_result: *const Lockfile.LoadResult,
@@ -2704,29 +2608,6 @@ pub fn saveLockfile(
     } else if (log_level != .silent) {
         Output.prettyErrorln("Saved lockfile", .{});
         Output.flush();
-    }
-}
-
-fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool) void {
-    const packages_count = summary.packages_with_blocked_scripts.count();
-    var scripts_count: usize = 0;
-    for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;
-
-    if (comptime Environment.allow_assert) {
-        // if packages_count is greater than 0, scripts_count must also be greater than 0.
-        bun.assert(packages_count == 0 or scripts_count > 0);
-        // if scripts_count is 1, it's only possible for packages_count to be 1.
-        bun.assert(scripts_count != 1 or packages_count == 1);
-    }
-
-    if (packages_count > 0) {
-        Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm {s}untrusted` for details.<r>\n", .{
-            scripts_count,
-            if (scripts_count > 1) "s" else "",
-            if (global) "-g " else "",
-        });
-    } else {
-        Output.pretty("<r>\n", .{});
     }
 }
 

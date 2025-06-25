@@ -195,41 +195,6 @@ pub const WorkspaceFilter = union(enum) {
     }
 };
 
-pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
-    const log_level = this.options.log_level;
-    if (log_level == .silent) return;
-    if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
-        return;
-    }
-
-    if (this.active_lifecycle_scripts.peek()) |active_lifecycle_script_running_for_the_longest_amount_of_time| {
-        if (this.cached_tick_for_slow_lifecycle_script_logging == this.event_loop.iterationNumber()) {
-            return;
-        }
-        this.cached_tick_for_slow_lifecycle_script_logging = this.event_loop.iterationNumber();
-        const current_time = bun.timespec.now().ns();
-        const time_running = current_time -| active_lifecycle_script_running_for_the_longest_amount_of_time.started_at;
-        const interval: u64 = if (log_level.isVerbose()) std.time.ns_per_s * 5 else std.time.ns_per_s * 30;
-        if (time_running > interval and current_time -| this.last_reported_slow_lifecycle_script_at > interval) {
-            this.last_reported_slow_lifecycle_script_at = current_time;
-            const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
-
-            if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                Output.warn("{s}'s postinstall cost you {}\n", .{
-                    package_name,
-                    bun.fmt.fmtDurationOneDecimal(time_running),
-                });
-            } else {
-                Output.warn("{s}' postinstall cost you {}\n", .{
-                    package_name,
-                    bun.fmt.fmtDurationOneDecimal(time_running),
-                });
-            }
-            Output.flush();
-        }
-    }
-}
-
 pub const PackageUpdateInfo = struct {
     original_version_literal: string,
     is_alias: bool,
@@ -588,67 +553,9 @@ pub fn wake(this: *PackageManager) void {
     this.event_loop.wakeup();
 }
 
-pub fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
-    this.reportSlowLifecycleScripts();
-    return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
-}
-
-pub fn tickLifecycleScripts(this: *PackageManager) void {
-    this.event_loop.tickOnce(this);
-}
-
 pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: anytype) void {
     Output.flush();
     this.event_loop.tick(closure, isDoneFn);
-}
-
-pub fn sleep(this: *PackageManager) void {
-    this.reportSlowLifecycleScripts();
-    Output.flush();
-    this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
-}
-
-pub fn formatLaterVersionInCache(
-    this: *PackageManager,
-    package_name: string,
-    name_hash: PackageNameHash,
-    resolution: Resolution,
-) ?Semver.Version.Formatter {
-    switch (resolution.tag) {
-        Resolution.Tag.npm => {
-            if (resolution.value.npm.version.tag.hasPre())
-                // TODO:
-                return null;
-
-            const manifest = this.manifests.byNameHash(
-                this,
-                this.scopeForPackageName(package_name),
-                name_hash,
-                .load_from_memory,
-            ) orelse return null;
-
-            if (manifest.findByDistTag("latest")) |*latest_version| {
-                if (latest_version.version.order(
-                    resolution.value.npm.version,
-                    manifest.string_buf,
-                    this.lockfile.buffers.string_bytes.items,
-                ) != .gt) return null;
-                return latest_version.version.fmt(manifest.string_buf);
-            }
-
-            return null;
-        },
-        else => return null,
-    }
-}
-
-pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm.Registry.Scope {
-    if (name.len == 0 or name[0] != '@') return &this.options.scope;
-    return this.options.registries.getPtr(
-        Npm.Registry.Scope.hash(
-            Npm.Registry.Scope.getName(name),
-        ),
-    ) orelse &this.options.scope;
 }
 
 pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
@@ -779,102 +686,6 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
     ) catch unreachable;
 }
 
-pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
-    var list = std.ArrayList(Semver.Version).init(allocator);
-    var dir = this.getCacheDirectory().openDir(package_name, .{
-        .iterate = true,
-    }) catch |err| switch (err) {
-        error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => return list,
-        else => return err,
-    };
-    defer dir.close();
-    var iter = dir.iterate();
-
-    while (try iter.next()) |entry| {
-        if (entry.kind != .directory and entry.kind != .sym_link) continue;
-        const name = entry.name;
-        const sliced = SlicedString.init(name, name);
-        const parsed = Semver.Version.parse(sliced);
-        if (!parsed.valid or parsed.wildcard != .none) continue;
-        // not handling OOM
-        // TODO: wildcard
-        var version = parsed.version.min();
-        const total = version.tag.build.len() + version.tag.pre.len();
-        if (total > 0) {
-            tags_buf.ensureUnusedCapacity(total) catch unreachable;
-            var available = tags_buf.items.ptr[tags_buf.items.len..tags_buf.capacity];
-            const new_version = version.cloneInto(name, &available);
-            tags_buf.items.len += total;
-            version = new_version;
-        }
-
-        list.append(version) catch unreachable;
-    }
-
-    return list;
-}
-
-pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
-    if (version.tag != .npm) {
-        // only npm supported right now
-        // tags are more ambiguous
-        return null;
-    }
-
-    var arena = bun.ArenaAllocator.init(this.allocator);
-    defer arena.deinit();
-    const arena_alloc = arena.allocator();
-    var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
-    const allocator = stack_fallback.get();
-    var tags_buf = std.ArrayList(u8).init(allocator);
-    const installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
-        Output.debug("error getting installed versions from disk cache: {s}", .{bun.span(@errorName(err))});
-        return null;
-    };
-
-    // TODO: make this fewer passes
-    std.sort.pdq(
-        Semver.Version,
-        installed_versions.items,
-        @as([]const u8, tags_buf.items),
-        Semver.Version.sortGt,
-    );
-    for (installed_versions.items) |installed_version| {
-        if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
-            var buf: bun.PathBuffer = undefined;
-            const npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
-                Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
-                return null;
-            };
-            const dependency = Dependency.Version{
-                .tag = .npm,
-                .value = .{
-                    .npm = .{
-                        .name = String.init(package_name, package_name),
-                        .version = Semver.Query.Group.from(installed_version),
-                    },
-                },
-            };
-            switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
-                .new_package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
-                    return id;
-                },
-                .package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
-                    return id;
-                },
-                .err => |err| {
-                    Output.debug("error getting or putting folder resolution: {s}", .{bun.span(@errorName(err))});
-                    return null;
-                },
-            }
-        }
-    }
-
-    return null;
-}
-
 pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
     const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
 
@@ -951,38 +762,6 @@ pub fn generateNetworkTaskForTarball(
 
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
-
-pub fn assignResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
-    const buffers = &this.lockfile.buffers;
-    if (comptime Environment.allow_assert) {
-        bun.assert(dependency_id < buffers.resolutions.items.len);
-        bun.assert(package_id < this.lockfile.packages.len);
-        // bun.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
-    }
-    buffers.resolutions.items[dependency_id] = package_id;
-    const string_buf = buffers.string_bytes.items;
-    var dep = &buffers.dependencies.items[dependency_id];
-    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
-        dep.name = this.lockfile.packages.items(.name)[package_id];
-        dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
-    }
-}
-
-pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
-    const buffers = &this.lockfile.buffers;
-    if (comptime Environment.allow_assert) {
-        bun.assert(dependency_id < buffers.resolutions.items.len);
-        bun.assert(package_id < this.lockfile.packages.len);
-        bun.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
-    }
-    buffers.resolutions.items[dependency_id] = package_id;
-    const string_buf = buffers.string_bytes.items;
-    var dep = &buffers.dependencies.items[dependency_id];
-    if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
-        dep.name = this.lockfile.packages.items(.name)[package_id];
-        dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
-    }
-}
 
 pub const debug = Output.scoped(.PackageManager, true);
 
@@ -1556,148 +1335,6 @@ var cwd_buf: bun.PathBuffer = undefined;
 pub var package_json_cwd_buf: bun.PathBuffer = undefined;
 pub var package_json_cwd: string = "";
 
-pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
-    const binding_dot_gyp_path = Path.joinAbsStringZ(
-        Fs.FileSystem.instance.top_level_dir,
-        &[_]string{"binding.gyp"},
-        .auto,
-    );
-
-    const buf = this.lockfile.buffers.string_bytes.items;
-    // need to clone because this is a copy before Lockfile.cleanWithLogger
-    const name = root_package.name.slice(buf);
-    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-
-    if (root_package.scripts.hasAny()) {
-        const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
-
-        this.root_lifecycle_scripts = root_package.scripts.createList(
-            this.lockfile,
-            buf,
-            top_level_dir_without_trailing_slash,
-            name,
-            .root,
-            add_node_gyp_rebuild_script,
-        );
-    } else {
-        if (Syscall.exists(binding_dot_gyp_path)) {
-            // no scripts exist but auto node gyp script needs to be added
-            this.root_lifecycle_scripts = root_package.scripts.createList(
-                this.lockfile,
-                buf,
-                top_level_dir_without_trailing_slash,
-                name,
-                .root,
-                true,
-            );
-        }
-    }
-}
-
-pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Options.LogLevel) void {
-    const lockfile = this.lockfile;
-    const resolutions_lists: []const Lockfile.DependencyIDSlice = lockfile.packages.items(.resolutions);
-    const dependency_lists: []const Lockfile.DependencySlice = lockfile.packages.items(.dependencies);
-    const pkg_resolutions = lockfile.packages.items(.resolution);
-    const dependencies_buffer = lockfile.buffers.dependencies.items;
-    const resolutions_buffer = lockfile.buffers.resolutions.items;
-    const end: PackageID = @truncate(lockfile.packages.len);
-
-    var any_failed = false;
-    const string_buf = lockfile.buffers.string_bytes.items;
-
-    for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
-        for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
-            if (package_id < end) continue;
-
-            // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-            //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
-            if (failed_dep.behavior.isPeer()) continue;
-
-            const features = switch (pkg_resolutions[parent_id].tag) {
-                .root, .workspace, .folder => this.options.local_package_features,
-                else => this.options.remote_package_features,
-            };
-            // even if optional dependencies are enabled, it's still allowed to fail
-            if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(features)) continue;
-
-            if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
-                        failed_dep.version.literal.fmt(string_buf),
-                    });
-                } else {
-                    Output.errGeneric("<b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>", .{
-                        failed_dep.name.slice(string_buf),
-                        failed_dep.version.literal.fmt(string_buf),
-                    });
-                }
-            }
-            // track this so we can log each failure instead of just the first
-            any_failed = true;
-        }
-    }
-
-    if (any_failed) this.crash();
-}
-
-pub fn spawnPackageLifecycleScripts(
-    this: *PackageManager,
-    ctx: Command.Context,
-    list: Lockfile.Package.Scripts.List,
-    optional: bool,
-    foreground: bool,
-) !void {
-    const log_level = this.options.log_level;
-    var any_scripts = false;
-    for (list.items) |maybe_item| {
-        if (maybe_item != null) {
-            any_scripts = true;
-            break;
-        }
-    }
-    if (!any_scripts) {
-        return;
-    }
-
-    try this.ensureTempNodeGypScript();
-
-    const cwd = list.cwd;
-    const this_transpiler = try this.configureEnvForScripts(ctx, log_level);
-    const original_path = this_transpiler.env.get("PATH") orelse "";
-
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-    var current_dir: ?*DirInfo = this_transpiler.resolver.readDirInfo(cwd) catch null;
-    bun.assert(current_dir != null);
-    while (current_dir) |dir| {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
-        }
-        try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-        if (!(dir.abs_path.len == 1 and dir.abs_path[0] == std.fs.path.sep)) {
-            try PATH.append(std.fs.path.sep);
-        }
-        try PATH.appendSlice(this.options.bin_path);
-        current_dir = dir.getParent();
-    }
-
-    if (original_path.len > 0) {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
-        }
-
-        try PATH.appendSlice(original_path);
-    }
-
-    this_transpiler.env.map.put("PATH", PATH.items) catch unreachable;
-
-    const envp = try this_transpiler.env.map.createNullDelimitedEnvMap(this.allocator);
-    try this_transpiler.env.map.put("PATH", original_path);
-    PATH.deinit();
-
-    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground);
-}
-
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
 // https://github.com/npm/cli/issues/7072
@@ -1781,7 +1418,22 @@ const preinstall = @import("PackageManager/PackageManagerPreinstall.zig");
 pub const determinePreinstallState = preinstall.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = preinstall.ensurePreinstallStateListCapacity;
 pub const getPreinstallState = preinstall.getPreinstallState;
+pub const hasNoMorePendingLifecycleScripts = preinstall.hasNoMorePendingLifecycleScripts;
+pub const loadRootLifecycleScripts = preinstall.loadRootLifecycleScripts;
+pub const reportSlowLifecycleScripts = preinstall.reportSlowLifecycleScripts;
 pub const setPreinstallState = preinstall.setPreinstallState;
+pub const sleep = preinstall.sleep;
+pub const spawnPackageLifecycleScripts = preinstall.spawnPackageLifecycleScripts;
+pub const tickLifecycleScripts = preinstall.tickLifecycleScripts;
+
+const resolution = @import("PackageManager/PackageManagerResolution.zig");
+pub const assignResolution = resolution.assignResolution;
+pub const assignRootResolution = resolution.assignRootResolution;
+pub const formatLaterVersionInCache = resolution.formatLaterVersionInCache;
+pub const getInstalledVersionsFromDiskCache = resolution.getInstalledVersionsFromDiskCache;
+pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
+pub const scopeForPackageName = resolution.scopeForPackageName;
+pub const verifyResolutions = resolution.verifyResolutions;
 
 pub const progress_zig = @import("PackageManager/ProgressStrings.zig");
 pub const ProgressStrings = progress_zig.ProgressStrings;
@@ -1836,12 +1488,12 @@ const stringZ = bun.stringZ;
 const strings = bun.strings;
 const transpiler = bun.transpiler;
 const Api = bun.Schema.Api;
+const File = bun.sys.File;
 
 const BunArguments = bun.CLI.Arguments;
 const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 
 const Fs = bun.fs;
@@ -1873,10 +1525,6 @@ const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;
 const initializeStore = bun.install.initializeStore;
-const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
-
-const Syscall = bun.sys;
-const File = bun.sys.File;

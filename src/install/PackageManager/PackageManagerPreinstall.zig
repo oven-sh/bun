@@ -108,19 +108,178 @@ pub fn determinePreinstallState(
     }
 }
 
+pub fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
+    this.reportSlowLifecycleScripts();
+    return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
+}
+
+pub fn tickLifecycleScripts(this: *PackageManager) void {
+    this.event_loop.tickOnce(this);
+}
+
+pub fn sleep(this: *PackageManager) void {
+    this.reportSlowLifecycleScripts();
+    Output.flush();
+    this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
+}
+
+pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
+    const log_level = this.options.log_level;
+    if (log_level == .silent) return;
+    if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
+        return;
+    }
+
+    if (this.active_lifecycle_scripts.peek()) |active_lifecycle_script_running_for_the_longest_amount_of_time| {
+        if (this.cached_tick_for_slow_lifecycle_script_logging == this.event_loop.iterationNumber()) {
+            return;
+        }
+        this.cached_tick_for_slow_lifecycle_script_logging = this.event_loop.iterationNumber();
+        const current_time = bun.timespec.now().ns();
+        const time_running = current_time -| active_lifecycle_script_running_for_the_longest_amount_of_time.started_at;
+        const interval: u64 = if (log_level.isVerbose()) std.time.ns_per_s * 5 else std.time.ns_per_s * 30;
+        if (time_running > interval and current_time -| this.last_reported_slow_lifecycle_script_at > interval) {
+            this.last_reported_slow_lifecycle_script_at = current_time;
+            const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
+
+            if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
+                Output.warn("{s}'s postinstall cost you {}\n", .{
+                    package_name,
+                    bun.fmt.fmtDurationOneDecimal(time_running),
+                });
+            } else {
+                Output.warn("{s}' postinstall cost you {}\n", .{
+                    package_name,
+                    bun.fmt.fmtDurationOneDecimal(time_running),
+                });
+            }
+            Output.flush();
+        }
+    }
+}
+
+pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
+    const binding_dot_gyp_path = Path.joinAbsStringZ(
+        Fs.FileSystem.instance.top_level_dir,
+        &[_]string{"binding.gyp"},
+        .auto,
+    );
+
+    const buf = this.lockfile.buffers.string_bytes.items;
+    // need to clone because this is a copy before Lockfile.cleanWithLogger
+    const name = root_package.name.slice(buf);
+    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+
+    if (root_package.scripts.hasAny()) {
+        const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
+
+        this.root_lifecycle_scripts = root_package.scripts.createList(
+            this.lockfile,
+            buf,
+            top_level_dir_without_trailing_slash,
+            name,
+            .root,
+            add_node_gyp_rebuild_script,
+        );
+    } else {
+        if (Syscall.exists(binding_dot_gyp_path)) {
+            // no scripts exist but auto node gyp script needs to be added
+            this.root_lifecycle_scripts = root_package.scripts.createList(
+                this.lockfile,
+                buf,
+                top_level_dir_without_trailing_slash,
+                name,
+                .root,
+                true,
+            );
+        }
+    }
+}
+
+pub fn spawnPackageLifecycleScripts(
+    this: *PackageManager,
+    ctx: Command.Context,
+    list: Lockfile.Package.Scripts.List,
+    optional: bool,
+    foreground: bool,
+) !void {
+    const log_level = this.options.log_level;
+    var any_scripts = false;
+    for (list.items) |maybe_item| {
+        if (maybe_item != null) {
+            any_scripts = true;
+            break;
+        }
+    }
+    if (!any_scripts) {
+        return;
+    }
+
+    try this.ensureTempNodeGypScript();
+
+    const cwd = list.cwd;
+    const this_transpiler = try this.configureEnvForScripts(ctx, log_level);
+    const original_path = this_transpiler.env.get("PATH") orelse "";
+
+    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+    var current_dir: ?*DirInfo = this_transpiler.resolver.readDirInfo(cwd) catch null;
+    bun.assert(current_dir != null);
+    while (current_dir) |dir| {
+        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+            try PATH.append(std.fs.path.delimiter);
+        }
+        try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
+        if (!(dir.abs_path.len == 1 and dir.abs_path[0] == std.fs.path.sep)) {
+            try PATH.append(std.fs.path.sep);
+        }
+        try PATH.appendSlice(this.options.bin_path);
+        current_dir = dir.getParent();
+    }
+
+    if (original_path.len > 0) {
+        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+            try PATH.append(std.fs.path.delimiter);
+        }
+
+        try PATH.appendSlice(original_path);
+    }
+
+    this_transpiler.env.map.put("PATH", PATH.items) catch unreachable;
+
+    const envp = try this_transpiler.env.map.createNullDelimitedEnvMap(this.allocator);
+    try this_transpiler.env.map.put("PATH", original_path);
+    PATH.deinit();
+
+    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground);
+}
+
 // @sortImports
 
+const DirInfo = @import("../../resolver/dir_info.zig");
 const std = @import("std");
 
 const bun = @import("bun");
+const Output = bun.Output;
+const Path = bun.path;
+const default_allocator = bun.default_allocator;
 const string = bun.string;
+const strings = bun.strings;
+const transpiler = bun.transpiler;
+const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const PreinstallState = bun.install.PreinstallState;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
+
+const Syscall = bun.sys;
+const File = bun.sys.File;

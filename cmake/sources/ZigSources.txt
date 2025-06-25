@@ -548,6 +548,7 @@ src/install/PackageInstall.zig
 src/install/PackageInstaller.zig
 src/install/PackageManager.zig
 src/install/PackageManager/CommandLineArguments.zig
+src/install/PackageManager/install_with_manager.zig
 src/install/PackageManager/PackageJSONEditor.zig
 src/install/PackageManager/PackageManagerOptions.zig
 src/install/PackageManager/UpdateRequest.zig

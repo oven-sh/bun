@@ -48,7 +48,7 @@ static std::optional<Vector<uint8_t>> cfb8(const Vector<uint8_t>& key, const Vec
     // (shiftRegister + shift + AES_BLOCK_SIZE) until the feedback position reaches
     // the end of the buffer.
     uint8_t shiftRegister[AES_BLOCK_SIZE * 2];
-    memcpy(shiftRegister, iv.data(), AES_BLOCK_SIZE);
+    memcpy(shiftRegister, iv.begin(), AES_BLOCK_SIZE);
     size_t shift = 0;
 
     Vector<uint8_t> output(input.size());

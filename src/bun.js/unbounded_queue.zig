@@ -7,7 +7,6 @@ const builtin = std.builtin;
 
 const assert = bun.assert;
 
-
 pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
     .x86_64, .aarch64, .powerpc64 => 128,
     .arm, .mips, .mips64, .riscv64 => 32,

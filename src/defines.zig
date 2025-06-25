@@ -140,11 +140,11 @@ pub const DefineData = struct {
             };
         }
         const _log = log;
-        var source = logger.Source{
+        const source = &logger.Source{
             .contents = value_str,
             .path = defines_path,
         };
-        const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
+        const expr = try json_parser.parseEnvJSON(source, _log, allocator);
         const cloned = try expr.data.deepClone(allocator);
         return .{
             .value = cloned,

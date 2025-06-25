@@ -6,12 +6,10 @@ pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const CssColor = css.css_values.color.CssColor;
 const Length = css.css_values.length.LengthValue;
 const Percentage = css.css_values.percentage.Percentage;
-
 
 /// A value for the [text-transform](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-transform-property) property.
 pub const TextTransform = struct {

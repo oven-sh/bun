@@ -96,12 +96,12 @@ static size_t getFramingOverhead(size_t payloadSize)
 
 const size_t maxReasonSizeInBytes = 123;
 
-static inline bool isValidProtocolCharacter(UChar character)
+static inline bool isValidProtocolCharacter(char16_t character)
 {
     // Hybi-10 says "(Subprotocol string must consist of) characters in the range U+0021 to U+007E not including
     // separator characters as defined in [RFC2616]."
-    const UChar minimumProtocolCharacter = '!'; // U+0021.
-    const UChar maximumProtocolCharacter = '~'; // U+007E.
+    const char16_t minimumProtocolCharacter = '!'; // U+0021.
+    const char16_t maximumProtocolCharacter = '~'; // U+007E.
     return character >= minimumProtocolCharacter && character <= maximumProtocolCharacter
         && character != '"' && character != '(' && character != ')' && character != ',' && character != '/'
         && !(character >= ':' && character <= '@') // U+003A - U+0040 (':', ';', '<', '=', '>', '?', '@').
@@ -441,11 +441,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.data(), headerValues.data(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
     }
 
     headerValues.clear();

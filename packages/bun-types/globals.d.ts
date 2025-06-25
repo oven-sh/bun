@@ -10,6 +10,7 @@ declare module "bun" {
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
+    type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
 
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
@@ -883,6 +884,8 @@ declare var CryptoKey: {
   prototype: CryptoKey;
   new (): CryptoKey;
 };
+
+interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
 
 interface Position {
   lineText: string;

@@ -7,7 +7,6 @@ const strings = bun.strings;
 const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
 
-
 const SKIP_LIST = .{
     // skip hidden directories
     ".",

@@ -7,8 +7,6 @@ const strings = bun.strings;
 
 const std = @import("std");
 
-
-
 const resolve_path = @import("../resolver/resolve_path.zig");
 
 const fs = @import("../fs.zig");

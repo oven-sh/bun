@@ -154,11 +154,7 @@ pub const CryptoHasher = union(enum) {
         };
     }
 
-    pub fn getAlgorithms(
-        globalThis_: *JSC.JSGlobalObject,
-        _: JSValue,
-        _: JSValue,
-    ) JSC.JSValue {
+    pub fn getAlgorithms(globalThis_: *JSC.JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSC.JSValue {
         return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
     }
 

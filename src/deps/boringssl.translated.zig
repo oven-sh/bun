@@ -19011,6 +19011,10 @@ pub const SSL = opaque {
         WantRenegotiate,
         HandshakeHintsReady,
     };
+    extern fn us_ssl_socket_verify_error_from_ssl(ssl: *SSL) bun.uws.us_bun_verify_error_t;
+    pub fn getVerifyError(this: *SSL) bun.uws.us_bun_verify_error_t {
+        return us_ssl_socket_verify_error_from_ssl(this);
+    }
 
     pub fn shutdown(this: *SSL) void {
         _ = SSL_shutdown(this);

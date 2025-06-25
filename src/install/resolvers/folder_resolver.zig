@@ -189,7 +189,7 @@ pub const FolderResolution = union(Tag) {
                 manager,
                 manager.allocator,
                 manager.log,
-                json.source,
+                &json.source,
                 json.root,
                 ResolverType,
                 resolver,
@@ -199,7 +199,7 @@ pub const FolderResolution = union(Tag) {
             const tracer = bun.perf.trace("FolderResolver.readPackageJSONFromDisk.folder");
             defer tracer.end();
 
-            const source = brk: {
+            const source = &brk: {
                 var file = bun.sys.File.from(try bun.sys.openatA(
                     bun.FD.cwd(),
                     abs,

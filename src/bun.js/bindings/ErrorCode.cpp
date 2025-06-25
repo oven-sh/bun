@@ -189,6 +189,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
 
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
@@ -197,7 +198,15 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     }
 
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
-    return JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        scope.clearException();
+        // TODO investigate what can throw here and whether it will throw non-objects
+        // (this is better than before where we would have returned nullptr from createError if any
+        // exception were thrown by ErrorInstance::create)
+        return jsCast<JSObject*>(thrown_exception->value());
+    }
+    return created_error;
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -268,7 +277,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
                         }
                     }
                 } else {
-                    const auto span = str->span<UChar>();
+                    const auto span = str->span<char16_t>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -415,7 +424,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                     }
                 }
             } else {
-                const auto span = view.span<UChar>();
+                const auto span = view.span<char16_t>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -1664,7 +1673,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str2 = arg2.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message));
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
+        err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
+        return JSC::JSValue::encode(err);
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
@@ -1735,7 +1747,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
-            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
             if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
                 ASSERT(arr->length() > 0);
                 WTF::StringBuilder builder;
@@ -1743,7 +1755,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 for (unsigned i = 0, length = arr->length(); i < length; i++) {
                     JSValue index = arr->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (i == length - 1) builder.append("or "_s);
+                    if (i > 0) builder.append("or "_s);
                     builder.append('"');
                     auto* jsString = index.toString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1751,7 +1763,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                     RETURN_IF_EXCEPTION(scope, {});
                     builder.append(str);
                     builder.append('"');
-                    if (i != length - 1) builder.append(',');
                     builder.append(' ');
                 }
                 builder.append("argument must be specified"_s);
@@ -2216,12 +2227,28 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_AMBIGUOUS_ARGUMENT, message));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_FD_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unsupported fd type: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
     case Bun::ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString(str0, " maxBuffer length exceeded"_s);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
+    }
+
+    case Bun::ErrorCode::ERR_IP_BLOCKED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("IP("_s, str0, ") is blocked by net.BlockList"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IP_BLOCKED, message));
     }
 
     case Bun::ErrorCode::ERR_VM_MODULE_STATUS: {
@@ -2242,6 +2269,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         error->putDirect(vm, Identifier::fromString(vm, "cause"_s), cause);
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(error);
+    }
+
+    case Bun::ErrorCode::ERR_ZSTD_INVALID_PARAM: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid zstd parameter"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
     }
 
     case ErrorCode::ERR_IPC_DISCONNECTED:
@@ -2304,6 +2339,17 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+
+        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
+
+        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
+
+        return JSC::JSValue::encode(err);
+    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:
@@ -2352,6 +2398,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT, "Socket connection timeout"_s));
+    case ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout"_s));
     case ErrorCode::ERR_VM_MODULE_ALREADY_LINKED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module has already been linked"_s));
     case ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA:

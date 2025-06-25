@@ -35,6 +35,8 @@ pub fn deinit(this: *EnvMap) void {
     this.map.deinit();
 }
 
+/// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
+/// before handing it to this function!!!
 pub fn insert(this: *EnvMap, key: EnvStr, val: EnvStr) void {
     const result = this.map.getOrPut(key) catch bun.outOfMemory();
     if (!result.found_existing) {

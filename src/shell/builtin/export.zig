@@ -9,21 +9,19 @@ const Entry = struct {
     }
 };
 
-pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), comptime fmt: []const u8, args: anytype) Maybe(void) {
+pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), comptime fmt: []const u8, args: anytype) Yield {
     if (this.bltn().stdout.needsIO()) |safeguard| {
         var output: *BuiltinIO.Output = &@field(this.bltn(), @tagName(io_kind));
         this.printing = true;
-        output.enqueueFmtBltn(this, .@"export", fmt, args, safeguard);
-        return Maybe(void).success;
+        return output.enqueueFmtBltn(this, .@"export", fmt, args, safeguard);
     }
 
     const buf = this.bltn().fmtErrorArena(.@"export", fmt, args);
     _ = this.bltn().writeNoIO(io_kind, buf);
-    this.bltn().done(0);
-    return Maybe(void).success;
+    return this.bltn().done(0);
 }
 
-pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.printing);
     }
@@ -33,10 +31,10 @@ pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) void {
         break :brk @intFromEnum(e.?.getErrno());
     } else 0;
 
-    this.bltn().done(exit_code);
+    return this.bltn().done(exit_code);
 }
 
-pub fn start(this: *Export) Maybe(void) {
+pub fn start(this: *Export) Yield {
     const args = this.bltn().argsSlice();
 
     // Calling `export` with no arguments prints all exported variables lexigraphically ordered
@@ -72,16 +70,15 @@ pub fn start(this: *Export) Maybe(void) {
 
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.printing = true;
-            this.bltn().stdout.enqueue(this, buf, safeguard);
-
-            return Maybe(void).success;
+            return this.bltn().stdout.enqueue(this, buf, safeguard);
         }
 
         _ = this.bltn().writeNoIO(.stdout, buf);
-        this.bltn().done(0);
-        return Maybe(void).success;
+        return this.bltn().done(0);
     }
 
+    // TODO: It would be nice to not have to duplicate the arguments here. Can
+    // we make `Builtin.args` mutable so that we can take it out of the argv?
     for (args) |arg_raw| {
         const arg_sentinel = arg_raw[0..std.mem.len(arg_raw) :0];
         const arg = arg_sentinel[0..arg_sentinel.len];
@@ -92,17 +89,25 @@ pub fn start(this: *Export) Maybe(void) {
                 const buf = this.bltn().fmtErrorArena(.@"export", "`{s}`: not a valid identifier", .{arg});
                 return this.writeOutput(.stderr, "{s}\n", .{buf});
             }
-            this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(arg), EnvStr.initSlice(""), .exported);
+
+            const label_env_str = EnvStr.dupeRefCounted(arg);
+            defer label_env_str.deref();
+            this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, label_env_str, EnvStr.initSlice(""), .exported);
             continue;
         };
 
         const label = arg[0..eqsign_idx];
         const value = arg_sentinel[eqsign_idx + 1 .. :0];
-        this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, EnvStr.initSlice(label), EnvStr.initSlice(value), .exported);
+
+        const label_env_str = EnvStr.dupeRefCounted(label);
+        const value_env_str = EnvStr.dupeRefCounted(value);
+        defer label_env_str.deref();
+        defer value_env_str.deref();
+
+        this.bltn().parentCmd().base.shell.assignVar(this.bltn().parentCmd().base.interpreter, label_env_str, value_env_str, .exported);
     }
 
-    this.bltn().done(0);
-    return Maybe(void).success;
+    return this.bltn().done(0);
 }
 
 pub fn deinit(this: *Export) void {
@@ -118,6 +123,7 @@ pub inline fn bltn(this: *Export) *Builtin {
 // --
 const debug = bun.Output.scoped(.ShellExport, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
@@ -125,7 +131,6 @@ const Builtin = Interpreter.Builtin;
 const ExitCode = shell.ExitCode;
 const Export = @This();
 const JSC = bun.JSC;
-const Maybe = JSC.Maybe;
 const std = @import("std");
 const log = debug;
 const EnvStr = interpreter.EnvStr;

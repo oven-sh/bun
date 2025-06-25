@@ -27,7 +27,9 @@ pub const ImportKind = enum(u8) {
     /// A CSS "composes" property
     composes = 9,
 
-    internal = 10,
+    html_manifest = 10,
+
+    internal = 11,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -45,6 +47,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.url, "url-token");
         labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
+        labels.set(ImportKind.html_manifest, "html_manifest");
         break :brk labels;
     };
 
@@ -60,6 +63,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.url, "url()");
         labels.set(ImportKind.internal, "<bun internal>");
         labels.set(ImportKind.composes, "composes");
+        labels.set(ImportKind.html_manifest, "HTML import");
         break :brk labels;
     };
 

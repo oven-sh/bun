@@ -15,6 +15,12 @@ crypto.getRandomValues(new Uint8Array(1));
 // );
 
 await crypto.subtle.generateKey("HMAC", false, ["sign", "verify"]);
+expectType<CryptoKeyPair>(
+  await crypto.subtle.generateKey({ namedCurve: "Ed25519" } as import("node:crypto").webcrypto.EcKeyGenParams, false, [
+    "sign",
+    "verify",
+  ]),
+);
 
 declare const key: CryptoKey;
 

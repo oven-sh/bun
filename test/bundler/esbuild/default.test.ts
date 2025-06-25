@@ -198,7 +198,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.appendFile(
         "/out.js",
-        dedent/* js */ `
+        dedent /* js */ `
           import { strictEqual } from "node:assert";
           strictEqual(globalName.default, 123, ".default");
           strictEqual(globalName.v, 234, ".v");
@@ -299,7 +299,7 @@ describe("bundler", () => {
         export default 3;
         export const a2 = 4;
       `,
-      "/test.js": String.raw/* js */ `
+      "/test.js": String.raw /* js */ `
         import { deepEqual } from 'node:assert';
         globalThis.deepEqual = deepEqual;
         await import ('./out.js');
@@ -1579,6 +1579,29 @@ describe("bundler", () => {
     bundling: false,
     bundleErrors: {
       "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
+    },
+  });
+  itBundled("default/CircularTLADependency", {
+    files: {
+      "/entry.js": /* js */ `
+        const { A } = await import('./a.js');
+        console.log(A);
+      `,
+      "/a.js": /* js */ `
+        import { B } from './b.js';
+        export const A = 'hi';
+      `,
+      "/b.js": /* js */ `
+        import { A } from './a.js';
+
+        // TLA that should mark the wrapper closure for a.js as async
+        await 1;
+
+        export const B = 'hello';
+      `,
+    },
+    run: {
+      stdout: "hi\n",
     },
   });
   itBundled("default/ThisOutsideFunctionRenamedToExports", {

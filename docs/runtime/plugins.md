@@ -102,7 +102,7 @@ Once the plugin is registered, `.yaml` and `.yml` files can be directly imported
 {% codetabs %}
 
 ```ts#index.ts
-import data from "./data.yml"
+import * as data from "./data.yml"
 
 console.log(data);
 ```

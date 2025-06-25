@@ -743,7 +743,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
             source,
             request,
             // It is theoretically possible for a breakpoint to resolve to multiple locations.
-            // In that case, send a seperate `breakpoint` event for each one, excluding the first.
+            // In that case, send a separate `breakpoint` event for each one, excluding the first.
             notify: i > 0,
           }),
         );

@@ -22,11 +22,12 @@ pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
     mime_type: ?*const bun.http.MimeType = null,
     status_code: u16 = 200,
+    headers: ?*JSC.WebCore.FetchHeaders = null,
 };
 
 /// Ownership of `blob` is transferred to this function.
 pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(null, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
+    var headers = Headers.from(options.headers, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();

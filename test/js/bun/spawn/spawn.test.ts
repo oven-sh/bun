@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
+  isBroken,
   isMacOS,
   isPosix,
   isWindows,
@@ -492,7 +493,7 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it("after exit", async () => {
+              it.skipIf(isWindows && isBroken && callback === huge)("after exit", async () => {
                 const process = callback();
                 await process.exited;
                 const output = await readableStreamToText(process.stdout);

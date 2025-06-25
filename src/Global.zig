@@ -219,6 +219,8 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
+    bun.JSC.Node.FSEvents.closeAndWait();
+
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);

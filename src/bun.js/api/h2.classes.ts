@@ -105,9 +105,9 @@ export default [
         fn: "setNextStreamID",
         length: 1,
       },
-      getAllStreams: {
-        fn: "getAllStreams",
-        length: 0,
+      forEachStream: {
+        fn: "forEachStream",
+        length: 2,
       },
       emitErrorToAllStreams: {
         fn: "emitErrorToAllStreams",

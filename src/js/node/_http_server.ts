@@ -1071,12 +1071,19 @@ const ServerPrototype = {
                 http_res.assignSocket(socket);
               }
             }
-          } else if (http_req.headers.expect === "100-continue") {
-            if (server.listenerCount("checkContinue") > 0) {
-              server.emit("checkContinue", http_req, http_res);
+          } else if (http_req.headers.expect !== undefined) {
+            if (http_req.headers.expect === "100-continue") {
+              if (server.listenerCount("checkContinue") > 0) {
+                server.emit("checkContinue", http_req, http_res);
+              } else {
+                http_res.writeContinue();
+                server.emit("request", http_req, http_res);
+              }
+            } else if (server.listenerCount("checkExpectation") > 0) {
+              server.emit("checkExpectation", http_req, http_res);
             } else {
-              http_res.writeContinue();
-              server.emit("request", http_req, http_res);
+              http_res.writeHead(417);
+              http_res.end();
             }
           } else {
             server.emit("request", http_req, http_res);
@@ -1406,6 +1413,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   setTimeout(_timeout, _callback) {
     return this;
+  }
+
+  setEncoding(_encoding) {
+    const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
+    err.code = "ERR_HTTP_SOCKET_ENCODING";
+    throw err;
   }
 
   unref() {

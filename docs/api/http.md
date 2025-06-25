@@ -326,7 +326,11 @@ Bun.serve({
 
 ### HTML imports
 
-To add a client-side single-page app, you can use an HTML import:
+Bun supports importing HTML files directly into your server code, enabling full-stack applications with both server-side and client-side code. HTML imports work in two modes:
+
+**Development (`bun --hot`):** Assets are bundled on-demand at runtime, enabling hot module replacement (HMR) for a fast, iterative development experience. When you change your frontend code, the browser automatically updates without a full page reload.
+
+**Production (`bun build`):** When building with `bun build --target=bun`, the `import index from "./index.html"` statement resolves to a pre-built manifest object containing all bundled client assets. `Bun.serve` consumes this manifest to serve optimized assets with zero runtime bundling overhead. This is ideal for deploying to production.
 
 ```ts
 import myReactSinglePageApp from "./index.html";
@@ -338,9 +342,9 @@ Bun.serve({
 });
 ```
 
-HTML imports don't just serve HTML. It's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser.
+HTML imports don't just serve HTML — it's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser. You can use this to build full-featured frontends with React, TypeScript, Tailwind CSS, and more.
 
-You can use this to build a full-featured frontend with React, TypeScript, Tailwind CSS, and more. Check out [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack) to learn more.
+For a complete guide on building full-stack applications with HTML imports, including detailed examples and best practices, see [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack).
 
 ### Practical example: REST API
 

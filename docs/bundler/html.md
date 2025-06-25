@@ -206,6 +206,38 @@ Each call to `console.log` or `console.error` will be broadcast to the terminal 
 
 Internally, this reuses the existing WebSocket connection from hot module reloading to send the logs.
 
+### Edit files in the browser
+
+Bun's frontend dev server has support for [Automatic Workspace Folders](https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md) in Chrome DevTools, which lets you save edits to files in the browser.
+
+{% image src="/images/bun-chromedevtools.gif" alt="Bun's frontend dev server has support for Automatic Workspace Folders in Chrome DevTools, which lets you save edits to files in the browser." /%}
+
+{% details summary="How it works" %}
+
+Bun's dev server automatically adds a `/.well-known/appspecific/com.chrome.devtools.json` route to the server.
+
+This route returns a JSON object with the following shape:
+
+```json
+{
+  "workspace": {
+    "root": "/path/to/your/project",
+    "uuid": "a-unique-identifier-for-this-workspace"
+  }
+}
+```
+
+For security reasons, this is only enabled when:
+
+1. The request is coming from localhost, 127.0.0.1, or ::1.
+2. Hot Module Reloading is enabled.
+3. The `chromeDevToolsAutomaticWorkspaceFolders` flag is set to `true` or `undefined`.
+4. There are no other routes that match the request.
+
+You can disable this by passing `development: { chromeDevToolsAutomaticWorkspaceFolders: false }` in `Bun.serve`'s options.
+
+{% /details %}
+
 ## Keyboard Shortcuts
 
 While the server is running:

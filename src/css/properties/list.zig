@@ -3,8 +3,6 @@ const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
-
-
 const CustomIdent = css.css_values.ident.CustomIdent;
 const CSSString = css.css_values.string.CSSString;
 const Image = css.css_values.image.Image;

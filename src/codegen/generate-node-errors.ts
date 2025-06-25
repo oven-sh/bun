@@ -124,6 +124,7 @@ zig += `
   extern fn Bun__createErrorWithCode(globalThis: *JSC.JSGlobalObject, code: Error, message: *bun.String) JSC.JSValue;
 
   /// Creates an Error object with the given error code.
+  /// If an error is thrown while creating the Error object, returns that error instead.
   /// Derefs the message string.
   pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, message: *bun.String) JSC.JSValue {
     defer message.deref();

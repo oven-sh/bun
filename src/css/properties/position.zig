@@ -7,9 +7,6 @@ pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
-
-
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 pub const Position = union(enum) {
     /// The box is laid in the document flow.

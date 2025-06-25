@@ -10,6 +10,7 @@
 #include <zlib.h>
 #include <brotli/encode.h>
 #include <brotli/decode.h>
+#include <zstd.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1016,6 +1017,8 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UNZIP"_s)), jsNumber(7));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODE"_s)), jsNumber(8));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_ENCODE"_s)), jsNumber(9));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_COMPRESS"_s)), jsNumber(10));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_DECOMPRESS"_s)), jsNumber(11));
 
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_WINDOWBITS"_s)), jsNumber(8));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_WINDOWBITS"_s)), jsNumber(15));
@@ -1091,6 +1094,69 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_UNREACHABLE"_s)), jsNumber(BROTLI_DECODER_ERROR_UNREACHABLE));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_continue"_s)), jsNumber(ZSTD_e_continue));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_flush"_s)), jsNumber(ZSTD_e_flush));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_end"_s)), jsNumber(ZSTD_e_end));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_fast"_s)), jsNumber(ZSTD_fast));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_dfast"_s)), jsNumber(ZSTD_dfast));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_greedy"_s)), jsNumber(ZSTD_greedy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy"_s)), jsNumber(ZSTD_lazy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy2"_s)), jsNumber(ZSTD_lazy2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btlazy2"_s)), jsNumber(ZSTD_btlazy2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btopt"_s)), jsNumber(ZSTD_btopt));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra"_s)), jsNumber(ZSTD_btultra));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra2"_s)), jsNumber(ZSTD_btultra2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_compressionLevel"_s)), jsNumber(ZSTD_c_compressionLevel));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_windowLog"_s)), jsNumber(ZSTD_c_windowLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_hashLog"_s)), jsNumber(ZSTD_c_hashLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_chainLog"_s)), jsNumber(ZSTD_c_chainLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_searchLog"_s)), jsNumber(ZSTD_c_searchLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_minMatch"_s)), jsNumber(ZSTD_c_minMatch));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_targetLength"_s)), jsNumber(ZSTD_c_targetLength));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_strategy"_s)), jsNumber(ZSTD_c_strategy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_enableLongDistanceMatching"_s)), jsNumber(ZSTD_c_enableLongDistanceMatching));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashLog"_s)), jsNumber(ZSTD_c_ldmHashLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmMinMatch"_s)), jsNumber(ZSTD_c_ldmMinMatch));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmBucketSizeLog"_s)), jsNumber(ZSTD_c_ldmBucketSizeLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashRateLog"_s)), jsNumber(ZSTD_c_ldmHashRateLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_contentSizeFlag"_s)), jsNumber(ZSTD_c_contentSizeFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_checksumFlag"_s)), jsNumber(ZSTD_c_checksumFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_dictIDFlag"_s)), jsNumber(ZSTD_c_dictIDFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_nbWorkers"_s)), jsNumber(ZSTD_c_nbWorkers));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_jobSize"_s)), jsNumber(ZSTD_c_jobSize));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_overlapLog"_s)), jsNumber(ZSTD_c_overlapLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_d_windowLogMax"_s)), jsNumber(ZSTD_d_windowLogMax));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_CLEVEL_DEFAULT"_s)), jsNumber(ZSTD_CLEVEL_DEFAULT));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_no_error"_s)), jsNumber(ZSTD_error_no_error));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_GENERIC"_s)), jsNumber(ZSTD_error_GENERIC));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_prefix_unknown"_s)), jsNumber(ZSTD_error_prefix_unknown));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_version_unsupported"_s)), jsNumber(ZSTD_error_version_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_unsupported"_s)), jsNumber(ZSTD_error_frameParameter_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_windowTooLarge"_s)), jsNumber(ZSTD_error_frameParameter_windowTooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_corruption_detected"_s)), jsNumber(ZSTD_error_corruption_detected));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_checksum_wrong"_s)), jsNumber(ZSTD_error_checksum_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_literals_headerWrong"_s)), jsNumber(ZSTD_error_literals_headerWrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_corrupted"_s)), jsNumber(ZSTD_error_dictionary_corrupted));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_wrong"_s)), jsNumber(ZSTD_error_dictionary_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionaryCreation_failed"_s)), jsNumber(ZSTD_error_dictionaryCreation_failed));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_unsupported"_s)), jsNumber(ZSTD_error_parameter_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_combination_unsupported"_s)), jsNumber(ZSTD_error_parameter_combination_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_outOfBound"_s)), jsNumber(ZSTD_error_parameter_outOfBound));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_tableLog_tooLarge"_s)), jsNumber(ZSTD_error_tableLog_tooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooLarge"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooSmall"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stabilityCondition_notRespected"_s)), jsNumber(ZSTD_error_stabilityCondition_notRespected));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stage_wrong"_s)), jsNumber(ZSTD_error_stage_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_init_missing"_s)), jsNumber(ZSTD_error_init_missing));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_memory_allocation"_s)), jsNumber(ZSTD_error_memory_allocation));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_workSpace_tooSmall"_s)), jsNumber(ZSTD_error_workSpace_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstSize_tooSmall"_s)), jsNumber(ZSTD_error_dstSize_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_srcSize_wrong"_s)), jsNumber(ZSTD_error_srcSize_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstBuffer_null"_s)), jsNumber(ZSTD_error_dstBuffer_null));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_destFull"_s)), jsNumber(ZSTD_error_noForwardProgress_destFull));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_inputEmpty"_s)), jsNumber(ZSTD_error_noForwardProgress_inputEmpty));
 
     return object;
 }

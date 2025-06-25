@@ -374,7 +374,12 @@ pub fn deinit(this: *@This()) void {
         this.pending_buffer = &.{};
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };
-        this.pending.run();
+        if (this.pending.state == .pending and this.pending.future == .promise) {
+            // We must never run JavaScript inside of a GC finalizer.
+            this.pending.runOnNextTick();
+        } else {
+            this.pending.run();
+        }
     }
     if (this.buffer_action) |*action| {
         action.deinit();

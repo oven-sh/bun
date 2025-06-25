@@ -582,11 +582,11 @@ Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
 const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
-buf; // => Uint8Array(25)
-compressed; // => Uint8Array(10)
+buf; // => Buffer(500)
+compressed; // => Uint8Array(12)
 ```
 
-The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bungzipsync).
+The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun-gzipsync).
 
 ## `Bun.inflateSync()`
 

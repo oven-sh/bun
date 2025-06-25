@@ -135,7 +135,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
         .utf8 => if (bun.strings.isAllASCII(str.byteSlice()))
             return split(.utf8, globalThis, bun.default_allocator, &str)
         else
-            return JSC.JSValue.jsUndefined(),
+            return .js_undefined,
     };
 }
 
@@ -209,7 +209,7 @@ pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     defer str.deref();
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
     if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
-    return JSC.JSValue.jsUndefined();
+    return .js_undefined;
 }
 
 pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

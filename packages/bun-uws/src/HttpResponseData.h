@@ -109,5 +109,3 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 };
 
 }
-
-

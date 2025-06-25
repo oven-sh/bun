@@ -387,6 +387,7 @@ public:
         JSArray* val = calls.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->calls.set(vm(), this, val);
         }
         return val;
@@ -396,6 +397,7 @@ public:
         JSArray* val = contexts.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->contexts.set(vm(), this, val);
         }
         return val;
@@ -405,6 +407,7 @@ public:
         JSArray* val = instances.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->instances.set(vm(), this, val);
         }
         return val;
@@ -414,6 +417,7 @@ public:
         JSArray* val = returnValues.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->returnValues.set(vm(), this, val);
         }
         return val;
@@ -423,6 +427,7 @@ public:
         JSArray* val = invocationCallOrder.get();
         if (!val) {
             val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            // RETURN_IF_EXCEPTION
             this->invocationCallOrder.set(vm(), this, val);
         }
         return val;

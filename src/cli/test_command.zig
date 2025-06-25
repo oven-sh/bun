@@ -9,7 +9,6 @@ const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 
-
 const FileSystem = @import("../fs.zig").FileSystem;
 const options = @import("../options.zig");
 const js_ast = bun.JSAst;
@@ -1528,7 +1527,7 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {

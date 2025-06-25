@@ -1491,9 +1491,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            // This exit code is what Node.js uses when it calls
-            // abort. This is relied on by their Node-API tests.
-            bun.c.quick_exit(134);
+            // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it includes a
+            // breakpoint which makes crashes easier to debug.
+            std.posix.abort();
         },
         else => {
             // Install default handler so that the tkill below will terminate.
@@ -1779,9 +1779,9 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
-        if (!bun.Environment.isMac) return .undefined;
+        if (!bun.Environment.isMac) return .js_undefined;
 
-        const header = std.c._dyld_get_image_header(0) orelse return .undefined;
+        const header = std.c._dyld_get_image_header(0) orelse return .js_undefined;
         const base_address = @intFromPtr(header);
         const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
 
@@ -1793,7 +1793,7 @@ pub const js_bindings = struct {
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
         std.mem.doNotOptimizeAway(&ptr);
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1826,7 +1826,7 @@ pub const js_bindings = struct {
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
-        const array = JSValue.createEmptyArray(global, list.len);
+        const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }

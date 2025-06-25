@@ -44,10 +44,7 @@ void *sni_find(void *sni, const char *hostname);
 #include <wolfssl/options.h>
 #endif
 
-#include "./root_certs.h"
-
-/* These are in root_certs.cpp */
-extern X509_STORE *us_get_default_ca_store();
+#include "./root_certs_header.h"
 
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
@@ -213,7 +210,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl_read_wants_write = 0;
   s->fatal_error = 0;
   s->handshake_state = HANDSHAKE_PENDING;
-  
+
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 // if we allow renegotiation, we need to set the mode here
@@ -255,7 +252,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 }
 
 /// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
-/// @param s 
+/// @param s
 int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
   // Scenarios:
@@ -265,7 +262,7 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
   // 4 - we are in the middle of a handshake
   // 5 - we received a fatal error
   if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error || !SSL_is_init_finished(s->ssl)) return 1;
-    
+
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
   int sent_shutdown = state & SSL_SENT_SHUTDOWN;
@@ -277,7 +274,7 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
     // Zero means that we should wait for the peer to close the connection
     // but we are already closing the connection so we do a fast shutdown here
     int ret = SSL_shutdown(s->ssl);
-    if(ret == 0 && force_fast_shutdown) { 
+    if(ret == 0 && force_fast_shutdown) {
       // do a fast shutdown (dont wait for peer)
       ret = SSL_shutdown(s->ssl);
     }
@@ -397,7 +394,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   // nothing todo here, renegotiation must be handled in SSL_read
   if (s->handshake_state != HANDSHAKE_PENDING)
     return;
-  
+
   if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
      (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
 
@@ -422,7 +419,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
         s->fatal_error = 1;
       }
       us_internal_trigger_handshake_callback(s, 0);
-    
+
       return;
     }
     s->handshake_state = HANDSHAKE_PENDING;
@@ -504,7 +501,7 @@ restart:
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-    
+
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
       // as far as I know these are the only errors we want to handle
@@ -603,7 +600,7 @@ restart:
       goto restart;
     }
   }
-  // Trigger writable if we failed last SSL_write with SSL_ERROR_WANT_READ 
+  // Trigger writable if we failed last SSL_write with SSL_ERROR_WANT_READ
   // If we failed SSL_read because we need to write more data (SSL_ERROR_WANT_WRITE) we are not going to trigger on_writable, we will wait until the next on_data or on_writable event
   // SSL_read will try to flush the write buffer and if fails with SSL_ERROR_WANT_WRITE means the socket is not in a writable state anymore and only makes sense to trigger on_writable if we can write more data
   // Otherwise we possible would trigger on_writable -> on_data event in a recursive loop
@@ -1133,7 +1130,7 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 }
 
 SSL_CTX *create_ssl_context_from_bun_options(
-    struct us_bun_socket_context_options_t options, 
+    struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err) {
   ERR_clear_error();
 
@@ -1250,8 +1247,8 @@ SSL_CTX *create_ssl_context_from_bun_options(
         return NULL;
       }
 
-     // It may return spurious errors here.
-    ERR_clear_error();
+      // It may return spurious errors here.
+      ERR_clear_error();
 
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
@@ -1755,7 +1752,7 @@ int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
                                  const char *data, int length, int msg_more) {
-  
+
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
     return 0;
   }
@@ -1989,7 +1986,7 @@ ssl_wrapped_context_on_end(struct us_internal_ssl_socket_t *s) {
   if (wrapped_context->events.on_end) {
     wrapped_context->events.on_end((struct us_socket_t *)s);
   }
-  
+
   return s;
 }
 
@@ -2082,7 +2079,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
       old_context->loop, sizeof(struct us_wrapped_socket_context_t),
       options, &err);
-  
+
   // Handle SSL context creation failure
   if (UNLIKELY(!context)) {
     return NULL;

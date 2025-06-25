@@ -270,6 +270,11 @@ pub const ZigString = extern struct {
             list.items.ptr[list.items.len] = 0;
         }
 
+        if (list.capacity > 0 and list.items.len == 0) {
+            list.deinit();
+            return &.{};
+        }
+
         return list.items;
     }
 

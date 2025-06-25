@@ -858,7 +858,8 @@ function getSshKeys() {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name));
+      .map(({ name }) => join(sshPath, name))
+      .filter(path => !readFile(path, { cache: true }).startsWith("ssh-ed25519"));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({

@@ -39,6 +39,6 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         basicBlocks.append(range);
     }
 
-    blockCallback(ctx, basicBlocks.data(), basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+    blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset, ignoreSourceMap);
     return true;
 }

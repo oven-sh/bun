@@ -97,6 +97,22 @@ pub const LifecycleScriptSubprocess = struct {
     // This is only used on the main thread.
     var cwd_z_buf: bun.PathBuffer = undefined;
 
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+        output.flags.nonblocking = true;
+        output.flags.socket = true;
+        output.flags.memfd = false;
+        output.flags.received_eof = false;
+        output.flags.closed_without_reporting = false;
+
+        if (comptime Environment.allow_assert) {
+            const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
+
+            const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
+        }
+    }
+
     fn ensureNotInHeap(this: *LifecycleScriptSubprocess) void {
         if (this.heap.child != null or this.heap.next != null or this.heap.prev != null or this.manager.active_lifecycle_scripts.root == this) {
             this.manager.active_lifecycle_scripts.remove(this);
@@ -219,7 +235,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stdout.setParent(this);
                     _ = bun.sys.setNonblocking(stdout);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stdout, stdout);
                     try this.stdout.start(stdout, true).unwrap();
+                    if (this.stdout.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stdout.setParent(this);
                     this.stdout.startMemfd(stdout);
@@ -230,7 +251,12 @@ pub const LifecycleScriptSubprocess = struct {
                     this.stderr.setParent(this);
                     _ = bun.sys.setNonblocking(stderr);
                     this.remaining_fds += 1;
+
+                    resetOutputFlags(&this.stderr, stderr);
                     try this.stderr.start(stderr, true).unwrap();
+                    if (this.stderr.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stderr.setParent(this);
                     this.stderr.startMemfd(stderr);

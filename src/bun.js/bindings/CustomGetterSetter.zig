@@ -1,4 +1,3 @@
-
 pub const CustomGetterSetter = opaque {
     pub fn isGetterNull(this: *CustomGetterSetter) bool {
         return JSC__CustomGetterSetter__isGetterNull(this);

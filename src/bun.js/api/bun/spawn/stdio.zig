@@ -284,15 +284,11 @@ pub const Stdio = union(enum) {
     }
 
     pub fn extract(out_stdio: *Stdio, globalThis: *JSC.JSGlobalObject, i: i32, value: JSValue) bun.JSError!void {
-        switch (value) {
-            // undefined: default
-            .undefined, .zero => return,
-            // null: ignore
-            .null => {
-                out_stdio.* = Stdio{ .ignore = {} };
-                return;
-            },
-            else => {},
+        if (value == .zero) return;
+        if (value.isUndefined()) return;
+        if (value.isNull()) {
+            out_stdio.* = Stdio{ .ignore = {} };
+            return;
         }
 
         if (value.isString()) {

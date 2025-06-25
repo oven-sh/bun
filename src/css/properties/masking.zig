@@ -7,7 +7,6 @@ pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Image = css.css_values.image.Image;
 const Rect = css.css_values.rect.Rect;

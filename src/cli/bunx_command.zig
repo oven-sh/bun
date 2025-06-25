@@ -160,12 +160,12 @@ pub const BunxCommand = struct {
         }
 
         const package_json_contents = package_json_read.bytes.items;
-        const source = bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
+        const source = &bun.logger.Source.initPathString(bun.span(subpath_z), package_json_contents);
 
         bun.JSAst.Expr.Data.Store.create();
         bun.JSAst.Stmt.Data.Store.create();
 
-        const expr = try bun.JSON.parsePackageJSONUTF8(&source, transpiler.log, transpiler.allocator);
+        const expr = try bun.JSON.parsePackageJSONUTF8(source, transpiler.log, transpiler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {

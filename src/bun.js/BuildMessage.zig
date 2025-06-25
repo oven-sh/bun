@@ -26,7 +26,7 @@ pub const BuildMessage = struct {
 
     pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         const notes = this.msg.notes;
-        const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
+        const array = try JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
             const cloned = try note.clone(bun.default_allocator);
             array.putIndex(

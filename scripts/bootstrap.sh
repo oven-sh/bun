@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 10
+# Version: 11
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.

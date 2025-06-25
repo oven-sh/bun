@@ -10,21 +10,20 @@ pub const JSArrayIterator = struct {
     array: JSValue,
     global: *JSGlobalObject,
 
-    pub fn init(value: JSValue, global: *JSGlobalObject) JSArrayIterator {
+    pub fn init(value: JSValue, global: *JSGlobalObject) bun.JSError!JSArrayIterator {
         return .{
             .array = value,
             .global = global,
-            .len = @as(u32, @truncate(value.getLength(global))),
+            .len = @truncate(try value.getLength(global)),
         };
     }
 
-    // TODO: this can throw
-    pub fn next(this: *JSArrayIterator) ?JSValue {
+    pub fn next(this: *JSArrayIterator) bun.JSError!?JSValue {
         if (!(this.i < this.len)) {
             return null;
         }
         const i = this.i;
         this.i += 1;
-        return JSObject.getIndex(this.array, this.global, i);
+        return try JSObject.getIndex(this.array, this.global, i);
     }
 };

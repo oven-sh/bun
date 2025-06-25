@@ -95,14 +95,6 @@ To print the hash stored in the current lockfile:
 $ bun pm hash-print
 ```
 
-## audit
-
-To run a security audit for packages in bun.lock or bun.lockb
-
-```bash
-$ bun pm audit
-```
-
 ## cache
 
 To print the path to Bun's global module cache:

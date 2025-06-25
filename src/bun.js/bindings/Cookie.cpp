@@ -85,12 +85,12 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
         return Exception { TypeError, "Invalid cookie string: no '=' found"_s };
     }
 
-    String name = cookiePair.substring(0, firstEqualsPos).trim(isASCIIWhitespace<UChar>).toString();
+    String name = cookiePair.substring(0, firstEqualsPos).trim(isASCIIWhitespace<char16_t>).toString();
     if (name.isEmpty())
         return Exception { TypeError, "Invalid cookie string: name cannot be empty"_s };
 
     ASSERT(isValidHTTPHeaderValue(name));
-    String value = cookiePair.substring(firstEqualsPos + 1).trim(isASCIIWhitespace<UChar>).toString();
+    String value = cookiePair.substring(firstEqualsPos + 1).trim(isASCIIWhitespace<char16_t>).toString();
 
     // Default values
     String domain;
@@ -108,15 +108,15 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
         auto attributesString = cookieString.substring(firstSemicolonPos + 1);
 
         for (auto attribute : attributesString.split(';')) {
-            auto trimmedAttribute = attribute.trim(isASCIIWhitespace<UChar>);
+            auto trimmedAttribute = attribute.trim(isASCIIWhitespace<char16_t>);
             size_t assignmentPos = trimmedAttribute.find('=');
 
             String attributeName;
             String attributeValue;
 
             if (assignmentPos != notFound) {
-                attributeName = trimmedAttribute.substring(0, assignmentPos).trim(isASCIIWhitespace<UChar>).convertToASCIILowercase();
-                attributeValue = trimmedAttribute.substring(assignmentPos + 1).trim(isASCIIWhitespace<UChar>).toString();
+                attributeName = trimmedAttribute.substring(0, assignmentPos).trim(isASCIIWhitespace<char16_t>).convertToASCIILowercase();
+                attributeValue = trimmedAttribute.substring(assignmentPos + 1).trim(isASCIIWhitespace<char16_t>).toString();
             } else {
                 attributeName = trimmedAttribute.convertToASCIILowercase();
                 attributeValue = emptyString();
@@ -182,7 +182,7 @@ String Cookie::toString(JSC::VM& vm) const
     return builder.toString();
 }
 
-static inline bool isValidCharacterInCookieName(UChar c)
+static inline bool isValidCharacterInCookieName(char16_t c)
 {
     return (c >= 0x21 && c <= 0x3A) || (c == 0x3C) || (c >= 0x3E && c <= 0x7E);
 }
@@ -201,7 +201,7 @@ bool Cookie::isValidCookieName(const String& name)
     }
     return true;
 }
-static inline bool isValidCharacterInCookiePath(UChar c)
+static inline bool isValidCharacterInCookiePath(char16_t c)
 {
     return (c >= 0x20 && c <= 0x3A) || (c >= 0x3D && c <= 0x7E);
 }
@@ -220,7 +220,7 @@ bool Cookie::isValidCookiePath(const String& path)
     return true;
 }
 
-static inline bool isValidCharacterInCookieDomain(UChar c)
+static inline bool isValidCharacterInCookieDomain(char16_t c)
 {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-';
 }

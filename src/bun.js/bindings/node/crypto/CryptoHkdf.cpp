@@ -50,11 +50,11 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
         .len = key.size(),
     };
     auto infoBuf = ncrypto::Buffer<const unsigned char> {
-        .data = m_info.data(),
+        .data = m_info.begin(),
         .len = m_info.size(),
     };
     auto saltBuf = ncrypto::Buffer<const unsigned char> {
-        .data = m_salt.data(),
+        .data = m_salt.begin(),
         .len = m_salt.size(),
     };
     auto dp = ncrypto::hkdf(m_digest, keyBuf, infoBuf, saltBuf, m_length);

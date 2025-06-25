@@ -401,6 +401,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     RETURN_IF_EXCEPTION(throwScope, {});
     auto entries = impl.getAll(name);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(throwScope, {});
     for (auto entry : entries) {
         if (auto string = std::get_if<String>(&entry)) {
             result->push(lexicalGlobalObject, jsString(vm, *string));

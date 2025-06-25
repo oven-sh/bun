@@ -1,5 +1,5 @@
 #include "InspectorLifecycleAgent.h"
-
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -12,6 +12,12 @@
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ConsoleObject.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/IterationKind.h>
+#include "BunProcess.h"
+#include "headers.h"
 
 namespace Inspector {
 
@@ -131,4 +137,77 @@ Protocol::ErrorStringOr<void> InspectorLifecycleAgent::stopPreventingExit()
     return {};
 }
 
-} // namespace Inspector
+using ModuleGraph = std::tuple<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */>;
+
+Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
+{
+    auto& vm = m_globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* global = defaultGlobalObject(&m_globalObject);
+    auto* esmMap = global->esmRegistryMap();
+    auto* cjsMap = global->requireMap();
+
+    if (!esmMap || !cjsMap) {
+        return makeUnexpected(ErrorString("Module graph not available"_s));
+    }
+
+    Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
+    {
+        auto iter1 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
+        JSC::JSValue value;
+        while (iter1->next(global, value)) {
+            esm->addItem(value.toWTFString(global));
+            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to esm array"_s)));
+        }
+    }
+
+    Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
+    {
+        auto iter2 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
+        JSC::JSValue value;
+        while (iter2->next(global, value)) {
+            cjs->addItem(value.toWTFString(global));
+            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to cjs array"_s)));
+        }
+    }
+
+    auto* process = global->processObject();
+
+    Ref<JSON::ArrayOf<String>> argv = JSON::ArrayOf<String>::create();
+    {
+
+        auto* array = jsCast<JSC::JSArray*>(process->getArgv(global));
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get argv"_s)));
+        for (size_t i = 0, length = array->length(); i < length; i++) {
+            auto value = array->getIndex(global, i);
+            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get value at index"_s)));
+            auto string = value.toWTFString(global);
+            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+            argv->addItem(string);
+        }
+    }
+
+    String main;
+    {
+        auto& builtinNames = Bun::builtinNames(vm);
+        auto value = global->bunObject()->get(global, builtinNames.mainPublicName());
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get main"_s)));
+        main = value.toWTFString(global);
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+    }
+
+    String cwd;
+    {
+        auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(&m_globalObject));
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get cwd"_s)));
+        cwd = cwdValue.toWTFString(global);
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+    }
+
+    return ModuleGraph { WTFMove(esm), WTFMove(cjs), WTFMove(cwd), WTFMove(main), WTFMove(argv) };
+}
+
+}

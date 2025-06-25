@@ -64,7 +64,7 @@ const EbusyState = struct {
     }
 };
 
-pub fn start(this: *Cp) Maybe(void) {
+pub fn start(this: *Cp) Yield {
     const maybe_filepath_args = switch (this.opts.parse(this.bltn().argsSlice())) {
         .ok => |args| args,
         .err => |e| {
@@ -74,14 +74,12 @@ pub fn start(this: *Cp) Maybe(void) {
                 .unsupported => |unsupported| this.bltn().fmtErrorArena(.cp, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
             };
 
-            _ = this.writeFailingError(buf, 1);
-            return Maybe(void).success;
+            return this.writeFailingError(buf, 1);
         },
     };
 
     if (maybe_filepath_args == null or maybe_filepath_args.?.len <= 1) {
-        _ = this.writeFailingError(Builtin.Kind.cp.usageString(), 1);
-        return Maybe(void).success;
+        return this.writeFailingError(Builtin.Kind.cp.usageString(), 1);
     }
 
     const args = maybe_filepath_args orelse unreachable;
@@ -93,12 +91,10 @@ pub fn start(this: *Cp) Maybe(void) {
         .paths_to_copy = paths_to_copy,
     } };
 
-    this.next();
-
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn ignoreEbusyErrorIfPossible(this: *Cp) void {
+pub fn ignoreEbusyErrorIfPossible(this: *Cp) Yield {
     if (!bun.Environment.isWindows) @compileError("dont call this plz");
 
     if (this.state.ebusy.idx < this.state.ebusy.state.tasks.items.len) {
@@ -115,18 +111,17 @@ pub fn ignoreEbusyErrorIfPossible(this: *Cp) void {
                 continue :outer_loop;
             }
             this.state.ebusy.idx += i + 1;
-            this.printShellCpTask(task);
-            return;
+            return this.printShellCpTask(task);
         }
     }
 
     this.state.ebusy.state.deinit();
     const exit_code = this.state.ebusy.main_exit_code;
     this.state = .done;
-    this.bltn().done(exit_code);
+    return this.bltn().done(exit_code);
 }
 
-pub fn next(this: *Cp) void {
+pub fn next(this: *Cp) Yield {
     while (this.state != .done) {
         switch (this.state) {
             .idle => @panic("Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"),
@@ -146,10 +141,9 @@ pub fn next(this: *Cp) void {
                             exec.ebusy.deinit();
                         }
                         this.state = .done;
-                        this.bltn().done(exit_code);
-                        return;
+                        return this.bltn().done(exit_code);
                     }
-                    return;
+                    return .suspended;
                 }
 
                 exec.started = true;
@@ -163,46 +157,44 @@ pub fn next(this: *Cp) void {
                     const cp_task = ShellCpTask.create(this, this.bltn().eventLoop(), this.opts, 1 + exec.paths_to_copy.len, path, exec.target_path, cwd_path);
                     cp_task.schedule();
                 }
-                return;
+                return .suspended;
             },
             .ebusy => {
                 if (comptime bun.Environment.isWindows) {
-                    this.ignoreEbusyErrorIfPossible();
-                    return;
-                } else @panic("Should only be called on Windows");
+                    return this.ignoreEbusyErrorIfPossible();
+                }
+                @panic("Should only be called on Windows");
             },
-            .waiting_write_err => return,
+            .waiting_write_err => return .failed,
             .done => unreachable,
         }
     }
 
-    this.bltn().done(0);
+    return this.bltn().done(0);
 }
 
 pub fn deinit(cp: *Cp) void {
     assert(cp.state == .done or cp.state == .waiting_write_err);
 }
 
-pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Yield {
     if (this.bltn().stderr.needsIO()) |safeguard| {
         this.state = .waiting_write_err;
-        this.bltn().stderr.enqueue(this, buf, safeguard);
-        return Maybe(void).success;
+        return this.bltn().stderr.enqueue(this, buf, safeguard);
     }
 
     _ = this.bltn().writeNoIO(.stderr, buf);
 
-    this.bltn().done(exit_code);
-    return Maybe(void).success;
+    return this.bltn().done(exit_code);
 }
 
-pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?JSC.SystemError) Yield {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
     }
     this.state.exec.output_done += 1;
-    this.next();
+    return this.next();
 }
 
 pub inline fn bltn(this: *@This()) *Builtin {
@@ -226,7 +218,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-                this.next();
+                this.next().run();
                 return;
             }
         } else {
@@ -239,10 +231,10 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
         }
     }
 
-    this.printShellCpTask(task);
+    this.printShellCpTask(task).run();
 }
 
-pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
+pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
     // Deinitialize this task as we are starting a new one
     defer task.deinit();
 
@@ -256,10 +248,9 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
     if (bun.take(&task.err)) |err| {
         this.state.exec.err = err;
         const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
-        output_task.start(error_string);
-        return;
+        return output_task.start(error_string);
     }
-    output_task.start(null);
+    return output_task.start(null);
 }
 
 pub const ShellCpOutputTask = OutputTask(Cp, .{
@@ -271,36 +262,34 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 });
 
 const ShellCpOutputTaskVTable = struct {
-    pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) CoroutineResult {
+    pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) ?Yield {
         if (this.bltn().stderr.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
-            return .yield;
+            return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
-        return .cont;
+        return null;
     }
 
     pub fn onWriteErr(this: *Cp) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) CoroutineResult {
+    pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) ?Yield {
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state.exec.output_waiting += 1;
-            this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
-            return .yield;
+            return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, output.slice());
-        return .cont;
+        return null;
     }
 
     pub fn onWriteOut(this: *Cp) void {
         this.state.exec.output_done += 1;
     }
 
-    pub fn onDone(this: *Cp) void {
-        this.next();
+    pub fn onDone(this: *Cp) Yield {
+        return this.next();
     }
 };
 
@@ -743,6 +732,7 @@ const ArrayList = std.ArrayList;
 const Syscall = bun.sys;
 const bun = @import("bun");
 const shell = bun.shell;
+const Yield = shell.Yield;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
@@ -751,7 +741,6 @@ const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
 const ExitCode = shell.ExitCode;
 const Cp = @This();
-const CoroutineResult = interpreter.CoroutineResult;
 const OutputTask = interpreter.OutputTask;
 const assert = bun.assert;
 

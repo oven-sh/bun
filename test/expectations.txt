@@ -3,7 +3,6 @@
 
 # Tests that are broken
 test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
-test/integration/bun-types/bun-types.test.ts [ FAIL ] # @types/bun integration test > checks without lib.dom.d.ts
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/install/bun-run.test.ts [ FAIL ] # should pass arguments correctly in scripts
 test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report

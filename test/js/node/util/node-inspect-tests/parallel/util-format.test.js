@@ -317,17 +317,17 @@ test("no assertion failures", () => {
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "} {\n" +
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "}",
   );
@@ -338,9 +338,9 @@ test("no assertion failures", () => {
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "} %o",
   );

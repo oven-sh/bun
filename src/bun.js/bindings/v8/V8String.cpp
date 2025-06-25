@@ -154,7 +154,7 @@ bool String::IsExternalOneByte() const
 }
 
 extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
-extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
@@ -175,7 +175,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     }
     if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
         // encode unpaired surrogate
-        UChar surrogate = string[read];
+        char16_t surrogate = string[read];
         buffer[written + 0] = 0xe0 | (surrogate >> 12);
         buffer[written + 1] = 0x80 | ((surrogate >> 6) & 0x3f);
         buffer[written + 2] = 0x80 | (surrogate & 0x3f);

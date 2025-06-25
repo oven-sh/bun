@@ -86,4 +86,5 @@ pub const Classes = struct {
     pub const HTMLBundle = api.HTMLBundle;
     pub const RedisClient = api.Valkey;
     pub const BlockList = api.BlockList;
+    pub const NativeZstd = api.NativeZstd;
 };

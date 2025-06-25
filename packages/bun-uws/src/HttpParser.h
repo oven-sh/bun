@@ -108,7 +108,7 @@ namespace uWS
         }
 
 
-        /* Returns true if there was an error */    
+        /* Returns true if there was an error */
         bool isError() {
             return parserError != HTTP_PARSER_ERROR_NONE;
         }
@@ -403,7 +403,7 @@ namespace uWS
 
         static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
             if (str.empty()) return false;
-             
+
             if (useStrictMethodValidation) {
                 return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
             }
@@ -613,22 +613,25 @@ namespace uWS
                 return HttpParserResult::shortRead();
             }
             postPaddedBuffer = requestLineResult.position;
-            
+
             if(requestLineResult.isAncientHTTP) {
                 isAncientHTTP = true;
             }
             /* No request headers found */
-            size_t buffer_size = end - postPaddedBuffer;
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
-                
-            if(buffer_size < 2) {
-                /* Fragmented request */
-                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+
+            /* Check if we can see if headers follow or not */
+            if (postPaddedBuffer + 2 > end) {
+                /* Not enough data to check for \r\n */
+                return HttpParserResult::shortRead();
             }
-            if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
-                /* No headers found */
+
+            /* Check for empty headers (no headers, just \r\n) */
+            if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
+                /* Valid request with no headers */
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
+
             headers++;
 
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
@@ -708,7 +711,7 @@ namespace uWS
                         }
                     }
                 } else {
-                 
+
                     if(postPaddedBuffer[0] == '\r') {
                         // invalid char after \r
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
@@ -754,7 +757,7 @@ namespace uWS
 
             /* Add all headers to bloom filter */
             req->bf.reset();
-            
+
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
@@ -861,7 +864,7 @@ namespace uWS
                 break;
             }
         }
-        
+
         return HttpParserResult::success(consumedTotal, user);
     }
 
@@ -997,4 +1000,3 @@ public:
 };
 
 }
-

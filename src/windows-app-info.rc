@@ -1,6 +1,6 @@
 #include "windows.h"
 
-IDI_MYICON ICON "bun.ico"
+IDI_MYICON ICON "@BUN_ICO_PATH@"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION @Bun_VERSION_MAJOR@,@Bun_VERSION_MINOR@,@Bun_VERSION_PATCH@,0
@@ -18,8 +18,9 @@ BEGIN
             VALUE "InternalName", "bun\0"
             VALUE "OriginalFilename", "bun.exe\0"
             VALUE "ProductName", "Bun\0"
-            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0"
-            VALUE "Copyright", "See https://bun.sh/docs/project/licensing"
+            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0",
+            VALUE "CompanyName", "Oven\0"
+            VALUE "LegalCopyright", "https://bun.sh/docs/project/licensing\0"
         END
     END
     BLOCK "VarFileInfo"

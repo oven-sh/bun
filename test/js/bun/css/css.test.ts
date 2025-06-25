@@ -139,6 +139,16 @@ describe("css tests", () => {
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
   });
+  describe("calc stack overflow", () => {
+    // https://github.com/oven-sh/bun/issues/20128
+    minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3
+    minify_test(`a { width: calc(100% - 2 - 1 + 5vh - 10vh) }`, `a{width:calc(100% - 2 - 1 - 5vh)}`); // ideally 100% - 3 + 5vh
+    minify_test(
+      `a { width: calc(10 - 4 - 100% - 2 - 4 - 300% - 8vh + 3ic) }`,
+      `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
+    ); // ideally -400% - 8vh + 3ic
+    minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
   describe("border_spacing", () => {
     minify_test(
       `
@@ -6939,6 +6949,14 @@ describe("css tests", () => {
     minify_test(".foo { transform: scale3d(1, 2, 1)", ".foo{transform:scaleY(2)}");
     minify_test(".foo { transform: scale3d(1, 1, 2)", ".foo{transform:scaleZ(2)}");
     minify_test(".foo { transform: scale3d(2, 2, 1)", ".foo{transform:scale(2)}");
+    minify_test(".foo { transform: rotate(20rad)", ".foo{transform:rotate(20rad)}");
+    minify_test(".foo { transform: rotateX(20rad)", ".foo{transform:rotateX(20rad)}");
+    minify_test(".foo { transform: rotateY(20rad)", ".foo{transform:rotateY(20rad)}");
+    minify_test(".foo { transform: rotateZ(20rad)", ".foo{transform:rotate(20rad)}");
+    minify_test(".foo { transform: rotateX(0.017453293rad)", ".foo{transform:rotateX(1deg)}");
+    minify_test(".foo { transform: rotateY(0.017453293rad)", ".foo{transform:rotateY(1deg)}");
+    minify_test(".foo { transform: rotateZ(0.017453293rad)", ".foo{transform:rotate(1deg)}");
+    minify_test(".foo { transform: rotate(0.017453293rad)", ".foo{transform:rotate(1deg)}");
     minify_test(".foo { transform: rotate(20deg)", ".foo{transform:rotate(20deg)}");
     minify_test(".foo { transform: rotateX(20deg)", ".foo{transform:rotateX(20deg)}");
     minify_test(".foo { transform: rotateY(20deg)", ".foo{transform:rotateY(20deg)}");

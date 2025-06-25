@@ -67,6 +67,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -947,6 +948,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForJSConnectionsList;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHTTPParser;
 };
 } // namespace WebCore
 

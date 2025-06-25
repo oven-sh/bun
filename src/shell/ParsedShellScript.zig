@@ -54,12 +54,12 @@ pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     };
     const str = try bun.String.fromJS(str_js, globalThis);
     this.cwd = str;
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     this.quiet = true;
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -82,7 +82,7 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     while (try object_iter.next()) |key| {
         const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
         var value = object_iter.value;
-        if (value == .undefined) continue;
+        if (value.isUndefined()) continue;
 
         const value_str = try value.getZigString(globalThis);
         const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
@@ -97,7 +97,7 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
         previous.deinit();
     }
     this.export_env = env;
-    return .undefined;
+    return .js_undefined;
 }
 
 pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -110,7 +110,7 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
     }
     const string_args = arguments[0];
     const template_args_js = arguments[1];
-    var template_args = template_args_js.arrayIterator(globalThis);
+    var template_args = try template_args_js.arrayIterator(globalThis);
 
     var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
     var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);

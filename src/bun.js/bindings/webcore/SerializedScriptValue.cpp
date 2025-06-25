@@ -113,6 +113,7 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
+#include "JSNodePerformanceHooksHistogram.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -244,6 +245,7 @@ enum SerializationTag {
     Bun__X509CertificateTag = 253,
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
+    Bun__NodePerformanceHooksHistogramTag = 250,
 
     ErrorTag = 255
 };
@@ -2033,6 +2035,30 @@ private:
                 }
             }
 
+            if (auto* histogram = jsDynamicCast<Bun::JSNodePerformanceHooksHistogram*>(obj)) {
+                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage) {
+                    // Don't allow cloning of histograms if it's not a simple .postMessage().
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+
+                // Serialize histogram configuration
+                hdr_histogram* hdr = histogram->m_histogramData.histogram;
+                if (!hdr) {
+                    // Histogram is not initialized
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+
+                write(Bun__NodePerformanceHooksHistogramTag);
+                // TODO: write the index into the histograms vector on SerializedScriptValue
+                // make it ThreadSafeRefCounted
+                // and then we can just write the index
+                code = SerializationReturnCode::DataCloneError;
+
+                return true;
+            }
+
             return false;
         }
         // Any other types are expected to serialize as null.
@@ -2161,7 +2187,7 @@ private:
         unsigned length = str.length();
 
         // Guard against overflow
-        if (length > (std::numeric_limits<uint32_t>::max() - sizeof(uint32_t)) / sizeof(UChar)) {
+        if (length > (std::numeric_limits<uint32_t>::max() - sizeof(uint32_t)) / sizeof(char16_t)) {
             fail();
             return;
         }
@@ -2202,7 +2228,7 @@ private:
     {
         uint32_t size = vector.size();
         write(size);
-        writeLittleEndian(m_buffer, vector.data(), size);
+        writeLittleEndian(m_buffer, vector.begin(), size);
     }
 
     // void write(const File& file)
@@ -3312,7 +3338,7 @@ private:
 
     static bool readString(const uint8_t*& ptr, const uint8_t* end, String& str, unsigned length, bool is8Bit)
     {
-        if (length >= std::numeric_limits<int32_t>::max() / sizeof(UChar))
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t))
             return false;
 
         if (is8Bit) {
@@ -3323,15 +3349,15 @@ private:
             return true;
         }
 
-        unsigned size = length * sizeof(UChar);
+        unsigned size = length * sizeof(char16_t);
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = String({ reinterpret_cast<const UChar*>(ptr), length });
-        ptr += length * sizeof(UChar);
+        str = String({ reinterpret_cast<const char16_t*>(ptr), length });
+        ptr += length * sizeof(char16_t);
 #else
-        std::span<UChar> characters;
+        std::span<char16_t> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -3358,7 +3384,7 @@ private:
 
     static bool readIdentifier(JSC::VM& vm, const uint8_t*& ptr, const uint8_t* end, Identifier& str, unsigned length, bool is8Bit)
     {
-        if (length >= std::numeric_limits<int32_t>::max() / sizeof(UChar))
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t))
             return false;
 
         if (is8Bit) {
@@ -3369,15 +3395,15 @@ private:
             return true;
         }
 
-        unsigned size = length * sizeof(UChar);
+        unsigned size = length * sizeof(char16_t);
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
-        ptr += length * sizeof(UChar);
+        str = Identifier::fromString(vm, { reinterpret_cast<const char16_t*>(ptr), length });
+        ptr += length * sizeof(char16_t);
 #else
-        std::span<UChar> characters;
+        std::span<char16_t> characters;
         str = String::createUninitialized(length, characters);
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
@@ -4516,7 +4542,7 @@ private:
         }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
-        const uint8_t* data = buffer.data();
+        const uint8_t* data = buffer.begin();
 
         auto cert = d2i_X509(&ptr, &data, buffer.size());
         if (!cert) {
@@ -5069,7 +5095,9 @@ private:
             }
 
             RELEASE_ASSERT(m_sharedBuffers->at(index));
-            auto buffer = ArrayBuffer::create(WTFMove(m_sharedBuffers->at(index)));
+            ArrayBufferContents arrayBufferContents;
+            m_sharedBuffers->at(index).shareWith(arrayBufferContents);
+            auto buffer = ArrayBuffer::create(WTFMove(arrayBufferContents));
             JSValue result = getJSValue(buffer.get());
             m_gcBuffer.appendWithCrashOnOverflow(result);
             return result;
@@ -5155,6 +5183,9 @@ private:
 
         case Bun__KeyObjectTag:
             return readKeyObject();
+
+            // case Bun__NodePerformanceHooksHistogramTag:
+            // ?
 
         default:
             m_ptr--; // Push the tag back
@@ -5961,7 +5992,7 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 
     this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        { this->m_data.data(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
+        { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
             protectedThis->deref();
         }));
 

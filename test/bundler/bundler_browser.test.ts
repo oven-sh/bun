@@ -320,4 +320,46 @@ describe("bundler", () => {
       expect(contents).toBe("");
     },
   });
+
+  itBundled("browser/AwaitUsingStatement", {
+    files: {
+      "/entry.js": `
+        async function test() {
+          await using resource = {
+            async [Symbol.asyncDispose]() {
+              console.log("The function was called");
+              await 42;
+              console.log("and the await finished");
+            }
+          };
+          console.log("Before!");
+        }
+        test();
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "Before!\nThe function was called\nand the await finished\n",
+    },
+  });
+
+  itBundled("browser/UsingStatement", {
+    files: {
+      "/entry.js": `
+        function test() {
+          using resource = {
+            [Symbol.dispose]() {
+              console.log("The dispose function was called");
+            }
+          };
+          console.log("Before!");
+        }
+        test();
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "Before!\nThe dispose function was called\n",
+    },
+  });
 });

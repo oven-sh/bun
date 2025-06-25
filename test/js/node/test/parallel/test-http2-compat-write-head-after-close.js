@@ -10,9 +10,9 @@ const server = h2.createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'text/plain' });
 });
 
-server.listen(0, common.mustCall(() => {
+server.listen(0, "127.0.0.1", common.mustCall(() => {
   const port = server.address().port;
-  const client = h2.connect(`http://localhost:${port}`);
+  const client = h2.connect(`http://127.0.0.1:${port}`);
   const req = client.request({ ':path': '/' });
   req.on('response', common.mustNotCall('head after close should not be sent'));
   req.on('end', common.mustCall(() => {

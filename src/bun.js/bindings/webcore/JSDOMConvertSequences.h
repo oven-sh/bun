@@ -484,7 +484,9 @@ template<typename T> struct JSConverter<IDLSequence<T>> {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
+        auto* array = JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, array);
     }
 };
 

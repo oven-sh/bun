@@ -10,7 +10,8 @@
 /// Version 11: Fix \uFFFF printing regression
 /// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
 /// Version 13: Hoist `import.meta.require` definition, see #15738
-const expected_version = 13;
+/// Version 14: Updated global defines table list.
+const expected_version = 14;
 
 const bun = @import("bun");
 const std = @import("std");

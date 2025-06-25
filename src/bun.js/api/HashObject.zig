@@ -27,6 +27,7 @@ pub const xxHash3 = hashWrap(struct {
 pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
 pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
 pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
+pub const rapidhash = hashWrap(std.hash.RapidHash);
 
 pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     const function = JSC.createCallback(globalThis, ZigString.static("hash"), 1, wyhash);
@@ -42,6 +43,7 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         "murmur32v2",
         "murmur32v3",
         "murmur64v2",
+        "rapidhash",
     };
     inline for (fns) |name| {
         const value = JSC.createCallback(

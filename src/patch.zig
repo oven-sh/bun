@@ -1168,11 +1168,11 @@ pub const TestingAPIs = struct {
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{}) catch {};
-            return .{ .err = .undefined };
+            return .initErr(.js_undefined);
         };
 
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.undefined);
+            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.js_undefined);
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
@@ -1180,13 +1180,13 @@ pub const TestingAPIs = struct {
             break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis)) catch {};
-                    return .{ .err = .undefined };
+                    return .initErr(.js_undefined);
                 },
                 .result => |fd| fd,
             };
         } else bun.FileDescriptor.cwd();
 
-        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.undefined);
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.js_undefined);
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
@@ -1198,7 +1198,7 @@ pub const TestingAPIs = struct {
 
             patchfile_src.deinit();
             globalThis.throwError(e, "failed to parse patchfile") catch {};
-            return .{ .err = .undefined };
+            return .initErr(.js_undefined);
         };
 
         return .{
@@ -1508,7 +1508,7 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
     }
 }
 
-/// We need to remove occurences of "a/" and "b/" and "$old_folder/" and
+/// We need to remove occurrences of "a/" and "b/" and "$old_folder/" and
 /// "$new_folder/" but we don't want to remove them from the actual patch
 /// content (maybe someone had a/$old_folder/foo.txt in the changed files).
 ///

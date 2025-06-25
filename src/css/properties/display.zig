@@ -7,8 +7,6 @@ pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
-
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 pub const Display = union(enum) {
     /// A display keyword.

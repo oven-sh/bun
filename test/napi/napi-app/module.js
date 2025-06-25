@@ -399,6 +399,51 @@ nativeTests.test_reflect_construct_napi_class = () => {
   console.log("reflect constructed data =", instance.getData?.());
 };
 
+nativeTests.test_reflect_construct_no_prototype_crash = () => {
+  // This test verifies the fix for jsDynamicCast being called on JSValue(0)
+  // when a NAPI class constructor is called via Reflect.construct with a
+  // newTarget that has no prototype property.
+
+  const NapiClass = nativeTests.get_class_with_constructor();
+
+  // Test 1: Constructor function with deleted prototype property
+  // This case should work without crashing
+  function ConstructorWithoutPrototype() {}
+  delete ConstructorWithoutPrototype.prototype;
+
+  try {
+    const instance1 = Reflect.construct(NapiClass, [], ConstructorWithoutPrototype);
+    console.log("constructor without prototype: success - no crash");
+  } catch (e) {
+    console.log("constructor without prototype error:", e.message);
+  }
+
+  // Test 2: Regular constructor (control test)
+  // This should always work
+  function NormalConstructor() {}
+
+  try {
+    const instance2 = Reflect.construct(NapiClass, [], NormalConstructor);
+    console.log("normal constructor: success - no crash");
+  } catch (e) {
+    console.log("normal constructor error:", e.message);
+  }
+
+  // Test 3: Reflect.construct with Proxy newTarget (prototype returns undefined)
+  function ProxyObject() {}
+
+  const proxyTarget = new Proxy(ProxyObject, {
+    get(target, prop) {
+      if (prop === "prototype") {
+        return undefined;
+      }
+      return target[prop];
+    },
+  });
+  const instance3 = Reflect.construct(NapiClass, [], proxyTarget);
+  console.log("✓ Success - no crash!");
+};
+
 nativeTests.test_napi_wrap = () => {
   const values = [
     {},

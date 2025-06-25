@@ -30,6 +30,7 @@ test("exists", () => {
   expect(typeof PerformanceResourceTiming !== "undefined").toBe(true);
   expect(typeof PerformanceServerTiming !== "undefined").toBe(true);
   expect(typeof PerformanceTiming !== "undefined").toBe(true);
+  expect(typeof Math.sumPrecise !== "undefined").toBe(true);
 });
 
 const globalSetters = [

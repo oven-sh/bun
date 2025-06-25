@@ -230,7 +230,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
         if (jsSecret.isEmptyOrUndefinedOrNull()) {
             return globalObject.throwInvalidArguments("Secret is required", .{});
         }
-        if (!jsSecret.isString() or jsSecret.getLength(globalObject) == 0) {
+        if (!jsSecret.isString() or try jsSecret.getLength(globalObject) == 0) {
             return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
         }
         secret = try jsSecret.toSlice(globalObject, bun.default_allocator);
@@ -316,7 +316,7 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     if (jsToken.isUndefinedOrNull()) {
         return globalObject.throwInvalidArguments("Token is required", .{});
     }
-    if (!jsToken.isString() or jsToken.getLength(globalObject) == 0) {
+    if (!jsToken.isString() or try jsToken.getLength(globalObject) == 0) {
         return globalObject.throwInvalidArguments("Token must be a non-empty string", .{});
     }
     const token = try jsToken.toSlice(globalObject, bun.default_allocator);

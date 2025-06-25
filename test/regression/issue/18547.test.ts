@@ -16,7 +16,6 @@ test("18547", async () => {
         expect(request.cookies.get("sessionToken")).toEqual("123456");
         expect(clone.cookies.get("sessionToken")).toEqual("654321");
 
-
         return new Response("OK");
       },
     },

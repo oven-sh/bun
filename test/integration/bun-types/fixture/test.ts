@@ -1,8 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
 import { expectType } from "./utilities";
-
-const spy = spyOn(console, "log");
-expectType<any[][]>(spy.mock.calls);
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
 
@@ -123,3 +120,27 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<boolean>(b);
   expectType<5 | "asdf">(c);
 });
+
+const mySpyOnObjectWithOptionalMethod: {
+  optionalMethod?: (input: { question: string }) => { answer: string };
+} = {
+  optionalMethod: input => ({ answer: `Aswer to ${input.question}` }),
+};
+
+const mySpiedMethodOfOptional = spyOn(mySpyOnObjectWithOptionalMethod, "optionalMethod");
+mySpiedMethodOfOptional({ question: "asdf" });
+expectType<Mock<(input: { question: string }) => { answer: string }>>(mySpiedMethodOfOptional);
+
+const myNormalSpyOnObject = {
+  normalMethod: (name: string) => `Hello ${name}`,
+};
+
+const myNormalSpiedMethod = spyOn(myNormalSpyOnObject, "normalMethod");
+myNormalSpiedMethod("asdf");
+expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
+
+const spy = spyOn(console, "log");
+expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
+
+jest.spyOn(console, "log");
+jest.fn(() => 123 as const);

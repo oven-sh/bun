@@ -9,12 +9,10 @@ const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
 const CSSNumber = css.css_values.number.CSSNumber;
 const DashedIdent = css.css_values.ident.DashedIdent;
 const CssColor = css.css_values.color.CssColor;
 const Url = css.css_values.url.Url;
-
 
 /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
 pub const ColorScheme = packed struct(u8) {

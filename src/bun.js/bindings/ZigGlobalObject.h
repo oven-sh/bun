@@ -281,6 +281,7 @@ public:
     JSObject* processBindingBuffer() const { return m_processBindingBuffer.getInitializedOnMainThread(this); }
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
     JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
+    JSObject* processBindingHTTPParser() const { return m_processBindingHTTPParser.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
@@ -544,6 +545,10 @@ public:
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
+    V(public, LazyClassStructure, m_JSNodePerformanceHooksHistogramClassStructure)                           \
+                                                                                                             \
+    V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
@@ -581,6 +586,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingBuffer)                                 \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingConstants)                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingFs)                                     \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingHTTPParser)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
@@ -643,21 +649,8 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    void trackFFIFunction(JSC::JSFunction* function)
-    {
-        this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
-    }
-    bool untrackFFIFunction(JSC::JSFunction* function)
-    {
-        for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
-            if (this->m_ffiFunctions[i].get() == function) {
-                this->m_ffiFunctions[i].clear();
-                this->m_ffiFunctions.remove(i);
-                return true;
-            }
-        }
-        return false;
-    }
+    void trackFFIFunction(JSC::JSFunction* function);
+    bool untrackFFIFunction(JSC::JSFunction* function);
 
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};

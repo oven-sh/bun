@@ -79,7 +79,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, 
         // Internal format is private key + public key suffix
         if (platformKey.size() == bytesExpectedExternal) {
             auto&& privateKey = ed25519PrivateFromSeed(WTFMove(platformKey));
-            if (!privateKey.data())
+            if (privateKey.size() == 0)
                 return nullptr;
 
             return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTFMove(privateKey), extractable, usages));
@@ -95,7 +95,7 @@ CryptoKeyOKP::CryptoKeyOKP(CryptoAlgorithmIdentifier identifier, NamedCurve curv
     : CryptoKey(identifier, type, extractable, usages)
     , m_curve(curve)
     , m_data(data)
-    , m_exportKey(curve == NamedCurve::Ed25519 && type == CryptoKeyType::Private ? std::optional<Vector<uint8_t>>(Vector<uint8_t>(std::span { data.data(), 32 })) : std::nullopt)
+    , m_exportKey(curve == NamedCurve::Ed25519 && type == CryptoKeyType::Private ? std::optional<Vector<uint8_t>>(Vector<uint8_t>(std::span { data.begin(), 32 })) : std::nullopt)
 {
 }
 

@@ -36,14 +36,6 @@
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
-static StringView extractCookieName(const StringView& cookie)
-{
-    auto nameEnd = cookie.find('=');
-    if (nameEnd == notFound)
-        return String();
-    return cookie.substring(0, nameEnd);
-}
-
 namespace WebCore {
 
 HTTPHeaderMap::HTTPHeaderMap()

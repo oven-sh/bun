@@ -30,7 +30,7 @@ pub const JSObject = opaque {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn create(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
     }
     /// Marshall a struct into a JSObject, copying its properties. It's
@@ -41,7 +41,7 @@ pub const JSObject = opaque {
     ///
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
-    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
     }
 
@@ -57,7 +57,7 @@ pub const JSObject = opaque {
     /// depending on whether `null_prototype` is set. Prefer using the object
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
-    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) bun.JSError!*JSObject {
         const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
 
         const obj = obj: {
@@ -76,7 +76,7 @@ pub const JSObject = opaque {
             cell.put(
                 global,
                 field.name,
-                JSC.toJS(global, @TypeOf(property), property, .temporary),
+                try JSC.toJS(global, @TypeOf(property), property),
             );
         }
 
@@ -144,8 +144,18 @@ pub const JSObject = opaque {
         return JSC__JSObject__create(global, length, creator, Type.call);
     }
 
-    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
-        return JSC__JSObject__getIndex(this, globalThis, i);
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
+        // we don't use fromJSHostCall, because it will assert that if there is an exception
+        // then the JSValue is zero. the function this ends up calling can return undefined
+        // with an exception:
+        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src(), .enabled);
+        defer scope.deinit();
+        const value = JSC__JSObject__getIndex(this, globalThis, i);
+        try scope.returnIfException();
+        bun.assert(value != .zero);
+        return value;
     }
 
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {

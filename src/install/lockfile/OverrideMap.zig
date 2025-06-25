@@ -113,7 +113,7 @@ pub fn parseAppend(
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
     log: *logger.Log,
-    json_source: logger.Source,
+    json_source: *const logger.Source,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
 ) !void {
@@ -134,13 +134,13 @@ pub fn parseFromOverrides(
     pm: *PackageManager,
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
-    source: logger.Source,
+    source: *const logger.Source,
     log: *logger.Log,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
 ) !void {
     if (expr.data != .e_object) {
-        try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"overrides\" must be an object", .{});
+        try log.addWarningFmt(source, expr.loc, lockfile.allocator, "\"overrides\" must be an object", .{});
         return error.Invalid;
     }
 
@@ -150,7 +150,7 @@ pub fn parseFromOverrides(
         const key = prop.key.?;
         const k = key.asString(lockfile.allocator).?;
         if (k.len == 0) {
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
             continue;
         }
 
@@ -165,26 +165,26 @@ pub fn parseFromOverrides(
                 if (value_expr.asProperty(".")) |dot| {
                     if (dot.expr.data == .e_string) {
                         if (value_expr.data.e_object.properties.len > 1) {
-                            try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                            try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
                         }
                         break :value dot.expr;
                     } else {
-                        try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                        try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
                         continue;
                     }
                 } else {
-                    try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                    try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
                     continue;
                 }
             }
-            try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+            try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
             continue;
         };
 
         const version_str = value.data.e_string.slice(lockfile.allocator);
         if (strings.hasPrefixComptime(version_str, "patch:")) {
             // TODO(dylan-conway): apply .patch files to packages
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
             continue;
         }
 
@@ -212,13 +212,13 @@ pub fn parseFromResolutions(
     pm: *PackageManager,
     lockfile: *Lockfile,
     root_package: *Lockfile.Package,
-    source: logger.Source,
+    source: *const logger.Source,
     log: *logger.Log,
     expr: Expr,
     builder: *Lockfile.StringBuilder,
 ) !void {
     if (expr.data != .e_object) {
-        try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
+        try log.addWarningFmt(source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
         return;
     }
     try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
@@ -228,12 +228,12 @@ pub fn parseFromResolutions(
         if (strings.hasPrefixComptime(k, "**/"))
             k = k[3..];
         if (k.len == 0) {
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing resolution package name", .{});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Missing resolution package name", .{});
             continue;
         }
         const value = prop.value.?;
         if (value.data != .e_string) {
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
             continue;
         }
         // currently we only support one level deep, so we should error if there are more than one
@@ -241,22 +241,22 @@ pub fn parseFromResolutions(
         // - "@namespace/hello/world"
         if (k[0] == '@') {
             const first_slash = strings.indexOfChar(k, '/') orelse {
-                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
+                try log.addWarningFmt(source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
                 continue;
             };
             if (strings.indexOfChar(k[first_slash + 1 ..], '/') != null) {
-                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
                 continue;
             }
         } else if (strings.indexOfChar(k, '/') != null) {
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
             continue;
         }
 
         const version_str = value.data.e_string.data;
         if (strings.hasPrefixComptime(version_str, "patch:")) {
             // TODO(dylan-conway): apply .patch files to packages
-            try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
             continue;
         }
 
@@ -283,7 +283,7 @@ pub fn parseOverrideValue(
     lockfile: *Lockfile,
     package_manager: *PackageManager,
     root_package: *Lockfile.Package,
-    source: logger.Source,
+    source: *const logger.Source,
     loc: logger.Loc,
     log: *logger.Log,
     key: []const u8,
@@ -291,7 +291,7 @@ pub fn parseOverrideValue(
     builder: *Lockfile.StringBuilder,
 ) !?Dependency {
     if (value.len == 0) {
-        try log.addWarningFmt(&source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
+        try log.addWarningFmt(source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
         return null;
     }
 
@@ -309,7 +309,7 @@ pub fn parseOverrideValue(
                 return dep;
             }
         }
-        try log.addWarningFmt(&source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
+        try log.addWarningFmt(source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
         return null;
     }
 
@@ -331,7 +331,7 @@ pub fn parseOverrideValue(
             log,
             package_manager,
         ) orelse {
-            try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
+            try log.addWarningFmt(source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
             return null;
         },
     };

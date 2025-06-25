@@ -4,7 +4,6 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const String = bun.String;
 
-
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,
@@ -276,7 +275,7 @@ pub const RESPValue = union(RESPType) {
                 }
             },
             .Array => |array| {
-                var js_array = JSC.JSValue.createEmptyArray(globalObject, array.len);
+                var js_array = try JSC.JSValue.createEmptyArray(globalObject, array.len);
                 for (array, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
                     js_array.putIndex(globalObject, @intCast(i), js_item);
@@ -301,7 +300,7 @@ pub const RESPValue = union(RESPType) {
                 return js_obj;
             },
             .Set => |set| {
-                var js_array = JSC.JSValue.createEmptyArray(globalObject, set.len);
+                var js_array = try JSC.JSValue.createEmptyArray(globalObject, set.len);
                 for (set, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
                     js_array.putIndex(globalObject, @intCast(i), js_item);
@@ -321,7 +320,7 @@ pub const RESPValue = union(RESPType) {
                 js_obj.put(globalObject, "type", kind_str);
 
                 // Add the data as an array
-                var data_array = JSC.JSValue.createEmptyArray(globalObject, push.data.len);
+                var data_array = try JSC.JSValue.createEmptyArray(globalObject, push.data.len);
                 for (push.data, 0..) |*item, i| {
                     const js_item = try item.toJSWithOptions(globalObject, options);
                     data_array.putIndex(globalObject, @intCast(i), js_item);

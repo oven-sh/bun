@@ -419,7 +419,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return {};
         }
-        memcpy(buf->data(), key.data(), key.size());
+        memcpy(buf->data(), key.begin(), key.size());
         return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
     };
 

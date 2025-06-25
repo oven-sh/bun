@@ -5,16 +5,23 @@ if (!common.hasCrypto)
   common.skip('missing crypto');
 const assert = require('assert');
 const h2 = require('http2');
+let client;
 
 const server = h2.createServer();
 server.on('stream', (stream) => {
-  stream.on('close', common.mustCall());
-  stream.respond();
-  stream.end('ok');
+  stream.on('close', common.mustCall(() => {
+    client.close();
+    server.close();
+  }));
+  stream.on('error', common.expectsError({
+    code: 'ERR_HTTP2_STREAM_ERROR',
+    name: 'Error',
+    message: 'Stream closed with error code NGHTTP2_PROTOCOL_ERROR'
+  }));
 });
 
 server.listen(0, common.mustCall(() => {
-  const client = h2.connect(`http://localhost:${server.address().port}`);
+  client = h2.connect(`http://localhost:${server.address().port}`);
   const req = client.request();
   const closeCode = 1;
 
@@ -23,8 +30,7 @@ server.listen(0, common.mustCall(() => {
     {
       name: 'RangeError',
       code: 'ERR_OUT_OF_RANGE',
-      message: 'The value of "code" is out of range. It must be ' +
-               '>= 0 and <= 4294967295. Received 4294967296'
+      message: 'The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received 4294967296'
     }
   );
   assert.strictEqual(req.closed, false);
@@ -39,7 +45,7 @@ server.listen(0, common.mustCall(() => {
     );
     assert.strictEqual(req.closed, false);
   });
-  
+
   req.close(closeCode, common.mustCall());
   assert.strictEqual(req.closed, true);
 
@@ -52,8 +58,6 @@ server.listen(0, common.mustCall(() => {
   req.on('close', common.mustCall(() => {
     assert.strictEqual(req.destroyed, true);
     assert.strictEqual(req.rstCode, closeCode);
-    server.close();
-    client.close();
   }));
 
   req.on('error', common.expectsError({
@@ -61,6 +65,7 @@ server.listen(0, common.mustCall(() => {
     name: 'Error',
     message: 'Stream closed with error code NGHTTP2_PROTOCOL_ERROR'
   }));
+
   // The `response` event should not fire as the server should receive the
   // RST_STREAM frame before it ever has a chance to reply.
   req.on('response', common.mustNotCall());
@@ -72,4 +77,3 @@ server.listen(0, common.mustCall(() => {
   req.resume();
   req.end();
 }));
-

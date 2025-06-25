@@ -39,7 +39,7 @@ for (const packageJsonPath of absolutes) {
   await $`bun i`.cwd(tmp);
 
   await spawn({
-    cmd: [bunExe(), "pm", "audit"],
+    cmd: [bunExe(), "audit"],
     cwd: tmp,
     env: {
       ...bunEnv,
@@ -50,7 +50,7 @@ for (const packageJsonPath of absolutes) {
   const body = await requestBodyPromise;
 
   const { stdout, exited } = spawn({
-    cmd: [bunExe(), "pm", "audit", "--json"],
+    cmd: [bunExe(), "audit", "--json"],
     cwd: tmp,
     stdout: "pipe",
     stderr: "ignore",

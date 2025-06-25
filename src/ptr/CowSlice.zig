@@ -221,15 +221,15 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            return std.fmt.formatType(str.slice(), fmt, options, writer, 1);
+        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            return try writer.writeAll(str.slice());
         }
 
         /// Free this `Cow`'s allocation if it is owned.
         ///
         /// In debug builds, deinitializing borrowed strings performs debug
         /// checks. In release builds it is a no-op.
-        pub fn deinit(str: Self, allocator: Allocator) void {
+        pub fn deinit(str: *const Self, allocator: Allocator) void {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 bun.assertf(

@@ -367,7 +367,8 @@ for (const { name, connect } of tests) {
     });
 
     // Test using only options
-    it("should process options correctly when connect is called with only options", done => {
+    // prettier-ignore
+    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",

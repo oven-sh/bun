@@ -67,15 +67,15 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
     Vector<uint8_t> cipherText(cipherTextLen);
 
     // Initialize the encryption operation
-    if (1 != EVP_EncryptInit_ex(ctx.get(), algorithm, nullptr, key.data(), iv.data()))
+    if (1 != EVP_EncryptInit_ex(ctx.get(), algorithm, nullptr, key.begin(), iv.begin()))
         return std::nullopt;
 
     // Provide the message to be encrypted, and obtain the encrypted output
-    if (1 != EVP_EncryptUpdate(ctx.get(), cipherText.data(), &len, plainText.data(), plainSize))
+    if (1 != EVP_EncryptUpdate(ctx.get(), cipherText.begin(), &len, plainText.begin(), plainSize))
         return std::nullopt;
 
     // Finalize the encryption. Further ciphertext bytes may be written at this stage
-    if (1 != EVP_EncryptFinal_ex(ctx.get(), cipherText.data() + len, &len))
+    if (1 != EVP_EncryptFinal_ex(ctx.get(), cipherText.begin() + len, &len))
         return std::nullopt;
 
     return cipherText;
@@ -99,16 +99,16 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
         return std::nullopt;
 
     // Initialize the decryption operation
-    if (1 != EVP_DecryptInit_ex(ctx.get(), algorithm, nullptr, key.data(), iv.data()))
+    if (1 != EVP_DecryptInit_ex(ctx.get(), algorithm, nullptr, key.begin(), iv.begin()))
         return std::nullopt;
 
     // Provide the message to be decrypted, and obtain the plaintext output
-    if (1 != EVP_DecryptUpdate(ctx.get(), plainText.data(), &len, cipherText.data(), cipherSize))
+    if (1 != EVP_DecryptUpdate(ctx.get(), plainText.begin(), &len, cipherText.begin(), cipherSize))
         return std::nullopt;
     plainTextLen = len;
 
     // Finalize the decryption. Further plaintext bytes may be written at this stage
-    if (1 != EVP_DecryptFinal_ex(ctx.get(), plainText.data() + len, &len))
+    if (1 != EVP_DecryptFinal_ex(ctx.get(), plainText.begin() + len, &len))
         return std::nullopt;
     plainTextLen += len;
 

@@ -29,19 +29,6 @@ static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_encoding);
 
-static WTF::String replacementString()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD", 1 });
-}
-static WTF::String replacementString2()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD\uFFFD", 2 });
-}
-static WTF::String replacementString3()
-{
-    return WTF::String(std::span<const UChar> { u"\uFFFD\uFFFD\uFFFD", 3 });
-}
-
 // Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
 // continuation byte.
 //     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
@@ -212,7 +199,7 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
         if (length == offset)
             RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
         if ((length - offset) % 2 == 0) {
-            UChar c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
+            char16_t c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
             if (c >= 0xD800 && c <= 0xDBFF) {
                 m_lastNeed = 2;
                 m_lastTotal = 4;

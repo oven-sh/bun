@@ -3,9 +3,6 @@ const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
 
-
-
-
 const GenericBorder = css.css_properties.border.GenericBorder;
 const LineStyle = css.css_properties.border.LineStyle;
 

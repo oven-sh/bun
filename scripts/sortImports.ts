@@ -13,7 +13,7 @@ const usage = String.raw`
  /_____ \____/|__|   |__|   /_____ \__|__|_|  /   __/ \____/|__|   |__| /____  >
        \/                         \/        \/|__|                           \/
 
-Usage: bun run sortImports [options] <files...>
+Usage: bun scripts/sortImports [options] <files...>
 
 Options:
   --help                   Show this help message

@@ -816,6 +816,94 @@ pub fn runTasks(
     }
 }
 
+pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
+    return manager.pending_tasks.load(.monotonic);
+}
+
+pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
+    manager.total_tasks += count;
+    return manager.pending_tasks.fetchAdd(count, .monotonic);
+}
+
+pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
+    return manager.pending_tasks.fetchSub(1, .monotonic);
+}
+
+pub fn flushNetworkQueue(this: *PackageManager) void {
+    var network = &this.network_task_fifo;
+
+    while (network.readItem()) |network_task| {
+        network_task.schedule(if (network_task.callback == .extract) &this.network_tarball_batch else &this.network_resolve_batch);
+    }
+}
+
+pub fn flushPatchTaskQueue(this: *PackageManager) void {
+    var patch_task_fifo = &this.patch_task_fifo;
+
+    while (patch_task_fifo.readItem()) |patch_task| {
+        patch_task.schedule(if (patch_task.callback == .apply) &this.patch_apply_batch else &this.patch_calc_hash_batch);
+    }
+}
+
+fn doFlushDependencyQueue(this: *PackageManager) void {
+    var lockfile = this.lockfile;
+    var dependency_queue = &lockfile.scratch.dependency_list_queue;
+
+    while (dependency_queue.readItem()) |dependencies_list| {
+        var i: u32 = dependencies_list.off;
+        const end = dependencies_list.off + dependencies_list.len;
+        while (i < end) : (i += 1) {
+            const dependency = lockfile.buffers.dependencies.items[i];
+            this.enqueueDependencyWithMain(
+                i,
+                &dependency,
+                lockfile.buffers.resolutions.items[i],
+                false,
+            ) catch {};
+        }
+    }
+
+    this.flushNetworkQueue();
+}
+pub fn flushDependencyQueue(this: *PackageManager) void {
+    var last_count = this.total_tasks;
+    while (true) : (last_count = this.total_tasks) {
+        this.flushNetworkQueue();
+        doFlushDependencyQueue(this);
+        this.flushNetworkQueue();
+        this.flushPatchTaskQueue();
+
+        if (this.total_tasks == last_count) break;
+    }
+}
+
+pub fn scheduleTasks(manager: *PackageManager) usize {
+    const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
+
+    _ = manager.incrementPendingTasks(@truncate(count));
+    manager.thread_pool.schedule(manager.patch_apply_batch);
+    manager.thread_pool.schedule(manager.patch_calc_hash_batch);
+    manager.thread_pool.schedule(manager.task_batch);
+    manager.network_resolve_batch.push(manager.network_tarball_batch);
+    HTTP.http_thread.schedule(manager.network_resolve_batch);
+    manager.task_batch = .{};
+    manager.network_tarball_batch = .{};
+    manager.network_resolve_batch = .{};
+    manager.patch_apply_batch = .{};
+    manager.patch_calc_hash_batch = .{};
+    return count;
+}
+
+pub fn drainDependencyList(this: *PackageManager) void {
+    // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
+    this.flushDependencyQueue();
+
+    if (PackageManager.verbose_install) Output.flush();
+
+    // It's only network requests here because we don't store tarballs.
+    _ = this.scheduleTasks();
+}
+
 // @sortImports
 
 const std = @import("std");

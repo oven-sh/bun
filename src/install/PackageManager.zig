@@ -1096,81 +1096,6 @@ pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, 
 
 pub const debug = Output.scoped(.PackageManager, true);
 
-pub fn flushNetworkQueue(this: *PackageManager) void {
-    var network = &this.network_task_fifo;
-
-    while (network.readItem()) |network_task| {
-        network_task.schedule(if (network_task.callback == .extract) &this.network_tarball_batch else &this.network_resolve_batch);
-    }
-}
-
-pub fn flushPatchTaskQueue(this: *PackageManager) void {
-    var patch_task_fifo = &this.patch_task_fifo;
-
-    while (patch_task_fifo.readItem()) |patch_task| {
-        patch_task.schedule(if (patch_task.callback == .apply) &this.patch_apply_batch else &this.patch_calc_hash_batch);
-    }
-}
-
-fn doFlushDependencyQueue(this: *PackageManager) void {
-    var lockfile = this.lockfile;
-    var dependency_queue = &lockfile.scratch.dependency_list_queue;
-
-    while (dependency_queue.readItem()) |dependencies_list| {
-        var i: u32 = dependencies_list.off;
-        const end = dependencies_list.off + dependencies_list.len;
-        while (i < end) : (i += 1) {
-            const dependency = lockfile.buffers.dependencies.items[i];
-            this.enqueueDependencyWithMain(
-                i,
-                &dependency,
-                lockfile.buffers.resolutions.items[i],
-                false,
-            ) catch {};
-        }
-    }
-
-    this.flushNetworkQueue();
-}
-pub fn flushDependencyQueue(this: *PackageManager) void {
-    var last_count = this.total_tasks;
-    while (true) : (last_count = this.total_tasks) {
-        this.flushNetworkQueue();
-        this.doFlushDependencyQueue();
-        this.flushNetworkQueue();
-        this.flushPatchTaskQueue();
-
-        if (this.total_tasks == last_count) break;
-    }
-}
-
-pub fn scheduleTasks(manager: *PackageManager) usize {
-    const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
-
-    _ = manager.incrementPendingTasks(@truncate(count));
-    manager.thread_pool.schedule(manager.patch_apply_batch);
-    manager.thread_pool.schedule(manager.patch_calc_hash_batch);
-    manager.thread_pool.schedule(manager.task_batch);
-    manager.network_resolve_batch.push(manager.network_tarball_batch);
-    HTTP.http_thread.schedule(manager.network_resolve_batch);
-    manager.task_batch = .{};
-    manager.network_tarball_batch = .{};
-    manager.network_resolve_batch = .{};
-    manager.patch_apply_batch = .{};
-    manager.patch_calc_hash_batch = .{};
-    return count;
-}
-
-pub fn drainDependencyList(this: *PackageManager) void {
-    // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
-    this.flushDependencyQueue();
-
-    if (PackageManager.verbose_install) Output.flush();
-
-    // It's only network requests here because we don't store tarballs.
-    _ = this.scheduleTasks();
-}
-
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
         error.LoadCAFile => {
@@ -1741,19 +1666,6 @@ var cwd_buf: bun.PathBuffer = undefined;
 pub var package_json_cwd_buf: bun.PathBuffer = undefined;
 pub var package_json_cwd: string = "";
 
-pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
-    return manager.pending_tasks.load(.monotonic);
-}
-
-pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
-    manager.total_tasks += count;
-    return manager.pending_tasks.fetchAdd(count, .monotonic);
-}
-
-pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
-    return manager.pending_tasks.fetchSub(1, .monotonic);
-}
-
 pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
     const binding_dot_gyp_path = Path.joinAbsStringZ(
         Fs.FileSystem.instance.top_level_dir,
@@ -1927,7 +1839,6 @@ pub const UpdateRequest = @import("PackageManager/UpdateRequest.zig");
 const std = @import("std");
 pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
 pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
-pub const runTasks = @import("PackageManager/run_tasks.zig").runTasks;
 
 pub const CLI = @import("InstallCLI.zig");
 pub const Subcommand = CLI.Subcommand;
@@ -1992,6 +1903,16 @@ pub const processDependencyList = @import("PackageManager/processDependencyList.
 pub const processDependencyListItem = @import("PackageManager/processDependencyList.zig").processDependencyListItem;
 pub const processExtractedTarballPackage = @import("PackageManager/processDependencyList.zig").processExtractedTarballPackage;
 pub const processPeerDependencyList = @import("PackageManager/processDependencyList.zig").processPeerDependencyList;
+
+pub const decrementPendingTasks = @import("PackageManager/run_tasks.zig").decrementPendingTasks;
+pub const drainDependencyList = @import("PackageManager/run_tasks.zig").drainDependencyList;
+pub const flushDependencyQueue = @import("PackageManager/run_tasks.zig").flushDependencyQueue;
+pub const flushNetworkQueue = @import("PackageManager/run_tasks.zig").flushNetworkQueue;
+pub const flushPatchTaskQueue = @import("PackageManager/run_tasks.zig").flushPatchTaskQueue;
+pub const incrementPendingTasks = @import("PackageManager/run_tasks.zig").incrementPendingTasks;
+pub const pendingTaskCount = @import("PackageManager/run_tasks.zig").pendingTaskCount;
+pub const runTasks = @import("PackageManager/run_tasks.zig").runTasks;
+pub const scheduleTasks = @import("PackageManager/run_tasks.zig").scheduleTasks;
 
 const updatePackageJSONAndInstall = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
 pub const updatePackageJSONAndInstallCatchError = @import("PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;

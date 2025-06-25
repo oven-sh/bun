@@ -882,9 +882,9 @@ const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
 
 const PackageManager = bun.install.PackageManager;
-pub const CommandLineArguments = PackageManager.CommandLineArguments;
-pub const Options = PackageManager.Options;
-pub const PackageInstaller = PackageManager.PackageInstaller;
-pub const PackageJSONEditor = PackageManager.PackageJSONEditor;
-pub const UpdateRequest = PackageManager.UpdateRequest;
+const CommandLineArguments = PackageManager.CommandLineArguments;
+const Options = PackageManager.Options;
+const PackageInstaller = PackageManager.PackageInstaller;
+const PackageJSONEditor = PackageManager.PackageJSONEditor;
+const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;

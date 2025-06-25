@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -625,7 +625,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
@@ -681,14 +680,14 @@ function kConnectPipe(self, req, address) {
 function Socket(options?) {
   if (!(this instanceof Socket)) return new Socket(options);
 
-  const {
+  let {
     socket,
     signal,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
     keepAlive = false,
-    keepAliveInitialDelay = 0,
+    keepAliveInitialDelay,
     ...opts
   } = options || {};
 
@@ -697,6 +696,11 @@ function Socket(options?) {
     throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
+  if (keepAliveInitialDelay !== undefined) {
+    validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
+    if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+  }
 
   if (options?.fd !== undefined) {
     validateInt32(options.fd, "options.fd", 0);
@@ -1101,6 +1105,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;

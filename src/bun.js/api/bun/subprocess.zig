@@ -1021,6 +1021,7 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
+
         this.reader.setParent(this);
         return this;
     }
@@ -1047,6 +1048,9 @@ pub const PipeReader = struct {
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.socket);
                     this.reader.flags.socket = true;
+                    this.reader.flags.nonblocking = true;
+                    this.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
                 }
 
                 return .{ .result = {} };
@@ -1543,18 +1547,34 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         }
     }
 
+    // We won't be sending any more data.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
-    }
-    if (this.stdout == .pipe) {
-        this.stdout.pipe.close();
-    }
-    if (this.stderr == .pipe) {
-        this.stderr.pipe.close();
     }
 
     if (existing_stdin_value != .zero) {
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+    }
+
+    if (this.flags.is_sync) {
+        // This doesn't match Node.js' behavior, but for synchronous
+        // subprocesses the streams should not keep the timers going.
+        if (this.stdout == .pipe) {
+            this.stdout.close();
+        }
+
+        if (this.stderr == .pipe) {
+            this.stderr.close();
+        }
+    } else {
+        // This matches Node.js behavior. Node calls resume() on the streams.
+        if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+            this.stdout.pipe.reader.read();
+        }
+
+        if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+            this.stderr.pipe.reader.read();
+        }
     }
 
     if (stdin) |pipe| {
@@ -2433,6 +2453,13 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
+    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
+
     if (comptime !is_sync) {
         bun.debugAssert(out != .zero);
 
@@ -2488,12 +2515,6 @@ pub fn spawnMaybeSync(
     }
 
     should_close_memfd = false;
-
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
 
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener

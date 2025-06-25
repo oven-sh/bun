@@ -277,7 +277,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
                         }
                     }
                 } else {
-                    const auto span = str->span<UChar>();
+                    const auto span = str->span<char16_t>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -424,7 +424,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                     }
                 }
             } else {
-                const auto span = view.span<UChar>();
+                const auto span = view.span<char16_t>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -1747,7 +1747,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
-            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
             if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
                 ASSERT(arr->length() > 0);
                 WTF::StringBuilder builder;
@@ -1755,7 +1755,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 for (unsigned i = 0, length = arr->length(); i < length; i++) {
                     JSValue index = arr->getIndex(globalObject, i);
                     RETURN_IF_EXCEPTION(scope, {});
-                    if (i == length - 1) builder.append("or "_s);
+                    if (i > 0) builder.append("or "_s);
                     builder.append('"');
                     auto* jsString = index.toString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1763,7 +1763,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                     RETURN_IF_EXCEPTION(scope, {});
                     builder.append(str);
                     builder.append('"');
-                    if (i != length - 1) builder.append(',');
                     builder.append(' ');
                 }
                 builder.append("argument must be specified"_s);

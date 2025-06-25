@@ -264,8 +264,14 @@ pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
             },
             .fd => |fd| {
-                _ = fd;
-                return globalObject.ERR(.INVALID_ARG_VALUE, "Bun does not support listening on a file descriptor.", .{}).throw();
+                const err: bun.jsc.SystemError = .{
+                    .errno = @intFromEnum(bun.sys.SystemErrno.EINVAL),
+                    .code = .static("EINVAL"),
+                    .message = .static("Bun does not support listening on a file descriptor."),
+                    .syscall = .static("listen"),
+                    .fd = fd.uv(),
+                };
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             },
         }
     } orelse {

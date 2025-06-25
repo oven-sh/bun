@@ -14,6 +14,8 @@ const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
+pub const AllocScope = @import("./AllocScope.zig");
+
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = interpret.Interpreter;

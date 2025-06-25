@@ -913,7 +913,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         head += length;
     }
 
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::JSValue(outBuffer)));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));
 }
 
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L337
@@ -1747,7 +1747,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         RETURN_IF_EXCEPTION(scope, {});
         if (!buffer) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode({});
+            return {};
         }
         memcpy(buffer->vector(), bytes.data(), bytes.size());
         return JSC::JSValue::encode(buffer);
@@ -1757,7 +1757,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode({});
+            return {};
         }
 
         memcpy(data.data(), bytes.data(), bytes.size());
@@ -1773,7 +1773,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         auto str = String::tryCreateUninitialized(u16length, data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode({});
+            return {};
         }
         memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
         return JSValue::encode(jsString(vm, WTFMove(str)));
@@ -1783,7 +1783,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode({});
+            return {};
         }
         Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
         return JSValue::encode(jsString(vm, WTFMove(str)));
@@ -1794,12 +1794,12 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
         EncodedJSValue res = Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSValue stringValue = JSValue::decode(res);
         if (!stringValue.isString()) [[unlikely]] {
             scope.throwException(lexicalGlobalObject, stringValue);
-            return JSValue::encode({});
+            return {};
         }
 
         RELEASE_AND_RETURN(scope, JSValue::encode(stringValue));

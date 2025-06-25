@@ -251,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     ENTER_PROTO_FUNC();
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
-    return JSC::JSValue::encode(JSC::JSValue(jsString(vm, sb.toString())));
+    return JSC::JSValue::encode(jsString(vm, sb.toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

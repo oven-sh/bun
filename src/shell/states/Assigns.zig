@@ -16,6 +16,7 @@ state: union(enum) {
     done,
 },
 ctx: AssignCtx,
+owned: bool = true,
 io: IO,
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -34,6 +35,8 @@ pub inline fn deinit(this: *Assigns) void {
         this.state.expanding.current_expansion_result.deinit();
     }
     this.io.deinit();
+    this.base.endScope();
+    if (this.owned) this.parent.destroy(this);
 }
 
 pub fn start(this: *Assigns) Yield {
@@ -41,20 +44,42 @@ pub fn start(this: *Assigns) Yield {
 }
 
 pub fn init(
+    interpreter: *Interpreter,
+    shell_state: *ShellExecEnv,
+    node: []const ast.Assign,
+    ctx: AssignCtx,
+    parent: ParentPtr,
+    io: IO,
+) *Assigns {
+    const this = parent.create(Assigns);
+    log("Assigns(0x{x}) init", .{@intFromPtr(this)});
+    this.* = .{
+        .base = State.initWithNewAllocScope(.assign, interpreter, shell_state),
+        .node = node,
+        .parent = parent,
+        .state = .idle,
+        .ctx = ctx,
+        .io = io,
+    };
+    return this;
+}
+
+pub fn initBorrowed(
     this: *Assigns,
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: []const ast.Assign,
     ctx: AssignCtx,
     parent: ParentPtr,
     io: IO,
 ) void {
     this.* = .{
-        .base = .{ .kind = .assign, .interpreter = interpreter, .shell = shell_state },
+        .base = State.initWithNewAllocScope(.assign, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .state = .idle,
         .ctx = ctx,
+        .owned = false,
         .io = io,
     };
 }
@@ -64,13 +89,14 @@ pub fn next(this: *Assigns) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding = .{
-                    .current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator),
+                    .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.allocator()),
                     .expansion = undefined,
                 } };
                 continue;
             },
             .expanding => {
                 if (this.state.expanding.idx >= this.node.len) {
+                    this.state.expanding.current_expansion_result.clearAndFree();
                     this.state = .done;
                     continue;
                 }
@@ -98,8 +124,10 @@ pub fn next(this: *Assigns) Yield {
 
 pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Expansion)) {
+        bun.assert(this.state == .expanding);
         const expansion = child.ptr.as(Expansion);
         if (exit_code != 0) {
+            this.state.expanding.current_expansion_result.clearAndFree();
             this.state = .{
                 .err = expansion.state.err,
             };
@@ -110,28 +138,38 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
 
         const label = this.node[expanding.idx].label;
 
+        // Did it expand to a single word?
         if (expanding.current_expansion_result.items.len == 1) {
             const value = expanding.current_expansion_result.items[0];
+            // We're going to let `EnvStr` manage the allocation for `value`
+            // from here on out
+            this.base.leakSlice(value);
+            expanding.current_expansion_result.clearAndFree();
+
             const ref = EnvStr.initRefCounted(value);
             defer ref.deref();
+
             this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), ref, this.ctx);
-            expanding.current_expansion_result = std.ArrayList([:0]const u8).init(bun.default_allocator);
         } else {
+            // Multiple words, need to concatenate them together. First
+            // calculate size of the total buffer.
             const size = brk: {
                 var total: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, i| {
                     total += slice.len;
                     if (i != last) {
-                        // for space
+                        // Let's not forget to count the space in between the
+                        // words!
                         total += 1;
                     }
                 }
                 break :brk total;
             };
 
-            const value = brk: {
-                var merged = bun.default_allocator.allocSentinel(u8, size, 0) catch bun.outOfMemory();
+            const value: []const u8 = brk: {
+                if (size == 0) break :brk "";
+                var merged = this.base.allocator().alloc(u8, size) catch bun.outOfMemory();
                 var i: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, j| {
@@ -144,12 +182,17 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
                 }
                 break :brk merged;
             };
+
+            // We're going to let `EnvStr` manage the allocation for `value`
+            // from here on out
+            this.base.leakSlice(value);
+
             const value_ref = EnvStr.initRefCounted(value);
             defer value_ref.deref();
 
             this.base.shell.assignVar(this.base.interpreter, EnvStr.initSlice(label), value_ref, this.ctx);
             for (expanding.current_expansion_result.items) |slice| {
-                bun.default_allocator.free(slice);
+                this.base.allocator().free(slice);
             }
             expanding.current_expansion_result.clearRetainingCapacity();
         }
@@ -170,13 +213,14 @@ pub const AssignCtx = enum {
 
 const std = @import("std");
 const bun = @import("bun");
+const log = bun.shell.interpret.log;
 const Yield = bun.shell.Yield;
 
 const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const EnvStr = bun.shell.interpret.EnvStr;

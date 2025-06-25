@@ -6584,13 +6584,9 @@ CPP_DECL unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, J
 
         if (visitor->hasLineAndColumnInfo()) {
             String currentSourceURL = Zig::sourceURL(visitor);
-            
-            if (!currentSourceURL.startsWith("builtin://"_s) &&
-                !currentSourceURL.startsWith("node:"_s) &&
-                !currentSourceURL.endsWith("jest.zig"_s) &&
-                !currentSourceURL.contains("node_modules"_s) &&
-                currentSourceURL.length() > 0) {
-                
+
+            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s) && !currentSourceURL.endsWith("jest.zig"_s) && !currentSourceURL.contains("node_modules"_s) && currentSourceURL.length() > 0) {
+
                 lineColumn = visitor->computeLineAndColumn();
                 sourceURL = currentSourceURL;
                 return WTF::IterationStatus::Done;
@@ -6604,9 +6600,9 @@ CPP_DECL unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, J
         remappedFrame.position.line_zero_based = lineColumn.line - 1;
         remappedFrame.position.column_zero_based = lineColumn.column;
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
-        
+
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
-        
+
         return remappedFrame.position.line_zero_based + 1;
     }
 

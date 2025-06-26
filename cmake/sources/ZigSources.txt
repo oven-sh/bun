@@ -529,7 +529,7 @@ src/http/Decompressor.zig
 src/http/Encoding.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
-src/http/headers.zig
+src/http/Headers.zig
 src/http/HTTPCertError.zig
 src/http/HTTPContext.zig
 src/http/HTTPRequestBody.zig

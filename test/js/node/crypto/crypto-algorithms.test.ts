@@ -1,5 +1,5 @@
+import { describe, expect, test } from "bun:test";
 import { createHash, getHashes } from "node:crypto";
-import { test, expect, describe } from "bun:test";
 
 describe("Crypto hash algorithms", () => {
   const algorithms = [

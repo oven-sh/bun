@@ -28,14 +28,14 @@ pub const ParentPtr = StatePtrUnion(.{
 
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     node: *const ast.Binary,
     parent: ParentPtr,
     io: IO,
 ) *Binary {
-    var binary = interpreter.allocator.create(Binary) catch bun.outOfMemory();
+    var binary = parent.create(Binary);
     binary.node = node;
-    binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
+    binary.base = State.initWithNewAllocScope(.binary, interpreter, shell_state);
     binary.parent = parent;
     binary.io = io;
     binary.left = null;
@@ -77,15 +77,19 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             return ChildPtr.init(pipeline);
         },
         .assign => |assigns| {
-            var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-            assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
-            return ChildPtr.init(assign_machine);
+            const assign = Assigns.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
+            return ChildPtr.init(assign);
         },
         .subshell => {
-            switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, this.io, .subshell)) {
-                .result => |shell_state| {
-                    const script = Subshell.init(this.base.interpreter, shell_state, node.subshell, Subshell.ParentPtr.init(this), this.io.copy());
-                    return ChildPtr.init(script);
+            switch (Subshell.initDupeShellState(
+                this.base.interpreter,
+                this.base.shell,
+                node.subshell,
+                Subshell.ParentPtr.init(this),
+                this.io.copy(),
+            )) {
+                .result => |subshell| {
+                    return ChildPtr.init(subshell);
                 },
                 .err => |e| {
                     this.base.throw(&bun.shell.ShellErr.newSys(e));
@@ -142,7 +146,8 @@ pub fn deinit(this: *Binary) void {
         child.deinit();
     }
     this.io.deinit();
-    this.base.interpreter.allocator.destroy(this);
+    this.base.endScope();
+    this.parent.allocator().destroy(this);
 }
 
 const bun = @import("bun");
@@ -152,7 +157,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

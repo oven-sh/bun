@@ -198,7 +198,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
         return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
-    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const limit: usize = @intCast(@max(try args[0].coerceToInt64(globalObject), 1024 * 1024));
     const prev = VirtualMachine.synthetic_allocation_limit;
     VirtualMachine.synthetic_allocation_limit = limit;
     VirtualMachine.string_allocation_limit = limit;

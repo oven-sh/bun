@@ -608,7 +608,7 @@ pub fn asyncDispose(
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
-            return global.throwValue(err.toJSC(global));
+            return global.throwValue(err.toJS(global));
         },
     }
 
@@ -695,7 +695,7 @@ pub fn kill(
         .result => {},
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     }
 
@@ -1021,6 +1021,7 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source = .{ .pipe = this.stdio_result.buffer };
         }
+
         this.reader.setParent(this);
         return this;
     }
@@ -1047,6 +1048,9 @@ pub const PipeReader = struct {
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.socket);
                     this.reader.flags.socket = true;
+                    this.reader.flags.nonblocking = true;
+                    this.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
                 }
 
                 return .{ .result = {} };
@@ -1543,18 +1547,34 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         }
     }
 
+    // We won't be sending any more data.
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
-    }
-    if (this.stdout == .pipe) {
-        this.stdout.pipe.close();
-    }
-    if (this.stderr == .pipe) {
-        this.stderr.pipe.close();
     }
 
     if (existing_stdin_value != .zero) {
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+    }
+
+    if (this.flags.is_sync) {
+        // This doesn't match Node.js' behavior, but for synchronous
+        // subprocesses the streams should not keep the timers going.
+        if (this.stdout == .pipe) {
+            this.stdout.close();
+        }
+
+        if (this.stderr == .pipe) {
+            this.stderr.close();
+        }
+    } else {
+        // This matches Node.js behavior. Node calls resume() on the streams.
+        if (this.stdout == .pipe and !this.stdout.pipe.reader.isDone()) {
+            this.stdout.pipe.reader.read();
+        }
+
+        if (this.stderr == .pipe and !this.stderr.pipe.reader.isDone()) {
+            this.stderr.pipe.reader.read();
+        }
     }
 
     if (stdin) |pipe| {
@@ -1582,7 +1602,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
                     else => {
                         // crash in debug mode
@@ -1595,7 +1615,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
-                        status.err.toJSC(globalThis)
+                        status.err.toJS(globalThis)
                     else
                         .js_undefined;
 
@@ -1737,7 +1757,7 @@ pub fn getExited(
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
         },
         else => {
             const promise = JSC.JSPromise.create(globalThis).toJS();
@@ -2119,7 +2139,7 @@ pub fn spawnMaybeSync(
 
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
-                    const value = val.coerce(i64, globalThis);
+                    const value = try val.coerce(i64, globalThis);
                     if (value > 0) {
                         maxBuffer = value;
                     }
@@ -2302,7 +2322,7 @@ pub fn spawnMaybeSync(
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -2414,7 +2434,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJSC(globalThis));
+                return globalThis.throwValue(err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
@@ -2432,6 +2452,13 @@ pub fn spawnMaybeSync(
     subprocess.this_jsvalue = out;
 
     var send_exit_notification = false;
+
+    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
 
     if (comptime !is_sync) {
         bun.debugAssert(out != .zero);
@@ -2488,12 +2515,6 @@ pub fn spawnMaybeSync(
     }
 
     should_close_memfd = false;
-
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
 
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener

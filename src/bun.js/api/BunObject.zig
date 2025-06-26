@@ -762,7 +762,7 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
-    const milliseconds = arg.coerce(i32, globalObject);
+    const milliseconds = try arg.coerce(i32, globalObject);
     if (milliseconds < 0) {
         return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }
@@ -1184,7 +1184,6 @@ pub fn allocUnsafe(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     if (!size.isUInt32AsAnyInt()) {
         return globalThis.throwInvalidArguments("Expected a positive number", .{});
     }
-
     return JSC.JSValue.createUninitializedUint8Array(globalThis, size.toUInt64NoTruncate());
 }
 
@@ -1249,7 +1248,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
         .result => |map| map,
 
         .err => |err| {
-            return globalThis.throwValue(err.toJSC(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis));
         },
     };
 
@@ -1507,21 +1506,21 @@ pub const JSZlib = struct {
         var library: Library = .zlib;
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
-                opts.windowBits = window.coerce(i32, globalThis);
+                opts.windowBits = try window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
             if (try options_val.get(globalThis, "level")) |level| {
-                opts.level = level.coerce(i32, globalThis);
+                opts.level = try level.coerce(i32, globalThis);
             }
 
             if (try options_val.get(globalThis, "memLevel")) |memLevel| {
-                opts.memLevel = memLevel.coerce(i32, globalThis);
+                opts.memLevel = try memLevel.coerce(i32, globalThis);
                 library = .zlib;
             }
 
             if (try options_val.get(globalThis, "strategy")) |strategy| {
-                opts.strategy = strategy.coerce(i32, globalThis);
+                opts.strategy = try strategy.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1633,7 +1632,7 @@ pub const JSZlib = struct {
 
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
-                windowBits = window.coerce(i32, globalThis);
+                windowBits = try window.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1648,7 +1647,7 @@ pub const JSZlib = struct {
             }
 
             if (try options_val.get(globalThis, "level")) |level_value| {
-                level = level_value.coerce(i32, globalThis);
+                level = try level_value.coerce(i32, globalThis);
                 if (globalThis.hasException()) return .zero;
             }
         }
@@ -1749,7 +1748,7 @@ pub const JSZstd = struct {
     fn getLevel(globalThis: *JSGlobalObject, options_val: ?JSValue) bun.JSError!i32 {
         if (options_val) |option_obj| {
             if (try option_obj.get(globalThis, "level")) |level_val| {
-                const value = level_val.coerce(i32, globalThis);
+                const value = try level_val.coerce(i32, globalThis);
                 if (globalThis.hasException()) return error.JSError;
 
                 if (value < 1 or value > 22) {
@@ -1948,15 +1947,6 @@ pub const JSZstd = struct {
 
             const output_slice = this.output;
             const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
-            if (globalThis.hasException()) {
-                promise.reject(globalThis, error.JSError);
-                return;
-            }
-            if (buffer_value == .zero) {
-                promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
-                return;
-            }
-
             this.output = &[_]u8{};
             promise.resolve(globalThis, buffer_value);
         }

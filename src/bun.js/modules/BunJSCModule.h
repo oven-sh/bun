@@ -618,7 +618,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
         return {};
     }
     vm.dateCache.resetIfNecessarySlow();
-    WTF::Vector<UChar, 32> buffer;
+    WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());
     return JSValue::encode(jsString(vm, timeZoneString));
@@ -770,7 +770,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     bool asNodeBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
-        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+        auto binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (binaryTypeValue) {
             if (!binaryTypeValue.isString()) {
                 throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
                 return {};
@@ -786,9 +788,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope,
-            serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
 
     auto serializedValue = serialized.releaseReturnValue();

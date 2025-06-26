@@ -323,7 +323,6 @@ const JSON = bun.JSON;
 const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
-const URL = bun.URL;
 const logger = bun.logger;
 const string = bun.string;
 
@@ -331,14 +330,12 @@ const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 
-const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const ExtractData = bun.install.ExtractData;
 const Features = bun.install.Features;
 const PackageID = bun.install.PackageID;
 const Repository = bun.install.Repository;
 const Resolution = bun.install.Resolution;
-const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;
 const initializeStore = bun.install.initializeStore;
 const invalid_package_id = bun.install.invalid_package_id;
@@ -348,7 +345,6 @@ const Package = Lockfile.Package;
 
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
-const SuccessFn = PackageManager.SuccessFn;
 const TaskCallbackList = PackageManager.TaskCallbackList;
 const assignRootResolution = PackageManager.assignRootResolution;
 const failRootResolution = PackageManager.failRootResolution;

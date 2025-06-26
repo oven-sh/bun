@@ -1094,7 +1094,6 @@ const Global = bun.Global;
 const JSC = bun.JSC;
 const JSON = bun.JSON;
 const Output = bun.Output;
-const Path = bun.path;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;

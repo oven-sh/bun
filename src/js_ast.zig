@@ -232,134 +232,6 @@ pub const SlotCounts = struct {
     }
 };
 
-const char_freq_count = 64;
-pub const CharAndCount = struct {
-    char: u8 = 0,
-    count: i32 = 0,
-    index: usize = 0,
-
-    pub const Array = [char_freq_count]CharAndCount;
-
-    pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
-        if (a.count != b.count) {
-            return a.count > b.count;
-        }
-
-        if (a.index != b.index) {
-            return a.index < b.index;
-        }
-
-        return a.char < b.char;
-    }
-};
-
-pub const CharFreq = struct {
-    const Vector = @Vector(char_freq_count, i32);
-    const Buffer = [char_freq_count]i32;
-
-    freqs: Buffer align(1) = undefined,
-
-    const scan_big_chunk_size = 32;
-    pub fn scan(this: *CharFreq, text: string, delta: i32) void {
-        if (delta == 0)
-            return;
-
-        if (text.len < scan_big_chunk_size) {
-            scanSmall(&this.freqs, text, delta);
-        } else {
-            scanBig(&this.freqs, text, delta);
-        }
-    }
-
-    fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
-        // https://zig.godbolt.org/z/P5dPojWGK
-        var freqs = out.*;
-        defer out.* = freqs;
-        var deltas: [256]i32 = [_]i32{0} ** 256;
-        var remain = text;
-
-        bun.assert(remain.len >= scan_big_chunk_size);
-
-        const unrolled = remain.len - (remain.len % scan_big_chunk_size);
-        const remain_end = remain.ptr + unrolled;
-        var unrolled_ptr = remain.ptr;
-        remain = remain[unrolled..];
-
-        while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
-            const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
-            inline for (0..scan_big_chunk_size) |i| {
-                deltas[@as(usize, chunk[i])] += delta;
-            }
-        }
-
-        for (remain) |c| {
-            deltas[@as(usize, c)] += delta;
-        }
-
-        freqs[0..26].* = deltas['a' .. 'a' + 26].*;
-        freqs[26 .. 26 * 2].* = deltas['A' .. 'A' + 26].*;
-        freqs[26 * 2 .. 62].* = deltas['0' .. '0' + 10].*;
-        freqs[62] = deltas['_'];
-        freqs[63] = deltas['$'];
-    }
-
-    fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
-        var freqs: [char_freq_count]i32 = out.*;
-        defer out.* = freqs;
-
-        for (text) |c| {
-            const i: usize = switch (c) {
-                'a'...'z' => @as(usize, @intCast(c)) - 'a',
-                'A'...'Z' => @as(usize, @intCast(c)) - ('A' - 26),
-                '0'...'9' => @as(usize, @intCast(c)) + (53 - '0'),
-                '_' => 62,
-                '$' => 63,
-                else => continue,
-            };
-            freqs[i] += delta;
-        }
-    }
-
-    pub fn include(this: *CharFreq, other: CharFreq) void {
-        // https://zig.godbolt.org/z/Mq8eK6K9s
-        const left: @Vector(char_freq_count, i32) = this.freqs;
-        const right: @Vector(char_freq_count, i32) = other.freqs;
-
-        this.freqs = left + right;
-    }
-
-    pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        const array: CharAndCount.Array = brk: {
-            var _array: CharAndCount.Array = undefined;
-
-            for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
-                dest.* = CharAndCount{
-                    .char = char,
-                    .index = i,
-                    .count = freq,
-                };
-            }
-
-            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
-
-            break :brk _array;
-        };
-
-        var minifier = NameMinifier.init(allocator);
-        minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
-        minifier.tail.ensureTotalCapacityPrecise(NameMinifier.default_tail.len) catch unreachable;
-        // TODO: investigate counting number of < 0 and > 0 and pre-allocating
-        for (array) |item| {
-            if (item.char < '0' or item.char > '9') {
-                minifier.head.append(item.char) catch unreachable;
-            }
-            minifier.tail.append(item.char) catch unreachable;
-        }
-
-        return minifier;
-    }
-};
-
 pub const NameMinifier = struct {
     head: std.ArrayList(u8),
     tail: std.ArrayList(u8),
@@ -448,122 +320,6 @@ pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNode
 pub const ArrayBinding = struct {
     binding: BindingNodeIndex,
     default_value: ?ExprNodeIndex = null,
-};
-
-pub const Ast = struct {
-    pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, BabyList(u32), Ref.ArrayHashCtx, false);
-
-    approximate_newline_count: usize = 0,
-    has_lazy_export: bool = false,
-    runtime_imports: Runtime.Imports = .{},
-
-    nested_scope_slot_counts: SlotCounts = SlotCounts{},
-
-    runtime_import_record_id: ?u32 = null,
-    needs_runtime: bool = false,
-    // This is a list of CommonJS features. When a file uses CommonJS features,
-    // it's not a candidate for "flat bundling" and must be wrapped in its own
-    // closure.
-    has_top_level_return: bool = false,
-    uses_exports_ref: bool = false,
-    uses_module_ref: bool = false,
-    uses_require_ref: bool = false,
-    commonjs_module_exports_assigned_deoptimized: bool = false,
-
-    force_cjs_to_esm: bool = false,
-    exports_kind: ExportsKind = ExportsKind.none,
-
-    // This is a list of ES6 features. They are ranges instead of booleans so
-    // that they can be used in log messages. Check to see if "Len > 0".
-    import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
-    export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: logger.Range = logger.Range.None,
-
-    /// These are stored at the AST level instead of on individual AST nodes so
-    /// they can be manipulated efficiently without a full AST traversal
-    import_records: ImportRecord.List = .{},
-
-    hashbang: string = "",
-    directive: ?string = null,
-    parts: Part.List = Part.List{},
-    // This list may be mutated later, so we should store the capacity
-    symbols: Symbol.List = Symbol.List{},
-    module_scope: Scope = Scope{},
-    char_freq: ?CharFreq = null,
-    exports_ref: Ref = Ref.None,
-    module_ref: Ref = Ref.None,
-    /// When using format .bake_internal_dev, this is the HMR variable instead
-    /// of the wrapper. This is because that format does not store module
-    /// wrappers in a variable.
-    wrapper_ref: Ref = Ref.None,
-    require_ref: Ref = Ref.None,
-
-    // These are used when bundling. They are filled in during the parser pass
-    // since we already have to traverse the AST then anyway and the parser pass
-    // is conveniently fully parallelized.
-    named_imports: NamedImports = .{},
-    named_exports: NamedExports = .{},
-    export_star_import_records: []u32 = &([_]u32{}),
-
-    // allocator: std.mem.Allocator,
-    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
-
-    commonjs_named_exports: CommonJSNamedExports = .{},
-
-    redirect_import_record_index: ?u32 = null,
-
-    /// Only populated when bundling
-    target: bun.options.Target = .browser,
-    // const_values: ConstValuesMap = .{},
-    ts_enums: TsEnumsMap = .{},
-
-    /// Not to be confused with `commonjs_named_exports`
-    /// This is a list of named exports that may exist in a CommonJS module
-    /// We use this with `commonjs_at_runtime` to re-export CommonJS
-    has_commonjs_export_names: bool = false,
-    import_meta_ref: Ref = Ref.None,
-
-    pub const CommonJSNamedExport = struct {
-        loc_ref: LocRef,
-        needs_decl: bool = true,
-    };
-    pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
-
-    pub const NamedImports = std.ArrayHashMapUnmanaged(Ref, NamedImport, RefHashCtx, true);
-    pub const NamedExports = bun.StringArrayHashMapUnmanaged(NamedExport);
-    pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
-    pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
-
-    pub fn fromParts(parts: []Part) Ast {
-        return Ast{
-            .parts = Part.List.init(parts),
-            .runtime_imports = .{},
-        };
-    }
-
-    pub fn initTest(parts: []Part) Ast {
-        return Ast{
-            .parts = Part.List.init(parts),
-            .runtime_imports = .{},
-        };
-    }
-
-    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
-
-    pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
-        const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
-            .separator = true,
-        } };
-        try std.json.stringify(self.parts, opts, stream);
-    }
-
-    /// Do not call this if it wasn't globally allocated!
-    pub fn deinit(this: *Ast) void {
-        // TODO: assert mimalloc-owned memory
-        if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-        if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
-        if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
-    }
 };
 
 /// TLA => Top Level Await
@@ -1099,6 +855,7 @@ pub fn NewBatcher(comptime Type: type) type {
 // @sortImports
 
 pub const ASTMemoryAllocator = @import("ast/ASTMemoryAllocator.zig");
+pub const Ast = @import("ast/Ast.zig");
 pub const Binding = @import("ast/Binding.zig");
 pub const BindingNodeIndex = Binding;
 pub const BundledAst = @import("ast/BundledAst.zig");
@@ -1115,21 +872,21 @@ pub const Stmt = @import("ast/Stmt.zig");
 pub const StmtNodeIndex = Stmt;
 pub const Symbol = @import("ast/Symbol.zig");
 const std = @import("std");
-const ImportRecord = @import("import_record.zig").ImportRecord;
 pub const NewStore = @import("ast/NewStore.zig").NewStore;
-const Runtime = @import("runtime.zig").Runtime;
 const TypeScript = @import("./js_parser.zig").TypeScript;
 pub const UseDirective = @import("ast/UseDirective.zig").UseDirective;
 
+pub const CharFreq = @import("ast/CharFreq.zig");
+const char_freq_count = CharFreq.char_freq_count;
+
 pub const Index = @import("ast/base.zig").Index;
 pub const Ref = @import("ast/base.zig").Ref;
-const RefHashCtx = @import("ast/base.zig").RefHashCtx;
+pub const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 
 const bun = @import("bun");
 pub const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;
 const strings = bun.strings;

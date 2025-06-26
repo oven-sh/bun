@@ -10,10 +10,12 @@ src/allocators/NullableAllocator.zig
 src/analytics/analytics_schema.zig
 src/analytics/analytics_thread.zig
 src/api/schema.zig
+src/ast/Ast.zig
 src/ast/ASTMemoryAllocator.zig
 src/ast/base.zig
 src/ast/Binding.zig
 src/ast/BundledAst.zig
+src/ast/CharFreq.zig
 src/ast/E.zig
 src/ast/Expr.zig
 src/ast/G.zig

@@ -92,7 +92,7 @@ pub fn setMaxSendFragment(this: *This, globalObject: *JSC.JSGlobalObject, callfr
     if (!arg.isNumber()) {
         return globalObject.throw("Expected size to be a number", .{});
     }
-    const size = args.ptr[0].coerceToInt64(globalObject);
+    const size = try args.ptr[0].coerceToInt64(globalObject);
     if (size < 1) {
         return globalObject.throw("Expected size to be greater than 1", .{});
     }
@@ -328,7 +328,7 @@ pub fn exportKeyingMaterial(this: *This, globalObject: *JSC.JSGlobalObject, call
         return globalObject.throw("Expected length to be a number", .{});
     }
 
-    const length = length_arg.coerceToInt64(globalObject);
+    const length = try length_arg.coerceToInt64(globalObject);
     if (length < 0) {
         return globalObject.throw("Expected length to be a positive number", .{});
     }

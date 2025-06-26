@@ -44,16 +44,18 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
     /* us_listen_socket_t extends us_socket_t so we close in similar ways */
     struct us_socket_t* s = &ls->s;
     if (!us_socket_is_closed(0, s)) {
-        us_internal_socket_context_unlink_listen_socket(ssl, s->context, ls);
-        us_poll_stop((struct us_poll_t *) s, s->context->loop);
+        struct us_socket_context_t* context = s->context;
+        struct us_loop_t* loop = context->loop;
+        us_internal_socket_context_unlink_listen_socket(ssl, context, ls);
+        us_poll_stop((struct us_poll_t *) s, loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
-        s->next = s->context->loop->data.closed_head;
-        s->context->loop->data.closed_head = s;
+        s->next = loop->data.closed_head;
+        loop->data.closed_head = s;
 
         /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->prev = (struct us_socket_t *) context;
     }
 
     /* We cannot immediately free a listen socket as we can be inside an accept loop */

@@ -336,6 +336,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
+            /* The context can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->context->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
@@ -480,7 +481,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if(s->flags.allow_half_open) {
                     /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
-                    us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
                     s = s->context->on_end(s);
                 } else {
                     /* We dont allow half open just emit end and close the socket */

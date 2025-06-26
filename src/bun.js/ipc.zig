@@ -1342,7 +1342,7 @@ pub const IPCHandlers = struct {
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat => {
+                    error.InvalidFormat, error.JSError => {
                         send_queue.closeSocket(.failure, .user);
                         return;
                     },

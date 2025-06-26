@@ -288,7 +288,7 @@ pub const JSPromise = opaque {
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        JSC__JSPromise__rejectAsHandled(this, globalThis, value);
+        return bun.jsc.fromJSHostCallVoid(globalThis, @src(), JSC__JSPromise__rejectAsHandled, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {

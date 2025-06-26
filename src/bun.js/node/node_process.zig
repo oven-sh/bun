@@ -53,7 +53,7 @@ fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         if (worker.execArgv) |execArgv| {
             const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len) catch return .zero;
             for (0..execArgv.len) |i| {
-                array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject)) catch return .zero;
             }
             return array;
         }

@@ -346,8 +346,8 @@ pub const CallbackList = union(enum) {
                 const prev = self.callback;
                 const arr = try JSC.JSValue.createEmptyArray(global, 2);
                 arr.protect();
-                arr.putIndex(global, 0, prev); // add the old callback to the array
-                arr.putIndex(global, 1, callback); // add the new callback to the array
+                try arr.putIndex(global, 0, prev); // add the old callback to the array
+                try arr.putIndex(global, 1, callback); // add the new callback to the array
                 prev.unprotect(); // owned by the array now
                 self.* = .{ .callback_array = arr };
             },

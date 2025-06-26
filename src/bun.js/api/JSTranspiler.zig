@@ -1064,7 +1064,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
         array.ensureStillAlive();
         const path = JSC.ZigString.init(record.path.text).toJS(global);
         const kind = JSC.ZigString.init(record.kind.label()).toJS(global);
-        array.putIndex(global, @as(u32, @truncate(i)), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        try array.putIndex(global, @as(u32, @truncate(i)), try JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 
     return array;

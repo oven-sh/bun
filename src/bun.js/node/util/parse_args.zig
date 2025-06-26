@@ -289,7 +289,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
             value_list.push(globalThis, new_value);
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
-            value_list.putIndex(globalThis, 0, new_value);
+            try value_list.putIndex(globalThis, 0, new_value);
             values.putMayBeIndex(globalThis, &key, value_list);
         }
     } else {

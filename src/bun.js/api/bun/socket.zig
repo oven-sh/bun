@@ -1594,8 +1594,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-            array.putIndex(globalObject, 0, raw_js_value);
-            array.putIndex(globalObject, 1, tls_js_value);
+            try array.putIndex(globalObject, 0, raw_js_value);
+            try array.putIndex(globalObject, 1, tls_js_value);
 
             defer this.deref();
 
@@ -2024,9 +2024,9 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     duplexContext.startTLS();
 
     const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
-    array.putIndex(globalObject, 0, tls_js_value);
+    try array.putIndex(globalObject, 0, tls_js_value);
     // data, end, drain and close events must be reported
-    array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
+    try array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
 
     return array;
 }
@@ -2081,8 +2081,8 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = try JSC.JSValue.createEmptyArray(global, 2);
-    array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
-    array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
+    try array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
+    try array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;
 }
 

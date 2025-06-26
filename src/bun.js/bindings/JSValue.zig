@@ -393,8 +393,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void;
-    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
-        JSC__JSValue__putIndex(value, globalObject, i, out);
+    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) bun.JSError!void {
+        return bun.jsc.fromJSHostCallVoid(globalObject, @src(), JSC__JSValue__putIndex, .{ value, globalObject, i, out });
     }
 
     extern fn JSC__JSValue__push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void;
@@ -530,24 +530,10 @@ pub const JSValue = enum(i64) {
         Bun__JSValue__unprotect(this);
     }
 
-    extern fn JSC__JSValue__JSONValueFromString(
-        global: *JSGlobalObject,
-        str: [*]const u8,
-        len: usize,
-        ascii: bool,
-    ) JSValue;
-    pub fn JSONValueFromString(
-        global: *JSGlobalObject,
-        str: [*]const u8,
-        len: usize,
-        ascii: bool,
-    ) JSValue {
-        return JSC__JSValue__JSONValueFromString(global, str, len, ascii);
-    }
     extern fn JSC__JSValue__createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue;
     /// Create an object with exactly two properties
-    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue {
-        return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
+    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__createObject2, .{ global, key1, key2, value1, value2 });
     }
 
     /// this must have been created by fromPtrAddress()
@@ -2387,7 +2373,7 @@ pub const JSValue = enum(i64) {
             inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
                 var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |item, i| {
-                    array.putIndex(
+                    try array.putIndex(
                         globalObject,
                         @truncate(i),
                         JSC.jsNumber(item),
@@ -2406,7 +2392,7 @@ pub const JSValue = enum(i64) {
                     for (value, 0..) |*item, i| {
                         const res = try fromAny(globalObject, *Child, item);
                         if (res == .zero) return .zero;
-                        array.putIndex(
+                        try array.putIndex(
                             globalObject,
                             @truncate(i),
                             res,

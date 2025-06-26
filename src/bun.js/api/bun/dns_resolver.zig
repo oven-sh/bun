@@ -3387,11 +3387,11 @@ pub const DNSResolver = struct {
         const options = callframe.argument(0);
         if (options.isObject()) {
             if (try options.getTruthy(globalThis, "timeout")) |timeout| {
-                resolver.options.timeout = timeout.coerceToInt32(globalThis);
+                resolver.options.timeout = try timeout.coerceToInt32(globalThis);
             }
 
             if (try options.getTruthy(globalThis, "tries")) |tries| {
-                resolver.options.tries = tries.coerceToInt32(globalThis);
+                resolver.options.tries = try tries.coerceToInt32(globalThis);
             }
         }
 

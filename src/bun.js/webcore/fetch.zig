@@ -2363,7 +2363,7 @@ pub fn Bun__fetch_(
 
             const opened_fd = switch (opened_fd_res) {
                 .err => |err| {
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     is_error = true;
                     return rejected_value;
                 },
@@ -2435,7 +2435,7 @@ pub fn Bun__fetch_(
             switch (res) {
                 .err => |err| {
                     is_error = true;
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
                     body.detach();
 
                     return rejected_value;

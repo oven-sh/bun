@@ -641,7 +641,7 @@ pub const PostgresSQLQuery = struct {
             return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
         }
 
-        const mode = js_mode.coerce(i32, globalObject);
+        const mode = try js_mode.coerce(i32, globalObject);
         this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
             return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
         };
@@ -972,12 +972,12 @@ pub const PostgresRequest = struct {
                 },
                 .int4 => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .int4_array => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .float8 => {
@@ -1801,7 +1801,7 @@ pub const PostgresSQLConnection = struct {
         const arguments = callframe.arguments_old(15).slice();
         const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
-        const port = arguments[1].coerce(i32, globalObject);
+        const port = try arguments[1].coerce(i32, globalObject);
 
         const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();

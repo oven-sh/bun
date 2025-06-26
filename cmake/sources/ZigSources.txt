@@ -525,7 +525,6 @@ src/install/extract_tarball.zig
 src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig
-src/install/InstallCLI.zig
 src/install/integrity.zig
 src/install/lifecycle_script_runner.zig
 src/install/lockfile.zig

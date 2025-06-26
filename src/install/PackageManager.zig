@@ -138,6 +138,70 @@ active_lifecycle_scripts: LifecycleScriptSubprocess.List,
 last_reported_slow_lifecycle_script_at: u64 = 0,
 cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
+/// Corresponds to possible commands from the CLI.
+pub const Subcommand = enum {
+    install,
+    update,
+    pm,
+    add,
+    remove,
+    link,
+    unlink,
+    patch,
+    @"patch-commit",
+    outdated,
+    pack,
+    publish,
+    audit,
+    info,
+
+    // bin,
+    // hash,
+    // @"hash-print",
+    // @"hash-string",
+    // cache,
+    // @"default-trusted",
+    // untrusted,
+    // trust,
+    // ls,
+    // migrate,
+
+    pub fn canGloballyInstallPackages(this: Subcommand) bool {
+        return switch (this) {
+            .install, .update, .add => true,
+            else => false,
+        };
+    }
+
+    pub fn supportsWorkspaceFiltering(this: Subcommand) bool {
+        return switch (this) {
+            .outdated => true,
+            .install => true,
+            // .pack => true,
+            // .add => true,
+            else => false,
+        };
+    }
+
+    pub fn supportsJsonOutput(this: Subcommand) bool {
+        return switch (this) {
+            .audit,
+            .pm,
+            .info,
+            => true,
+            else => false,
+        };
+    }
+
+    // TODO: make all subcommands find root and chdir
+    pub fn shouldChdirToRoot(this: Subcommand) bool {
+        return switch (this) {
+            .link => false,
+            else => true,
+        };
+    }
+};
+
 pub const WorkspaceFilter = union(enum) {
     all,
     name: []const u8,
@@ -975,9 +1039,6 @@ pub const WorkspacePackageJSONCache = @import("PackageManager/WorkspacePackageJS
 const std = @import("std");
 pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
 pub const installWithManager = @import("PackageManager/install_with_manager.zig").installWithManager;
-
-pub const CLI = @import("InstallCLI.zig");
-pub const Subcommand = CLI.Subcommand;
 
 pub const directories = @import("PackageManager/PackageManagerDirectories.zig");
 pub const attemptToCreatePackageJSON = directories.attemptToCreatePackageJSON;

@@ -12,6 +12,7 @@ src/analytics/analytics_thread.zig
 src/api/schema.zig
 src/ast/Ast.zig
 src/ast/ASTMemoryAllocator.zig
+src/ast/B.zig
 src/ast/base.zig
 src/ast/Binding.zig
 src/ast/BundledAst.zig
@@ -27,6 +28,7 @@ src/ast/Scope.zig
 src/ast/ServerComponentBoundary.zig
 src/ast/Stmt.zig
 src/ast/Symbol.zig
+src/ast/TS.zig
 src/ast/UseDirective.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig

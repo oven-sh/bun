@@ -252,10 +252,8 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
+static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
-    VM& vm = JSC::getVM(globalObject);
-
     if (vm.hasTerminationRequest()) {
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
@@ -337,7 +335,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
         return {};
     }
 
@@ -399,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (checkForTermination(globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
         return {};
     }
 

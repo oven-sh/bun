@@ -117,4 +117,4 @@ const MutableString = bun.MutableString;
 const Zlib = @import("../zlib.zig");
 const Brotli = bun.brotli;
 const zstd = bun.zstd;
-const Encoding = @import("./encoding.zig").Encoding;
+const Encoding = @import("./Encoding.zig").Encoding;

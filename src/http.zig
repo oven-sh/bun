@@ -25,133 +25,6 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
-pub const FetchRedirect = enum(u8) {
-    follow,
-    manual,
-    @"error",
-
-    pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
-        .{ "follow", .follow },
-        .{ "manual", .manual },
-        .{ "error", .@"error" },
-    });
-};
-
-pub const HTTPRequestBody = union(enum) {
-    bytes: []const u8,
-    sendfile: Sendfile,
-    stream: struct {
-        buffer: ?*ThreadSafeStreamBuffer,
-        ended: bool,
-
-        pub fn detach(this: *@This()) void {
-            if (this.buffer) |buffer| {
-                this.buffer = null;
-                buffer.deref();
-            }
-        }
-    },
-
-    pub fn isStream(this: *const HTTPRequestBody) bool {
-        return this.* == .stream;
-    }
-
-    pub fn deinit(this: *HTTPRequestBody) void {
-        switch (this.*) {
-            .sendfile, .bytes => {},
-            .stream => |*stream| stream.detach(),
-        }
-    }
-    pub fn len(this: *const HTTPRequestBody) usize {
-        return switch (this.*) {
-            .bytes => this.bytes.len,
-            .sendfile => this.sendfile.content_size,
-            // unknow amounts
-            .stream => std.math.maxInt(usize),
-        };
-    }
-};
-
-pub const Sendfile = struct {
-    fd: bun.FileDescriptor,
-    remain: usize = 0,
-    offset: usize = 0,
-    content_size: usize = 0,
-
-    pub fn isEligible(url: bun.URL) bool {
-        if (comptime Environment.isWindows or !FeatureFlags.streaming_file_uploads_for_http_client) {
-            return false;
-        }
-        return url.isHTTP() and url.href.len > 0;
-    }
-
-    pub fn write(
-        this: *Sendfile,
-        socket: NewHTTPContext(false).HTTPSocket,
-    ) Status {
-        const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
-        // TODO we should not need this int cast; improve the return type of `@min`
-        const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
-
-        if (Environment.isLinux) {
-            var signed_offset = @as(i64, @intCast(this.offset));
-            const begin = this.offset;
-            const val =
-                // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
-            this.offset = @as(u64, @intCast(signed_offset));
-
-            const errcode = bun.sys.getErrno(val);
-
-            this.remain -|= @as(u64, @intCast(this.offset -| begin));
-
-            if (errcode != .SUCCESS or this.remain == 0 or val == 0) {
-                if (errcode == .SUCCESS) {
-                    return .{ .done = {} };
-                }
-
-                return .{ .err = bun.errnoToZigErr(errcode) };
-            }
-        } else if (Environment.isPosix) {
-            var sbytes: std.posix.off_t = adjusted_count;
-            const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
-            const errcode = bun.sys.getErrno(std.c.sendfile(
-                this.fd.cast(),
-                socket.fd().cast(),
-                signed_offset,
-                &sbytes,
-                null,
-                0,
-            ));
-            const wrote = @as(u64, @intCast(sbytes));
-            this.offset +|= wrote;
-            this.remain -|= wrote;
-            if (errcode != .AGAIN or this.remain == 0 or sbytes == 0) {
-                if (errcode == .SUCCESS) {
-                    return .{ .done = {} };
-                }
-
-                return .{ .err = bun.errnoToZigErr(errcode) };
-            }
-        }
-
-        return .{ .again = {} };
-    }
-
-    pub const Status = union(enum) {
-        done: void,
-        err: anyerror,
-        again: void,
-    };
-};
-
-pub const InitError = error{
-    FailedToOpenSocket,
-    LoadCAFile,
-    InvalidCAFile,
-    InvalidCA,
-};
-
 const log = Output.scoped(.fetch, false);
 
 pub var temp_hostname: [8192]u8 = undefined;
@@ -508,18 +381,6 @@ fn writeRequest(
     _ = writer.write("\r\n") catch 0;
 }
 
-pub const CertificateInfo = struct {
-    cert: []const u8,
-    cert_error: HTTPCertError,
-    hostname: []const u8,
-    pub fn deinit(this: *const CertificateInfo, allocator: std.mem.Allocator) void {
-        allocator.free(this.cert);
-        allocator.free(this.cert_error.code);
-        allocator.free(this.cert_error.reason);
-        allocator.free(this.hostname);
-    }
-};
-
 const default_redirect_count = 127;
 
 pub const HTTPVerboseLevel = enum {
@@ -669,7 +530,7 @@ pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
-pub const HeaderBuilder = @import("./http/header_builder.zig");
+pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -2575,7 +2436,7 @@ const FeatureFlags = bun.FeatureFlags;
 const std = @import("std");
 const URL = @import("./url.zig").URL;
 
-pub const Method = @import("./http/method.zig").Method;
+pub const Method = @import("./http/Method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
 const HTTPClient = @This();
 const StringBuilder = bun.StringBuilder;
@@ -2586,17 +2447,20 @@ const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const uws = bun.uws;
-const HTTPCertError = @import("./http/cert_error.zig").HTTPCertError;
-const ProxyTunnel = @import("./http/proxy_tunnel.zig").ProxyTunnel;
-pub const Headers = @import("./http/headers.zig").Headers;
-pub const MimeType = @import("./http/mime_type.zig");
-pub const URLPath = @import("./http/url_path.zig");
-pub const Encoding = @import("./http/encoding.zig").Encoding;
-pub const Decompressor = @import("./http/decompressor.zig").Decompressor;
-pub const Signals = @import("./http/signals.zig").Signals;
-pub const ThreadSafeStreamBuffer = @import("./http/stream_buffer.zig").ThreadSafeStreamBuffer;
-pub const HTTPThread = @import("./http/http_thread.zig").HTTPThread;
-pub const NewHTTPContext = @import("./http/http_context.zig").NewHTTPContext;
-pub const AsyncHTTP = @import("./http/async_http.zig").AsyncHTTP;
-pub const InternalState = @import("./http/internal_state.zig").InternalState;
-pub const HTTPStage = @import("./http/internal_state.zig").HTTPStage;
+const HTTPCertError = @import("./http/HTTPCertError.zig");
+const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+pub const Headers = @import("./http/Headers.zig");
+pub const MimeType = @import("./http/MimeType.zig");
+pub const URLPath = @import("./http/URLPath.zig");
+pub const Encoding = @import("./http/Encoding.zig").Encoding;
+pub const Decompressor = @import("./http/Decompressor.zig").Decompressor;
+pub const Signals = @import("./http/Signals.zig");
+pub const ThreadSafeStreamBuffer = @import("./http/ThreadSafeStreamBuffer.zig");
+pub const HTTPThread = @import("./http/HTTPThread.zig");
+pub const NewHTTPContext = @import("./http/HTTPContext.zig").NewHTTPContext;
+pub const AsyncHTTP = @import("./http/AsyncHTTP.zig");
+pub const InternalState = @import("./http/InternalState.zig");
+pub const CertificateInfo = @import("./http/CertificateInfo.zig");
+pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
+pub const InitError = @import("./http/InitError.zig").InitError;
+pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;

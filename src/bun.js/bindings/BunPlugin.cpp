@@ -735,7 +735,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
 
     if (!result.isObject()) {
         JSC::throwTypeError(globalObject, scope, "onLoad() expects an object returned"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
@@ -810,7 +810,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             switch (promise->status(vm)) {
             case JSPromise::Status::Pending: {
                 JSC::throwTypeError(globalObject, scope, "onResolve() doesn't support pending promises yet"_s);
-                return JSValue::encode({});
+                return {};
             }
             case JSPromise::Status::Rejected: {
                 promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
@@ -826,7 +826,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, scope, "onResolve() expects an object returned"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         RELEASE_AND_RETURN(scope, JSValue::encode(result));

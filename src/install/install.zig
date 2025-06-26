@@ -10178,6 +10178,17 @@ pub const PackageManager = struct {
 
         this_transpiler.env.map.put("PATH", PATH.items) catch unreachable;
 
+        // Run node-gyp jobs in parallel.
+        // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
+        const thread_count = bun.getThreadCount();
+        if (thread_count > 2) {
+            if (!this_transpiler.env.has("JOBS")) {
+                var int_buf: [10]u8 = undefined;
+                const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
+                this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+            }
+        }
+
         const envp = try this_transpiler.env.map.createNullDelimitedEnvMap(this.allocator);
         try this_transpiler.env.map.put("PATH", original_path);
         PATH.deinit();

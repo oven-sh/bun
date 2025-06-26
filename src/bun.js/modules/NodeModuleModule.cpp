@@ -315,27 +315,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         // not "requires" because "require" could be confusing
-        JSC::throwTypeError(
-            globalObject, scope,
-            "Module._resolveFilename needs 2+ arguments (a string)"_s);
-        scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::throwTypeError(globalObject, scope, "Module._resolveFilename needs 2+ arguments (a string)"_s);
+        return {};
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
 
         if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            JSC::throwTypeError(globalObject, scope,
-                "Module._resolveFilename expects a string"_s);
-            scope.release();
-            return JSC::JSValue::encode(JSC::JSValue {});
+            JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
+            return {};
         }
 
         if (
@@ -347,28 +341,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             // weird thing.
             (fromValue.isObject()) {
 
-            if (auto idValue = fromValue.getObject()->getIfPropertyExists(
-                    globalObject, builtinNames(vm).filenamePublicName())) {
+            auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (idValue) {
                 if (idValue.isString()) {
                     fromValue = idValue;
                 }
             }
         }
 
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        auto result = Bun__resolveSync(
-            globalObject,
-            JSC::JSValue::encode(moduleName), JSValue::encode(fromValue),
-            false,
-            true);
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
             JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
 
-        scope.release();
         return result;
     }
     }
@@ -612,9 +601,7 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(
-        globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr),
-        JSC::ArgList(args));
+    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -1016,8 +1003,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
-        globalObject);
+    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
         if (catchScope.exception()) {
@@ -1031,18 +1017,14 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(constructor);
 
-    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
-        ++i) {
+    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues); ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
         const auto& property = Identifier::fromString(vm, entry.m_key);
-        JSValue value = constructor->getIfPropertyExists(globalObject, property);
+        JSValue value = constructor->get(globalObject, property);
 
         if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
-        }
-        if (value.isEmpty()) [[unlikely]] {
-            value = JSC::jsUndefined();
         }
 
         exportNames.append(property);

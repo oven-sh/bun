@@ -42,11 +42,11 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 49 },
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 284 },
-  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 175 },
+  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 174 },
 
-  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 29 },
-  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 49 },
-  "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 139 },
+  "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
+  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
+  "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 136 },
 };
 const words_keys = [...Object.keys(words)];
 

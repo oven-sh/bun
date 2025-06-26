@@ -208,7 +208,7 @@ fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     switch (bun.api.node.path.getCwd(&buf)) {
         .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
-            return globalObject.throwValue(e.toJSC(globalObject));
+            return globalObject.throwValue(e.toJS(globalObject));
         },
     }
 }
@@ -233,7 +233,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
                 .result => |r| r,
                 .err => |err| {
                     _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
-                    return globalObject.throwValue(err.toJSC(globalObject));
+                    return globalObject.throwValue(err.toJS(globalObject));
                 },
             };
             @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
@@ -252,7 +252,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
             return str.transferToJS(globalObject);
         },
         .err => |e| {
-            return globalObject.throwValue(e.toJSC(globalObject));
+            return globalObject.throwValue(e.toJS(globalObject));
         },
     }
 }

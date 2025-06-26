@@ -45,7 +45,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     }
 
     JSValue publicKeyValue = m_keyObj.exportPublic(lexicalGlobalObject, scope, m_publicKeyEncoding);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         scope.clearException();
         exceptionCallback(exceptionValue);
@@ -53,7 +53,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     }
 
     JSValue privateKeyValue = m_keyObj.exportPrivate(lexicalGlobalObject, scope, m_privateKeyEncoding);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         scope.clearException();
         exceptionCallback(exceptionValue);

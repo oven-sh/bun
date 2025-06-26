@@ -55,14 +55,12 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-} || bun.OOM;
+} || bun.JSError;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
     SerializationFailed,
-    /// Out of memory
-    OutOfMemory,
-};
+} || bun.JSError;
 
 const advanced = struct {
     pub const header_length = @sizeOf(IPCMessageType) + @sizeOf(u32);
@@ -109,11 +107,7 @@ const advanced = struct {
                 }
 
                 const message = data[header_length .. header_length + message_len];
-                const deserialized = JSValue.deserialize(message, global);
-
-                if (deserialized == .zero) {
-                    return IPCDecodeError.InvalidFormat;
-                }
+                const deserialized = try JSValue.deserialize(message, global);
 
                 return .{
                     .bytes_consumed = header_length + message_len,
@@ -137,8 +131,7 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = value.serialize(global, true) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = try value.serialize(global, true);
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -1155,7 +1148,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
-                error.InvalidFormat => {
+                error.InvalidFormat, error.JSError => {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
@@ -1188,7 +1181,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 log("hit NotEnoughBytes2", .{});
                 return;
             },
-            error.InvalidFormat => {
+            error.InvalidFormat, error.JSError => {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },

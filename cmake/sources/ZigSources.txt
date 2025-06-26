@@ -13,6 +13,7 @@ src/api/schema.zig
 src/ast/base.zig
 src/ast/Parser.zig
 src/ast/SideEffects.zig
+src/ast/visitExpr.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig
 src/async/windows_event_loop.zig
@@ -569,6 +570,7 @@ src/js_ast.zig
 src/js_lexer_tables.zig
 src/js_lexer.zig
 src/js_lexer/identifier.zig
+src/js_parser_longest.zig
 src/js_parser.zig
 src/js_printer.zig
 src/jsc_stub.zig

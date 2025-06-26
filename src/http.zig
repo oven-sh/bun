@@ -2464,3 +2464,4 @@ pub const CertificateInfo = @import("./http/CertificateInfo.zig");
 pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
+pub const SendFile = @import("./http/SendFile.zig");

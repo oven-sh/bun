@@ -149,7 +149,7 @@ pub const FetchTasklet = struct {
 
     pub const HTTPRequestBody = union(enum) {
         AnyBlob: AnyBlob,
-        Sendfile: http.Sendfile,
+        Sendfile: http.SendFile,
         ReadableStream: JSC.WebCore.ReadableStream.Strong,
 
         pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
@@ -2370,7 +2370,7 @@ pub fn Bun__fetch_(
                 .result => |fd| fd,
             };
 
-            if (proxy == null and bun.http.Sendfile.isEligible(url)) {
+            if (proxy == null and bun.http.SendFile.isEligible(url)) {
                 use_sendfile: {
                     const stat: bun.Stat = switch (bun.sys.fstat(opened_fd)) {
                         .result => |result| result,

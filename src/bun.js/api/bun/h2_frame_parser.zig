@@ -1917,14 +1917,14 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
                 const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
@@ -1935,11 +1935,11 @@ pub const H2FrameParser = struct {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+                    try sensitiveHeaders.push(globalObject, js_header_name);
                 }
 
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
+                try headers.push(globalObject, js_header_name);
+                try headers.push(globalObject, js_header_value);
 
                 js_header_name.ensureStillAlive();
                 js_header_value.ensureStillAlive();
@@ -2103,12 +2103,12 @@ pub const H2FrameParser = struct {
                     // need to create an array
                     const array = try JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
                     array.ensureStillAlive();
-                    array.push(this.handlers.globalObject, originValue);
-                    array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try array.push(this.handlers.globalObject, originValue);
+                    try array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
                     originValue = array;
                 } else {
                     // we already have an array, just add the origin to it
-                    originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    try originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
                 }
                 count += 1;
                 payload = payload[origin_length + 2 ..];

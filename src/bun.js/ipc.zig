@@ -241,7 +241,7 @@ const json = struct {
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
-        value.jsonStringify(global, 0, &out);
+        try value.jsonStringify(global, 0, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
@@ -352,7 +352,7 @@ pub const CallbackList = union(enum) {
                 self.* = .{ .callback_array = arr };
             },
             .callback_array => |arr| {
-                arr.push(global, callback);
+                try arr.push(global, callback);
             },
         }
     }
@@ -1382,15 +1382,11 @@ pub const IPCHandlers = struct {
 extern "C" fn IPCSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcSerialize(globalObject: *JSC.JSGlobalObject, message: JSC.JSValue, handle: JSC.JSValue) bun.JSError!JSC.JSValue {
-    const result = IPCSerialize(globalObject, message, handle);
-    if (result == .zero) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCSerialize, .{ globalObject, message, handle });
 }
 
 extern "C" fn IPCParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) JSC.JSValue;
 
 pub fn ipcParse(globalObject: *JSC.JSGlobalObject, target: JSC.JSValue, serialized: JSC.JSValue, fd: JSC.JSValue) bun.JSError!JSC.JSValue {
-    const result = IPCParse(globalObject, target, serialized, fd);
-    if (result == .zero) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCall(globalObject, @src(), IPCParse, .{ globalObject, target, serialized, fd });
 }

@@ -406,7 +406,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             }
 
             if (!kind.isStringLike()) {
-                tsconfig.jsonStringify(globalThis, 0, &out);
+                try tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
                 out = tsconfig.toBunString(globalThis) catch @panic("unexpected exception");
             }
@@ -445,7 +445,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             defer out.deref();
             // TODO: write a converter between JSC types and Bun AST types
             if (is_object) {
-                macros.jsonStringify(globalThis, 0, &out);
+                try macros.jsonStringify(globalThis, 0, &out);
             } else {
                 out = try macros.toBunString(globalThis);
             }

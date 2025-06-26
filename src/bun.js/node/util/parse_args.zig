@@ -286,7 +286,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         // first value is added as new array [new_value],
         // subsequent values are pushed to existing array.
         if (try values.getOwn(globalThis, key)) |value_list| {
-            value_list.push(globalThis, new_value);
+            try value_list.push(globalThis, new_value);
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
             try value_list.putIndex(globalThis, 0, new_value);
@@ -602,7 +602,7 @@ const ParseArgsState = struct {
                     return globalThis.throwValue(err);
                 }
                 const value = token.value.asJSValue(globalThis);
-                this.positionals.push(globalThis, value);
+                try this.positionals.push(globalThis, value);
             },
             .@"option-terminator" => {},
         }
@@ -645,7 +645,7 @@ const ParseArgsState = struct {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                 },
             }
-            this.tokens.push(globalThis, obj);
+            try this.tokens.push(globalThis, obj);
         }
     }
 };

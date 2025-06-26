@@ -9,13 +9,17 @@ Bun uses **BuildKite** as its primary continuous integration (CI) system, with a
 ### 1. BuildKite Pipeline (`.buildkite/`)
 
 #### `bootstrap.yml`
+
 The entry point for BuildKite CI runs. It:
+
 - Requires manual approval for pull requests from forks (security measure)
 - Executes the main CI script (`ci.mjs`) on a Darwin (macOS) build agent
 - Must be manually updated in BuildKite settings when changed
 
 #### `ci.mjs`
+
 The main CI orchestration script that:
+
 - Dynamically generates the BuildKite pipeline based on the build context
 - Manages build and test jobs across different platforms
 - Handles various build profiles (release, debug, assert, asan)
@@ -25,7 +29,9 @@ The main CI orchestration script that:
 ### 2. Build System (`scripts/`)
 
 #### `bootstrap.sh`
+
 A universal bootstrap script that sets up build dependencies:
+
 - **Version**: 11 (increment when dependencies change)
 - Works on macOS and Linux with POSIX shell
 - Installs system packages, development tools, and Bun-specific dependencies
@@ -34,7 +40,9 @@ A universal bootstrap script that sets up build dependencies:
 - Handles Docker-specific configurations
 
 #### `build.mjs`
+
 The main build orchestration script that:
+
 - Wraps CMake for building Bun
 - Manages build caching for faster CI runs
 - Handles parallel builds and error reporting
@@ -42,7 +50,9 @@ The main build orchestration script that:
 - Supports cross-compilation via toolchains
 
 #### `machine.mjs`
+
 Virtual machine management script for CI that:
+
 - Supports multiple cloud providers: AWS, Google Cloud, Docker, OrbStack, Tart
 - Provisions ephemeral build environments
 - Manages SSH connections to build machines
@@ -53,12 +63,14 @@ Virtual machine management script for CI that:
 ### Supported Configurations
 
 **Build Platforms:**
+
 - macOS (Darwin): aarch64, x64
 - Linux: aarch64, x64 (with musl and glibc variants)
 - Windows: x64
 - Special builds: baseline (for older CPUs), ASAN (AddressSanitizer)
 
 **Test Platforms:**
+
 - macOS: 13, 14 (latest and previous versions)
 - Linux distributions:
   - Debian 12
@@ -96,6 +108,7 @@ Virtual machine management script for CI that:
 ### Parallel Execution
 
 The CI system maximizes parallelism by:
+
 - Running Zig and C++ compilation on separate machines
 - Using different instance types optimized for each task
 - Caching dependencies between builds
@@ -106,15 +119,18 @@ The CI system maximizes parallelism by:
 ### AWS EC2 Configuration
 
 **Build Agents:**
+
 - C++ builds: `c7i.16xlarge` (x64) or `c8g.16xlarge` (aarch64)
   - 32 CPUs with single thread per core for deterministic builds
 - Zig builds: `r8g.large` (memory-optimized for Zig compiler)
 
 **Test Agents:**
+
 - Standard: `c7i.xlarge` (x64) or `c8g.xlarge` (aarch64)
 - Windows: `c7i.2xlarge` (extra memory for certain tests)
 
 **Image Management:**
+
 - Base images are versioned using bootstrap script version
 - Images can be rebuilt with `build-images` option
 - Published to AWS for reuse across builds
@@ -145,6 +161,7 @@ When triggering manual builds, the following options are available:
 ### Commit Message Triggers
 
 Special commit message patterns trigger CI behaviors:
+
 - `[skip ci]` or `[no ci]`: Skip all CI
 - `[skip builds]` or `[only tests]`: Skip build phase
 - `[skip tests]` or `[only builds]`: Skip test phase
@@ -213,7 +230,7 @@ Special commit message patterns trigger CI behaviors:
 ## Security Considerations
 
 1. **Fork PR Protection**: Manual approval required
-2. **Secrets Management**: 
+2. **Secrets Management**:
    - AWS credentials for EC2
    - GitHub tokens for releases
    - npm tokens for publishing
@@ -226,6 +243,7 @@ Special commit message patterns trigger CI behaviors:
 ### Build Artifacts
 
 All builds upload:
+
 - Compiled binaries
 - Debug symbols
 - Build logs

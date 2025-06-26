@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "WebSocketDeflate.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
@@ -127,7 +128,7 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(int32_t code);
 
     void didReceiveMessage(String&& message);

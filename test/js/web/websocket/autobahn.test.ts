@@ -154,9 +154,7 @@ if (isDockerEnabled()) {
     });
     for (let i = 1; i <= count; i++) {
       const info = (await getCaseInfo(i)) as { id: string; description: string };
-      const test = parseInt(info.id.split(".")[0]) > 10 ? it.todo : it;
-      // tests > 10 are compression tests, which are not supported yet
-      test(`Running test case ${info.id}: ${info.description}`, async () => {
+      it(`Running test case ${info.id}: ${info.description}`, async () => {
         await runTestCase(i);
         const result = (await getCaseStatus(i)) as { behavior: string };
         expect(["OK", "INFORMATIONAL", "NON-STRICT"]).toContain(result.behavior);

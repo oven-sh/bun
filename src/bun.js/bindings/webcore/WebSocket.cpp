@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "WebSocket.h"
+#include "WebSocketDeflate.h"
 #include "headers.h"
 // #include "Blob.h"
 #include "CloseEvent.h"
@@ -71,6 +72,7 @@
 
 #include "JSBuffer.h"
 #include "ErrorEvent.h"
+#include "WebSocketDeflate.h"
 
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
@@ -1258,16 +1260,38 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->disablePendingActivity();
 }
 
-void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
+void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
 {
     this->m_upgradeClient = nullptr;
+
+    // Set extensions if permessage-deflate was negotiated
+    if (deflate_params != nullptr) {
+        StringBuilder extensions;
+        extensions.append("permessage-deflate"_s);
+        if (deflate_params->server_no_context_takeover) {
+            extensions.append("; server_no_context_takeover"_s);
+        }
+        if (deflate_params->client_no_context_takeover) {
+            extensions.append("; client_no_context_takeover"_s);
+        }
+        if (deflate_params->server_max_window_bits != 15) {
+            extensions.append("; server_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->server_max_window_bits));
+        }
+        if (deflate_params->client_max_window_bits != 15) {
+            extensions.append("; client_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->client_max_window_bits));
+        }
+        this->m_extensions = extensions.toString();
+    }
+
     if (m_isSecure) {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 
@@ -1452,9 +1476,9 @@ void WebSocket::updateHasPendingActivity()
 
 } // namespace WebCore
 
-extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
-    webSocket->didConnect(socket, bufferedData, len);
+    webSocket->didConnect(socket, bufferedData, len, deflate_params);
 }
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t errorCode)
 {

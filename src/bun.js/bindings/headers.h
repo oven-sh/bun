@@ -20,6 +20,7 @@
 #include "root.h"
 #include <JavaScriptCore/JSClassRef.h>
 #include "headers-handwritten.h"
+#include "webcore/WebSocketDeflate.h"
 
 namespace JSC {
 class JSGlobalObject;
@@ -598,7 +599,7 @@ ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0
 ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
-ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5);
+ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6);
 ZIG_DECL void Bun__WebSocketClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
@@ -611,7 +612,7 @@ ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
-ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5);
+ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6);
 ZIG_DECL void Bun__WebSocketClientTLS__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);

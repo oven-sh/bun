@@ -1,17 +1,13 @@
 import { createHash, getHashes } from "node:crypto";
 import { test, expect, describe } from "bun:test";
 
-describe("createHash with various algorithms", () => {
-  // https://nodejs.org/api/crypto.html#crypto_crypto_gethashes
-  // filtered out signature algorithms
-
-  const digestAlgorithms = [
+describe("Crypto hash algorithms", () => {
+  const algorithms = [
+    "blake2b256",
     "blake2b512",
     "md4",
     "md5",
-    "md5-sha1",
     "ripemd160",
-    "rmd160",
     "sha1",
     "sha224",
     "sha256",
@@ -29,13 +25,10 @@ describe("createHash with various algorithms", () => {
 
   test("getHashes() returns supported digest algorithms", () => {
     const supportedHashes = getHashes().sort();
-    const expectedHashes = [...digestAlgorithms].sort();
-    console.log("supportedHashes", supportedHashes);
-    console.log("expectedHashes", expectedHashes);
-    expect(supportedHashes).toEqual(expectedHashes);
+    expect(supportedHashes).toEqual(algorithms.sort());
   });
 
-  for (const algorithm of digestAlgorithms) {
+  for (const algorithm of algorithms) {
     test(`createHash supports ${algorithm}`, () => {
       expect(() => {
         const hash = createHash(algorithm);

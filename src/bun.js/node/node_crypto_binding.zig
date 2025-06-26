@@ -503,19 +503,12 @@ fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]
 }
 
 fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    var hashes: bun.CaseInsensitiveASCIIStringArrayHashMap(void) = .init(bun.default_allocator);
-    defer hashes.deinit();
-
-    // TODO(dylan-conway): cache the names
-    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
-
-    const array = try JSValue.createEmptyArray(global, hashes.count());
-
-    for (hashes.keys(), 0..) |hash, i| {
-        const str = String.createUTF8ForJS(global, hash);
+    const values = std.enums.values(EVP.Algorithm);
+    const array = try JSValue.createEmptyArray(global, values.len);
+    for (values, 0..) |alg, i| {
+        const str = String.createUTF8ForJS(global, @tagName(alg));
         array.putIndex(global, @intCast(i), str);
     }
-
     return array;
 }
 

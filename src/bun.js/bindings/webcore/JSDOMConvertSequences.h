@@ -53,7 +53,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
-            if (UNLIKELY(scope.exception()))
+            if (scope.exception()) [[unlikely]]
                 return;
             result.append(WTFMove(convertedValue));
         });
@@ -68,7 +68,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, std::forward<ExceptionThrower>(exceptionThrower));
-            if (UNLIKELY(scope.exception()))
+            if (scope.exception()) [[unlikely]]
                 return;
             result.append(WTFMove(convertedValue));
         });
@@ -86,7 +86,7 @@ struct GenericSequenceConverter {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
             auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, nextValue);
-            if (UNLIKELY(scope.exception()))
+            if (scope.exception()) [[unlikely]]
                 return;
             result.append(WTFMove(convertedValue));
         });
@@ -480,11 +480,13 @@ template<typename T> struct JSConverter<IDLSequence<T>> {
             RETURN_IF_EXCEPTION(scope, {});
             list.append(jsValue);
         }
-        if (UNLIKELY(list.hasOverflowed())) {
+        if (list.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
+        auto* array = JSC::constructArray(&globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, array);
     }
 };
 
@@ -518,7 +520,7 @@ template<typename T> struct JSConverter<IDLFrozenArray<T>> {
             RETURN_IF_EXCEPTION(scope, {});
             list.append(jsValue);
         }
-        if (UNLIKELY(list.hasOverflowed())) {
+        if (list.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }

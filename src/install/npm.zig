@@ -16,6 +16,7 @@ const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = bun.logger;
 const Output = bun.Output;
+const Global = bun.Global;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
@@ -24,19 +25,13 @@ const HTTPClient = bun.http;
 const JSON = bun.JSON;
 const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const Global = bun.Global;
-const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
 const Npm = @This();
@@ -175,8 +170,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("???", response_buf.list.items);
-    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         switch (err) {
             error.OutOfMemory => |oom| return oom,
             else => {
@@ -204,8 +199,8 @@ pub fn responseError(
 ) OOM!noreturn {
     const message = message: {
         var log = logger.Log.init(allocator);
-        const source = logger.Source.initPathString("???", response_body.list.items);
-        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        const source = &logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(source, &log, allocator) catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => break :message null,
@@ -510,7 +505,6 @@ pub const Registry = struct {
     }
 };
 
-const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
 const DistTagMap = extern struct {
     tags: ExternalStringList = ExternalStringList{},
     versions: VersionSlice = VersionSlice{},
@@ -730,8 +724,8 @@ pub const OperatingSystem = enum(u16) {
     pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var operating_system = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
@@ -847,8 +841,8 @@ pub const Architecture = enum(u16) {
     pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callframe.arguments_old(1);
         var architecture = negatable(.none);
-        var iter = args.ptr[0].arrayIterator(globalObject);
-        while (iter.next()) |item| {
+        var iter = try args.ptr[0].arrayIterator(globalObject);
+        while (try iter.next()) |item| {
             const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
@@ -1559,7 +1553,7 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    fn parse(
+    pub fn parse(
         allocator: std.mem.Allocator,
         scope: *const Registry.Scope,
         log: *logger.Log,
@@ -1569,20 +1563,20 @@ pub const PackageManifest = struct {
         etag: []const u8,
         public_max_age: u32,
     ) !?PackageManifest {
-        const source = logger.Source.initPathString(expected_name, json_buffer);
+        const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = JSON.parseUTF8(
-            &source,
+            source,
             log,
             arena.allocator(),
         ) catch return null;
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(&source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }
@@ -1653,7 +1647,7 @@ pub const PackageManifest = struct {
 
                     if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
-                        log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
+                        log.addErrorFmt(source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
                     }
 
@@ -2456,5 +2450,3 @@ pub const PackageManifest = struct {
         return result;
     }
 };
-
-const assert = bun.assert;

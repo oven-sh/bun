@@ -5,25 +5,16 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
@@ -38,7 +29,6 @@ const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = bun.clap;
-const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
@@ -698,9 +688,9 @@ pub const CreateCommand = struct {
             if (package_json_file != null) {
                 initializeStore();
 
-                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+                const source = &logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -1439,7 +1429,7 @@ pub const CreateCommand = struct {
                     @TypeOf(&package_json_writer),
                     &package_json_writer,
                     package_json_expr,
-                    &source,
+                    source,
                     .{ .mangled_props = null },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1851,7 +1841,6 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -2145,8 +2134,8 @@ pub const Example = struct {
         progress.name = "Parsing package.json";
         refresher.refresh();
         initializeStore();
-        var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("package.json", mutable.list.items);
+        var expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2276,8 +2265,8 @@ pub const Example = struct {
         }
 
         initializeStore();
-        var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("examples.json", mutable.list.items);
+        const examples_object = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 try ctx.log.print(Output.errorWriter());
                 Global.exit(1);

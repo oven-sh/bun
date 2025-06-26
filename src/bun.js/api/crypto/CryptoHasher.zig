@@ -154,11 +154,7 @@ pub const CryptoHasher = union(enum) {
         };
     }
 
-    pub fn getAlgorithms(
-        globalThis_: *JSC.JSGlobalObject,
-        _: JSValue,
-        _: JSValue,
-    ) JSC.JSValue {
+    pub fn getAlgorithms(globalThis_: *JSC.JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSC.JSValue {
         return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
     }
 
@@ -843,7 +839,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             }
         }
 
-        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
+        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
             var output_digest_buf: Hasher.Digest = comptime brk: {
                 var bytes: Hasher.Digest = undefined;
                 var i: usize = 0;
@@ -883,16 +879,12 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
-const Async = bun.Async;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
-const assert = bun.assert;
 const HMAC = Crypto.HMAC;
 const EVP = Crypto.EVP;
 const BoringSSL = bun.BoringSSL.c;

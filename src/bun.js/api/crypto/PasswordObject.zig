@@ -41,7 +41,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "cost", "number");
                                     }
 
-                                    const rounds = rounds_value.coerce(i32, globalObject);
+                                    const rounds = try rounds_value.coerce(i32, globalObject);
 
                                     if (rounds < 4 or rounds > 31) {
                                         return globalObject.throwInvalidArguments("Rounds must be between 4 and 31", .{});
@@ -60,7 +60,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
                                     }
 
-                                    const time_cost = time_value.coerce(i32, globalObject);
+                                    const time_cost = try time_value.coerce(i32, globalObject);
 
                                     if (time_cost < 1) {
                                         return globalObject.throwInvalidArguments("Time cost must be greater than 0", .{});
@@ -74,7 +74,7 @@ pub const PasswordObject = struct {
                                         return globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
                                     }
 
-                                    const memory_cost = memory_value.coerce(i32, globalObject);
+                                    const memory_cost = try memory_value.coerce(i32, globalObject);
 
                                     if (memory_cost < 1) {
                                         return globalObject.throwInvalidArguments("Memory cost must be greater than 0", .{});
@@ -758,8 +758,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
 const Async = bun.Async;

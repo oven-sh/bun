@@ -1,13 +1,10 @@
 const uws = bun.uws;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -338,7 +335,7 @@ pub const CallbackList = union(enum) {
     }
 
     /// protects the callback
-    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) void {
+    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
         switch (self.*) {
             .ack_nack => unreachable,
             .none => {
@@ -347,7 +344,7 @@ pub const CallbackList = union(enum) {
             },
             .callback => {
                 const prev = self.callback;
-                const arr = JSC.JSValue.createEmptyArray(global, 2);
+                const arr = try JSC.JSValue.createEmptyArray(global, 2);
                 arr.protect();
                 arr.putIndex(global, 0, prev); // add the old callback to the array
                 arr.putIndex(global, 1, callback); // add the new callback to the array
@@ -359,7 +356,7 @@ pub const CallbackList = union(enum) {
             },
         }
     }
-    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) void {
+    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) bun.JSError!void {
         switch (self.*) {
             .ack_nack => {},
             .none => {},
@@ -369,8 +366,8 @@ pub const CallbackList = union(enum) {
                 self.* = .none;
             },
             .callback_array => {
-                var iter = self.callback_array.arrayIterator(global);
-                while (iter.next()) |item| {
+                var iter = try self.callback_array.arrayIterator(global);
+                while (try iter.next()) |item| {
                     item.callNextTick(global, .{.null});
                 }
                 self.callback_array.unprotect();
@@ -402,8 +399,8 @@ pub const SendHandle = struct {
 
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
-        self.callbacks.callNextTick(global);
-        self.deinit();
+        defer self.deinit();
+        self.callbacks.callNextTick(global) catch {}; // TODO: properly propagate exception upwards
     }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();
@@ -584,7 +581,7 @@ pub const SendQueue = struct {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) bun.JSError!*SendHandle {
         log("SendQueue#startMessage", .{});
         if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
 
@@ -594,7 +591,7 @@ pub const SendQueue = struct {
             const last = &self.queue.items[self.queue.items.len - 1];
             if (last.handle == null and !last.isAckNack() and !(self.queue.items.len == 1 and self.write_in_progress)) {
                 if (callback.isCallable()) {
-                    last.callbacks.push(callback, global);
+                    try last.callbacks.push(callback, global);
                 }
                 // caller can append now
                 return last;
@@ -647,8 +644,8 @@ pub const SendQueue = struct {
             global.emitWarning(
                 warning.transferToJS(global),
                 warning_name.transferToJS(global),
-                .undefined,
-                .undefined,
+                .js_undefined,
+                .js_undefined,
             ) catch |e| {
                 _ = global.takeException(e);
             };
@@ -774,7 +771,7 @@ pub const SendQueue = struct {
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
         log("SendQueue#serializeAndSend", .{});
         const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
-        const msg = self.startMessage(global, callback, handle);
+        const msg = self.startMessage(global, callback, handle) catch return .failure;
         const start_offset = msg.data.list.items.len;
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
@@ -930,7 +927,7 @@ const MAX_HANDLE_RETRANSMISSIONS = 3;
 fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const ex = callframe.argumentsAsArray(1)[0];
     JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-    return .undefined;
+    return .js_undefined;
 }
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
@@ -951,11 +948,11 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
 
     if (handle.isCallable()) {
         callback = handle;
-        handle = .undefined;
-        options_ = .undefined;
+        handle = .js_undefined;
+        options_ = .js_undefined;
     } else if (options_.isCallable()) {
         callback = options_;
-        options_ = .undefined;
+        options_ = .js_undefined;
     } else if (!options_.isUndefined()) {
         try globalObject.validateObject("options", options_, .{});
     }
@@ -982,10 +979,10 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: JSC.JSValue = try ipcSerialize(globalObject, message, handle);
         if (serialized_array.isUndefinedOrNull()) {
-            handle = .undefined;
+            handle = .js_undefined;
         } else {
-            const serialized_handle = serialized_array.getIndex(globalObject, 0);
-            const serialized_message = serialized_array.getIndex(globalObject, 1);
+            const serialized_handle = try serialized_array.getIndex(globalObject, 0);
+            const serialized_message = try serialized_array.getIndex(globalObject, 1);
             handle = serialized_handle;
             message = serialized_message;
         }
@@ -1026,14 +1023,14 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
 pub fn emitHandleIPCMessage(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const target, const message, const handle = callframe.argumentsAsArray(3);
     if (target.isNull()) {
-        const ipc = globalThis.bunVM().getIPCInstance() orelse return .undefined;
+        const ipc = globalThis.bunVM().getIPCInstance() orelse return .js_undefined;
         ipc.handleIPCMessage(.{ .data = message }, handle);
     } else {
-        if (!target.isCell()) return .undefined;
-        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .undefined;
+        if (!target.isCell()) return .js_undefined;
+        const subprocess = bun.JSC.Subprocess.fromJSDirect(target) orelse return .js_undefined;
         subprocess.handleIPCMessage(.{ .data = message }, handle);
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 const IPCCommand = union(enum) {
@@ -1134,7 +1131,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     } else {
         switch (send_queue.owner) {
             inline else => |owner| {
-                owner.handleIPCMessage(message, .undefined);
+                owner.handleIPCMessage(message, .js_undefined);
             },
         }
     }

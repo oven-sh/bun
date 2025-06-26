@@ -244,7 +244,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, hash->m_digestBuffer.mutableSpan());
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         hash->m_finalized = finalized;
@@ -272,7 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         auto data = hash->m_ctx.digestFinal(bufLen);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         // Some hash algorithms don't support calling EVP_DigestFinal_ex more than once
@@ -301,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hash cannot be invoked without 'new'"_s);
             return {};
@@ -365,19 +365,19 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher, xofLen)) {
             throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
-            return JSValue::encode({});
+            return {};
         }
         return JSValue::encode(hash);
     }
 
     if (md == nullptr || !hash->init(globalObject, scope, md, xofLen)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     if (original != nullptr && !original->m_ctx.copyTo(hash->m_ctx)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest copy error"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSC::JSValue::encode(hash);

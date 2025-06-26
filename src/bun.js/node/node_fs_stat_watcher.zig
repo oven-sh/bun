@@ -3,11 +3,7 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.encoding;
-const Mutex = bun.Mutex;
-const uws = @import("../../deps/uws.zig");
 
-const PathWatcher = @import("./path_watcher.zig");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
@@ -16,15 +12,13 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Environment = bun.Environment;
 
 const StatsSmall = bun.JSC.Node.StatsSmall;
 const StatsBig = bun.JSC.Node.StatsBig;
 
 const log = bun.Output.scoped(.StatWatcher, false);
 
-fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) JSC.JSValue {
+fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!JSC.JSValue {
     if (bigint) {
         return StatsBig.init(stats).toJS(globalThis);
     } else {
@@ -285,7 +279,7 @@ pub const StatWatcher = struct {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
                             return global.throwInvalidArguments("interval must be a number", .{});
                         }
-                        interval = interval_.coerce(i32, global);
+                        interval = try interval_.coerce(i32, global);
                     }
                 }
             }
@@ -315,7 +309,7 @@ pub const StatWatcher = struct {
             if (obj.js_this != .zero) {
                 return obj.js_this;
             }
-            return .undefined;
+            return .js_undefined;
         }
     };
 
@@ -324,7 +318,7 @@ pub const StatWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -332,7 +326,7 @@ pub const StatWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     /// Stops file watching but does not free the instance.
@@ -347,7 +341,7 @@ pub const StatWatcher = struct {
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
-        return .undefined;
+        return .js_undefined;
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
@@ -398,7 +392,7 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
@@ -409,12 +403,12 @@ pub const StatWatcher = struct {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
@@ -436,7 +430,17 @@ pub const StatWatcher = struct {
             .err => std.mem.zeroes(bun.Stat),
         };
 
-        if (std.mem.eql(u8, std.mem.asBytes(&res), std.mem.asBytes(&this.last_stat))) return;
+        var compare = res;
+        const StatT = @TypeOf(compare);
+        if (@hasField(StatT, "st_atim")) {
+            compare.st_atim = this.last_stat.st_atim;
+        } else if (@hasField(StatT, "st_atimespec")) {
+            compare.st_atimespec = this.last_stat.st_atimespec;
+        } else if (@hasField(StatT, "atim")) {
+            compare.atim = this.last_stat.atim;
+        }
+
+        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));
@@ -445,12 +449,12 @@ pub const StatWatcher = struct {
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
         const prev_jsvalue = this.last_jsvalue.swap();
-        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
+        const current_jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
         _ = js.listenerGetCached(this.js_this).?.call(
             this.globalThis,
-            .undefined,
+            .js_undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,

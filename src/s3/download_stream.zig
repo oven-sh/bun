@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const picohttp = JSC.WebCore.picohttp;
 const S3Error = @import("./error.zig").S3Error;
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const SignResult = S3Credentials.SignResult;

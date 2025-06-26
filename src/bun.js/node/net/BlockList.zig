@@ -1,11 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
-const C = bun.c;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const validators = @import("./../util/validators.zig");
 const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
 const sockaddr = SocketAddress.sockaddr;
@@ -66,7 +61,7 @@ pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *J
         break :blk (try SocketAddress.initFromAddrFamily(globalThis, address_js, family_js))._addr;
     };
     try this.da_rules.insert(0, .{ .addr = address });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -91,7 +86,7 @@ pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC
         }
     }
     try this.da_rules.insert(0, .{ .range = .{ .start = start, .end = end } });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -112,7 +107,7 @@ pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JS
         else => {},
     }
     try this.da_rules.insert(0, .{ .subnet = .{ .network = network, .prefix = prefix } });
-    return .jsUndefined();
+    return .js_undefined;
 }
 
 pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -166,7 +161,7 @@ pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return .jsBoolean(false);
 }
 
-pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     var list = std.ArrayList(JSC.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();

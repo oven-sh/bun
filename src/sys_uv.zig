@@ -1,22 +1,14 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-const std = @import("std");
-const posix = std.posix;
 const bun = @import("bun");
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const fd_t = bun.FileDescriptor;
-const default_allocator = bun.default_allocator;
-const kernel32 = bun.windows;
-const linux = posix.linux;
 const uv = bun.windows.libuv;
 
 const Environment = bun.Environment;
 const FileDescriptor = bun.FileDescriptor;
 const JSC = bun.JSC;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const Maybe = JSC.Maybe;
-const SystemError = JSC.SystemError;
 
 comptime {
     bun.assert(Environment.isWindows);

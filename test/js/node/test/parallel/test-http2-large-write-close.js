@@ -28,7 +28,7 @@ server.on('stream', common.mustCall((stream) => {
 }));
 
 server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`https://localhost:${server.address().port}`,
+  const client = http2.connect(`https://127.0.0.1:${server.address().port}`,
                                { rejectUnauthorized: false });
 
   const req = client.request({ ':path': '/' });

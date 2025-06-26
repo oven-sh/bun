@@ -30,6 +30,8 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+const ArrayPrototypeSplice = Array.prototype.splice;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
@@ -735,19 +737,19 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  // execArgv = options.execArgv || process.execArgv;
-  // validateArgumentsNullCheck(execArgv, "options.execArgv");
+  let execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  // if (execArgv === process.execArgv && process._eval != null) {
-  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
-  //   if (index > 0) {
-  //     // Remove the -e switch to avoid fork bombing ourselves.
-  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
-  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
-  //   }
-  // }
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice.$call(execArgv);
+      ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+    }
+  }
 
-  args = [/*...execArgv,*/ modulePath, ...args];
+  args = [...execArgv, modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1498,10 +1500,12 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   }
   if (isNodeStreamReadable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
     if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];

@@ -1,4 +1,3 @@
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -105,7 +104,7 @@ pub const AbortSignal = opaque {
         var reason: u8 = 0;
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
-            bun.debugAssert(js_reason == .undefined);
+            bun.debugAssert(js_reason.isUndefined());
             return .{ .common = @enumFromInt(reason) };
         }
         if (js_reason == .zero) {

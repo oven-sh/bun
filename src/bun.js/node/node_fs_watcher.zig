@@ -1,7 +1,6 @@
 const std = @import("std");
 const JSC = bun.JSC;
 const bun = @import("bun");
-const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
@@ -12,7 +11,6 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
@@ -503,7 +501,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJSC(globalObject),
+                    err.toJS(globalObject),
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -526,10 +524,10 @@ pub const FSWatcher = struct {
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
         const globalObject = this.globalThis;
-        var filename: JSC.JSValue = .undefined;
+        var filename: JSC.JSValue = .js_undefined;
         if (file_name.len > 0) {
             if (this.encoding == .buffer)
-                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
+                filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
                 filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
@@ -558,7 +556,7 @@ pub const FSWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -566,7 +564,7 @@ pub const FSWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -606,7 +604,7 @@ pub const FSWatcher = struct {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
                     _ = this.refTask();
                     log("emit('close')", .{});
-                    emitJS(listener, this.globalThis, .undefined, .close);
+                    emitJS(listener, this.globalThis, .js_undefined, .close);
                     this.unrefTask();
                 }
             }
@@ -639,7 +637,7 @@ pub const FSWatcher = struct {
 
     pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         this.close();
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {

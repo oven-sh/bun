@@ -419,7 +419,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return {};
         }
-        memcpy(buf->data(), key.data(), key.size());
+        memcpy(buf->data(), key.begin(), key.size());
         return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
     };
 
@@ -1218,9 +1218,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
 
         auto keyObject = create(key);
-        if (UNLIKELY(keyObject.hasException())) {
+        if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
-            return {};
+            RELEASE_AND_RETURN(scope, {});
         }
         KeyObject handle = keyObject.releaseReturnValue();
         RETURN_IF_EXCEPTION(scope, {});
@@ -1286,8 +1286,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
 
             auto keyObject = create(key);
-            if (UNLIKELY(keyObject.hasException())) {
+            if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
+                RELEASE_AND_RETURN(scope, {});
             }
             KeyObject handle = keyObject.releaseReturnValue();
             return { .keyData = handle.data() };
@@ -1424,7 +1425,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
                 return {};
             }
             auto keyObject = create(key);
-            if (UNLIKELY(keyObject.hasException())) {
+            if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());
                 return {};
             }

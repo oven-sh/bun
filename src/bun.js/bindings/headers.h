@@ -197,10 +197,8 @@ CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JS
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSCell* JSC__JSValue__asCell(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSInternalPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0);
-CPP_DECL double JSC__JSValue__asNumber(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0);
-CPP_DECL double JSC__JSValue__coerceToDouble(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL int32_t JSC__JSValue__coerceToInt32(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL int64_t JSC__JSValue__coerceToInt64(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t arg1);
@@ -213,7 +211,6 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__createStringArray(JSC::JSGlobalObject
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createTypeError(const ZigString* arg0, const ZigString* arg1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObject* arg0, size_t arg1);
 CPP_DECL bool JSC__JSValue__deepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
-CPP_DECL bool JSC__JSValue__deepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC::EncodedJSValue JSValue0, JSC::JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fastGet(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, unsigned char arg2);
@@ -326,16 +323,6 @@ CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC:
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__whenIdle(JSC::VM* arg0, void(* ArgFn1)());
 
-#pragma mark - JSC::ThrowScope
-
-CPP_DECL void JSC__ThrowScope__clearException(JSC::ThrowScope* arg0);
-CPP_DECL JSC::Exception* JSC__ThrowScope__exception(JSC::ThrowScope* arg0);
-CPP_DECL void JSC__ThrowScope__release(JSC::ThrowScope* arg0);
-
-#pragma mark - JSC::CatchScope
-
-CPP_DECL void JSC__CatchScope__clearException(JSC::CatchScope* arg0);
-CPP_DECL JSC::Exception* JSC__CatchScope__exception(JSC::CatchScope* arg0);
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
@@ -641,6 +628,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0
 ZIG_DECL void Bun__Process__getTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
+ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif
 CPP_DECL ZigException ZigException__fromException(JSC::Exception* arg0);

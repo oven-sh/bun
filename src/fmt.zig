@@ -4,7 +4,6 @@ const Output = bun.Output;
 const strings = bun.strings;
 const string = bun.string;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
@@ -283,7 +282,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -309,7 +308,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
 

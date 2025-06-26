@@ -60,7 +60,7 @@ static int findFirstInvalidHTTPTokenChar(const StringView& view)
 
 // Checks if a character is valid within an HTTP quoted string value (excluding DQUOTE and backslash).
 // Equivalent to /[^\t\u0020-\u007E\u0080-\u00FF]/, but we handle quotes/backslash separately.
-static inline bool isHTTPQuotedStringChar(UChar c)
+static inline bool isHTTPQuotedStringChar(char16_t c)
 {
     return c == 0x09 || (c >= 0x20 && c <= 0x7E) || (c >= 0x80 && c <= 0xFF);
 }
@@ -101,7 +101,7 @@ static size_t findEndBeginningWhitespace(const StringView& view)
     } else {
         const auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
-            UChar c = span[i];
+            char16_t c = span[i];
             if (c != '\t' && c != ' ' && c != '\r' && c != '\n') {
                 return i;
             }
@@ -125,7 +125,7 @@ static size_t findStartEndingWhitespace(const StringView& view)
     } else {
         const auto span = view.span16();
         for (size_t i = span.size(); i > 0; --i) {
-            UChar c = span[i - 1];
+            char16_t c = span[i - 1];
             if (c != '\t' && c != ' ' && c != '\r' && c != '\n') {
                 return i;
             }
@@ -154,7 +154,7 @@ static String removeBackslashes(const StringView& view)
     } else {
         auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
-            UChar c = span[i];
+            char16_t c = span[i];
             if (c == '\\' && i + 1 < span.size()) {
                 builder.append(span[++i]);
             } else {
@@ -167,7 +167,7 @@ static String removeBackslashes(const StringView& view)
 
 static void escapeQuoteOrBackslash(const StringView& view, StringBuilder& builder)
 {
-    if (view.find([](UChar c) { return c == '"' || c == '\\'; }) == notFound) {
+    if (view.find([](char16_t c) { return c == '"' || c == '\\'; }) == notFound) {
         builder.append(view);
         return;
     }
@@ -182,7 +182,7 @@ static void escapeQuoteOrBackslash(const StringView& view, StringBuilder& builde
         }
     } else {
         auto span = view.span16();
-        for (UChar c : span) {
+        for (char16_t c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
             }
@@ -227,7 +227,7 @@ bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView 
         // Find the end of the parameter name (next ';' or '=')
         size_t nameEnd = position;
         while (nameEnd < length) {
-            UChar c = input[nameEnd];
+            char16_t c = input[nameEnd];
             if (c == ';' || c == '=') break;
             nameEnd++;
         }
@@ -249,7 +249,7 @@ bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView 
                 size_t valueStart = position;
                 bool escaped = false;
                 while (position < length) {
-                    UChar c = input[position];
+                    char16_t c = input[position];
                     if (escaped) {
                         escaped = false;
                     } else if (c == '\\') {
@@ -392,7 +392,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
 
     // 1. Get this value
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -420,7 +420,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -442,7 +442,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -484,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -506,7 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -557,7 +557,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalO
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -568,7 +568,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObje
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -579,7 +579,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalOb
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -654,7 +654,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEParams, (JSGlobalObject * globalObject, Ca
     JSC::Structure* structure = zigGlobalObject->m_JSMIMEParamsClassStructure.get(zigGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSMIMEParamsClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSMIMEParamsClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor MIMEParams cannot be invoked without 'new'"_s);
             return {};

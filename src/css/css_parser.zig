@@ -2691,7 +2691,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
         };
 
-        /// If css modules is enabled, we want to record each occurence of the `composes` property
+        /// If css modules is enabled, we want to record each occurrence of the `composes` property
         /// for the bundler so we can generate the lazy JS import object later.
         pub fn recordComposes(this: *This, allocator: Allocator, composes: *Composes) void {
             for (this.composes_refs.slice()) |ref| {
@@ -7321,4 +7321,20 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
 
 pub inline fn fract(val: f32) f32 {
     return val - @trunc(val);
+}
+
+pub fn f32_length_with_5_digits(n_input: f32) usize {
+    var n = std.math.round(n_input * 100000.0);
+    var count: usize = 0;
+    var i: usize = 0;
+
+    while (n >= 1.0) : (i += 1) {
+        const rem = @mod(n, 10.0);
+        if (i > 4 or rem != 0.0) {
+            count += 1;
+        }
+        n = n / 10.0;
+    }
+
+    return count;
 }

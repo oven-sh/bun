@@ -107,7 +107,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         return {};
     return result;
 }
@@ -163,7 +163,7 @@ void ReadableStream::cancel(const Exception& exception)
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto value = createDOMException(&lexicalGlobalObject, exception.code(), exception.message());
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }
@@ -184,7 +184,7 @@ void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadable
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto value = createDOMException(&globalObject, exception.code(), exception.message());
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
         return;
     }

@@ -3,7 +3,6 @@ const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
 const use_mimalloc = bun.use_mimalloc;
-const StringTypes = @import("./string_types.zig");
 const Mimalloc = bun.Mimalloc;
 const bun = @import("bun");
 
@@ -220,6 +219,8 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
+    bun.JSC.Node.FSEvents.closeAndWait();
+
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);

@@ -2,7 +2,7 @@ state: enum { idle, waiting_io, err, done } = .idle,
 expletive: []const u8 = "y",
 task: YesTask = undefined,
 
-pub fn start(this: *@This()) Maybe(void) {
+pub fn start(this: *@This()) Yield {
     const args = this.bltn().argsSlice();
 
     if (args.len > 0) {
@@ -16,35 +16,31 @@ pub fn start(this: *@This()) Maybe(void) {
             .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
         };
         this.state = .waiting_io;
-        this.bltn().stdout.enqueue(this, this.expletive, safeguard);
-        this.bltn().stdout.enqueue(this, "\n", safeguard);
         this.task.enqueue();
-        return Maybe(void).success;
+        return this.bltn().stdout.enqueueFmt(this, "{s}\n", .{this.expletive}, safeguard);
     }
 
     var res: Maybe(usize) = undefined;
     while (true) {
         res = this.bltn().writeNoIO(.stdout, this.expletive);
         if (res == .err) {
-            this.bltn().done(1);
-            return Maybe(void).success;
+            return this.bltn().done(1);
         }
         res = this.bltn().writeNoIO(.stdout, "\n");
         if (res == .err) {
-            this.bltn().done(1);
-            return Maybe(void).success;
+            return this.bltn().done(1);
         }
     }
     @compileError(unreachable);
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
-        this.bltn().done(1);
-        return;
+        return this.bltn().done(1);
     }
+    return .suspended;
 }
 
 pub inline fn bltn(this: *@This()) *Builtin {
@@ -72,8 +68,7 @@ pub const YesTask = struct {
         const yes: *Yes = @fieldParentPtr("task", this);
 
         // Manually make safeguard since this task should not be created if output does not need IO
-        yes.bltn().stdout.enqueue(yes, yes.expletive, .output_needs_io);
-        yes.bltn().stdout.enqueue(yes, "\n", .output_needs_io);
+        yes.bltn().stdout.enqueueFmt(yes, "{s}\n", .{yes.expletive}, .output_needs_io).run();
 
         this.enqueue();
     }
@@ -84,29 +79,14 @@ pub const YesTask = struct {
 };
 
 // --
-const log = bun.Output.scoped(.Yes, true);
 const bun = @import("bun");
+const Yield = bun.shell.Yield;
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
-const ParseError = interpreter.ParseError;
-const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const IOReader = shell.IOReader;
-const IOWriter = shell.IOWriter;
 const IO = shell.IO;
-const IOVector = shell.IOVector;
-const IOVectorSlice = shell.IOVectorSlice;
-const IOVectorSliceMut = shell.IOVectorSliceMut;
 const Yes = @This();
-const ReadChunkAction = interpreter.ReadChunkAction;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
 const std = @import("std");
-const FlagParser = interpreter.FlagParser;
-
-const ShellSyscall = interpreter.ShellSyscall;
-const unsupportedFlag = interpreter.unsupportedFlag;
-const OutputNeedsIOSafeGuard = interpreter.OutputNeedsIOSafeGuard;

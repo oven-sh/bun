@@ -46,7 +46,7 @@ pub const HashType = u32;
 const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
-/// recieves watch callbacks on the watcher thread. This function does not
+/// receives watch callbacks on the watcher thread. This function does not
 /// actually start the watcher thread.
 ///
 ///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator)
@@ -670,12 +670,9 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const options = @import("./options.zig");
 const Mutex = bun.Mutex;
-const Futex = @import("./futex.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

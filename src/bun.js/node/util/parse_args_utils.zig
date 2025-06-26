@@ -1,6 +1,4 @@
-const std = @import("std");
 const bun = @import("bun");
-const testing = std.testing;
 const String = bun.String;
 const JSValue = bun.JSC.JSValue;
 

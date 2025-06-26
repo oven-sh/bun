@@ -5,7 +5,6 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
-const validators = @import("./../../../node/util/validators.zig");
 pub const js = JSC.Codegen.JSSocketAddress;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -115,7 +114,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     };
     defer url_str.deref();
 
-    const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();
+    const url = JSC.URL.fromString(url_str) orelse return .js_undefined;
     defer url.deinit();
     const host = url.host();
     const port_: u16 = blk: {
@@ -130,10 +129,10 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
     // - "0x.0x.0" -> "0.0.0.0"
     const paddr = host.latin1(); // presentation address
     const addr = if (paddr[0] == '[' and paddr[paddr.len - 1] == ']') v6: {
-        const v6 = net.Ip6Address.parse(paddr[1 .. paddr.len - 1], port_) catch return JSValue.jsUndefined();
+        const v6 = net.Ip6Address.parse(paddr[1 .. paddr.len - 1], port_) catch return .js_undefined;
         break :v6 SocketAddress{ ._addr = .{ .sin6 = v6.sa } };
     } else v4: {
-        const v4 = net.Ip4Address.parse(paddr, port_) catch return JSValue.jsUndefined();
+        const v4 = net.Ip4Address.parse(paddr, port_) catch return .js_undefined;
         break :v4 SocketAddress{ ._addr = .{ .sin = v4.sa } };
     };
 
@@ -328,7 +327,6 @@ pub fn finalize(this: *SocketAddress) void {
 pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     var addr_str = this.address();
     defer this._presentation = .dead;
-    defer this.* = undefined; // removed in release builds, so setting _presentation to dead is still needed.
     return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
 }
 
@@ -338,21 +336,15 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 ///
 /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
 /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
+pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) JSC.JSValue {
     if (comptime bun.Environment.isDebug) {
-        bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
         bun.assertWithLocation(addr_.len > 0, @src());
     }
 
-    return JSSocketAddressDTO__create(
-        globalObject,
-        bun.String.createUTF8ForJS(globalObject, addr_),
-        port_,
-        is_ipv6,
-    );
+    return JSSocketAddressDTO__create(globalObject, bun.String.createUTF8ForJS(globalObject, addr_), port_, is_ipv6);
 }
 
-extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: c_int, is_ipv6: bool) JSC.JSValue;
+extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: u16, is_ipv6: bool) JSC.JSValue;
 
 // =============================================================================
 
@@ -456,12 +448,12 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 }
 
 pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.JSObject.create(.{
+    return (try JSC.JSObject.create(.{
         .address = this.getAddress(global),
         .family = this.getFamily(global),
         .port = this.port(),
         .flowlabel = this.flowLabel() orelse 0,
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {
@@ -658,15 +650,12 @@ const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;
 const string = bun.string;
-const Output = bun.Output;
 
 const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
 
 const isDebug = bun.Environment.isDebug;
-const allow_assert = bun.Environment.allow_assert;
 
 pub const inet = if (bun.Environment.isWindows)
 win: {

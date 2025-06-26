@@ -3,40 +3,18 @@ const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
 
 const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
 const css_values = css.css_values;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Length = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
-const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const CSSInteger = css.css_values.number.CSSInteger;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Percentage = css.css_values.percentage.Percentage;
 const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
-const Time = css.css_values.time.Time;
-const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
-const HorizontalPosition = css.css_values.position.HorizontalPosition;
-const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 pub const FontWeight = union(enum) {

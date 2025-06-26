@@ -29,16 +29,16 @@ pub const Start = union(Tag) {
         done,
     };
 
-    pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Start, globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
         switch (this) {
             .empty, .ready => {
-                return .undefined;
+                return .js_undefined;
             },
             .chunk_size => |chunk| {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                return globalThis.throwValue(err.toJSC(globalThis)) catch .zero;
+                return globalThis.throwValue(err.toJS(globalThis));
             },
             .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -47,7 +47,7 @@ pub const Start = union(Tag) {
                 return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
-                return .undefined;
+                return .js_undefined;
             },
         }
     }
@@ -81,7 +81,7 @@ pub const Start = union(Tag) {
                 var chunk_size: Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.getOwn(globalThis, "asUint8Array")) |val| {
+                if (try value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;
@@ -234,7 +234,7 @@ pub const Result = union(Tag) {
         pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
             return switch (this.*) {
                 .Error => |err| {
-                    return .{ err.toJSC(globalObject), WasStrong.Weak };
+                    return .{ err.toJS(globalObject), WasStrong.Weak };
                 },
                 .JSValue => .{ this.JSValue, WasStrong.Strong },
                 .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
@@ -381,7 +381,7 @@ pub const Result = union(Tag) {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJSC(globalThis));
+                    promise.reject(globalThis, err.toJS(globalThis));
                 },
                 .done => {
                     promise.resolve(globalThis, JSValue.jsBoolean(false));
@@ -394,7 +394,7 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).toJS(),
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
 
                 .owned => |len| JSC.JSValue.jsNumber(len),
                 .owned_and_done => |len| JSC.JSValue.jsNumber(len),
@@ -437,6 +437,25 @@ pub const Result = union(Tag) {
             };
             this.state = .pending;
             return prom;
+        }
+
+        pub fn runOnNextTick(this: *Pending) void {
+            if (this.state != .pending) return;
+            const vm = JSC.VirtualMachine.get();
+            if (vm.isShuttingDown()) {
+                return;
+            }
+
+            const clone = bun.create(bun.default_allocator, Pending, this.*);
+            this.state = .none;
+            this.result = .{ .done = {} };
+            vm.eventLoop().enqueueTask(JSC.Task.init(clone));
+        }
+
+        pub fn runFromJSThread(this: *Pending) void {
+            this.run();
+
+            bun.destroy(this);
         }
 
         pub const Future = union(enum) {
@@ -524,7 +543,11 @@ pub const Result = union(Tag) {
                 promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
-                const value = result.toJS(globalThis);
+                const value = result.toJS(globalThis) catch |err| {
+                    result.* = .{ .temporary = .{} };
+                    promise.reject(globalThis, err);
+                    return;
+                };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
@@ -533,7 +556,7 @@ pub const Result = union(Tag) {
         }
     }
 
-    pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) JSValue {
+    pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         if (JSC.VirtualMachine.get().isShuttingDown()) {
             var that = this.*;
             that.deinit();
@@ -548,14 +571,14 @@ pub const Result = union(Tag) {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
             },
             .temporary => |temp| {
-                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .temporary_and_done => |temp| {
-                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);
@@ -1740,46 +1763,25 @@ pub const AutoSizer = struct {
 };
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
-const MimeType = HTTPClient.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = WebCore.FetchHeaders;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = JSC.ArrayBuffer;
-const Async = bun.Async;
 
-const Environment = bun.Environment;
-const ZigString = JSC.ZigString;
-const IdentityContext = bun.IdentityContext;
-const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const E = bun.sys.E;
 const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
-const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Blob = bun.webcore.Blob;
 const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
-const uv = bun.windows.libuv;
 const WebCore = JSC.WebCore;
 const Sink = WebCore.Sink;
 const AutoFlusher = WebCore.AutoFlusher;

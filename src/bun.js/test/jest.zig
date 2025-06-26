@@ -1,11 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const Api = @import("../../api/schema.zig").Api;
-const MimeType = bun.http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -13,31 +7,22 @@ const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
 
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
-
 const JSC = bun.JSC;
 
 const logger = bun.logger;
-const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 
 const Output = bun.Output;
 const MutableString = bun.MutableString;
-const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = JSC.ArrayBuffer;
 const RegularExpression = bun.RegularExpression;
 
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSType = JSValue.JSType;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
@@ -294,13 +279,13 @@ pub const Jest = struct {
                     return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
-                if (function.getLength(globalThis) > 0) {
+                if (try function.getLength(globalThis) > 0) {
                     return globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                 }
 
                 function.protect();
                 @field(the_runner.global_callbacks, name).append(bun.default_allocator, function) catch unreachable;
-                return .undefined;
+                return .js_undefined;
             }
         }.appendGlobalFunctionCallback;
     }
@@ -514,13 +499,13 @@ pub const Jest = struct {
             return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
-        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+        const timeout_ms: u32 = @intCast(@max(try arguments[0].coerce(i32, globalObject), 0));
 
         if (Jest.runner) |test_runner| {
             test_runner.default_timeout_override = timeout_ms;
         }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     comptime {
@@ -607,7 +592,7 @@ pub const TestScope = struct {
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     const jsOnReject = JSC.toJSHostFn(onReject);
 
@@ -617,7 +602,7 @@ pub const TestScope = struct {
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
     const jsOnResolve = JSC.toJSHostFn(onResolve);
 
@@ -663,7 +648,7 @@ pub const TestScope = struct {
             }
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn run(
@@ -750,7 +735,7 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
                     if (!promise.isHandled(vm.global.vm()) and this.tag != .fail) {
-                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                        vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     }
 
                     return switch (this.tag) {
@@ -920,7 +905,7 @@ pub const DescribeScope = struct {
             scope.done = true;
         }
 
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub const afterAll = createCallback(.afterAll);
@@ -928,6 +913,7 @@ pub const DescribeScope = struct {
     pub const beforeAll = createCallback(.beforeAll);
     pub const beforeEach = createCallback(.beforeEach);
 
+    // TODO this should return JSError
     pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
@@ -948,7 +934,7 @@ pub const DescribeScope = struct {
             }
 
             const vm = VirtualMachine.get();
-            var result: JSValue = switch (cb.getLength(globalObject)) {
+            var result: JSValue = switch (cb.getLength(globalObject) catch |e| return globalObject.takeException(e)) { // TODO is this right?
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
                     this.done = false;
@@ -1098,7 +1084,7 @@ pub const DescribeScope = struct {
 
         if (callback == .zero) {
             this.runTests(globalObject);
-            return .undefined;
+            return .js_undefined;
         }
 
         {
@@ -1110,18 +1096,18 @@ pub const DescribeScope = struct {
                 switch (prom.status(globalObject.vm())) {
                     .fulfilled => {},
                     else => {
-                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue());
-                        return .undefined;
+                        globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue());
+                        return .js_undefined;
                     },
                 }
             } else if (result.toError()) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                return .undefined;
+                return .js_undefined;
             }
         }
 
         this.runTests(globalObject);
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
@@ -1790,25 +1776,25 @@ inline fn createScope(
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -1820,7 +1806,7 @@ inline fn createScope(
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
-        return .undefined;
+        return .js_undefined;
     }
 
     var is_skip = tag == .skip or
@@ -1849,7 +1835,7 @@ inline fn createScope(
             function.protect();
         }
 
-        const func_params_length = function.getLength(globalThis);
+        const func_params_length = try function.getLength(globalThis);
         var arg_size: usize = 0;
         var has_callback = false;
         if (func_params_length > 0) {
@@ -2037,25 +2023,25 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -2067,26 +2053,26 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
         const allocator = bun.default_allocator;
         const each_data = bun.cast(*EachData, data);
         JSC.host_fn.setFunctionData(callee, null);
-        const array = each_data.*.strong.get() orelse return .undefined;
+        const array = each_data.*.strong.get() orelse return .js_undefined;
         defer {
             each_data.*.strong.deinit();
             allocator.destroy(each_data);
         }
 
         if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
-            return .undefined;
+            return .js_undefined;
         }
 
-        var iter = array.arrayIterator(globalThis);
+        var iter = try array.arrayIterator(globalThis);
 
         var test_idx: usize = 0;
-        while (iter.next()) |item| {
-            const func_params_length = function.getLength(globalThis);
+        while (try iter.next()) |item| {
+            const func_params_length = try function.getLength(globalThis);
             const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
 
             if (item_is_array) {
-                arg_size = item.getLength(globalThis);
+                arg_size = try item.getLength(globalThis);
             }
 
             // add room for callback function
@@ -2100,8 +2086,8 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
             if (item_is_array) {
                 // Spread array as args
-                var item_iter = item.arrayIterator(globalThis);
-                while (item_iter.next()) |array_item| {
+                var item_iter = try item.arrayIterator(globalThis);
+                while (try item_iter.next()) |array_item| {
                     if (array_item == .zero) {
                         allocator.free(function_args);
                         break;
@@ -2153,7 +2139,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 allocator.free(formattedLabel);
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
-                    return .undefined;
+                    return .js_undefined;
                 } else {
                     function.protect();
                     parent.tests.append(allocator, TestScope{
@@ -2183,7 +2169,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
         }
     }
 
-    return .undefined;
+    return .js_undefined;
 }
 
 inline fn createEach(
@@ -2221,8 +2207,8 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     vm.eventLoop().enter();
     defer vm.eventLoop().exit();
 
-    globalObject.clearTerminationException();
-    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
+    globalObject.clearTerminationException(); // TODO this is sus
+    return function.call(globalObject, .js_undefined, args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

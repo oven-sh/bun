@@ -83,7 +83,11 @@ pub const Lazy = union(enum) {
                 };
             }
         else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
-            .result => |fd| fd,
+            .result => |fd| brk: {
+                if (Environment.isPosix) is_nonblocking = true;
+                break :brk fd;
+            },
+
             .err => |err| {
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
             },
@@ -116,6 +120,10 @@ pub const Lazy = union(enum) {
                 return .{ .err = .fromCode(.ISDIR, .fstat) };
             }
 
+            if (bun.S.ISREG(stat.mode)) {
+                is_nonblocking = false;
+            }
+
             this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking or (file.is_atty orelse false);
             this.file_type = if (bun.S.ISFIFO(stat.mode))
                 .pipe
@@ -129,7 +137,9 @@ pub const Lazy = union(enum) {
                 this.file_type = .nonblocking_pipe;
             }
 
-            this.nonblocking = is_nonblocking or (this.pollable and !(file.is_atty orelse false));
+            this.nonblocking = is_nonblocking or (this.pollable and
+                !(file.is_atty orelse false) and
+                this.file_type != .pipe);
 
             if (this.nonblocking and this.file_type == .pipe) {
                 this.file_type = .nonblocking_pipe;
@@ -255,7 +265,7 @@ pub fn onStart(this: *FileReader) streams.Start {
         if (this.buffered.items.len > 0) {
             const buffered = this.buffered;
             this.buffered = .{};
-            return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+            return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
         }
     } else if (comptime Environment.isPosix) {
         if (!was_lazy and this.reader.flags.pollable) {
@@ -524,10 +534,10 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Resul
                 this.buffered = .{};
                 log("onPull({d}) = {d}", .{ buffer.len, buffered.items.len });
                 if (this.reader.isDone()) {
-                    return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+                    return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
                 }
 
-                return .{ .owned = bun.ByteList.init(buffered.items) };
+                return .{ .owned = bun.ByteList.fromList(buffered) };
             },
             else => {},
         }
@@ -549,7 +559,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Resul
 
 pub fn drain(this: *FileReader) bun.ByteList {
     if (this.buffered.items.len > 0) {
-        const out = bun.ByteList.init(this.buffered.items);
+        const out = bun.ByteList.fromList(this.buffered);
         this.buffered = .{};
         if (comptime Environment.allow_assert) {
             bun.assert(this.reader.buffer().items.ptr != out.ptr);
@@ -601,15 +611,12 @@ pub fn onReaderDone(this: *FileReader) void {
                     this.eventLoop().js.runCallback(
                         cb,
                         globalThis,
-                        .undefined,
+                        .js_undefined,
                         &.{
-                            JSC.ArrayBuffer.fromBytes(
-                                buffered.items,
-                                .Uint8Array,
-                            ).toJS(
-                                globalThis,
-                                null,
-                            ),
+                            JSC.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis, null) catch |err| {
+                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
+                                return;
+                            },
                         },
                     );
                 }
@@ -626,6 +633,10 @@ pub fn onReaderDone(this: *FileReader) void {
 
 pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
     this.consumeReaderBuffer();
+    if (this.buffered.capacity > 0 and this.buffered.items.len == 0) {
+        this.buffered.deinit(bun.default_allocator);
+        this.buffered = .{};
+    }
 
     this.pending.result = .{ .err = .{ .Error = err } };
     this.pending.run();

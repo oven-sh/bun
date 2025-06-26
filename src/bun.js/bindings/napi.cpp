@@ -1248,7 +1248,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 
     auto globalObject = toJS(env);
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -2395,6 +2395,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive

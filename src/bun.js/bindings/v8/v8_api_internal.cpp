@@ -45,16 +45,16 @@ Local<Value> GetFunctionTemplateData(Isolate* isolate, Local<Data> target)
         // If it's not a Function, return undefined
         return Local<Value>();
     }
-    
+
     // Get the FunctionTemplate from the Function
     auto* functionTemplate = function->functionTemplate();
     if (!functionTemplate) {
         return Local<Value>();
     }
-    
+
     // Get the data from the FunctionTemplate
     JSC::JSValue data = functionTemplate->m_data.get();
-    
+
     // Create a Local<Value> from the data
     auto* globalInternals = isolate->globalInternals();
     return globalInternals->currentHandleScope()->createLocal<Value>(isolate->vm(), data);

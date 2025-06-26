@@ -358,25 +358,29 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
-                if (s->context->is_low_prio(s)) {
-                    if (s->flags.low_prio_state == 2) {
-                        s->flags.low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
-                    } else if (s->context->loop->data.low_prio_budget > 0) {
-                        s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
+                struct us_socket_context_t *context = s->context;
+                struct us_loop_t* loop = s->context->loop;
+                struct us_socket_flags* flags = &s->flags;
+                if (context->is_low_prio(s)) {
+                    if (flags->low_prio_state == 2) {
+                        flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
+                    } else if (loop->data.low_prio_budget > 0) {
+                        loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
-                        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        us_socket_context_ref(0,  s->context);
-                        us_internal_socket_context_unlink_socket(0, s->context, s);
+                        struct us_poll_t* poll = &s->p;
+                        us_poll_change(poll, loop, us_poll_events(poll) & LIBUS_SOCKET_WRITABLE);
+                        us_socket_context_ref(0,  context);
+                        us_internal_socket_context_unlink_socket(0, context, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts
                          * under high load */
                         s->prev = 0;
-                        s->next = s->context->loop->data.low_prio_head;
+                        s->next = loop->data.low_prio_head;
                         if (s->next) s->next->prev = s;
-                        s->context->loop->data.low_prio_head = s;
+                        loop->data.low_prio_head = s;
 
-                        s->flags.low_prio_state = 1;
+                        flags->low_prio_state = 1;
 
                         break;
                     }

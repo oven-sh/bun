@@ -776,26 +776,14 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     }
     struct us_socket_context_t *old_context = s->context;
     struct us_loop_t *loop = old_context->loop;
+    /* We need to be sure that we still holding a reference*/
+    us_socket_context_ref(ssl, old_context);
     if (s->flags.low_prio_state != 1) {
-        /* We need to be sure that we still holding a reference*/
-        us_socket_context_ref(ssl, old_context);
         /* This properly updates the iterator if in on_timeout */
         us_internal_socket_context_unlink_socket(ssl, old_context, s);
     } else {
-        /* Remove old socket from low-priority queue */
-        if (loop->data.low_prio_head == s) {
-            loop->data.low_prio_head = s->next;
-            if (s->next) s->next->prev = NULL;
-        } else {
-            struct us_socket_t *current = loop->data.low_prio_head;
-            while (current && current->next != s) {
-                current = current->next;
-            }
-            if (current) {
-                current->next = s->next;
-                if (s->next) s->next->prev = current;
-            }
-        }
+       /* We manually ref/unref context to handle context life cycle with low-priority queue */
+        us_socket_context_unref(ssl, old_context);
     }
 
     struct us_connecting_socket_t *c = s->connect_state;
@@ -823,11 +811,13 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         else new_s->prev->next = new_s;
 
         if (new_s->next) new_s->next->prev = new_s;
+        /* We manually ref/unref context to handle context life cycle with low-priority queue */
+        us_socket_context_ref(ssl, context);
     } else {
-        
         us_internal_socket_context_link_socket(context, new_s);
-        us_socket_context_unref(ssl, old_context);
     }
+    /* We can safely unref the old context here with can potentially be freed */
+    us_socket_context_unref(ssl, old_context);
     return new_s;
 }
 

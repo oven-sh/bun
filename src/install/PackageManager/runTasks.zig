@@ -1015,15 +1015,11 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;
 const strings = bun.strings;
-
-const Semver = bun.Semver;
-const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
@@ -1031,18 +1027,14 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
-const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
-const PackageInstall = bun.install.PackageInstall;
 const PackageManifestError = bun.install.PackageManifestError;
 const PatchTask = bun.install.PatchTask;
-const PreinstallState = bun.install.PreinstallState;
 const Repository = bun.install.Repository;
-const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
 

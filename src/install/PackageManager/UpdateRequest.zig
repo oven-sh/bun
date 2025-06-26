@@ -228,26 +228,21 @@ const bun = @import("bun");
 const Global = bun.Global;
 const JSAst = bun.JSAst;
 const JSC = bun.JSC;
-const JSON = bun.JSON;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 
 const Dependency = bun.install.Dependency;
+const Lockfile = bun.install.Lockfile;
 const PackageID = bun.install.PackageID;
-const PackageInstall = bun.install.PackageInstall;
 const PackageNameHash = bun.install.PackageNameHash;
 const invalid_package_id = bun.install.invalid_package_id;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;
 
 const PackageManager = bun.install.PackageManager;
 pub const CommandLineArguments = PackageManager.CommandLineArguments;

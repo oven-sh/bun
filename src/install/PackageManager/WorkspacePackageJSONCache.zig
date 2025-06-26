@@ -156,7 +156,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
-const Path = bun.path;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const File = bun.sys.File;
@@ -165,9 +164,3 @@ const initializeStore = bun.install.initializeStore;
 const JSAst = bun.JSAst;
 const js_ast = bun.JSAst;
 const Expr = js_ast.Expr;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;

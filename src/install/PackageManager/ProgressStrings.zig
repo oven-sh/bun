@@ -98,12 +98,4 @@ const bun = @import("bun");
 const Output = bun.Output;
 const Progress = bun.Progress;
 const string = bun.string;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-
 const PackageManager = bun.install.PackageManager;
-const Task = bun.install.Task;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;

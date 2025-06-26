@@ -477,16 +477,12 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const JSON = bun.JSON;
 const Output = bun.Output;
 const Path = bun.path;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 const strings = bun.strings;
 const Command = bun.CLI.Command;
-
-const Semver = bun.Semver;
-const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

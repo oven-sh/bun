@@ -968,7 +968,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const HTTP = bun.http;
 const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
@@ -977,7 +976,6 @@ const logger = bun.logger;
 const string = bun.string;
 const strings = bun.strings;
 const Command = bun.CLI.Command;
-const File = bun.sys.File;
 
 const Semver = bun.Semver;
 const String = Semver.String;
@@ -990,11 +988,9 @@ const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
 const PackageID = bun.install.PackageID;
 const PackageInstall = bun.install.PackageInstall;
-const PackageManifestError = bun.install.PackageManifestError;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
 const Resolution = bun.install.Resolution;
-const Task = bun.install.Task;
 const TextLockfile = bun.install.TextLockfile;
 const invalid_package_id = bun.install.invalid_package_id;
 

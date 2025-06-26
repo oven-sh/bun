@@ -224,10 +224,8 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const Path = bun.path;
 const string = bun.string;
 const strings = bun.strings;
-const File = bun.sys.File;
 
 const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
@@ -236,12 +234,10 @@ const String = Semver.String;
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const FolderResolution = bun.install.FolderResolution;
+const Lockfile = bun.install.Lockfile;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const PackageNameHash = bun.install.PackageNameHash;
 const Resolution = bun.install.Resolution;
 const invalid_package_id = bun.install.invalid_package_id;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;

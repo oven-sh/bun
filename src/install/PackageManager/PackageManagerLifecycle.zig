@@ -323,10 +323,10 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Path = bun.path;
+const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 const strings = bun.strings;
-const transpiler = bun.transpiler;
 const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;
@@ -342,6 +342,3 @@ const PreinstallState = bun.install.PreinstallState;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
-
-const Syscall = bun.sys;
-const File = bun.sys.File;

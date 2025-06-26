@@ -814,7 +814,6 @@ const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
-const JSON = bun.JSON;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
@@ -832,14 +831,10 @@ const String = Semver.String;
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
 
-const Bin = bun.install.Bin;
+const Lockfile = bun.install.Lockfile;
 const PackageID = bun.install.PackageID;
 const Repository = bun.install.Repository;
 const Resolution = bun.install.Resolution;
-const TextLockfile = bun.install.TextLockfile;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;
 
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;

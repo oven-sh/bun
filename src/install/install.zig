@@ -242,18 +242,15 @@ pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
 
 pub const Lockfile = @import("./lockfile.zig");
-const Package = Lockfile.Package;
 pub const PatchedDep = Lockfile.PatchedDep;
 
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
 const bun = @import("bun");
-const HTTP = bun.http;
 const JSAst = bun.JSAst;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const String = Semver.String;

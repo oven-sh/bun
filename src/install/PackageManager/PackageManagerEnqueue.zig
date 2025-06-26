@@ -1763,16 +1763,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSON = bun.JSON;
 const Output = bun.Output;
 const Path = bun.path;
-const Progress = bun.Progress;
 const ThreadPool = bun.ThreadPool;
-const URL = bun.URL;
 const logger = bun.logger;
 const string = bun.string;
 const strings = bun.strings;
-const File = bun.sys.File;
 
 const Semver = bun.Semver;
 const String = Semver.String;
@@ -1788,10 +1784,8 @@ const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
-const PackageManifestError = bun.install.PackageManifestError;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
-const PreinstallState = bun.install.PreinstallState;
 const Repository = bun.install.Repository;
 const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;

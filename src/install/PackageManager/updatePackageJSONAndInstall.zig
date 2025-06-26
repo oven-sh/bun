@@ -726,7 +726,6 @@ const Global = bun.Global;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
-const Path = bun.path;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const string = bun.string;
@@ -740,9 +739,6 @@ const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

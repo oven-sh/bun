@@ -455,6 +455,12 @@ pub const JunitReporter = struct {
                 if (this.suite_stack.items.len > 0) {
                     this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
                 }
+                // TODO: add the failure message
+                // if (failure_message) |msg| {
+                //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
+                //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
+                //     try this.contents.appendSlice(bun.default_allocator, "\"");
+                // }
                 try this.contents.appendSlice(bun.default_allocator, ">\n");
                 try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.appendSlice(bun.default_allocator, "  <failure type=\"AssertionError\" />\n");
@@ -475,7 +481,6 @@ pub const JunitReporter = struct {
                 try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .fail_because_expected_assertion_count => {
-                // TODO: add the failure message
                 if (this.suite_stack.items.len > 0) {
                     this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
                 }

@@ -408,7 +408,7 @@ fn transformOptionsFromJSC(globalObject: *JSC.JSGlobalObject, temp_allocator: st
             if (!kind.isStringLike()) {
                 try tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
-                out = tsconfig.toBunString(globalThis) catch @panic("unexpected exception");
+                out = try tsconfig.toBunString(globalThis);
             }
 
             if (out.isEmpty()) break :tsconfig;

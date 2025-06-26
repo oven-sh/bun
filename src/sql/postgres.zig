@@ -972,12 +972,12 @@ pub const PostgresRequest = struct {
                 },
                 .int4 => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .int4_array => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .float8 => {

@@ -60,8 +60,8 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private handleOpenDocument(document: vscode.TextDocument): void {
-    if (this.isTestFile(document) && !this.testController.items.get(document.uri.toString())) {
-      this.staticDiscoverTests(false, document.uri.fsPath);
+    if (this.isTestFile(document) && !this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
+      this.staticDiscoverTests(false, windowsVscodeUri(document.uri.fsPath));
     }
   }
 
@@ -134,7 +134,7 @@ export class BunTestController implements vscode.Disposable {
     }
 
     for (const file of files) {
-      let fileTestItem = this.testController.items.get(file.toString());
+      let fileTestItem = this.testController.items.get(windowsVscodeUri(file.fsPath));
       if (!fileTestItem) {
         fileTestItem = this.testController.createTestItem(
           file.toString(),
@@ -156,7 +156,7 @@ export class BunTestController implements vscode.Disposable {
     const refreshTestsForFile = (uri: vscode.Uri) => {
       if (uri.toString().includes("node_modules")) return;
 
-      const existing = this.testController.items.get(uri.toString());
+      const existing = this.testController.items.get(windowsVscodeUri(uri.fsPath));
       if (existing) {
         existing.children.replace([]);
         this.staticDiscoverTests(existing);
@@ -168,7 +168,7 @@ export class BunTestController implements vscode.Disposable {
     fileWatcher.onDidChange(refreshTestsForFile);
     fileWatcher.onDidCreate(refreshTestsForFile);
     fileWatcher.onDidDelete(uri => {
-      const existing = this.testController.items.get(uri.toString());
+      const existing = this.testController.items.get(windowsVscodeUri(uri.fsPath));
       if (existing) {
         this.testController.items.delete(existing.id);
       }
@@ -218,8 +218,8 @@ export class BunTestController implements vscode.Disposable {
       const fileContent = await fs.readFile(targetPath, "utf8");
       const testNodes = this.parseTestBlocks(fileContent);
 
-      const fileUri = vscode.Uri.file(targetPath);
-      let fileTestItem = this.testController.items.get(fileUri.toString());
+      const fileUri = vscode.Uri.file(windowsVscodeUri(targetPath));
+      let fileTestItem = this.testController.items.get(windowsVscodeUri(targetPath));
       if (!fileTestItem) {
         fileTestItem = this.testController.createTestItem(
           fileUri.toString(),
@@ -428,7 +428,7 @@ export class BunTestController implements vscode.Disposable {
         continue;
       }
 
-      const filePath = test.uri.fsPath;
+      const filePath = windowsVscodeUri(test.uri.fsPath);
       if (!testsByFile.has(filePath)) {
         testsByFile.set(filePath, []);
       }
@@ -438,8 +438,9 @@ export class BunTestController implements vscode.Disposable {
 
     let i = 0;
 
-    for (const [filePath, tests] of testsByFile.entries()) {
+    for (const [_filePath, tests] of testsByFile.entries()) {
       if (token.isCancellationRequested) break;
+      const filePath = process.platform === "win32" ? _filePath.replace("c:\\", "C:\\") : _filePath;
 
       try {
         for (const test of tests) {
@@ -489,7 +490,7 @@ export class BunTestController implements vscode.Disposable {
 
           if (testNames.length > 0) {
             const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
-            args.push("--test-name-pattern", testNamesRegex);
+            args.push("--test-name-pattern", process.platform === "win32" ? `"${testNamesRegex}"` : testNamesRegex);
           }
         }
 
@@ -580,7 +581,9 @@ export class BunTestController implements vscode.Disposable {
                 }
 
                 if (isFileOnly) {
-                  const fileTestItem = this.testController.items.get(vscode.Uri.file(filePath).toString());
+                  const fileTestItem = this.testController.items.get(
+                    vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
+                  );
                   if (fileTestItem) {
                     this.removeTestItemAndChildren(fileTestItem);
                   }
@@ -589,7 +592,9 @@ export class BunTestController implements vscode.Disposable {
 
                   const fileResult = parsedOutput.find((result: BunFileResult) => result.name === filePath);
                   if (fileResult) {
-                    const newFileTestItem = this.testController.items.get(vscode.Uri.file(filePath).toString());
+                    const newFileTestItem = this.testController.items.get(
+                      vscode.Uri.file(windowsVscodeUri(filePath)).toString(),
+                    );
                     if (newFileTestItem) {
                       this.processTestResults(fileResult.tests, run, newFileTestItem, "", 0, true);
                     }
@@ -770,18 +775,8 @@ export class BunTestController implements vscode.Disposable {
           column = Math.max(0, testResult.location.column);
         }
 
-        let fileUri = testItem.uri;
-        if (
-          testItem.id.endsWith(" tests skipped") &&
-          testResult.location &&
-          testResult.location.file &&
-          !testResult.location.file.endsWith(" tests skipped")
-        ) {
-          fileUri = vscode.Uri.file(testResult.location.file);
-        }
-
         const position = new vscode.Position(line, column);
-        location = new vscode.Location(fileUri, position);
+        location = new vscode.Location(testItem.uri, position);
       }
 
       const isParent = testResult.children && testResult.children.length > 0;
@@ -804,10 +799,6 @@ export class BunTestController implements vscode.Disposable {
           run.failed(testItem, message, testResult.duration);
         } else {
           run.failed(testItem, [], testResult.duration);
-        }
-      } else if (testItem.id.includes(" tests skipped")) {
-        if (!testResult.status || testResult.status === "skipped") {
-          run.skipped(testItem);
         }
       }
 
@@ -883,7 +874,7 @@ export class BunTestController implements vscode.Disposable {
 
     if (testNames.length > 0) {
       const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
-      args.push("--test-name-pattern", testNamesRegex);
+      args.push("--test-name-pattern", process.platform === "win32" ? `""` : testNamesRegex);
     }
 
     const debugConfiguration: vscode.DebugConfiguration = {
@@ -955,7 +946,7 @@ export class BunTestController implements vscode.Disposable {
 
   private createTestItemsFromParsedOutput(parsedOutput: BunFileResult[]): void {
     for (const fileResult of parsedOutput) {
-      const fileUri = vscode.Uri.file(fileResult.name);
+      const fileUri = vscode.Uri.file(windowsVscodeUri(fileResult.name));
       let fileTestItem = this.testController.items.get(fileUri.toString());
 
       if (!fileTestItem) {
@@ -983,20 +974,7 @@ export class BunTestController implements vscode.Disposable {
       const testId = `${fileName}#${path}`;
 
       const fileUri = parent.uri || vscode.Uri.file(fileName);
-      if (
-        fileName.endsWith(" tests skipped") &&
-        test.location &&
-        test.location.file &&
-        !test.location.file.endsWith(" tests skipped")
-      ) {
-        // fileUri = vscode.Uri.file(test.location.file);
-      }
-
       const testItem = this.testController.createTestItem(testId, test.name, fileUri);
-
-      if (fileName.endsWith(" tests skipped") && !parentPath) {
-        testItem.description = fileUri.fsPath.split("/").pop();
-      }
 
       testItem.tags = [new vscode.TestTag(test.children ? "describe" : "test")];
 
@@ -1152,15 +1130,19 @@ function parseBunTestOutput(output: string, workspacePath: string, reporterOutfi
       for (const childSuite of suites as Record<string, unknown>[]) {
         const describeName = childSuite.name as string;
         const line = childSuite.line !== undefined ? Number(childSuite.line) : 0;
+
+        const childFile = childSuite.file as string;
+        const suiteFile = suite.file as string;
         const file = childSuite.file
-          ? path.isAbsolute(childSuite.file as string)
-            ? (childSuite.file as string)
-            : path.resolve(workspacePath, childSuite.file as string)
-          : suite.file
-            ? path.isAbsolute(suite.file as string)
-              ? (suite.file as string)
-              : path.resolve(workspacePath, suite.file as string)
+          ? path.isAbsolute(childFile as string)
+            ? (childFile as string)
+            : path.resolve(workspacePath, childFile as string)
+          : suiteFile
+            ? path.isAbsolute(suiteFile as string)
+              ? (suiteFile as string)
+              : path.resolve(workspacePath, suiteFile as string)
             : undefined;
+
         const children = parseXmlSuite(childSuite, [...parentChain, describeName]);
         const status = children.some(c => c.status === "failed") ? "failed" : "passed";
         results.push({
@@ -1185,15 +1167,18 @@ function parseBunTestOutput(output: string, workspacePath: string, reporterOutfi
         const classname = (testcase.classname as string) || "";
         const fullParent = parentChain.length ? parentChain.join(" > ") : classname || undefined;
         const line = testcase.line !== undefined ? Number(testcase.line) : 0;
+
+        const testcaseFile = testcase.file as string;
         const file = testcase.file
-          ? path.isAbsolute(testcase.file as string)
-            ? (testcase.file as string)
-            : path.resolve(workspacePath, testcase.file as string)
-          : suite.file
-            ? path.isAbsolute(suite.file as string)
-              ? (suite.file as string)
-              : path.resolve(workspacePath, suite.file as string)
+          ? path.isAbsolute(testcaseFile as string)
+            ? (testcaseFile as string)
+            : path.resolve(workspacePath, testcaseFile as string)
+          : testcaseFile
+            ? path.isAbsolute(testcaseFile as string)
+              ? (testcaseFile as string)
+              : path.resolve(workspacePath, testcaseFile as string)
             : undefined;
+
         const status =
           testcase.skipped !== undefined ? "skipped" : testcase.failure !== undefined ? "failed" : "passed";
         const duration = testcase.time !== undefined ? Number(testcase.time) * 1000 : undefined;
@@ -1415,4 +1400,8 @@ function processErrorData({
   const message = new vscode.TestMessage(msg);
   message.location = messageLocation;
   return message;
+}
+
+function windowsVscodeUri(uri: string): string {
+  return process.platform === "win32" ? uri.replace("c:\\", "C:\\") : uri;
 }

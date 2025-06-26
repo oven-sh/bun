@@ -1147,19 +1147,23 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     JSValue reasonStack {};
     if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
-        if (scope.exception()) scope.clearException();
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
-        if (scope.exception()) scope.clearException();
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
-    if (scope.exception()) scope.clearException();
+    if (scope.exception()) [[unlikely]]
+        scope.clearException();
     Process::emitWarningErrorInstance(globalObject, warning);
-    if (scope.exception()) scope.clearException();
+    if (scope.exception()) [[unlikely]]
+        scope.clearException();
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
@@ -1495,6 +1499,7 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
             // });
             auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
             process->queueNextTick(globalObject, func, errorInstance);
+            RETURN_IF_EXCEPTION(scope, {});
             return jsUndefined();
         }
     }
@@ -1502,6 +1507,7 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     //   process.nextTick(doEmitWarning, warning);
     auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
     process->queueNextTick(globalObject, func, errorInstance);
+    RETURN_IF_EXCEPTION(scope, {});
     return jsUndefined();
 }
 JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
@@ -3160,9 +3166,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue stdinValue = global->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "stdin"_s))) {
-        RETURN_IF_EXCEPTION(throwScope, {});
-
+    auto stdinValue = global->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "stdin"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (stdinValue) {
         if (!stdinValue.isObject()) {
             throwTypeError(globalObject, throwScope, "stdin is not an object"_s);
             return {};
@@ -3170,7 +3176,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
 
         JSValue resumeValue = stdinValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "resume"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!resumeValue.isUndefinedOrNull()) {
+        if (resumeValue && !resumeValue.isUndefinedOrNull()) {
             auto resumeFunction = jsDynamicCast<JSFunction*>(resumeValue);
             if (!resumeFunction) [[unlikely]] {
                 throwTypeError(globalObject, throwScope, "stdin.resume is not a function"_s);

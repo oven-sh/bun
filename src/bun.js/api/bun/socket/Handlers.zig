@@ -314,11 +314,7 @@ pub const SocketConfig = struct {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
-                const porti32 = port_value.coerceToInt32(globalObject);
-                if (globalObject.hasException()) {
-                    return error.JSError;
-                }
-
+                const porti32 = try port_value.coerceToInt32(globalObject);
                 if (porti32 < 0 or porti32 > 65535) {
                     return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{});
                 }

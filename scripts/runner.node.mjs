@@ -245,7 +245,7 @@ const shouldValidateExceptions = (() => {
       }
       skipArray = readFileSync(path, "utf-8")
         .split("\n")
-        .filter(line => !line.startsWith("#"));
+        .filter(line => !line.startsWith("#") && line.length > 0);
     }
     return !(skipArray.includes(test) || skipArray.includes("test/" + test));
   };

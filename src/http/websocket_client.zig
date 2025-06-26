@@ -46,7 +46,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         initial_data_handler: ?*InitialDataHandler = null,
         event_loop: *JSC.EventLoop = undefined,
-        deflate: ?*WebSocketDeflate.PerMessageDeflate = null,
+        deflate: ?*WebSocketDeflate = null,
 
         // Track if current message is compressed
         receiving_compressed: bool = false,
@@ -228,7 +228,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             };
 
             // Decompress the data
-            var decompressed = std.ArrayList(u8).init(bun.default_allocator);
+            var decompressed = deflate.rare_data.arrayList();
             defer decompressed.deinit();
 
             deflate.decompress(data_, &decompressed) catch |err| {
@@ -1128,7 +1128,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             });
 
             if (deflate_params) |params| {
-                if (WebSocketDeflate.PerMessageDeflate.init(bun.default_allocator, params.*)) |deflate| {
+                if (WebSocketDeflate.init(bun.default_allocator, params.*, globalThis.bunVM().rareData())) |deflate| {
                     ws.deflate = deflate;
                 } else |_| {
                     // failed to init, silently disable compression

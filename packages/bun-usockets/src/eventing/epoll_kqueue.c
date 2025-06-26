@@ -19,7 +19,6 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <time.h>
-
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
 void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
@@ -338,7 +337,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
             SET_READY_POLL(loop, i, new_poll);
-
+            
             num_entries_possibly_remaining--;
         }
     }
@@ -447,7 +446,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
-        //us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
+        // us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
 }
 

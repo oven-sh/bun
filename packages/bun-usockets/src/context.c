@@ -20,10 +20,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
-
 #define CONCURRENT_CONNECTIONS 4
 
 // clang-format off
@@ -774,42 +774,60 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return s;
     }
-
+    struct us_socket_context_t *old_context = s->context;
+    struct us_loop_t *loop = old_context->loop;
     if (s->flags.low_prio_state != 1) {
-         /* We need to be sure that we still holding a reference*/
-        us_socket_context_ref(ssl, context);
+        /* We need to be sure that we still holding a reference*/
+        us_socket_context_ref(ssl, old_context);
         /* This properly updates the iterator if in on_timeout */
-        us_internal_socket_context_unlink_socket(ssl, s->context, s);
-    }
-
-
-    struct us_connecting_socket_t *c = s->connect_state;
-
-    struct us_socket_t *new_s = s;
-    if (ext_size != -1) {
-        new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
-        if (c) {
-            c->connecting_head = new_s;
-            struct us_socket_context_t *old_context = s->context;
-            c->context = context;
-            us_internal_socket_context_link_connecting_socket(ssl, context, c);
-            us_internal_socket_context_unlink_connecting_socket(ssl, old_context, c);
+        us_internal_socket_context_unlink_socket(ssl, old_context, s);
+    } else {
+        if (loop->data.low_prio_head == s) {
+            loop->data.low_prio_head = s->next;
+            if (s->next) s->next->prev = NULL;
+        } else {
+            struct us_socket_t *current = loop->data.low_prio_head;
+            while (current && current->next != s) {
+                current = current->next;
+            }
+            if (current) {
+                current->next = s->next;
+                if (s->next) s->next->prev = current;
+            }
         }
     }
+
+    struct us_connecting_socket_t *c = s->connect_state;
+    
+    struct us_socket_t *new_s = s;
+    
+    if (ext_size != -1) {
+        struct us_poll_t *pool_ref = &s->p;
+        /* Remove old socket from low-priority queue */
+       
+        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
+        if (c) {
+            c->connecting_head = new_s;
+            c->context = context;
+            us_internal_socket_context_unlink_connecting_socket(ssl, old_context, c);
+            us_internal_socket_context_link_connecting_socket(ssl, context, c);
+        }
+    }
+    new_s->context = context;
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
-        if (!new_s->prev) new_s->context->loop->data.low_prio_head = new_s;
+        if (!new_s->prev) loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
 
         if (new_s->next) new_s->next->prev = new_s;
     } else {
+        
         us_internal_socket_context_link_socket(context, new_s);
-        us_socket_context_unref(ssl, context);
+        us_socket_context_unref(ssl, old_context);
     }
-
     return new_s;
 }
 

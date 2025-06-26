@@ -2059,3 +2059,4 @@ test/js/node/test/parallel/test-cluster-primary-error.js
 
 # needs https://github.com/oven-sh/WebKit/pull/94
 test/js/node/test/parallel/test-cluster-disconnect-idle-worker.js
+test/js/node/test/parallel/test-cluster-disconnect-leak.js

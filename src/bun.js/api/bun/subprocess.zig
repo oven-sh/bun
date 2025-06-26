@@ -1732,6 +1732,14 @@ pub fn finalizeStreams(this: *Subprocess) void {
 
 fn deinit(this: *Subprocess) void {
     log("deinit", .{});
+    
+    // Ensure streams are finalized before destroying the subprocess
+    // This prevents use-after-free when pipes outlive the subprocess
+    if (!this.flags.finalized) {
+        this.finalizeStreams();
+        this.flags.finalized = true;
+    }
+    
     bun.destroy(this);
 }
 

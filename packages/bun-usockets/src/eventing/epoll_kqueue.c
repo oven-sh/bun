@@ -385,14 +385,14 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
     if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
-            /* Hack: forcefully update poll by stripping away already set events */
-            new_p->state.poll_type = us_internal_poll_type(new_p);
-            us_poll_change(new_p, loop, events);
+        /* Hack: forcefully update poll by stripping away already set events */
+        new_p->state.poll_type = us_internal_poll_type(new_p);
+        us_poll_change(new_p, loop, events);
 #else
-            /* Forcefully update poll by resetting them with new_p as user data */
-            kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+        /* Forcefully update poll by resetting them with new_p as user data */
+        kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
 #endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
-            us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
+        us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
     }
 
     return new_p;

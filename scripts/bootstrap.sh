@@ -982,8 +982,13 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ]; then
 		return
+	fi
+	
+	# Default to GCC 13 if not specified (needed for C++20 support)
+	if [ -z "$gcc_version" ]; then
+		gcc_version="13"
 	fi
 
 	# Taken from WebKit's Dockerfile.
@@ -1050,10 +1055,16 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
-	# Overwrite gcc/g++ to point to clang as well
+	# Force gcc/g++ to point to clang by removing existing files first
 	# This ensures any tool looking for gcc/g++ gets clang (which supports C++20)
+	execute_sudo rm -f /usr/bin/gcc /usr/bin/g++
 	execute_sudo ln -sf $(which clang-$llvm_v) /usr/bin/gcc
 	execute_sudo ln -sf $(which clang++-$llvm_v) /usr/bin/g++
+	# Also set very high priority in alternatives to override system gcc
+	execute_sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/clang-$llvm_v 200 --force
+	execute_sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/clang++-$llvm_v 200 --force
+	execute_sudo update-alternatives --set gcc /usr/bin/clang-$llvm_v
+	execute_sudo update-alternatives --set g++ /usr/bin/clang++-$llvm_v
 	# Make sure llvm-symbolizer is available for ASAN
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }

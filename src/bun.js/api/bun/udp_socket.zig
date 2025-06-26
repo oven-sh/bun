@@ -158,7 +158,7 @@ pub const UDPSocketConfig = struct {
 
         const port: u16 = brk: {
             if (try options.getTruthy(globalThis, "port")) |value| {
-                const number = value.coerceToInt32(globalThis);
+                const number = try value.coerceToInt32(globalThis);
                 if (number < 0 or number > 0xffff) {
                     return globalThis.throwInvalidArguments("Expected \"port\" to be an integer between 0 and 65535", .{});
                 }
@@ -228,7 +228,7 @@ pub const UDPSocketConfig = struct {
             const connect_port_js = try connect.getTruthy(globalThis, "port") orelse {
                 return globalThis.throwInvalidArguments("Expected \"connect.port\" to be an integer", .{});
             };
-            const connect_port = connect_port_js.coerceToInt32(globalThis);
+            const connect_port = try connect_port_js.coerceToInt32(globalThis);
 
             const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
@@ -442,13 +442,13 @@ pub const UDPSocket = struct {
         }
 
         var addr = std.mem.zeroes(std.posix.sockaddr.storage);
-        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+        if (!try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
             return globalThis.throwValue(try bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
         var interface = std.mem.zeroes(std.posix.sockaddr.storage);
 
-        const res = if (arguments.len > 1 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &interface)) blk: {
+        const res = if (arguments.len > 1 and try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &interface)) blk: {
             if (addr.family != interface.family) {
                 return globalThis.throwInvalidArguments("Family mismatch between address and interface", .{});
             }
@@ -481,12 +481,12 @@ pub const UDPSocket = struct {
         }
 
         var source_addr: std.posix.sockaddr.storage = undefined;
-        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &source_addr)) {
+        if (!try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &source_addr)) {
             return globalThis.throwValue(try bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
         var group_addr: std.posix.sockaddr.storage = undefined;
-        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &group_addr)) {
+        if (!try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &group_addr)) {
             return globalThis.throwValue(try bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
@@ -496,7 +496,7 @@ pub const UDPSocket = struct {
 
         var interface: std.posix.sockaddr.storage = undefined;
 
-        const res = if (arguments.len > 2 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[2], &interface)) blk: {
+        const res = if (arguments.len > 2 and try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[2], &interface)) blk: {
             if (source_addr.family != interface.family) {
                 return globalThis.throwInvalidArguments("Family mismatch among source, group and interface addresses", .{});
             }
@@ -530,7 +530,7 @@ pub const UDPSocket = struct {
 
         var addr: std.posix.sockaddr.storage = undefined;
 
-        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+        if (!try parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
             return .false;
         }
 
@@ -584,7 +584,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
         }
 
-        const ttl = arguments[0].coerceToInt32(globalThis);
+        const ttl = try arguments[0].coerceToInt32(globalThis);
         const res = function(this.socket, ttl);
 
         if (getUSError(res, .setsockopt, true)) |err| {
@@ -655,7 +655,7 @@ pub const UDPSocket = struct {
                 continue;
             }
             if (i % 3 == 2) {
-                if (!this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
+                if (!try this.parseAddr(globalThis, port, val, &addrs[slice_idx])) {
                     return globalThis.throwInvalidArguments("Invalid address", .{});
                 }
                 addr_ptrs[slice_idx] = &addrs[slice_idx];
@@ -713,7 +713,7 @@ pub const UDPSocket = struct {
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {
             if (dst) |dest| {
-                if (!this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
+                if (!try this.parseAddr(globalThis, dest.port, dest.address, &addr)) {
                     return globalThis.throwInvalidArguments("Invalid address", .{});
                 }
                 break :brk &addr;
@@ -729,20 +729,14 @@ pub const UDPSocket = struct {
         return JSValue.jsBoolean(res > 0);
     }
 
-    fn parseAddr(
-        this: *This,
-        globalThis: *JSGlobalObject,
-        port_val: JSValue,
-        address_val: JSValue,
-        storage: *std.posix.sockaddr.storage,
-    ) bool {
+    fn parseAddr(this: *This, globalThis: *JSGlobalObject, port_val: JSValue, address_val: JSValue, storage: *std.posix.sockaddr.storage) bun.JSError!bool {
         _ = this;
-        const number = port_val.coerceToInt32(globalThis);
+        const number = try port_val.coerceToInt32(globalThis);
         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
-        const str = address_val.toBunString(globalThis) catch @panic("unexpected exception");
+        const str = try address_val.toBunString(globalThis);
         defer str.deref();
-        const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
+        const address_slice = try str.toOwnedSliceZ(default_allocator);
         defer default_allocator.free(address_slice);
 
         var addr4: *std.posix.sockaddr.in = @ptrCast(storage);

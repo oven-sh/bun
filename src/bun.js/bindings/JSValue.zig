@@ -46,16 +46,14 @@ pub const JSValue = enum(i64) {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
 
-    // TODO: use JSError! `toInt32` can throw
     extern fn JSC__JSValue__coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32;
-    pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
-        return JSC__JSValue__coerceToInt32(this, globalThis);
+    pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!i32 {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__coerceToInt32, .{ this, globalThis });
     }
 
-    // TODO: use  JSError! `toInt32` can throw
     extern fn JSC__JSValue__coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64;
-    pub fn coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64 {
-        return JSC__JSValue__coerceToInt64(this, globalThis);
+    pub fn coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!i64 {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__coerceToInt64, .{ this, globalThis });
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
@@ -195,7 +193,7 @@ pub const JSValue = enum(i64) {
                 if (this.getNumber()) |num| {
                     return @bitCast(coerceJSValueDoubleTruncatingT(i32, num));
                 }
-                return @bitCast(this.coerceToInt32(globalThis));
+                return @bitCast(try this.coerceToInt32(globalThis));
             },
             else => @compileError("Unsupported coercion type"),
         };
@@ -389,7 +387,7 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: JSC.JSValue, value: JSC.JSValue) void;
     pub fn putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: JSC.JSValue, value: JSC.JSValue) bun.JSError!void {
-        return bun.jsc.host_fn.fromJSHostCallVoid(globalObject, @src(), JSC__JSValue__putToPropertyKey, .{ target, globalObject, key, value });
+        return bun.jsc.host_fn.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__putToPropertyKey, .{ target, globalObject, key, value });
     }
 
     extern fn JSC__JSValue__putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void;
@@ -1147,12 +1145,12 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
     pub fn toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void {
-        return bun.jsc.fromJSHostCallVoid(global, @src(), JSC__JSValue__toZigException, .{ this, global, exception }) catch return; // TODO: properly propagate termination
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__toZigException, .{ this, global, exception }) catch return; // TODO: properly propagate termination
     }
 
     extern fn JSC__JSValue__toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void;
     pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) JSError!void {
-        return bun.jsc.fromJSHostCallVoid(global, @src(), JSC__JSValue__toZigString, .{ this, out, global });
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__toZigString, .{ this, out, global });
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.

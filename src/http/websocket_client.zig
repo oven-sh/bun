@@ -745,30 +745,27 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (should_compress) {
                 // For compressed messages, we need to compress the content first
-                var content_to_compress: []const u8 = undefined;
                 var temp_buffer: ?[]u8 = null;
-                defer if (temp_buffer) |buf| bun.default_allocator.free(buf);
-
-                switch (bytes) {
-                    .utf16 => |utf16| {
+                const allocator = this.deflate.?.rare_data.allocator();
+                defer if (temp_buffer) |buf| allocator.free(buf);
+                const content_to_compress: []const u8 = switch (bytes) {
+                    .utf16 => |utf16| brk: {
                         // Convert UTF16 to UTF8 for compression
                         const content_byte_len: usize = strings.elementLengthUTF16IntoUTF8([]const u16, utf16);
-                        temp_buffer = bun.default_allocator.alloc(u8, content_byte_len) catch return false;
+                        temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
                         const encode_result = strings.copyUTF16IntoUTF8(temp_buffer.?, []const u16, utf16);
-                        content_to_compress = temp_buffer.?[0..encode_result.written];
+                        break :brk temp_buffer.?[0..encode_result.written];
                     },
-                    .latin1 => |latin1| {
+                    .latin1 => |latin1| brk: {
                         // Convert Latin1 to UTF8 for compression
                         const content_byte_len: usize = strings.elementLengthLatin1IntoUTF8(latin1);
-                        temp_buffer = bun.default_allocator.alloc(u8, content_byte_len) catch return false;
+                        temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
                         const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, []const u8, latin1);
-                        content_to_compress = temp_buffer.?[0..encode_result.written];
+                        break :brk temp_buffer.?[0..encode_result.written];
                     },
-                    .bytes => |b| {
-                        content_to_compress = b;
-                    },
+                    .bytes => |b| b,
                     .raw => unreachable,
-                }
+                };
 
                 // Check if compression is worth it
                 if (!this.shouldCompress(content_to_compress.len, opcode)) {
@@ -776,7 +773,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 }
 
                 // Compress the content
-                var compressed = std.ArrayList(u8).init(bun.default_allocator);
+                var compressed = std.ArrayList(u8).init(allocator);
                 defer compressed.deinit();
 
                 this.deflate.?.compress(content_to_compress, &compressed) catch {
@@ -789,17 +786,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 const writable = this.send_buffer.writableWithSize(frame_size) catch return false;
                 Copy.copyCompressed(this.globalThis, writable[0..frame_size], compressed.items, opcode, true);
                 this.send_buffer.update(frame_size);
+
+                if (do_write) {
+                    if (comptime Environment.allow_assert) {
+                        bun.assert(!this.tcp.isShutdown());
+                        bun.assert(!this.tcp.isClosed());
+                        bun.assert(this.tcp.isEstablished());
+                    }
+                    return this.sendBuffer(this.send_buffer.readableSlice(0));
+                }
             } else {
                 return this.sendDataUncompressed(bytes, do_write, opcode);
-            }
-
-            if (do_write) {
-                if (comptime Environment.allow_assert) {
-                    bun.assert(!this.tcp.isShutdown());
-                    bun.assert(!this.tcp.isClosed());
-                    bun.assert(this.tcp.isEstablished());
-                }
-                return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
 
             return true;
@@ -1147,14 +1144,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch {
-                ws.deref();
-                return null;
-            };
-            ws.receive_buffer.ensureTotalCapacity(2048) catch {
-                ws.deref();
-                return null;
-            };
+            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];

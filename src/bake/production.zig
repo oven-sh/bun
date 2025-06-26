@@ -561,6 +561,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             return vm.global.throwValue(err);
         },
     }
+    vm.waitForTasks();
 }
 
 /// unsafe function, must be run outside of the event loop

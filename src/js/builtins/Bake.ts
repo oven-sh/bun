@@ -130,11 +130,11 @@ export function renderRoutesForProdStatic(
         });
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
-            callRouteGenerator(type, i, layouts, pageModule, params);
+            await callRouteGenerator(type, i, layouts, pageModule, params);
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter) {
-            callRouteGenerator(type, i, layouts, pageModule, params);
+            await callRouteGenerator(type, i, layouts, pageModule, params);
           }
         } else {
           await Promise.all(

@@ -869,7 +869,13 @@ pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
-    this.eventLoop().waitForTasks();
+    while (this.isEventLoopAlive()) {
+        this.eventLoop().tick();
+
+        if (this.isEventLoopAlive()) {
+            this.eventLoop().autoTick();
+        }
+    }
 }
 
 pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
@@ -1870,6 +1876,15 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
 // TODO:
 pub fn deinit(this: *VirtualMachine) void {
+    {
+        var frame: std.builtin.StackTrace = .{
+            .index = 0,
+            .instruction_addresses = &[_]usize{},
+        };
+        std.debug.captureStackTrace(@returnAddress(), &frame);
+        bun.Output.printErrorln("Pointer allocated here:", .{});
+        bun.crash_handler.dumpStackTrace(frame, .{});
+    }
     this.auto_killer.deinit();
 
     if (source_code_printer) |print| {

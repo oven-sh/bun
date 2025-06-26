@@ -72,6 +72,18 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
+    if (auto string = jsDynamicCast<JSC::JSString*>(key)) {
+        auto keyView = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+        if (keyView.startsWith("bake:/"_s)) {
+            BunString result = BakeProdResolve(global, Bun::toString("bake:/"_s), Bun::toString(keyView.substringSharingImpl("bake:"_s.length())));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.transferToWTFString());
+        }
+    }
+
     // Use Zig::GlobalObject's function
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
 }

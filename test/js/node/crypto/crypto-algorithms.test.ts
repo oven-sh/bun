@@ -23,9 +23,9 @@ describe("Crypto hash algorithms", () => {
     "shake256",
   ];
 
-  test("getHashes() returns supported digest algorithms", () => {
+  test("getHashes() returns supported algorithms", () => {
     const supportedHashes = getHashes().sort();
-    expect(supportedHashes).toEqual(algorithms.sort());
+    expect(supportedHashes).toEqual(algorithms);
   });
 
   for (const algorithm of algorithms) {

@@ -496,20 +496,8 @@ pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     return global.ERR(.CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED, "Custom engines not supported by BoringSSL", .{}).throw();
 }
 
-fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
-    const from = maybe_from orelse return;
-    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
-    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
-}
-
 fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    const values = std.enums.values(EVP.Algorithm);
-    const array = try JSValue.createEmptyArray(global, values.len);
-    for (values, 0..) |alg, i| {
-        const str = String.createUTF8ForJS(global, @tagName(alg));
-        array.putIndex(global, @intCast(i), str);
-    }
-    return array;
+    return bun.String.toJSArray(global, &EVP.Algorithm.names.values);
 }
 
 const Scrypt = struct {

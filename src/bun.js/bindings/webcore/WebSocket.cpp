@@ -1297,7 +1297,7 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 
     this->didConnect();
 }
-void WebSocket::didFailWithErrorCode(int32_t code)
+void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
 {
     // from new WebSocket() -> connect()
 
@@ -1305,148 +1305,141 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         return;
 
     this->m_upgradeClient = nullptr;
+    if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        this->m_connectedWebSocket.clientSSL = nullptr;
+    } else if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        this->m_connectedWebSocket.client = nullptr;
+    }
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
-    this->m_connectedWebSocket.client = nullptr;
-
     switch (code) {
-    // cancel
-    case 0: {
+
+    case Bun::WebSocketErrorCode::cancel: {
+        didReceiveClose(CleanStatus::NotClean, 1000, "Connection cancelled"_s);
         break;
     }
-    // invalid_response
-    case 1: {
+    case Bun::WebSocketErrorCode::invalid_response: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s);
         break;
     }
-    // expected_101_status_code
-    case 2: {
+    case Bun::WebSocketErrorCode::expected_101_status_code: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s);
         break;
     }
-    // missing_upgrade_header
-    case 3: {
+    case Bun::WebSocketErrorCode::missing_upgrade_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Missing upgrade header"_s);
         break;
     }
-    // missing_connection_header
-    case 4: {
+    case Bun::WebSocketErrorCode::missing_connection_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Missing connection header"_s);
         break;
     }
-    // missing_websocket_accept_header
-    case 5: {
+    case Bun::WebSocketErrorCode::missing_websocket_accept_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Missing websocket accept header"_s);
         break;
     }
-    // invalid_upgrade_header
-    case 6: {
+    case Bun::WebSocketErrorCode::invalid_upgrade_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid upgrade header"_s);
         break;
     }
-    // invalid_connection_header
-    case 7: {
+    case Bun::WebSocketErrorCode::invalid_connection_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid connection header"_s);
         break;
     }
-    // invalid_websocket_version
-    case 8: {
+    case Bun::WebSocketErrorCode::invalid_websocket_version: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid websocket version"_s);
         break;
     }
-    // mismatch_websocket_accept_header
-    case 9: {
+    case Bun::WebSocketErrorCode::mismatch_websocket_accept_header: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch websocket accept header"_s);
         break;
     }
-    // missing_client_protocol
-    case 10: {
+    case Bun::WebSocketErrorCode::missing_client_protocol: {
         didReceiveClose(CleanStatus::Clean, 1002, "Missing client protocol"_s);
         break;
     }
-    // mismatch_client_protocol
-    case 11: {
+    case Bun::WebSocketErrorCode::mismatch_client_protocol: {
         didReceiveClose(CleanStatus::Clean, 1002, "Mismatch client protocol"_s);
         break;
     }
-    // timeout
-    case 12: {
+    case Bun::WebSocketErrorCode::timeout: {
         didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
         break;
     }
-    // closed
-    case 13: {
+    case Bun::WebSocketErrorCode::closed: {
         didReceiveClose(CleanStatus::Clean, 1000, "Closed by client"_s);
         break;
     }
-    // failed_to_write
-    case 14: {
+    case Bun::WebSocketErrorCode::failed_to_write: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to write"_s);
         break;
     }
-    // failed_to_connect
-    case 15: {
+    case Bun::WebSocketErrorCode::failed_to_connect: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to connect"_s, true);
         break;
     }
-    // headers_too_large
-    case 16: {
+    case Bun::WebSocketErrorCode::headers_too_large: {
         didReceiveClose(CleanStatus::NotClean, 1007, "Headers too large"_s);
         break;
     }
-    // ended
-    case 17: {
+    case Bun::WebSocketErrorCode::ended: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s);
         break;
     }
 
-    // failed_to_allocate_memory
-    case 18: {
+    case Bun::WebSocketErrorCode::failed_to_allocate_memory: {
         didReceiveClose(CleanStatus::NotClean, 1001, "Failed to allocate memory"_s);
         break;
     }
-    // control_frame_is_fragmented
-    case 19: {
+    case Bun::WebSocketErrorCode::control_frame_is_fragmented: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - control frame is fragmented"_s);
         break;
     }
-    // invalid_control_frame
-    case 20: {
+    case Bun::WebSocketErrorCode::invalid_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - invalid control frame"_s);
         break;
     }
-    // compression_unsupported
-    case 21: {
+    case Bun::WebSocketErrorCode::compression_unsupported: {
         didReceiveClose(CleanStatus::Clean, 1011, "Compression not implemented yet"_s);
         break;
     }
-    // unexpected_mask_from_server
-    case 22: {
+    case Bun::WebSocketErrorCode::unexpected_mask_from_server: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected mask from server"_s);
         break;
     }
-    // expected_control_frame
-    case 23: {
+    case Bun::WebSocketErrorCode::expected_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - expected control frame"_s);
         break;
     }
-    // unsupported_control_frame
-    case 24: {
+    case Bun::WebSocketErrorCode::unsupported_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unsupported control frame"_s);
         break;
     }
-    // unexpected_opcode
-    case 25: {
+    case Bun::WebSocketErrorCode::unexpected_opcode: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected opcode"_s);
         break;
     }
-    // invalid_utf8
-    case 26: {
+    case Bun::WebSocketErrorCode::invalid_utf8: {
         didReceiveClose(CleanStatus::NotClean, 1003, "Server sent invalid UTF8"_s);
         break;
     }
-    // tls_handshake_failed
-    case 27: {
+    case Bun::WebSocketErrorCode::tls_handshake_failed: {
         didReceiveClose(CleanStatus::NotClean, 1015, "TLS handshake failed"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::message_too_big: {
+        didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::protocol_error: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::compression_failed: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Compression failed"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::invalid_compressed_data: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s);
         break;
     }
     }
@@ -1480,7 +1473,7 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 {
     webSocket->didConnect(socket, bufferedData, len, deflate_params);
 }
-extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
 }

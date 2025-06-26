@@ -6,6 +6,6 @@
 typedef struct {
     uint8_t server_max_window_bits;
     uint8_t client_max_window_bits;
-    bool server_no_context_takeover;
-    bool client_no_context_takeover;
+    uint8_t server_no_context_takeover;
+    uint8_t client_no_context_takeover;
 } PerMessageDeflateParams;

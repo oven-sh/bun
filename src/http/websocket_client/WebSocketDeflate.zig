@@ -4,8 +4,8 @@ const PerMessageDeflate = @This();
 pub const Params = extern struct {
     server_max_window_bits: u8 = 15,
     client_max_window_bits: u8 = 15,
-    server_no_context_takeover: bool = false,
-    client_no_context_takeover: bool = false,
+    server_no_context_takeover: u8 = 0,
+    client_no_context_takeover: u8 = 0,
 
     pub const MAX_WINDOW_BITS: u8 = 15;
     pub const MIN_WINDOW_BITS: u8 = 8;
@@ -169,7 +169,7 @@ pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayL
         }
     }
 
-    if (self.params.server_no_context_takeover) {
+    if (self.params.server_no_context_takeover == 1) {
         _ = zlib.inflateReset(&self.decompress_stream);
     }
 }
@@ -202,7 +202,7 @@ pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayLis
         out.shrinkRetainingCapacity(out.items.len - 4);
     }
 
-    if (self.params.client_no_context_takeover) {
+    if (self.params.client_no_context_takeover == 1) {
         _ = zlib.deflateReset(&self.compress_stream);
     }
 }

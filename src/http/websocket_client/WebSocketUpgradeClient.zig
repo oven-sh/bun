@@ -404,9 +404,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                                         const value = std.mem.trim(u8, param_it.next() orelse "", " \t");
 
                                         if (strings.eqlComptime(key, "server_no_context_takeover")) {
-                                            deflate_result.params.server_no_context_takeover = true;
+                                            deflate_result.params.server_no_context_takeover = 1;
                                         } else if (strings.eqlComptime(key, "client_no_context_takeover")) {
-                                            deflate_result.params.client_no_context_takeover = true;
+                                            deflate_result.params.client_no_context_takeover = 1;
                                         } else if (strings.eqlComptime(key, "server_max_window_bits")) {
                                             if (value.len > 0) {
                                                 // Remove quotes if present

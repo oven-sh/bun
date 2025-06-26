@@ -1,4 +1,4 @@
-# Version: 8
+# Version: 9
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -239,8 +239,75 @@ function Install-Git {
   }
 }
 
+function Install-NodeJs-Headers {
+  param(
+    [string]$NodeVersion,
+    [string[]]$CacheLocations
+  )
+  
+  $nodeHeadersUrl = "https://nodejs.org/download/release/v$NodeVersion/node-v$NodeVersion-headers.tar.gz"
+  
+  # Determine architecture
+  $arch = if ([System.Environment]::Is64BitOperatingSystem) {
+    if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+      "arm64"
+    } else {
+      "x64"
+    }
+  } else {
+    "ia32"
+  }
+  
+  $nodeLibUrl = "https://nodejs.org/download/release/v$NodeVersion/win-$arch/node.lib"
+  
+  Write-Output "Downloading Node.js $NodeVersion headers..."
+  
+  # Download headers and node.lib once
+  $headersPath = Download-File $nodeHeadersUrl
+  $nodeLibPath = Download-File $nodeLibUrl
+  $tempDir = New-TemporaryFile | %{ Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+  
+  # Extract headers
+  tar -xzf $headersPath -C $tempDir
+  $extractedDir = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
+  
+  # Install to each cache location
+  foreach ($cacheBase in $CacheLocations) {
+    $nodeGypCache = Join-Path $cacheBase $NodeVersion
+    New-Item -ItemType Directory -Force -Path $nodeGypCache | Out-Null
+    
+    # Copy headers
+    Copy-Item -Path "$($extractedDir.FullName)\*" -Destination $nodeGypCache -Recurse -Force
+    
+    # Copy node.lib
+    $libDir = Join-Path $nodeGypCache $arch
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+    Copy-Item -Path $nodeLibPath -Destination (Join-Path $libDir "node.lib") -Force
+    
+    # Create installVersion file
+    Set-Content -Path (Join-Path $nodeGypCache "installVersion") -Value "11"
+    
+    Write-Output "Installed to: $nodeGypCache"
+  }
+  
+  # Clean up
+  Remove-Item -Path $tempDir -Recurse -Force
+}
+
 function Install-NodeJs {
   Install-Package nodejs -Command node -Version "24.3.0"
+  
+  # Common node-gyp cache locations for different versions
+  $cacheLocations = @(
+    "$env:LOCALAPPDATA\node-gyp\Cache",              # node-gyp 10+
+    "$env:USERPROFILE\.node-gyp",                    # older node-gyp
+    "$env:APPDATA\npm-cache\_cacache\node-gyp"       # npm cached location
+  )
+  
+  # Install headers for current Node.js version
+  Install-NodeJs-Headers -NodeVersion "24.3.0" -CacheLocations $cacheLocations
+  
+  Write-Output "Node.js headers installed to multiple node-gyp cache locations"
 }
 
 function Install-Bun {

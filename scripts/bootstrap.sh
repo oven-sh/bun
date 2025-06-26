@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 11
+# Version: 12
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -756,12 +756,64 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	nodejs_version="$(nodejs_version_exact)"
+	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
 	execute tar -xzf "$nodejs_headers_tar" -C "$nodejs_headers_dir"
 
-	nodejs_headers_include="$nodejs_headers_dir/node-v$(nodejs_version_exact)/include"
+	nodejs_headers_include="$nodejs_headers_dir/node-v$nodejs_version/include"
 	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+	
+	# Also install to node-gyp cache locations for different node-gyp versions
+	# This ensures node-gyp finds headers without downloading them
+	setup_node_gyp_cache "$nodejs_version" "$nodejs_headers_dir/node-v$nodejs_version"
+}
+
+setup_node_gyp_cache() {
+	nodejs_version="$1"
+	headers_source="$2"
+	
+	# Common node-gyp cache locations
+	cache_locations="
+		$HOME/.node-gyp/$nodejs_version
+		$HOME/.cache/node-gyp/$nodejs_version
+		$HOME/.npm/_cacache/node-gyp/$nodejs_version
+		$current_home/.node-gyp/$nodejs_version
+		$current_home/.cache/node-gyp/$nodejs_version
+	"
+	
+	for cache_dir in $cache_locations; do
+		if ! [ -z "$cache_dir" ]; then
+			create_directory "$cache_dir"
+			
+			# Copy headers
+			if [ -d "$headers_source/include" ]; then
+				cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
+			fi
+			
+			# Create installVersion file (node-gyp expects this)
+			echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
+			
+			# For Linux, we don't need .lib files like Windows
+			# but create the directory structure node-gyp expects
+			case "$arch" in
+			x86_64|amd64)
+				create_directory "$cache_dir/lib/x64" 2>/dev/null || true
+				;;
+			aarch64|arm64)
+				create_directory "$cache_dir/lib/arm64" 2>/dev/null || true
+				;;
+			*)
+				create_directory "$cache_dir/lib" 2>/dev/null || true
+				;;
+			esac
+			
+			# Set proper ownership for buildkite user
+			if [ "$ci" = "1" ] && [ "$user" = "buildkite-agent" ]; then
+				execute_sudo chown -R "$user:$user" "$cache_dir" 2>/dev/null || true
+			fi
+		fi
+	done
 }
 
 bun_version_exact() {
@@ -998,6 +1050,10 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
+	# Overwrite gcc/g++ to point to clang as well
+	# This ensures any tool looking for gcc/g++ gets clang (which supports C++20)
+	execute_sudo ln -sf $(which clang-$llvm_v) /usr/bin/gcc
+	execute_sudo ln -sf $(which clang++-$llvm_v) /usr/bin/g++
 	# Make sure llvm-symbolizer is available for ASAN
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }

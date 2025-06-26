@@ -336,12 +336,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
-
+            struct us_loop_t* loop = s->context->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
-                s->context->loop->data.last_write_failed = 0;
-
+                loop->data.last_write_failed = 0;
+                
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {
@@ -349,8 +349,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->context->loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
-                    us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 }
             }
 
@@ -359,7 +359,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
                 struct us_socket_context_t *context = s->context;
-                struct us_loop_t* loop = s->context->loop;
                 struct us_socket_flags* flags = &s->flags;
                 if (context->is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {
@@ -389,7 +388,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 size_t repeat_recv_count = 0;
 
                 do {
-                    const struct us_loop_t* loop = s->context->loop;
                     #ifdef _WIN32
                       const int recv_flags = MSG_PUSH_IMMEDIATE;
                     #else

@@ -2399,6 +2399,11 @@ pub fn NewParser_(
         pub const skipTypeScriptTypeStmt = skipTypescript_zig.skipTypeScriptTypeStmt;
         pub const skipTypeScriptInterfaceStmt = skipTypescript_zig.skipTypeScriptInterfaceStmt;
         pub const skipTypeScriptTypeArguments = skipTypescript_zig.skipTypeScriptTypeArguments;
+        pub const trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking = skipTypescript_zig.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking;
+        pub const trySkipTypeScriptTypeArgumentsWithBacktracking = skipTypescript_zig.trySkipTypeScriptTypeArgumentsWithBacktracking;
+        pub const trySkipTypeScriptArrowReturnTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowReturnTypeWithBacktracking;
+        pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowArgsWithBacktracking;
+        pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
 
         const parse_zig = @import("ast/parse.zig").Parse(P);
         pub const parsePrefix = parse_zig.parsePrefix;
@@ -6029,159 +6034,6 @@ pub fn NewParser_(
                 .allocated_name => p.allocated_names.items[ref.innerIndex()],
                 else => @panic("Internal error: JS parser tried to load an invalid name from a Ref"),
             };
-        }
-
-        pub const Backtracking = struct {
-            pub inline fn lexerBacktracker(p: *P, func: anytype, comptime ReturnType: type) ReturnType {
-                p.markTypeScriptOnly();
-                const old_lexer = p.lexer;
-                const old_log_disabled = p.lexer.is_log_disabled;
-                p.lexer.is_log_disabled = true;
-                defer p.lexer.is_log_disabled = old_log_disabled;
-                var backtrack = false;
-                const FnReturnType = bun.meta.ReturnOf(func);
-                const result = func(p) catch |err| brk: {
-                    switch (err) {
-                        error.Backtrack => {
-                            backtrack = true;
-                        },
-                        else => {
-                            if (p.lexer.did_panic) {
-                                backtrack = true;
-                            }
-                        },
-                    }
-                    if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
-                        // we are not using the value
-                        break :brk undefined;
-
-                    break :brk SkipTypeParameterResult.did_not_skip_anything;
-                };
-
-                if (backtrack) {
-                    p.lexer.restore(&old_lexer);
-
-                    if (comptime FnReturnType == anyerror!bool) {
-                        return false;
-                    }
-                }
-
-                if (comptime FnReturnType == anyerror!bool) {
-                    return true;
-                }
-
-                if (comptime ReturnType == void or ReturnType == bool)
-                    // If we did not backtrack, then we skipped successfully.
-                    return !backtrack;
-
-                return result;
-            }
-
-            pub inline fn lexerBacktrackerWithArgs(p: *P, func: anytype, args: anytype, comptime ReturnType: type) ReturnType {
-                p.markTypeScriptOnly();
-                const old_lexer = p.lexer;
-                const old_log_disabled = p.lexer.is_log_disabled;
-                p.lexer.is_log_disabled = true;
-
-                defer p.lexer.is_log_disabled = old_log_disabled;
-                var backtrack = false;
-                const FnReturnType = bun.meta.ReturnOf(func);
-                const result = @call(.auto, func, args) catch |err| brk: {
-                    switch (err) {
-                        error.Backtrack => {
-                            backtrack = true;
-                        },
-                        else => {},
-                    }
-                    if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
-                        // we are not using the value
-                        break :brk undefined;
-                    break :brk SkipTypeParameterResult.did_not_skip_anything;
-                };
-
-                if (backtrack) {
-                    p.lexer.restore(&old_lexer);
-                    if (comptime FnReturnType == anyerror!bool) {
-                        return false;
-                    }
-                }
-
-                if (comptime FnReturnType == anyerror!bool) {
-                    return true;
-                }
-
-                if (comptime ReturnType == void or ReturnType == bool) return backtrack;
-                return result;
-            }
-
-            pub fn skipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) anyerror!SkipTypeParameterResult {
-                const result = try p.skipTypeScriptTypeParameters(.{ .allow_const_modifier = true });
-                if (p.lexer.token != .t_open_paren) {
-                    return error.Backtrack;
-                }
-
-                return result;
-            }
-
-            pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) anyerror!bool {
-                try p.lexer.expect(.t_extends);
-                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, {});
-
-                if (!flags.contains(.disallow_conditional_types) and p.lexer.token == .t_question) {
-                    return error.Backtrack;
-                }
-
-                return true;
-            }
-
-            pub fn skipTypeScriptArrowArgsWithBacktracking(p: *P) anyerror!bool {
-                try p.skipTypescriptFnArgs();
-                p.lexer.expect(.t_equals_greater_than) catch
-                    return error.Backtrack;
-
-                return true;
-            }
-
-            pub fn skipTypeScriptTypeArgumentsWithBacktracking(p: *P) anyerror!bool {
-                if (try p.skipTypeScriptTypeArguments(false)) {
-                    // Check the token after this and backtrack if it's the wrong one
-                    if (!TypeScript.canFollowTypeArgumentsInExpression(p)) {
-                        return error.Backtrack;
-                    }
-                }
-
-                return true;
-            }
-
-            pub fn skipTypeScriptArrowReturnTypeWithBacktracking(p: *P) anyerror!void {
-                try p.lexer.expect(.t_colon);
-
-                try p.skipTypescriptReturnType();
-                // Check the token after this and backtrack if it's the wrong one
-                if (p.lexer.token != .t_equals_greater_than) {
-                    return error.Backtrack;
-                }
-            }
-        };
-
-        pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) SkipTypeParameterResult {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeParametersThenOpenParenWithBacktracking, SkipTypeParameterResult);
-        }
-
-        pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeArgumentsWithBacktracking, bool);
-        }
-
-        pub fn trySkipTypeScriptArrowReturnTypeWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowReturnTypeWithBacktracking, bool);
-        }
-
-        pub fn trySkipTypeScriptArrowArgsWithBacktracking(p: *P) bool {
-            return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking, bool);
-        }
-
-        pub fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) bool {
-            return Backtracking.lexerBacktrackerWithArgs(p, Backtracking.skipTypeScriptConstraintOfInferTypeWithBacktracking, .{ p, flags }, bool);
         }
 
         pub inline fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {

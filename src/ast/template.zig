@@ -18,6 +18,7 @@ pub fn Template(comptime P: type) type {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
 const assert = bun.assert;
 const logger = bun.logger;
@@ -60,6 +61,7 @@ const T = js_lexer.T;
 const js_parser = bun.js_parser;
 const AsyncPrefixExpression = js_parser.AsyncPrefixExpression;
 const AwaitOrYield = js_parser.AwaitOrYield;
+const ConvertESMExportsForHmr = js_parser.ConvertESMExportsForHmr;
 const DeferredArrowArgErrors = js_parser.DeferredArrowArgErrors;
 const DeferredErrors = js_parser.DeferredErrors;
 const DeferredTsDecorators = js_parser.DeferredTsDecorators;
@@ -72,6 +74,7 @@ const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const IdentifierOpts = js_parser.IdentifierOpts;
 const ImportItemForNamespaceMap = js_parser.ImportItemForNamespaceMap;
 const ImportKind = js_parser.ImportKind;
+const ImportScanner = js_parser.ImportScanner;
 const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
 const LocList = js_parser.LocList;

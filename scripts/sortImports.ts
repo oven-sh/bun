@@ -21,6 +21,10 @@ Options:
   --no-remove-unused       Don't remove unused imports
   --include-unsorted       Process files even if they don't have @sortImports marker
 
+Markers:
+  // @sortImports
+  // @sortImports @noRemoveUnused
+
 Examples:
   bun scripts/sortImports src
 `.slice(1);
@@ -35,7 +39,6 @@ if (filePaths.length === 0) {
 
 const config = {
   includePub: !args.includes("--no-include-pub"),
-  removeUnused: !args.includes("--no-remove-unused"),
   includeUnsorted: args.includes("--include-unsorted"),
 };
 
@@ -54,9 +57,11 @@ type Declaration = {
 function parseDeclarations(
   lines: string[],
   fileContents: string,
+  skipRemoveUnused: boolean,
 ): {
   declarations: Map<string, Declaration>;
   unusedLineIndices: number[];
+  sortImportsLines: number[];
 } {
   const declarations = new Map<string, Declaration>();
   const unusedLineIndices: number[] = [];
@@ -64,11 +69,13 @@ function parseDeclarations(
   // for stability
   const sortedLineKeys = [...lines.keys()].sort((a, b) => (lines[a] < lines[b] ? -1 : lines[a] > lines[b] ? 1 : 0));
 
+  let sortImportsLines: number[] = [];
+
   for (const i of sortedLineKeys) {
     const line = lines[i];
 
-    if (line === "// @sortImports") {
-      lines[i] = "";
+    if (line.startsWith("// @sortImports")) {
+      sortImportsLines.push(i);
       continue;
     }
 
@@ -87,7 +94,7 @@ function parseDeclarations(
     }
 
     // Skip unused declarations (non-public declarations that appear only once)
-    if (config.removeUnused && !line.includes("pub ")) {
+    if (!skipRemoveUnused && !line.includes("pub ")) {
       const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const expectedCount = (line.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
       const actualCount = (fileContents.match(new RegExp(`\\b${escapedName}\\b`, "g")) || []).length;
@@ -111,7 +118,7 @@ function parseDeclarations(
     });
   }
 
-  return { declarations, unusedLineIndices };
+  return { declarations, unusedLineIndices, sortImportsLines };
 }
 
 // Validate if a segment is a valid identifier
@@ -273,10 +280,18 @@ function sortGroupsAndDeclarations(groups: Map<string, Group>): string[] {
 }
 
 // Generate the sorted output
-function generateSortedOutput(lines: string[], groups: Map<string, Group>, sortedGroupKeys: string[]): string[] {
+function generateSortedOutput(
+  lines: string[],
+  groups: Map<string, Group>,
+  sortedGroupKeys: string[],
+  sortImportsLines: number[],
+): string[] {
   const outputLines = [...lines];
   outputLines.push("");
-  outputLines.push("// @sortImports");
+  for (const line of sortImportsLines) {
+    outputLines.push(lines[line]);
+    outputLines[line] = "";
+  }
 
   for (const groupKey of sortedGroupKeys) {
     const groupDeclarations = groups.get(groupKey)!;
@@ -303,6 +318,7 @@ async function processFile(filePath: string): Promise<void> {
   if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
     return;
   }
+  const skipRemoveUnused = originalFileContents.includes("@noRemoveUnused");
   console.log(`Processing: ${filePath}`);
 
   let needsRecurse = true;
@@ -311,17 +327,21 @@ async function processFile(filePath: string): Promise<void> {
 
     const lines = fileContents.split("\n");
 
-    const { declarations, unusedLineIndices } = parseDeclarations(lines, fileContents);
+    const { declarations, unusedLineIndices, sortImportsLines } = parseDeclarations(
+      lines,
+      fileContents,
+      skipRemoveUnused,
+    );
     const groups = groupDeclarationsByImportPath(declarations);
 
     promoteItemsWithChildGroups(groups);
     mergeSingleItemGroups(groups);
     const sortedGroupKeys = sortGroupsAndDeclarations(groups);
 
-    const sortedLines = generateSortedOutput(lines, groups, sortedGroupKeys);
+    const sortedLines = generateSortedOutput(lines, groups, sortedGroupKeys, sortImportsLines);
 
     // Remove unused declarations
-    if (config.removeUnused) {
+    if (!skipRemoveUnused) {
       for (const line of unusedLineIndices) {
         sortedLines[line] = "";
         needsRecurse = true;

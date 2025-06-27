@@ -16,6 +16,8 @@ pub fn ParseStmt(
     };
 }
 
+// @sortImports @noRemoveUnused
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
@@ -58,6 +60,7 @@ const js_lexer = bun.js_lexer;
 const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
+const DeferredErrors = js_parser.DeferredErrors;
 const DeferredTsDecorators = js_parser.DeferredTsDecorators;
 const ExprIn = js_parser.ExprIn;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
@@ -90,5 +93,3 @@ const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
-
-// add sortImports when ready

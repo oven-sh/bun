@@ -1,4 +1,4 @@
-pub fn ParseStmt(
+pub fn Visit(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,
     comptime parser_feature__scan_only: bool,
@@ -13,7 +13,9 @@ pub fn ParseStmt(
         const track_symbol_usage_during_parse_pass = P.track_symbol_usage_during_parse_pass;
         const extractDeclsForBinding = P.extractDeclsForBinding;
         const is_jsx_enabled = P.is_jsx_enabled;
-
+        const only_scan_imports_and_do_not_visit = P.only_scan_imports_and_do_not_visit;
+        const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
+        const isSimpleParameterList = P.isSimpleParameterList;
     };
 }
 
@@ -65,9 +67,11 @@ const AsyncPrefixExpression = js_parser.AsyncPrefixExpression;
 const DeferredErrors = js_parser.DeferredErrors;
 const DeferredTsDecorators = js_parser.DeferredTsDecorators;
 const ExprIn = js_parser.ExprIn;
+const FnOnlyDataVisit = js_parser.FnOnlyDataVisit;
 const FnOrArrowDataParse = js_parser.FnOrArrowDataParse;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const IdentifierOpts = js_parser.IdentifierOpts;
+const ImportItemForNamespaceMap = js_parser.ImportItemForNamespaceMap;
 const ImportKind = js_parser.ImportKind;
 const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
@@ -81,9 +85,12 @@ const PropertyOpts = js_parser.PropertyOpts;
 const ReactRefresh = js_parser.ReactRefresh;
 const Ref = js_parser.Ref;
 const RelocateVars = js_parser.RelocateVars;
+const RuntimeFeatures = js_parser.RuntimeFeatures;
 const SideEffects = js_parser.SideEffects;
 const StmtList = js_parser.StmtList;
 const StmtsKind = js_parser.StmtsKind;
+const StringVoidMap = js_parser.StringVoidMap;
+const TempRef = js_parser.TempRef;
 const ThenCatchChain = js_parser.ThenCatchChain;
 const TransposeState = js_parser.TransposeState;
 const TypeParameterFlag = js_parser.TypeParameterFlag;
@@ -91,6 +98,7 @@ const TypeScript = js_parser.TypeScript;
 const VisitArgsOpts = js_parser.VisitArgsOpts;
 const floatToInt32 = js_parser.floatToInt32;
 const fs = js_parser.fs;
+const isEvalOrArguments = js_parser.isEvalOrArguments;
 const options = js_parser.options;
 const statementCaresAboutScope = js_parser.statementCaresAboutScope;
 

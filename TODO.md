@@ -1,0 +1,4 @@
+- [ ] consider splitting visitExpr the same way visitStmt is split up
+- [ ] remove template.zig
+- [ ] remove js_parser_longest.zig
+- [ ] remove TODO.md

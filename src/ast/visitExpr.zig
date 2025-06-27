@@ -8,6 +8,17 @@ pub fn VisitExpr(
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
+        const only_scan_imports_and_do_not_visit = P.only_scan_imports_and_do_not_visit;
+
+        // public for JSNode.JSXWriter usage
+        pub inline fn visitExpr(noalias p: *P, expr: Expr) Expr {
+            if (only_scan_imports_and_do_not_visit) {
+                @compileError("only_scan_imports_and_do_not_visit must not run this.");
+            }
+
+            // hopefully this gets tailed
+            return p.visitExprInOut(expr, .{});
+        }
 
         pub fn visitExprInOut(p: *P, expr: Expr, in: ExprIn) Expr {
             if (in.assign_target != .none and !p.isValidAssignmentTarget(expr)) {

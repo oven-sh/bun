@@ -17,6 +17,7 @@ src/ast/parseStmt.zig
 src/ast/parseSuffix.zig
 src/ast/SideEffects.zig
 src/ast/template.zig
+src/ast/visit.zig
 src/ast/visitExpr.zig
 src/ast/visitStmt.zig
 src/async/posix_event_loop.zig

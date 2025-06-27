@@ -62,6 +62,16 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
   });
+  itBundled("minify/ArrayLengthFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        capture([1, 2, 3].length);
+        capture([].length);
+      `,
+    },
+    capture: ["3", "0"],
+    minifySyntax: true,
+  });
   itBundled("minify/StringAdditionFolding", {
     files: {
       "/entry.js": /* js */ `

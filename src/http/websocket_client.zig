@@ -769,20 +769,22 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     return this.sendDataUncompressed(bytes, do_write, opcode);
                 }
 
-                // Compress the content
-                var compressed = std.ArrayList(u8).init(allocator);
-                defer compressed.deinit();
+                {
+                    // Compress the content
+                    var compressed = std.ArrayList(u8).init(allocator);
+                    defer compressed.deinit();
 
-                this.deflate.?.compress(content_to_compress, &compressed) catch {
-                    // If compression fails, fall back to uncompressed
-                    return this.sendDataUncompressed(bytes, do_write, opcode);
-                };
+                    this.deflate.?.compress(content_to_compress, &compressed) catch {
+                        // If compression fails, fall back to uncompressed
+                        return this.sendDataUncompressed(bytes, do_write, opcode);
+                    };
 
-                // Create the compressed frame
-                const frame_size = WebsocketHeader.frameSizeIncludingMask(compressed.items.len);
-                const writable = this.send_buffer.writableWithSize(frame_size) catch return false;
-                Copy.copyCompressed(this.globalThis, writable[0..frame_size], compressed.items, opcode, true);
-                this.send_buffer.update(frame_size);
+                    // Create the compressed frame
+                    const frame_size = WebsocketHeader.frameSizeIncludingMask(compressed.items.len);
+                    const writable = this.send_buffer.writableWithSize(frame_size) catch return false;
+                    Copy.copyCompressed(this.globalThis, writable[0..frame_size], compressed.items, opcode, true);
+                    this.send_buffer.update(frame_size);
+                }
 
                 if (do_write) {
                     if (comptime Environment.allow_assert) {
@@ -1486,8 +1488,6 @@ const Copy = union(enum) {
         // 0, 2, 8 byte length
         var to_mask = buf[content_offset..];
 
-        var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
-
         // Write extended length if needed
         switch (how_big_is_the_length_integer) {
             0 => {},
@@ -1495,6 +1495,8 @@ const Copy = union(enum) {
             8 => std.mem.writeInt(u64, buf[2..][0..8], @as(u64, @truncate(content_byte_len)), .big),
             else => unreachable,
         }
+
+        var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
 
         header.mask = true;
         header.compressed = is_first_fragment; // Only set compressed flag for first fragment

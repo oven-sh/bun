@@ -14,7 +14,9 @@ pub const Params = extern struct {
 pub const RareData = struct {
     libdeflate_compressor: ?*libdeflate.Compressor = null,
     libdeflate_decompressor: ?*libdeflate.Decompressor = null,
-    stack_fallback: std.heap.StackFallbackAllocator(128 * 1024) = undefined,
+    stack_fallback: std.heap.StackFallbackAllocator(RareData.stack_buffer_size) = undefined,
+
+    pub const stack_buffer_size = 128 * 1024;
 
     pub fn arrayList(this: *RareData) std.ArrayList(u8) {
         var list = std.ArrayList(u8).init(this.allocator());
@@ -126,10 +128,18 @@ pub fn deinit(self: *PerMessageDeflate) void {
     self.allocator.destroy(self);
 }
 
+fn canUseLibDeflate(len: usize) bool {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE)) {
+        return false;
+    }
+
+    return len < RareData.stack_buffer_size;
+}
+
 pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayList(u8)) error{ InflateFailed, OutOfMemory }!void {
 
     // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
-    {
+    if (canUseLibDeflate(in_buf.len)) {
         const result = self.rare_data.decompressor().deflate(in_buf, out.unusedCapacitySlice());
         if (result.status == .success) {
             out.items.len += result.written;
@@ -185,12 +195,11 @@ pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayLis
 
         const res = zlib.deflate(&self.compress_stream, zlib.FlushValue.SyncFlush);
         out.items.len += out.unusedCapacitySlice().len - self.compress_stream.avail_out;
-
-        if (res != .Ok) {
+        if (res != .Ok)
             return error.DeflateFailed;
-        }
 
-        if (self.compress_stream.avail_in == 0) {
+        // exit only when zlib is truly finished
+        if (self.compress_stream.avail_in == 0 and self.compress_stream.avail_out != 0) {
             break;
         }
     }

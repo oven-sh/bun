@@ -2043,6 +2043,7 @@ test/js/node/test/parallel/test-fs-readSync-position-validation.mjs
 test/js/node/test/parallel/test-fs-read-promises-position-validation.mjs
 test/js/node/test/parallel/test-fs-read-position-validation.mjs
 test/js/node/test/parallel/test-net-server-async-dispose.mjs
+test/js/node/test/parallel/test-net-connect-custom-lookup-non-string-address.mjs
 
 # uses node:test
 test/js/node/test/parallel/test-fs-write-stream-flush.js

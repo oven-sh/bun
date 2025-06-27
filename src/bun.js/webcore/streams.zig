@@ -29,7 +29,7 @@ pub const Start = union(Tag) {
         done,
     };
 
-    pub fn toJS(this: Start, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Start, globalThis: *JSGlobalObject) bun.JSError!JSC.JSValue {
         switch (this) {
             .empty, .ready => {
                 return .js_undefined;
@@ -38,7 +38,7 @@ pub const Start = union(Tag) {
                 return JSC.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                return globalThis.throwValue(err.toJSC(globalThis)) catch .zero;
+                return globalThis.throwValue(err.toJS(globalThis));
             },
             .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -234,7 +234,7 @@ pub const Result = union(Tag) {
         pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
             return switch (this.*) {
                 .Error => |err| {
-                    return .{ err.toJSC(globalObject), WasStrong.Weak };
+                    return .{ err.toJS(globalObject), WasStrong.Weak };
                 },
                 .JSValue => .{ this.JSValue, WasStrong.Strong },
                 .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
@@ -381,7 +381,7 @@ pub const Result = union(Tag) {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJSC(globalThis));
+                    promise.reject(globalThis, err.toJS(globalThis));
                 },
                 .done => {
                     promise.resolve(globalThis, JSValue.jsBoolean(false));
@@ -394,7 +394,7 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).toJS(),
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
 
                 .owned => |len| JSC.JSValue.jsNumber(len),
                 .owned_and_done => |len| JSC.JSValue.jsNumber(len),
@@ -543,7 +543,11 @@ pub const Result = union(Tag) {
                 promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
-                const value = result.toJS(globalThis);
+                const value = result.toJS(globalThis) catch |err| {
+                    result.* = .{ .temporary = .{} };
+                    promise.reject(globalThis, err);
+                    return;
+                };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
@@ -552,7 +556,7 @@ pub const Result = union(Tag) {
         }
     }
 
-    pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) JSValue {
+    pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         if (JSC.VirtualMachine.get().isShuttingDown()) {
             var that = this.*;
             that.deinit();
@@ -567,14 +571,14 @@ pub const Result = union(Tag) {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
             },
             .temporary => |temp| {
-                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .temporary_and_done => |temp| {
-                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var array = try JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
                 const temp_slice = temp.slice();
                 @memcpy(slice_[0..temp_slice.len], temp_slice);

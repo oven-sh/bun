@@ -752,7 +752,7 @@ pub fn fromJS(
             args.address.tcp.port = @as(
                 u16,
                 @intCast(@min(
-                    @max(0, port_.coerce(i32, global)),
+                    @max(0, try port_.coerce(i32, global)),
                     std.math.maxInt(u16),
                 )),
             );
@@ -836,17 +836,17 @@ pub fn fromJS(
         }
 
         if (try arg.get(global, "reusePort")) |dev| {
-            args.reuse_port = dev.coerce(bool, global);
+            args.reuse_port = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "ipv6Only")) |dev| {
-            args.ipv6_only = dev.coerce(bool, global);
+            args.ipv6_only = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "inspector")) |inspector| {
-            args.inspector = inspector.coerce(bool, global);
+            args.inspector = inspector.toBoolean();
 
             if (args.inspector and args.development == .production) {
                 return global.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{});

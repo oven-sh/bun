@@ -109,6 +109,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #interpreter: $ZigGeneratedClasses.ShellInterpreter | undefined = undefined;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
@@ -169,9 +170,9 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+        this.#interpreter = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
         this.#args = undefined;
-        interp.run();
+        this.#interpreter.run();
       }
     }
 
@@ -192,6 +193,41 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     throws(doThrow: boolean | undefined): this {
       this.#throws = !!doThrow;
+      return this;
+    }
+
+    signal(signal: AbortSignal): this {
+      if (signal.aborted) {
+        // If already aborted, cancel immediately
+        if (this.#hasRun && this.#interpreter) {
+          this.#interpreter.cancel();
+        } else if (this.#args) {
+          // If not yet run, we need to cancel once it starts
+          const origRun = this.#run.bind(this);
+          this.#run = () => {
+            origRun();
+            if (this.#interpreter) {
+              this.#interpreter.cancel();
+            }
+          };
+        }
+      } else {
+        // Listen for abort event
+        signal.addEventListener('abort', () => {
+          if (this.#hasRun && this.#interpreter) {
+            this.#interpreter.cancel();
+          } else if (this.#args) {
+            // If not yet run, we need to cancel once it starts
+            const origRun = this.#run.bind(this);
+            this.#run = () => {
+              origRun();
+              if (this.#interpreter) {
+                this.#interpreter.cancel();
+              }
+            };
+          }
+        }, { once: true });
+      }
       return this;
     }
 

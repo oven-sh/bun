@@ -170,6 +170,13 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
     return this.parent.childDone(this, this.exit_code);
 }
 
+pub fn cancel(this: *Subshell) Yield {
+    log("{} cancel", .{this});
+    
+    // Propagate cancellation to parent with CANCELLED_EXIT_CODE
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();
@@ -196,6 +203,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

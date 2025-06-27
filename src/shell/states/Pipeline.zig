@@ -260,6 +260,31 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
     return .suspended;
 }
 
+pub fn cancel(this: *Pipeline) Yield {
+    log("Pipeline(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // First close all pipes to unblock any processes stuck on I/O
+    if (this.pipes) |pipes| {
+        for (pipes) |*pipe| {
+            closefd(pipe[0]);
+            closefd(pipe[1]);
+        }
+    }
+    
+    // Cancel all running commands
+    if (this.cmds) |cmds| {
+        for (cmds) |cmd_or_result| {
+            if (cmd_or_result == .cmd) {
+                // Cancel the command
+                _ = cmd_or_result.cmd.call("cancel", .{}, Yield);
+            }
+        }
+    }
+    
+    // The pipeline will wait for all children to report childDone before propagating cancellation
+    return .suspended;
+}
+
 pub fn deinit(this: *Pipeline) void {
     // If commands was zero then we didn't allocate anything
     if (this.cmds == null) return;
@@ -333,6 +358,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

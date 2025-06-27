@@ -131,6 +131,22 @@ pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
     return .suspended;
 }
 
+pub fn cancel(this: *Async) Yield {
+    log("{} cancel", .{this});
+    
+    // Cancel the child if it's running
+    if (this.state == .exec) {
+        if (this.state.exec.child) |child| {
+            _ = child.cancel();
+        }
+    }
+    
+    // Mark as done with CANCELLED_EXIT_CODE
+    this.state = .{ .done = CANCELLED_EXIT_CODE };
+    this.enqueueSelf();
+    return .suspended;
+}
+
 /// This function is purposefully empty as a hack to ensure Async runs in the background while appearing to
 /// the parent that it is done immediately.
 ///
@@ -164,6 +180,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

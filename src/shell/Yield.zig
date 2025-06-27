@@ -99,19 +99,63 @@ pub const Yield = union(enum) {
         // Note that we're using labelled switch statements but _not_
         // re-assigning `this`, so the `this` variable is stale after the first
         // execution. Don't touch it.
-        state: switch (this) {
+        var current_yield = this;
+        state: switch (current_yield) {
             .pipeline => |x| {
                 pipeline_stack.append(x) catch bun.outOfMemory();
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
                 continue :state x.next();
             },
-            .cmd => |x| continue :state x.next(),
-            .script => |x| continue :state x.next(),
-            .stmt => |x| continue :state x.next(),
-            .assigns => |x| continue :state x.next(),
-            .expansion => |x| continue :state x.next(),
-            .@"if" => |x| continue :state x.next(),
-            .subshell => |x| continue :state x.next(),
-            .cond_expr => |x| continue :state x.next(),
+            .cmd => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .script => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .stmt => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .assigns => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .expansion => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .@"if" => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .subshell => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
+            .cond_expr => |x| {
+                if (x.base.interpreter.is_cancelled.load(.monotonic)) {
+                    continue :state x.cancel();
+                }
+                continue :state x.next();
+            },
             .on_io_writer_chunk => |x| {
                 const child = IOWriterChildPtr.fromAnyOpaque(x.child);
                 continue :state child.onIOWriterChunk(x.written, x.err);

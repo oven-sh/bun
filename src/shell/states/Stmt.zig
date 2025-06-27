@@ -124,6 +124,18 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.next();
 }
 
+pub fn cancel(this: *Stmt) Yield {
+    log("Stmt(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Cancel the currently executing child if any
+    if (this.currently_executing) |child| {
+        return child.cancel();
+    }
+    
+    // Otherwise propagate cancellation to parent
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Stmt) void {
     log("Stmt(0x{x}) deinit", .{@intFromPtr(this)});
     this.io.deinit();
@@ -141,6 +153,8 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

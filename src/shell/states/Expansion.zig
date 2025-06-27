@@ -146,6 +146,24 @@ pub fn init(
     expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
 }
 
+pub fn cancel(this: *Expansion) Yield {
+    log("Expansion(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // If a command substitution is running, cancel it
+    if (this.child_state == .cmd_subst) {
+        return this.child_state.cmd_subst.cmd.cancel();
+    }
+    
+    // Clean up state
+    this.current_out.deinit();
+    if (this.child_state == .glob) {
+        this.child_state.glob.walker.deinit(true);
+    }
+    
+    // Propagate cancellation to parent
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(expansion: *Expansion) void {
     log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
     expansion.current_out.deinit();
@@ -857,6 +875,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const GlobWalker = bun.shell.interpret.GlobWalker;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;

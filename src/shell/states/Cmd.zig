@@ -694,6 +694,39 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     }
 }
 
+pub fn cancel(this: *Cmd) Yield {
+    log("Cmd(0x{x}, {s}) cancel", .{ @intFromPtr(this), @tagName(this.exec) });
+    
+    // Set internal state to cancelling
+    if (this.exit_code == null) {
+        this.exit_code = CANCELLED_EXIT_CODE;
+    }
+    
+    // Cancel subprocess or builtin
+    if (this.exec == .subproc) {
+        // Send SIGTERM to subprocess
+        _ = this.exec.subproc.child.tryKill(9); // TODO: Use SIGTERM instead of SIGKILL
+    } else if (this.exec == .bltn) {
+        // Cancel builtin
+        this.exec.bltn.cancel();
+    }
+    
+    // Cancel chunks in IOWriter for stdout/stderr if they are file descriptors
+    if (this.io.stdout == .fd) {
+        if (this.io.stdout.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    if (this.io.stderr == .fd) {
+        if (this.io.stderr.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    
+    // State machine will handle cleanup via normal childDone pathway
+    return .suspended;
+}
+
 // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
 pub fn deinit(this: *Cmd) void {
     log("Cmd(0x{x}, {s}) cmd deinit", .{ @intFromPtr(this), @tagName(this.exec) });
@@ -807,6 +840,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

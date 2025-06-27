@@ -626,6 +626,16 @@ pub fn start(this: *Builtin) Yield {
     return this.callImpl(Yield, "start", .{});
 }
 
+pub fn cancel(this: *Builtin) void {
+    // Call the specific builtin's cancel method if it exists
+    this.callImpl(void, "cancel", .{});
+    
+    // Set exit code to CANCELLED_EXIT_CODE if not already set
+    if (this.exit_code == null) {
+        this.exit_code = CANCELLED_EXIT_CODE;
+    }
+}
+
 pub fn deinit(this: *Builtin) void {
     this.callImpl(void, "deinit", .{});
 
@@ -771,6 +781,7 @@ const Builtin = Interpreter.Builtin;
 const JSC = bun.JSC;
 const Maybe = bun.sys.Maybe;
 const ExitCode = shell.interpret.ExitCode;
+const CANCELLED_EXIT_CODE = shell.interpret.CANCELLED_EXIT_CODE;
 const EnvMap = shell.interpret.EnvMap;
 const log = shell.interpret.log;
 const Syscall = bun.sys;

@@ -134,6 +134,7 @@ pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 pub const CallstackGuard = enum(u0) { __i_know_what_i_am_doing };
 
 pub const ExitCode = u16;
+pub const CANCELLED_EXIT_CODE: ExitCode = 130; // 128 + SIGINT
 
 pub const StateKind = enum(u8) {
     script,
@@ -282,6 +283,7 @@ pub const Interpreter = struct {
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    is_cancelled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
@@ -1166,21 +1168,33 @@ pub const Interpreter = struct {
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
-                    const loop = this.event_loop.js;
-                    const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
-                    this.keep_alive.disable();
-                    loop.enter();
-                    _ = resolve.call(globalThis, .js_undefined, &.{
-                        JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-                    loop.exit();
+                const loop = this.event_loop.js;
+                const globalThis = this.globalThis;
+                this.this_jsvalue = .zero;
+                this.keep_alive.disable();
+                loop.enter();
+                
+                // Handle cancellation by rejecting with AbortError
+                if (exit_code == CANCELLED_EXIT_CODE) {
+                    if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
+                        // Create a DOMException with name "AbortError"
+                        const error_str = bun.String.static("The operation was aborted");
+                        const abort_error = JSC.DOMException.createAbortError(globalThis, &error_str);
+                        _ = reject.call(globalThis, .js_undefined, &.{abort_error}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    }
+                } else {
+                    if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
+                        _ = resolve.call(globalThis, .js_undefined, &.{
+                            JSValue.jsNumberFromU16(exit_code),
+                            this.getBufferedStdout(globalThis),
+                            this.getBufferedStderr(globalThis),
+                        }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    }
                 }
+                
+                JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                loop.exit();
             }
         } else {
             this.flags.done = true;
@@ -1306,6 +1320,11 @@ pub const Interpreter = struct {
     pub fn finalize(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
+    }
+
+    pub fn cancel(this: *ThisInterpreter) callconv(.C) void {
+        log("Interpreter(0x{x}) cancel", .{@intFromPtr(this)});
+        this.is_cancelled.store(true, .seq_cst);
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) bool {
@@ -1474,6 +1493,20 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                     };
                     var casted = this.as(Ty);
                     return casted.childDone(child_ptr, exit_code);
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        /// Cancels the state node
+        pub fn cancel(this: @This()) Yield {
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    return casted.cancel();
                 }
             }
             unknownTag(this.tagInt());

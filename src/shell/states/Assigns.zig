@@ -39,6 +39,18 @@ pub inline fn deinit(this: *Assigns) void {
     if (this.owned) this.parent.destroy(this);
 }
 
+pub fn cancel(this: *Assigns) Yield {
+    log("Assigns(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Clean up current expansion if any
+    if (this.state == .expanding) {
+        this.state.expanding.current_expansion_result.clearAndFree();
+    }
+    
+    // Propagate cancellation to parent
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn start(this: *Assigns) Yield {
     return .{ .assigns = this };
 }
@@ -220,6 +232,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

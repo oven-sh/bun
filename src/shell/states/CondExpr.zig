@@ -210,6 +210,13 @@ fn doStat(this: *CondExpr) Yield {
     return .suspended;
 }
 
+pub fn cancel(this: *CondExpr) Yield {
+    log("{} cancel", .{this});
+    
+    // Propagate cancellation to parent with CANCELLED_EXIT_CODE
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
     for (this.args.items) |item| {
@@ -276,6 +283,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

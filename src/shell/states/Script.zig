@@ -91,6 +91,14 @@ pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.next();
 }
 
+pub fn cancel(this: *Script) Yield {
+    log("Script(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Since scripts don't have direct children running in parallel,
+    // we just propagate the cancellation to the parent with CANCELLED_EXIT_CODE
+    return this.finish(CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Script) void {
     log("Script(0x{x}) deinit", .{@intFromPtr(this)});
     this.io.deref();
@@ -122,6 +130,8 @@ const InterpreterChildPtr = Interpreter.InterpreterChildPtr;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

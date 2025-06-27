@@ -141,6 +141,18 @@ pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.parent.childDone(this, exit_code);
 }
 
+pub fn cancel(this: *Binary) Yield {
+    log("binary cancel {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
+    
+    // Cancel the currently executing child if any
+    if (this.currently_executing) |child| {
+        return child.cancel();
+    }
+    
+    // Propagate cancellation to parent
+    return this.parent.childDone(this, CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Binary) void {
     if (this.currently_executing) |child| {
         child.deinit();
@@ -157,6 +169,7 @@ const Interpreter = bun.shell.Interpreter;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
+const CANCELLED_EXIT_CODE = bun.shell.CANCELLED_EXIT_CODE;
 const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;

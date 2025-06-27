@@ -22,6 +22,7 @@ pub const Interpreter = interpret.Interpreter;
 pub const ParsedShellScript = interpret.ParsedShellScript;
 pub const Subprocess = subproc.ShellSubprocess;
 pub const ExitCode = interpret.ExitCode;
+pub const CANCELLED_EXIT_CODE = interpret.CANCELLED_EXIT_CODE;
 pub const IOWriter = Interpreter.IOWriter;
 pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;

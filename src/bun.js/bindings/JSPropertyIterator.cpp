@@ -162,11 +162,11 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    if (!object->getNonIndexPropertySlot(globalObject, prop, slot)) {
+    auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!has) {
         return {};
     }
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (slot.isAccessor() || slot.isCustom()) {
         return {};
     }

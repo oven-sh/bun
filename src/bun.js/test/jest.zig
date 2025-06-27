@@ -504,7 +504,7 @@ pub const Jest = struct {
             return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
-        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+        const timeout_ms: u32 = @intCast(@max(try arguments[0].coerce(i32, globalObject), 0));
 
         if (Jest.runner) |test_runner| {
             test_runner.default_timeout_override = timeout_ms;
@@ -1789,25 +1789,25 @@ inline fn createScope(
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -2042,25 +2042,25 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});

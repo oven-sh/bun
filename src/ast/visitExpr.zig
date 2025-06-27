@@ -26,25 +26,35 @@ pub fn VisitExpr(
             }
 
             // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
-            switch (expr.data) {
-                .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_undefined => {},
+            switch (@as(Expr.Tag, expr.data)) {
+                inline else => |tag| {
+                    if (@hasDecl(visitors.visitorsL2, @tagName(tag))) {
+                        return @field(visitors.visitorsL2, @tagName(tag))(p, expr, in);
+                    }
+                    return expr;
+                },
+            }
+        }
 
-                .e_new_target => |_| {
+        const visitors = struct {
+            const visitorsL2 = struct {
+                pub fn e_new_target(_: *P, expr: Expr, _: ExprIn) Expr {
                     // this error is not necessary and it is causing breakages
                     // if (!p.fn_only_data_visit.is_new_target_allowed) {
                     //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
                     // }
-                },
-                .e_string => {
-
+                    return expr;
+                }
+                pub fn e_string(_: *P, expr: Expr, _: ExprIn) Expr {
                     // If you're using this, you're probably not using 0-prefixed legacy octal notation
                     // if e.LegacyOctalLoc.Start > 0 {
-                },
-                .e_number => {
-
+                    return expr;
+                }
+                pub fn e_number(_: *P, expr: Expr, _: ExprIn) Expr {
                     // idc about legacy octal loc
-                },
-                .e_this => {
+                    return expr;
+                }
+                pub fn e_this(p: *P, expr: Expr, _: ExprIn) Expr {
                     if (p.valueForThis(expr.loc)) |exp| {
                         return exp;
                     }
@@ -54,8 +64,9 @@ pub fn VisitExpr(
                     // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
                     //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
                     // }
-                },
-                .e_import_meta => {
+                    return expr;
+                }
+                pub fn e_import_meta(p: *P, expr: Expr, in: ExprIn) Expr {
                     // TODO: delete import.meta might not work
                     const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta;
 
@@ -68,11 +79,15 @@ pub fn VisitExpr(
                             }
                         }
                     }
-                },
-                .e_spread => |exp| {
+
+                    return expr;
+                }
+                pub fn e_spread(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const exp = expr.data.e_spread;
                     exp.value = p.visitExpr(exp.value);
-                },
-                .e_identifier => {
+                    return expr;
+                }
+                pub fn e_identifier(p: *P, expr: Expr, in: ExprIn) Expr {
                     var e_ = expr.data.e_identifier;
                     const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and e_.ref.eql(p.delete_target.e_identifier.ref);
 
@@ -177,8 +192,9 @@ pub fn VisitExpr(
                         .is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref),
                         .was_originally_identifier = true,
                     });
-                },
-                .e_jsx_element => |e_| {
+                }
+                pub fn e_jsx_element(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_jsx_element;
                     switch (comptime jsx_transform_type) {
                         .react => {
                             const tag: Expr = tagger: {
@@ -360,8 +376,10 @@ pub fn VisitExpr(
                         },
                         else => unreachable,
                     }
-                },
-                .e_template => |e_| {
+                    return expr;
+                }
+                pub fn e_template(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_template;
                     if (e_.tag) |tag| {
                         e_.tag = p.visitExpr(tag);
 
@@ -422,8 +440,10 @@ pub fn VisitExpr(
                     if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
                         return e_.fold(p.allocator, expr.loc);
                     }
-                },
-                .e_binary => |e_| {
+                    return expr;
+                }
+                pub fn e_binary(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_binary;
 
                     // The handling of binary expressions is convoluted because we're using
                     // iteration on the heap instead of recursion on the call stack to avoid
@@ -492,8 +512,9 @@ pub fn VisitExpr(
                     }
 
                     return current;
-                },
-                .e_index => |e_| {
+                }
+                pub fn e_index(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_index;
                     const is_call_target = p.call_target == .e_index and expr.data.e_index == p.call_target.e_index;
                     const is_delete_target = p.delete_target == .e_index and expr.data.e_index == p.delete_target.e_index;
 
@@ -675,8 +696,9 @@ pub fn VisitExpr(
                     }
 
                     return p.newExpr(e_, expr.loc);
-                },
-                .e_unary => |e_| {
+                }
+                pub fn e_unary(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_unary;
                     switch (e_.op) {
                         .un_typeof => {
                             const id_before = e_.value.data == .e_identifier;
@@ -799,8 +821,10 @@ pub fn VisitExpr(
                             }
                         },
                     }
-                },
-                .e_dot => |e_| {
+                    return expr;
+                }
+                pub fn e_dot(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_dot;
                     const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_dot and expr.data.e_dot == p.delete_target.e_dot;
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
@@ -891,8 +915,10 @@ pub fn VisitExpr(
                             }
                         }
                     }
-                },
-                .e_if => |e_| {
+                    return expr;
+                }
+                pub fn e_if(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_if;
                     const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
                     e_.test_ = p.visitExpr(e_.test_);
@@ -948,17 +974,23 @@ pub fn VisitExpr(
                             return e_.no;
                         }
                     }
-                },
-                .e_await => |e_| {
+                    return expr;
+                }
+                pub fn e_await(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_await;
                     p.await_target = e_.value.data;
                     e_.value = p.visitExpr(e_.value);
-                },
-                .e_yield => |e_| {
+                    return expr;
+                }
+                pub fn e_yield(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_yield;
                     if (e_.value) |val| {
                         e_.value = p.visitExpr(val);
                     }
-                },
-                .e_array => |e_| {
+                    return expr;
+                }
+                pub fn e_array(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_array;
                     if (in.assign_target != .none) {
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
@@ -1002,8 +1034,10 @@ pub fn VisitExpr(
                     if (p.options.features.minify_syntax and spread_item_count > 0 and in.assign_target == .none) {
                         e_.items = e_.inlineSpreadOfArrayLiterals(p.allocator, spread_item_count) catch e_.items;
                     }
-                },
-                .e_object => |e_| {
+                    return expr;
+                }
+                pub fn e_object(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_object;
                     if (in.assign_target != .none) {
                         p.maybeCommaSpreadError(e_.comma_after_spread);
                     }
@@ -1068,8 +1102,10 @@ pub fn VisitExpr(
                             }
                         }
                     }
-                },
-                .e_import => |e_| {
+                    return expr;
+                }
+                pub fn e_import(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_import;
                     // We want to forcefully fold constants inside of imports
                     // even when minification is disabled, so that if we have an
                     // import based on a string template, it does not cause a
@@ -1109,8 +1145,10 @@ pub fn VisitExpr(
 
                         return p.import_transposer.maybeTransposeIf(e_.expr, &state);
                     }
-                },
-                .e_call => |e_| {
+                    return expr;
+                }
+                pub fn e_call(p: *P, expr: Expr, in: ExprIn) Expr {
+                    const e_ = expr.data.e_call;
                     p.call_target = e_.target.data;
 
                     p.then_catch_chain = ThenCatchChain{
@@ -1418,8 +1456,9 @@ pub fn VisitExpr(
                     };
 
                     return expr;
-                },
-                .e_new => |e_| {
+                }
+                pub fn e_new(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_new;
                     e_.target = p.visitExpr(e_.target);
 
                     for (e_.args.slice()) |*arg| {
@@ -1429,8 +1468,10 @@ pub fn VisitExpr(
                     if (p.options.features.minify_syntax) {
                         KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
                     }
-                },
-                .e_arrow => |e_| {
+                    return expr;
+                }
+                pub fn e_arrow(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_arrow;
                     if (p.is_revisit_for_substitution) {
                         return expr;
                     }
@@ -1483,8 +1524,10 @@ pub fn VisitExpr(
 
                         return p.getReactRefreshHookSignalInit(hook, expr);
                     }
-                },
-                .e_function => |e_| {
+                    return expr;
+                }
+                pub fn e_function(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_function;
                     if (p.is_revisit_for_substitution) {
                         return expr;
                     }
@@ -1509,18 +1552,18 @@ pub fn VisitExpr(
                     }
 
                     return final_expr;
-                },
-                .e_class => |e_| {
+                }
+                pub fn e_class(p: *P, expr: Expr, _: ExprIn) Expr {
+                    const e_ = expr.data.e_class;
                     if (p.is_revisit_for_substitution) {
                         return expr;
                     }
 
                     _ = p.visitClass(expr.loc, e_, Ref.None);
-                },
-                else => {},
-            }
-            return expr;
-        }
+                    return expr;
+                }
+            };
+        };
 
     };
 }

@@ -1,4 +1,6 @@
 - [ ] consider splitting visitExpr the same way visitStmt is split up
 - [ ] remove template.zig
 - [ ] remove js_parser_longest.zig
+- [ ] remove @noRemoveUnused from any that still have it
+- [ ] bun scripts/sortImports src && bun scripts/glob-sources.mjs
 - [ ] remove TODO.md

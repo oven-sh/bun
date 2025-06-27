@@ -320,6 +320,11 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
     return this.bltn().done(1);
 }
 
+pub fn cancel(this: *@This()) void {
+    // TODO: Add atomic cancellation flag for threaded execution
+    _ = this;
+}
+
 pub fn deinit(this: *Rm) void {
     _ = this;
 }

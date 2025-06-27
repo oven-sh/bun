@@ -626,6 +626,10 @@ pub fn start(this: *Builtin) Yield {
     return this.callImpl(Yield, "start", .{});
 }
 
+pub fn cancel(this: *Builtin) void {
+    this.callImpl(void, "cancel", .{});
+}
+
 pub fn deinit(this: *Builtin) void {
     this.callImpl(void, "deinit", .{});
 
@@ -646,7 +650,7 @@ pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.enum_literal
         @compileError("Bad IO" ++ @tagName(io_kind));
     }
 
-    const io: *BuiltinIO = &@field(this, @tagName(io_kind));
+    const io: *BuiltinIO.Output = &@field(this, @tagName(io_kind));
     return switch (io.*) {
         .captured => if (comptime io_kind == .stdout) this.parentCmd().base.shell.buffered_stdout() else this.parentCmd().base.shell.buffered_stderr(),
         else => null,

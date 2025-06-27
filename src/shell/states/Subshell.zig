@@ -170,6 +170,25 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
     return this.parent.childDone(this, this.exit_code);
 }
 
+pub fn cancel(this: *Subshell) Yield {
+    log("Subshell(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Cancel any IO chunks
+    if (this.io.stdout == .fd) {
+        if (this.io.stdout.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    if (this.io.stderr == .fd) {
+        if (this.io.stderr.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();

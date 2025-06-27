@@ -134,6 +134,7 @@ pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 pub const CallstackGuard = enum(u0) { __i_know_what_i_am_doing };
 
 pub const ExitCode = u16;
+pub const CANCELLED_EXIT_CODE: ExitCode = 130; // 128 + SIGINT
 
 pub const StateKind = enum(u8) {
     script,
@@ -299,6 +300,8 @@ pub const Interpreter = struct {
     this_jsvalue: JSValue = .zero,
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
+
+    is_cancelled: std.atomic.Value(bool) = .{ .raw = false },
 
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
@@ -1166,21 +1169,43 @@ pub const Interpreter = struct {
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
-                    const loop = this.event_loop.js;
-                    const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
-                    this.keep_alive.disable();
-                    loop.enter();
-                    _ = resolve.call(globalThis, .js_undefined, &.{
-                        JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-                    loop.exit();
+                // ... existing code ...
+                const loop = this.event_loop.js;
+                const globalThis = this.globalThis;
+                this.this_jsvalue = .zero;
+                this.keep_alive.disable();
+                loop.enter();
+                
+                // Check if cancelled and reject with DOMException
+                if (exit_code == CANCELLED_EXIT_CODE) {
+                    if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
+                        // Create DOMException with AbortError
+                        const abort_error = globalThis.createDOMExceptionInstance(.AbortError, "The operation was aborted", .{}) catch |err| {
+                            globalThis.reportActiveExceptionAsUnhandled(err);
+                            JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                            JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                            loop.exit();
+                            return .done;
+                        };
+                        
+                        _ = reject.call(globalThis, .js_undefined, &.{abort_error}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                        JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                        JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                    }
+                } else {
+                    // Normal case - resolve with exit code
+                    if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
+                        _ = resolve.call(globalThis, .js_undefined, &.{
+                            JSValue.jsNumberFromU16(exit_code),
+                            this.getBufferedStdout(globalThis),
+                            this.getBufferedStderr(globalThis),
+                        }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                        JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                        JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                    }
                 }
+                
+                loop.exit();
             }
         } else {
             this.flags.done = true;
@@ -1286,6 +1311,12 @@ pub const Interpreter = struct {
 
     pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.hasPendingActivity());
+    }
+
+    pub fn cancel(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        log("Interpreter(0x{x}) cancel()", .{@intFromPtr(this)});
+        this.is_cancelled.store(true, .seq_cst);
+        return .js_undefined;
     }
 
     pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1474,6 +1505,20 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                     };
                     var casted = this.as(Ty);
                     return casted.childDone(child_ptr, exit_code);
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        /// Signals to the state node to cancel execution
+        pub fn cancel(this: @This()) Yield {
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    return casted.cancel();
                 }
             }
             unknownTag(this.tagInt());

@@ -368,6 +368,11 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
     }
 }
 
+pub fn cancel(this: *@This()) void {
+    // TODO: Add atomic cancellation flag for threaded execution
+    _ = this;
+}
+
 pub fn deinit(this: *Mv) void {
     if (this.args.target_fd) |fd| fd.toOptional().close();
 }

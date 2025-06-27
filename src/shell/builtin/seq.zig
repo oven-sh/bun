@@ -122,6 +122,10 @@ pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yiel
     }
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *@This()) void {
     this.buf.deinit(bun.default_allocator);
     //seq

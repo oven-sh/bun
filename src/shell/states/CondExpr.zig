@@ -210,6 +210,25 @@ fn doStat(this: *CondExpr) Yield {
     return .suspended;
 }
 
+pub fn cancel(this: *CondExpr) Yield {
+    log("CondExpr(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Cancel any IO chunks
+    if (this.io.stdout == .fd) {
+        if (this.io.stdout.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    if (this.io.stderr == .fd) {
+        if (this.io.stderr.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *CondExpr) void {
     this.io.deinit();
     for (this.args.items) |item| {

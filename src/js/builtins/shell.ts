@@ -170,6 +170,18 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
         this.#hasRun = true;
 
         let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+        
+        // Store the interpreter reference for abort signal handling
+        if (this.#args) {
+          (this.#args as any).__interpreter = interp;
+          
+          // Check if we should cancel immediately
+          const abortSignal = (this.#args as any).__abortSignal;
+          if (abortSignal && abortSignal.aborted) {
+            interp.cancel();
+          }
+        }
+        
         this.#args = undefined;
         interp.run();
       }
@@ -235,6 +247,34 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     run(): this {
       this.#run();
+      return this;
+    }
+
+    signal(signal: AbortSignal): this {
+      this.#throwIfRunning();
+      
+      if (signal.aborted) {
+        // Signal is already aborted, cancel immediately when run
+        const args = this.#args;
+        if (args) {
+          // Store a flag to cancel when interpreter is created
+          (args as any).__abortSignal = signal;
+        }
+      } else {
+        // Listen for abort event
+        const args = this.#args;
+        if (args) {
+          signal.addEventListener('abort', () => {
+            // Get the interpreter from the parsed shell script
+            const jsInterpreter = (args as any).__interpreter;
+            if (jsInterpreter) {
+              jsInterpreter.cancel();
+            }
+          }, { once: true });
+          (args as any).__abortSignal = signal;
+        }
+      }
+      
       return this;
     }
 

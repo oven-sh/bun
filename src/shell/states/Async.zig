@@ -142,6 +142,23 @@ pub fn deinit(this: *Async) void {
     _ = this;
 }
 
+pub fn cancel(this: *Async) Yield {
+    log("Async(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Cancel the child if executing
+    if (this.state == .exec) {
+        if (this.state.exec.child) |child| {
+            _ = child.cancel();
+        }
+    }
+    
+    // Set state to done with cancelled exit code
+    this.state = .{ .done = bun.shell.interpret.CANCELLED_EXIT_CODE };
+    this.enqueueSelf();
+    
+    return .suspended;
+}
+
 pub fn actuallyDeinit(this: *Async) void {
     this.io.deref();
     bun.destroy(this);

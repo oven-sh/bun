@@ -122,6 +122,13 @@ pub fn next(this: *Assigns) Yield {
     return this.parent.childDone(this, 0);
 }
 
+pub fn cancel(this: *Assigns) Yield {
+    log("Assigns(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
     if (child.ptr.is(Expansion)) {
         bun.assert(this.state == .expanding);

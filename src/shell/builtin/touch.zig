@@ -21,6 +21,10 @@ pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.Format
     try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Touch) void {
     log("{} deinit", .{this});
 }

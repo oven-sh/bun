@@ -68,6 +68,10 @@ pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) Yield {
     return this.next();
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Pwd) void {
     _ = this;
 }

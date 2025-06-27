@@ -71,6 +71,22 @@ pub const Yield = union(enum) {
         return this.* == .done;
     }
 
+    fn getInterpreter(this: Yield) ?*Interpreter {
+        return switch (this) {
+            .script => |x| x.base.interpreter,
+            .stmt => |x| x.base.interpreter,
+            .pipeline => |x| x.base.interpreter,
+            .cmd => |x| x.base.interpreter,
+            .assigns => |x| x.base.interpreter,
+            .expansion => |x| x.base.interpreter,
+            .@"if" => |x| x.base.interpreter,
+            .subshell => |x| x.base.interpreter,
+            .cond_expr => |x| x.base.interpreter,
+            .on_io_writer_chunk => null,
+            .suspended, .failed, .done => null,
+        };
+    }
+
     pub fn run(this: Yield) void {
         if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} + 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
@@ -80,48 +96,64 @@ pub const Yield = union(enum) {
             if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
-        // A pipeline creates multiple "threads" of execution:
-        //
-        // ```bash
-        // cmd1 | cmd2 | cmd3
-        // ```
-        //
-        // We need to start cmd1, go back to the pipeline, start cmd2, and so
-        // on.
-        //
-        // This means we need to store a reference to the pipeline. And
-        // there can be nested pipelines, so we need a stack.
         var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
         const alloc = sfb.get();
         var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
         defer pipeline_stack.deinit();
 
+        var current_yield = this;
+
         // Note that we're using labelled switch statements but _not_
-        // re-assigning `this`, so the `this` variable is stale after the first
-        // execution. Don't touch it.
-        state: switch (this) {
-            .pipeline => |x| {
-                pipeline_stack.append(x) catch bun.outOfMemory();
-                continue :state x.next();
-            },
-            .cmd => |x| continue :state x.next(),
-            .script => |x| continue :state x.next(),
-            .stmt => |x| continue :state x.next(),
-            .assigns => |x| continue :state x.next(),
-            .expansion => |x| continue :state x.next(),
-            .@"if" => |x| continue :state x.next(),
-            .subshell => |x| continue :state x.next(),
-            .cond_expr => |x| continue :state x.next(),
-            .on_io_writer_chunk => |x| {
-                const child = IOWriterChildPtr.fromAnyOpaque(x.child);
-                continue :state child.onIOWriterChunk(x.written, x.err);
-            },
-            .failed, .suspended, .done => {
-                if (drainPipelines(&pipeline_stack)) |yield| {
-                    continue :state yield;
+        // re-assigning `current_yield`, so we need to be careful about state updates.
+        while (true) {
+            // Check for cancellation at the beginning of each iteration
+            if (current_yield.getInterpreter()) |interp| {
+                if (interp.is_cancelled.load(.monotonic)) {
+                    // Begin graceful unwind
+                    current_yield = switch (current_yield) {
+                        .pipeline => |x| x.cancel(),
+                        .cmd => |x| x.cancel(),
+                        .script => |x| x.cancel(),
+                        .stmt => |x| x.cancel(),
+                        .assigns => |x| x.cancel(),
+                        .expansion => |x| x.cancel(),
+                        .@"if" => |x| x.cancel(),
+                        .subshell => |x| x.cancel(),
+                        .cond_expr => |x| x.cancel(),
+                        else => current_yield,
+                    };
+                    if (current_yield == .suspended or current_yield == .done or current_yield == .failed) {
+                        return;
+                    }
+                    continue;
                 }
-                return;
-            },
+            }
+
+            state: switch (current_yield) {
+                .pipeline => |x| {
+                    pipeline_stack.append(x) catch bun.outOfMemory();
+                    current_yield = x.next();
+                },
+                .cmd => |x| current_yield = x.next(),
+                .script => |x| current_yield = x.next(),
+                .stmt => |x| current_yield = x.next(),
+                .assigns => |x| current_yield = x.next(),
+                .expansion => |x| current_yield = x.next(),
+                .@"if" => |x| current_yield = x.next(),
+                .subshell => |x| current_yield = x.next(),
+                .cond_expr => |x| current_yield = x.next(),
+                .on_io_writer_chunk => |x| {
+                    const child = IOWriterChildPtr.fromAnyOpaque(x.child);
+                    current_yield = child.onIOWriterChunk(x.written, x.err);
+                },
+                .failed, .suspended, .done => {
+                    if (drainPipelines(&pipeline_stack)) |yield| {
+                        current_yield = yield;
+                        continue;
+                    }
+                    return;
+                },
+            }
         }
     }
 

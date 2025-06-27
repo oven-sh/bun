@@ -112,6 +112,11 @@ fn next(this: *Ls) Yield {
     return this.bltn().done(0);
 }
 
+pub fn cancel(this: *@This()) void {
+    // TODO: Add atomic cancellation flag for threaded execution
+    _ = this;
+}
+
 pub fn deinit(this: *Ls) void {
     this.alloc_scope.endScope();
 }

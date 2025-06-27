@@ -260,6 +260,43 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
     return .suspended;
 }
 
+pub fn cancel(this: *Pipeline) Yield {
+    log("Pipeline(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // If already done, nothing to do
+    if (this.state == .done) {
+        return .suspended;
+    }
+    
+    // Set state to done with cancelled exit code
+    this.state = .{ .done = .{ .exit_code = bun.shell.interpret.CANCELLED_EXIT_CODE } };
+    
+    // Close all pipes to unblock any processes stuck on I/O
+    if (this.pipes) |pipes| {
+        for (pipes) |*pipe| {
+            closefd(pipe[0]);
+            closefd(pipe[1]);
+        }
+    }
+    
+    // Cancel all running commands
+    if (this.cmds) |cmds| {
+        for (cmds) |*cmd_or_result| {
+            switch (cmd_or_result.*) {
+                .cmd => |cmd| {
+                    // Cancel the command
+                    _ = cmd.call("cancel", .{}, Yield);
+                },
+                .result => {
+                    // Already finished, nothing to do
+                },
+            }
+        }
+    }
+    
+    return .suspended;
+}
+
 pub fn deinit(this: *Pipeline) void {
     // If commands was zero then we didn't allocate anything
     if (this.cmds == null) return;

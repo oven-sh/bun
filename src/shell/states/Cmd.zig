@@ -694,6 +694,46 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     }
 }
 
+pub fn cancel(this: *Cmd) Yield {
+    log("Cmd(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // If already done, nothing to do
+    if (this.state == .done) {
+        return .suspended;
+    }
+    
+    // Set state to indicate cancellation
+    this.state = .done;
+    this.exit_code = bun.shell.interpret.CANCELLED_EXIT_CODE;
+    
+    // Cancel the underlying execution
+    switch (this.exec) {
+        .none => {},
+        .subproc => |*subproc| {
+            // Try to kill the subprocess with SIGTERM
+            _ = subproc.child.tryKill(std.posix.SIGTERM);
+        },
+        .bltn => |*builtin| {
+            // Call cancel on the builtin
+            builtin.cancel();
+        },
+    }
+    
+    // Cancel any pending IO chunks
+    if (this.io.stdout == .fd) {
+        if (this.io.stdout.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    if (this.io.stderr == .fd) {
+        if (this.io.stderr.fd.writer) |writer| {
+            writer.cancelChunks(this);
+        }
+    }
+    
+    return .suspended;
+}
+
 // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
 pub fn deinit(this: *Cmd) void {
     log("Cmd(0x{x}, {s}) cmd deinit", .{ @intFromPtr(this), @tagName(this.exec) });

@@ -91,6 +91,13 @@ pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.next();
 }
 
+pub fn cancel(this: *Script) Yield {
+    log("Script(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Simply finish with cancelled exit code
+    return this.finish(bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Script) void {
     log("Script(0x{x}) deinit", .{@intFromPtr(this)});
     this.io.deref();

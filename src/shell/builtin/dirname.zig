@@ -20,6 +20,10 @@ pub fn start(this: *@This()) Yield {
     return this.bltn().done(0);
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *@This()) void {
     this.buf.deinit(bun.default_allocator);
     //dirname

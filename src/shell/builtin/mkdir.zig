@@ -159,6 +159,10 @@ const ShellMkdirOutputTaskVTable = struct {
     }
 };
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Mkdir) void {
     _ = this;
 }

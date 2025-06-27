@@ -123,6 +123,10 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) Yield {
     return this.argComplete();
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Which) void {
     log("({s}) deinit", .{@tagName(.which)});
     _ = this;

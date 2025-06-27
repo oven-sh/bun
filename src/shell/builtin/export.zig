@@ -110,6 +110,10 @@ pub fn start(this: *Export) Yield {
     return this.bltn().done(0);
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Export) void {
     log("({s}) deinit", .{@tagName(.@"export")});
     _ = this;

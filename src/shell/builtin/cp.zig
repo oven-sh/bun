@@ -50,6 +50,11 @@ const EbusyState = struct {
     absolute_targets: bun.StringArrayHashMapUnmanaged(void) = .{},
     absolute_srcs: bun.StringArrayHashMapUnmanaged(void) = .{},
 
+pub fn cancel(this: *@This()) void {
+    // TODO: Add atomic cancellation flag for threaded execution
+    _ = this;
+}
+
     pub fn deinit(this: *EbusyState) void {
         // The tasks themselves are freed in `ignoreEbusyErrorIfPossible()`
         this.tasks.deinit(bun.default_allocator);

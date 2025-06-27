@@ -148,6 +148,13 @@ pub fn next(this: *If) Yield {
     return this.parent.childDone(this, 0);
 }
 
+pub fn cancel(this: *If) Yield {
+    log("If(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *If) void {
     log("{} deinit", .{this});
     this.io.deref();

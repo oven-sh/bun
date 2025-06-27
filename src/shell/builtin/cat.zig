@@ -243,6 +243,37 @@ pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) Yield {
 
 pub fn deinit(_: *Cat) void {}
 
+pub fn cancel(this: *Cat) void {
+    switch (this.state) {
+        .exec_stdin => {
+            // Cancel reader if needed
+            if (!this.state.exec_stdin.in_done) {
+                if (this.bltn().stdin.needsIO()) {
+                    this.bltn().stdin.fd.removeReader(this);
+                }
+                this.state.exec_stdin.in_done = true;
+            }
+            // Cancel any pending chunks
+            if (this.bltn().stdout.needsIO()) |_| {
+                this.bltn().stdout.fd.writer.cancelChunks(this);
+            }
+        },
+        .exec_filepath_args => {
+            var exec = &this.state.exec_filepath_args;
+            if (exec.reader) |r| {
+                r.removeReader(this);
+            }
+            exec.deinit();
+            // Cancel any pending chunks
+            if (this.bltn().stdout.needsIO()) |_| {
+                this.bltn().stdout.fd.writer.cancelChunks(this);
+            }
+        },
+        .idle, .waiting_write_err, .done => {},
+    }
+    this.state = .done;
+}
+
 pub inline fn bltn(this: *Cat) *Builtin {
     const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("cat", this));
     return @fieldParentPtr("impl", impl);

@@ -146,11 +146,41 @@ pub fn init(
     expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
 }
 
-pub fn deinit(expansion: *Expansion) void {
-    log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
-    expansion.current_out.deinit();
-    expansion.io.deinit();
-    expansion.base.endScope();
+pub fn cancel(this: *Expansion) Yield {
+    log("Expansion(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // If a command substitution is running, cancel the child Script
+    if (this.child_state == .cmd_subst) {
+        if (this.child_state.cmd_subst.cmd) |child| {
+            _ = child.cancel();
+        }
+    }
+    
+    // Clean up state
+    if (this.current_out.items.len > 0) {
+        switch (this.out) {
+            .array_of_ptr => |buf| {
+                for (this.current_out.items) |item| {
+                    _ = item; // Unused, we're cancelling
+                }
+            },
+            .array_of_slice => |buf| {
+                _ = buf; // Unused, we're cancelling
+            },
+            else => {},
+        }
+        this.current_out.clearAndFree();
+    }
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
+pub fn deinit(this: *Expansion) void {
+    log("Expansion(0x{x}) deinit", .{@intFromPtr(this)});
+    this.current_out.deinit();
+    this.io.deinit();
+    this.base.endScope();
 }
 
 pub fn start(this: *Expansion) Yield {

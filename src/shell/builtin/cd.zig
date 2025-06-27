@@ -107,6 +107,10 @@ pub inline fn bltn(this: *Cd) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *Cd) void {
     log("({s}) deinit", .{@tagName(.cd)});
     _ = this;

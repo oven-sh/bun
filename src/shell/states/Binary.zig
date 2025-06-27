@@ -141,6 +141,18 @@ pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.parent.childDone(this, exit_code);
 }
 
+pub fn cancel(this: *Binary) Yield {
+    log("Binary(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // Cancel the currently executing child if any
+    if (this.currently_executing) |child| {
+        _ = child.cancel();
+    }
+    
+    // Report cancellation to parent
+    return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
+}
+
 pub fn deinit(this: *Binary) void {
     if (this.currently_executing) |child| {
         child.deinit();

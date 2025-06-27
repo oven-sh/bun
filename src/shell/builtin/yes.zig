@@ -50,6 +50,20 @@ pub inline fn bltn(this: *@This()) *Builtin {
 
 pub fn deinit(_: *@This()) void {}
 
+pub fn cancel(this: *@This()) void {
+    switch (this.state) {
+        .waiting_io => {
+            // Cancel any pending chunks
+            if (this.bltn().stdout.needsIO()) |_| {
+                this.bltn().stdout.fd.writer.cancelChunks(this);
+            }
+            // The concurrent task will stop when it sees the cancelled state
+            this.state = .done;
+        },
+        .idle, .err, .done => {},
+    }
+}
+
 pub const YesTask = struct {
     evtloop: JSC.EventLoopHandle,
     concurrent_task: JSC.EventLoopTask,
@@ -66,6 +80,11 @@ pub const YesTask = struct {
 
     pub fn runFromMainThread(this: *@This()) void {
         const yes: *Yes = @fieldParentPtr("task", this);
+
+        // Check if we should stop
+        if (yes.state == .done or yes.state == .err) {
+            return;
+        }
 
         // Manually make safeguard since this task should not be created if output does not need IO
         yes.bltn().stdout.enqueueFmt(yes, "{s}\n", .{yes.expletive}, .output_needs_io).run();

@@ -2,6 +2,10 @@ pub fn start(this: *@This()) Yield {
     return this.bltn().done(1);
 }
 
+pub fn cancel(this: *@This()) void {
+    _ = this;
+}
+
 pub fn deinit(this: *@This()) void {
     _ = this;
 }

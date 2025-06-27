@@ -62,41 +62,41 @@ pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame)
     return .js_undefined;
 }
 
-pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const value1 = callframe.argument(0).getObject() orelse {
-        return globalThis.throwInvalidArguments("env must be an object", .{});
+pub fn setEnv(this: *ParsedShellScript, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments_ = callframe.arguments_old(2);
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    const jsenv = arguments.nextEat() orelse {
+        return globalThis.throw("$`...`.env(): expected an object argument", .{});
     };
 
-    var object_iter = try JSC.JSPropertyIterator(.{
-        .skip_empty_name = false,
-        .include_value = true,
-    }).init(globalThis, value1);
-    defer object_iter.deinit();
+    var iter = try JSC.JSObject.DictionaryIterator.init(globalThis, jsenv.asObjectRef() orelse {
+        return globalThis.throw("$`...`.env(): expected an object argument", .{});
+    });
+    defer iter.deinit();
 
-    var env: EnvMap = EnvMap.init(bun.default_allocator);
-    env.ensureTotalCapacity(object_iter.len);
-
-    // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-    // PATH = "";
-
-    while (try object_iter.next()) |key| {
-        const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
-        var value = object_iter.value;
-        if (value.isUndefined()) continue;
-
-        const value_str = try value.getZigString(globalThis);
-        const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
-        const keyref = EnvStr.initRefCounted(keyslice);
-        defer keyref.deref();
-        const valueref = EnvStr.initRefCounted(slice);
-        defer valueref.deref();
-
-        env.insert(keyref, valueref);
+    if (this.export_env == null) {
+        this.export_env = EnvMap.init(bun.default_allocator);
     }
-    if (this.export_env) |*previous| {
-        previous.deinit();
+
+    while (iter.next()) |entry| {
+        var key = try entry.key.toOwnedSlice(globalThis);
+        const len = @as(u32, @truncate(entry.key.getLength(globalThis)));
+
+        var val = entry.value;
+        var val_slice = try val.toOwnedSlice(globalThis);
+        if (entry.key_allocated) key = try EnvStr.EnvKey.toOwnedSlice(key);
+        try this.export_env.?.put(key, val_slice);
+        _ = len; // autofix
     }
-    this.export_env = env;
+
+    return .js_undefined;
+}
+
+pub fn cancel(this: *ParsedShellScript, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    // This is not used directly from ParsedShellScript, cancellation is handled in the interpreter
+    _ = this;
+    _ = globalThis;
+    _ = callframe;
     return .js_undefined;
 }
 

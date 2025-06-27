@@ -61,6 +61,10 @@ pub fn deinit(this: *Echo) void {
     this.output.deinit();
 }
 
+pub fn cancel(this: *Echo) void {
+    _ = this;
+}
+
 pub inline fn bltn(this: *Echo) *Builtin {
     const impl: *Builtin.Impl = @alignCast(@fieldParentPtr("echo", this));
     return @fieldParentPtr("impl", impl);

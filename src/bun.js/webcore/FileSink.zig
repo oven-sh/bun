@@ -78,10 +78,17 @@ comptime {
 pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) void {
     log("onAttachedProcessExit()", .{});
     this.done = true;
-    if (this.readable_stream.has()) {
+    var readable_stream = this.readable_stream;
+    this.readable_stream = .{};
+    this.writer.close();
+
+    if (readable_stream.has()) {
         if (this.event_loop_handle.globalObject()) |global| {
-            if (this.readable_stream.get(global)) |*stream| {
+            if (readable_stream.get(global)) |*stream| {
                 if (!status.isOK()) {
+                    const event_loop = global.bunVM().eventLoop();
+                    event_loop.enter();
+                    defer event_loop.exit();
                     stream.cancel(global);
                 } else {
                     stream.done(global);
@@ -89,12 +96,10 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
             }
         }
         // Clean up the readable stream reference
-        this.readable_stream.deinit();
+        readable_stream.deinit();
     }
-    this.writer.close();
 
     this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
-
     this.runPending();
 
     if (this.must_be_kept_alive_until_eof) {

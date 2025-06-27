@@ -562,6 +562,7 @@ describe("spawn stdin ReadableStream", () => {
           cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdin: stream,
           stdout: "pipe",
+          stderr: "inherit",
           env: bunEnv,
         });
 

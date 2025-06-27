@@ -2,7 +2,7 @@
 #include "root.h"
 #include <memory>
 #include <JavaScriptCore/JSDestructibleObject.h>
-#include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/WriteBarrier.h>
 
 // Forward declarations
 typedef struct YGNode* YGNodeRef;
@@ -30,14 +30,15 @@ public:
 
     YGNodeRef internal() { return m_node; }
     void clearInternal() { m_node = nullptr; }
+    void setInternal(YGNodeRef node) { m_node = node; }
 
     // Helper to get JS wrapper from Yoga node
     static JSYogaNode* fromYGNode(YGNodeRef);
     JSC::JSGlobalObject* globalObject() const;
 
     // Storage for JS callbacks
-    JSC::Strong<JSC::JSObject> m_measureFunc;
-    JSC::Strong<JSC::JSObject> m_dirtiedFunc;
+    JSC::WriteBarrier<JSC::JSObject> m_measureFunc;
+    JSC::WriteBarrier<JSC::JSObject> m_dirtiedFunc;
 
 private:
     JSYogaNode(JSC::VM&, JSC::Structure*);

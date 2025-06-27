@@ -98,7 +98,6 @@ src/bun.js/bindings/JSYogaConstructor.cpp
 src/bun.js/bindings/JSYogaExports.cpp
 src/bun.js/bindings/JSYogaModule.cpp
 src/bun.js/bindings/JSYogaNode.cpp
-src/bun.js/bindings/JSYogaNodeImpl.cpp
 src/bun.js/bindings/JSYogaPrototype.cpp
 src/bun.js/bindings/linux_perf_tracing.cpp
 src/bun.js/bindings/MarkingConstraint.cpp

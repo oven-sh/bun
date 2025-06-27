@@ -54,6 +54,7 @@ set(BUN_DEPENDENCIES
   Lshpack
   Mimalloc
   TinyCC
+  Yoga
   Zlib
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
@@ -61,9 +62,6 @@ set(BUN_DEPENDENCIES
 )
 
 include(CloneZstd)
-# foreach(dependency ${BUN_DEPENDENCIES})
-#   include(Clone${dependency})
-# endforeach()
 
 # --- Codegen ---
 

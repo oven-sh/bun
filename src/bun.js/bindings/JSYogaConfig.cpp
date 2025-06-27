@@ -2,11 +2,14 @@
 #include "JSYogaConfig.h"
 #include "webcore/DOMIsoSubspaces.h"
 #include "webcore/DOMClientIsoSubspaces.h"
+#include "webcore/WebCoreJSClientData.h"
 #include <yoga/Yoga.h>
 
 namespace Bun {
 
-const JSC::ClassInfo JSYogaConfig::s_info = { "Yoga.Config"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaConfig) };
+using namespace JSC;
+
+const JSC::ClassInfo JSYogaConfig::s_info = { "Config"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaConfig) };
 
 JSYogaConfig::JSYogaConfig(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -51,7 +54,7 @@ JSC::GCClient::IsoSubspace* JSYogaConfig::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSYogaConfig, WebCore::UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForJSYogaConfig.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSYogaConfig = std::forward<decltype(space)>(space); },

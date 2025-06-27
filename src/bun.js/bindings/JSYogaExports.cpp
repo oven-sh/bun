@@ -2,6 +2,8 @@
 #include "JSYogaConstructor.h"
 #include "ZigGlobalObject.h"
 
+using namespace JSC;
+
 extern "C" {
 
 JSC::EncodedJSValue Bun__JSYogaConfigConstructor(Zig::GlobalObject* globalObject)

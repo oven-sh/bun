@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+const Yoga = Bun.Yoga;
+
 describe("Yoga.Node", () => {
   test("Node constructor", () => {
     const node = new Yoga.Node();
@@ -174,6 +176,15 @@ describe("Yoga.Node", () => {
     };
 
     node.setDirtiedFunc(dirtiedFunc);
+    
+    // markDirty requires a measure function
+    node.setMeasureFunc(() => ({ width: 100, height: 50 }));
+    
+    // Nodes start dirty, so clear the dirty flag first
+    node.calculateLayout();
+    expect(node.isDirty()).toBe(false);
+    
+    // Now mark dirty - this should trigger the callback
     node.markDirty();
 
     expect(dirtiedCalled).toBe(true);
@@ -190,22 +201,27 @@ describe("Yoga.Node", () => {
 
     node.reset();
 
-    // After reset, values should be back to defaults
+    // After reset, width/height default to AUTO, not UNDEFINED
     const width = node.getWidth();
-    expect(width.unit).toBe(Yoga.UNIT_UNDEFINED);
+    expect(width.unit).toBe(Yoga.UNIT_AUTO);
   });
 
   test("dirty state", () => {
     const node = new Yoga.Node();
 
-    // Initially not dirty
-    expect(node.isDirty()).toBe(false);
-
-    // Mark as dirty
-    node.markDirty();
+    // Nodes start as dirty by default in Yoga
     expect(node.isDirty()).toBe(true);
 
     // Calculate layout clears dirty flag
+    node.calculateLayout();
+    expect(node.isDirty()).toBe(false);
+
+    // Mark as dirty (requires measure function)
+    node.setMeasureFunc(() => ({ width: 100, height: 50 }));
+    node.markDirty();
+    expect(node.isDirty()).toBe(true);
+
+    // Calculate layout clears dirty flag again
     node.calculateLayout();
     expect(node.isDirty()).toBe(false);
   });

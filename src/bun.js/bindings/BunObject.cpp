@@ -72,6 +72,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 
+extern "C" JSC::EncodedJSValue Bun__createYogaModule(Zig::GlobalObject*);
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -756,6 +758,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
+    Yoga                                           constructYogaObject                                                 DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
@@ -837,6 +840,8 @@ public:
     }
 };
 
+static JSValue constructYogaObject(VM& vm, JSObject* bunObject);
+
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
 #define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
 #define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
@@ -867,6 +872,13 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructYogaObject(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    auto result = Bun__createYogaModule(globalObject);
+    return JSValue::decode(result);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

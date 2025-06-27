@@ -39,6 +39,9 @@ private:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    
+public:
+    void setConstructor(JSC::VM& vm, JSC::JSObject* constructor);
 };
 
 class JSYogaNodePrototype final : public JSC::JSNonFinalObject {
@@ -75,6 +78,9 @@ private:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    
+public:
+    void setConstructor(JSC::VM& vm, JSC::JSObject* constructor);
 };
 
 } // namespace Bun

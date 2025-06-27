@@ -2,11 +2,14 @@
 #include "JSYogaNode.h"
 #include "webcore/DOMIsoSubspaces.h"
 #include "webcore/DOMClientIsoSubspaces.h"
+#include "webcore/WebCoreJSClientData.h"
 #include <yoga/Yoga.h>
 
 namespace Bun {
 
-const JSC::ClassInfo JSYogaNode::s_info = { "Yoga.Node"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaNode) };
+using namespace JSC;
+
+const JSC::ClassInfo JSYogaNode::s_info = { "Node"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaNode) };
 
 JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -67,7 +70,7 @@ JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSYogaNode, WebCore::UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForJSYogaNode.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSYogaNode = std::forward<decltype(space)>(space); },
@@ -77,7 +80,8 @@ JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
 
 DEFINE_VISIT_CHILDREN(JSYogaNode);
 
-void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, JSC::Visitor& visitor)
+template<typename Visitor>
+void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
 {
     JSYogaNode* thisObject = jsCast<JSYogaNode*>(cell);
     Base::visitChildren(thisObject, visitor);

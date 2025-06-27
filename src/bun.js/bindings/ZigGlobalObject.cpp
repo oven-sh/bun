@@ -177,6 +177,7 @@
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include "JSYogaConstructor.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2809,6 +2810,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSHTTPParserClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupHTTPParserClassStructure(init);
+        });
+
+    m_JSYogaConfigClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSYogaConfigClassStructure(init);
+        });
+
+    m_JSYogaNodeClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSYogaNodeClassStructure(init);
         });
 
     m_JSNodePerformanceHooksHistogramClassStructure.initLater(

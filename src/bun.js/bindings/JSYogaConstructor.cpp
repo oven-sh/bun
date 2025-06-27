@@ -8,6 +8,10 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <yoga/Yoga.h>
 
+#ifndef UNLIKELY
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
 namespace Bun {
 
 // Forward declarations for constructor functions
@@ -26,7 +30,7 @@ JSYogaConfigConstructor::JSYogaConfigConstructor(JSC::VM& vm, JSC::Structure* st
 
 void JSYogaConfigConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
-    Base::finishCreation(vm, 0, "Config"_s);
+    Base::finishCreation(vm, 0, "Config"_s, PropertyAdditionMode::WithStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     // Add static methods - create() is an alias for the constructor
@@ -43,7 +47,7 @@ JSYogaNodeConstructor::JSYogaNodeConstructor(JSC::VM& vm, JSC::Structure* struct
 
 void JSYogaNodeConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
-    Base::finishCreation(vm, 1, "Node"_s); // 1 for optional config parameter
+    Base::finishCreation(vm, 1, "Node"_s, PropertyAdditionMode::WithStructureTransition); // 1 for optional config parameter
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     // Add static methods - create() is an alias for the constructor
@@ -143,6 +147,7 @@ void setupJSYogaConfigClassStructure(JSC::LazyClassStructure::Initializer& init)
     auto* constructor = JSYogaConfigConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSYogaConfig::createStructure(init.vm, init.global, prototype);
+    
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
@@ -157,6 +162,7 @@ void setupJSYogaNodeClassStructure(JSC::LazyClassStructure::Initializer& init)
     auto* constructor = JSYogaNodeConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSYogaNode::createStructure(init.vm, init.global, prototype);
+    
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

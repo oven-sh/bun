@@ -1507,8 +1507,6 @@ const Copy = union(enum) {
         var fib = std.io.fixedBufferStream(buf);
         header.writeHeader(fib.writer(), content_byte_len) catch unreachable;
 
-        // Copy compressed data and mask it
-        @memcpy(to_mask[0..content_byte_len], compressed_data);
         Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], compressed_data);
     }
 };

@@ -12,6 +12,7 @@ pub fn ParseStmt(
         const createDefaultName = P.createDefaultName;
         const track_symbol_usage_during_parse_pass = P.track_symbol_usage_during_parse_pass;
         const extractDeclsForBinding = P.extractDeclsForBinding;
+        const is_jsx_enabled = P.is_jsx_enabled;
 
     };
 }
@@ -60,18 +61,23 @@ const js_lexer = bun.js_lexer;
 const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
+const AsyncPrefixExpression = js_parser.AsyncPrefixExpression;
 const DeferredErrors = js_parser.DeferredErrors;
 const DeferredTsDecorators = js_parser.DeferredTsDecorators;
 const ExprIn = js_parser.ExprIn;
+const FnOrArrowDataParse = js_parser.FnOrArrowDataParse;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const IdentifierOpts = js_parser.IdentifierOpts;
 const ImportKind = js_parser.ImportKind;
 const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
+const ParenExprOpts = js_parser.ParenExprOpts;
+const ParseClassOptions = js_parser.ParseClassOptions;
 const ParseStatementOptions = js_parser.ParseStatementOptions;
 const ParsedPath = js_parser.ParsedPath;
 const Prefill = js_parser.Prefill;
 const PrependTempRefsOpts = js_parser.PrependTempRefsOpts;
+const PropertyOpts = js_parser.PropertyOpts;
 const ReactRefresh = js_parser.ReactRefresh;
 const Ref = js_parser.Ref;
 const RelocateVars = js_parser.RelocateVars;
@@ -80,6 +86,7 @@ const StmtList = js_parser.StmtList;
 const StmtsKind = js_parser.StmtsKind;
 const ThenCatchChain = js_parser.ThenCatchChain;
 const TransposeState = js_parser.TransposeState;
+const TypeParameterFlag = js_parser.TypeParameterFlag;
 const TypeScript = js_parser.TypeScript;
 const VisitArgsOpts = js_parser.VisitArgsOpts;
 const floatToInt32 = js_parser.floatToInt32;

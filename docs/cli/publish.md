@@ -108,5 +108,5 @@ $ bun publish --otp 123456
 ```
 
 {% callout %}
-**Note** - `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions or automated workflows.
+**Note** - `bun publish` respects the `BUN_AUTH_TOKEN` environment variable which can be used when publishing in github actions or automated workflows.
 {% /callout %}

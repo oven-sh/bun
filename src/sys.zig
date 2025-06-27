@@ -2603,8 +2603,10 @@ pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("symlink({s}, {s}) = {s}", .{ target, dest, @tagName(err.getErrno()) });
             return err;
         }
+        log("symlink({s}, {s}) = 0", .{ target, dest });
         return Maybe(void).success;
     }
 }
@@ -2613,8 +2615,10 @@ pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]cons
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("symlinkat({s}, {}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
             return err;
         }
+        log("symlinkat({s}, {}, {s}) = 0", .{ target, dirfd, dest });
         return Maybe(void).success;
     }
 }
@@ -2824,6 +2828,7 @@ pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSysP(syscall.unlink(from), .unlink, from)) |err| {
             if (err.getErrno() == .INTR) continue;
+            log("unlink({s}) = {s}", .{ from, @tagName(err.getErrno()) });
             return err;
         }
 
@@ -2854,7 +2859,7 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
@@ -2872,7 +2877,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
@@ -3765,28 +3770,33 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     return dupWithFlags(fd, 0);
 }
 
-pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun.FileDescriptor, dest_name: []const u8) Maybe(void) {
-    return Maybe(void).errnoSysP(
-        std.c.linkat(
-            @intCast(dir_fd),
-            &(std.posix.toPosixPath(basename) catch return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
-                    .syscall = .open,
-                },
-            }),
-            @intCast(dest_dir_fd),
-            &(std.posix.toPosixPath(dest_name) catch return .{
-                .err = .{
-                    .errno = @intFromEnum(E.NOMEM),
-                    .syscall = .open,
-                },
-            }),
-            0,
-        ),
-        .link,
-        basename,
-    ) orelse Maybe(void).success;
+pub fn linkat(src: bun.FileDescriptor, src_path: []const u8, dest: bun.FileDescriptor, dest_path: []const u8) Maybe(void) {
+    return linkatZ(
+        src,
+        &(std.posix.toPosixPath(src_path) catch return .{
+            .err = .{
+                .errno = @intFromEnum(E.NOMEM),
+                .syscall = .link,
+            },
+        }),
+        dest,
+        &(std.posix.toPosixPath(dest_path) catch return .{
+            .err = .{
+                .errno = @intFromEnum(E.NOMEM),
+                .syscall = .link,
+            },
+        }),
+    );
+}
+
+pub fn linkatZ(src: FD, src_path: [:0]const u8, dest: FD, dest_path: [:0]const u8) Maybe(void) {
+    const ret = std.c.linkat(src.cast(), src_path, dest.cast(), dest_path, 0);
+    if (Maybe(void).errnoSysP(ret, .link, src_path)) |err| {
+        log("linkat({}, {s}, {}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("linkat({}, {s}, {}, {s}) = 0", .{ src, src_path, dest, dest_path });
+    return .success;
 }
 
 pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name: [:0]const u8) Maybe(void) {

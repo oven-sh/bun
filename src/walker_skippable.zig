@@ -6,6 +6,8 @@ const path = std.fs.path;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const OSPathSlice = bun.OSPathSlice;
+const OSPathSliceZ = bun.OSPathSliceZ;
+const OOM = bun.OOM;
 
 stack: std.ArrayList(StackItem),
 name_buffer: NameBufferList,
@@ -24,8 +26,8 @@ pub const WalkerEntry = struct {
     /// rather than `path`, avoiding `error.NameTooLong` for deeply nested paths.
     /// The directory remains open until `next` or `deinit` is called.
     dir: Dir,
-    basename: OSPathSlice,
-    path: OSPathSlice,
+    basename: OSPathSliceZ,
+    path: OSPathSliceZ,
     kind: Dir.Entry.Kind,
 };
 
@@ -85,7 +87,6 @@ pub fn next(self: *Walker) !?WalkerEntry {
                     try self.name_buffer.appendSlice(base.name.slice());
                     const cur_len = self.name_buffer.items.len;
                     try self.name_buffer.append(0);
-                    self.name_buffer.shrinkRetainingCapacity(cur_len);
 
                     if (base.kind == .directory) {
                         var new_dir = (if (Environment.isWindows)
@@ -99,15 +100,15 @@ pub fn next(self: *Walker) !?WalkerEntry {
                             errdefer new_dir.close();
                             try self.stack.append(StackItem{
                                 .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
-                                .dirname_len = self.name_buffer.items.len,
+                                .dirname_len = cur_len,
                             });
                             top = &self.stack.items[self.stack.items.len - 1];
                         }
                     }
                     return WalkerEntry{
                         .dir = top.iter.iter.dir,
-                        .basename = self.name_buffer.items[dirname_len..],
-                        .path = self.name_buffer.items,
+                        .basename = self.name_buffer.items[dirname_len..cur_len :0],
+                        .path = self.name_buffer.items[0..cur_len :0],
                         .kind = base.kind,
                     };
                 } else {
@@ -146,7 +147,7 @@ pub fn walk(
     allocator: Allocator,
     skip_filenames: []const OSPathSlice,
     skip_dirnames: []const OSPathSlice,
-) !Walker {
+) OOM!Walker {
     var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 

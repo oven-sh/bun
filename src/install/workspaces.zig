@@ -25,6 +25,8 @@ const strings = bun.strings;
 const Environment = bun.Environment;
 const ThreadPool = bun.ThreadPool;
 const PackageNameHash = install.PackageNameHash;
+const Walker = @import("../walker_skippable.zig");
+const Bin = install.Bin;
 
 // const IsolatedInstaller = struct {
 //     manager: *PackageManager,
@@ -224,6 +226,10 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     manager,
                     lockfile,
                 )) {
+                    // std.debug.print("filtered: {s}@{s}\n", .{
+                    //     dependencies[dep_id].name.slice(string_buf),
+                    //     dependencies[dep_id].version.literal.slice(string_buf),
+                    // });
                     continue;
                 }
 
@@ -417,6 +423,10 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (entry_queue.readItem()) |entry| {
+            {
+                // nodes.get(entry.node_id.get()).debugPrint(entry.node_id, lockfile);
+            }
+
             const pkg_id = node_pkg_ids[entry.node_id.get()];
 
             const dedupe_entry = try dedupe.getOrPut(lockfile.allocator, pkg_id);
@@ -425,11 +435,6 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             } else {
                 const curr_peers = node_peers[entry.node_id.get()];
                 const curr_dep_id = node_dep_ids[entry.node_id.get()];
-
-                const eql_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
-                    .string_buf = string_buf,
-                    .pkg_names = pkg_names,
-                };
 
                 for (dedupe_entry.value_ptr.items) |info| {
                     if (info.dep_id != invalid_dependency_id and curr_dep_id != invalid_dependency_id) {
@@ -443,13 +448,26 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                         }
                     }
 
+                    const eql_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                        .string_buf = string_buf,
+                        .pkg_names = pkg_names,
+                    };
+
                     if (info.peers.eql(&curr_peers, &eql_ctx)) {
                         // dedupe! depend on the already created entry
-                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
-                            continue :next_entry;
-                        }
+
                         const entries = store.slice();
                         const entry_dependencies = entries.items(.dependencies);
+                        const entry_parents = entries.items(.parents);
+
+                        var parents = &entry_parents[info.entry_id.get()];
+
+                        if (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].behavior.isWorkspaceOnly()) {
+                            if (!parents.contains(entry.entry_parent_id)) {
+                                try parents.append(lockfile.allocator, entry.entry_parent_id);
+                            }
+                            continue :next_entry;
+                        }
                         const ctx: Store.Entry.DependenciesOrderedArraySetCtx = .{
                             .string_buf = string_buf,
                             .dependencies = dependencies,
@@ -458,6 +476,12 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                             .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
                             &ctx,
                         );
+                        if (!parents.contains(entry.entry_parent_id)) {
+                            std.debug.print("adding new parent: {d} <- {d}\n", .{ entry.entry_parent_id.get(), info.entry_id.get() });
+                            try parents.append(lockfile.allocator, entry.entry_parent_id);
+                        } else {
+                            std.debug.print("skipping already present parent: {d}\n", .{entry.entry_parent_id.get()});
+                        }
                         continue :next_entry;
                     }
                 }
@@ -479,10 +503,16 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 .node_id = entry.node_id,
                 .parent_id = entry.entry_parent_id,
                 .dependencies = new_entry_dependencies,
+                .parents = .init(entry.entry_parent_id),
             };
 
             const entry_id: Store.Entry.Id = .from(@intCast(store.len));
             try store.append(lockfile.allocator, new_entry);
+
+            // std.debug.print("append entry({d}) -> node({d})", .{
+            //     entry_id.getOr(999),
+            //     entry.node_id.getOr(999),
+            // });
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
                 if (new_entry_dep_id != invalid_dependency_id and dependencies[new_entry_dep_id].behavior.isWorkspaceOnly()) {
@@ -639,8 +669,9 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
 
         const entries = store.entries.slice();
         const entry_node_ids = entries.items(.node_id);
-        const entry_parent_ids = entries.items(.parent_id);
         const entry_dependencies = entries.items(.dependencies);
+        _ = entry_dependencies;
+        const entry_steps = entries.items(.step);
 
         const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -658,6 +689,10 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
         defer seen_entry_ids.deinit(lockfile.allocator);
         try seen_entry_ids.ensureTotalCapacity(lockfile.allocator, @intCast(store.entries.len));
 
+        // TODO: delete
+        var seen_workspace_ids: std.AutoHashMapUnmanaged(PackageID, void) = .empty;
+        defer seen_workspace_ids.deinit(lockfile.allocator);
+
         var installer: Store.Installer = .{
             .lockfile = lockfile,
             .manager = manager,
@@ -665,34 +700,46 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             .preallocated_tasks = .init(bun.default_allocator),
         };
 
-        var install_queue: std.fifo.LinearFifo(Store.Entry.Id, .Dynamic) = .init(lockfile.allocator);
-        defer install_queue.deinit();
-        try install_queue.ensureTotalCapacity(store.entries.len);
+        // var install_stack: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, store.entries.len);
+        // defer install_stack.deinit(lockfile.allocator);
 
-        // find and queue entries without dependencies. we want to start downloading
-        // their tarballs first because their lifecycle scripts can start running
-        // immediately
+        // var curr_entry_id: Store.Entry.Id = .from(0);
+        // while (curr_entry_id != .invalid) {
+        //     install_stack.appendAssumeCapacity(curr_entry_id);
+        //     const deps = entry_dependencies[curr_entry_id.get()];
+        //     for (deps.slice()) |entry_id
+        // }
+
+        // var install_queue: std.fifo.LinearFifo(Store.Entry.Id, .Dynamic) = .init(lockfile.allocator);
+        // defer install_queue.deinit();
+        // try install_queue.ensureTotalCapacity(store.entries.len);
+
+        // // find and queue entries without dependencies. we want to start downloading
+        // // their tarballs first because their lifecycle scripts can start running
+        // // immediately
+        // for (0..store.entries.len) |_entry_id| {
+        //     const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+
+        //     const dependencies = entry_dependencies[entry_id.get()];
+
+        //     if (dependencies.list.items.len != 0) {
+        //         continue;
+        //     }
+
+        //     seen_entry_ids.putAssumeCapacityNoClobber(entry_id, {});
+        //     install_queue.writeItemAssumeCapacity(entry_id);
+        // }
+
+        // while (install_queue.readItem()) |entry_id| {
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
-
-            const dependencies = entry_dependencies[entry_id.get()];
-
-            if (dependencies.list.items.len != 0) {
-                continue;
-            }
-
-            seen_entry_ids.putAssumeCapacityNoClobber(entry_id, {});
-            install_queue.writeItemAssumeCapacity(entry_id);
-        }
-
-        while (install_queue.readItem()) |entry_id| {
-            const parent_entry_id = entry_parent_ids[entry_id.get()];
-            if (parent_entry_id != .invalid) {
-                const entry = try seen_entry_ids.getOrPut(lockfile.allocator, parent_entry_id);
-                if (!entry.found_existing) {
-                    install_queue.writeItemAssumeCapacity(parent_entry_id);
-                }
-            }
+            // const parent_entry_id = entry_parent_ids[entry_id.get()];
+            // if (parent_entry_id != .invalid) {
+            //     const entry = try seen_entry_ids.getOrPut(lockfile.allocator, parent_entry_id);
+            //     if (!entry.found_existing) {
+            //         install_queue.writeItemAssumeCapacity(parent_entry_id);
+            //     }
+            // }
 
             const node_id = entry_node_ids[entry_id.get()];
             const pkg_id = node_pkg_ids[node_id.get()];
@@ -701,7 +748,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             const pkg_name_hash = pkg_name_hashes[pkg_id];
             const pkg_res: Resolution = pkg_resolutions[pkg_id];
 
-            // std.debug.print("checking: {s}@{}\n", .{ pkg_name.slice(string_buf), pkg_res.fmt(string_buf, .posix) });
+            // std.debug.print("installing: {s}@{}\n", .{ pkg_name.slice(string_buf), pkg_res.fmt(string_buf, .posix) });
 
             const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
 
@@ -711,13 +758,23 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             const needs_install = needs_install: switch (pkg_res.tag) {
                 .root => {
                     if (entry_id == .root) {
-                        store.linkDependencies(installer.lockfile, entry_id);
+                        entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                        installer.resumeTask(entry_id);
+                        continue;
                     }
-                    break :needs_install false;
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    continue;
+                    // break :needs_install false;
                 },
                 .workspace => {
-                    store.linkDependencies(installer.lockfile, entry_id);
-                    break :needs_install false;
+                    if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
+                        entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                        installer.resumeTask(entry_id);
+                        continue;
+                    }
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    continue;
+                    // break :needs_install false;
                 },
                 .symlink,
                 .folder,
@@ -773,12 +830,16 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                 // TODO: onPackageInstall or something for starting parent tasks that
                 // were blocked.
                 summary.skipped += 1;
+                entry_steps[entry_id.get()].store(.done, .monotonic);
                 continue;
             }
 
             // determine if the package is cached. if it's not, enqueue it and go to the next package.
-            const cache_dir, var cache_dir_subpath = installer.packageCacheDirAndSubpath(pkg_name, &pkg_res, patch_info);
-            defer cache_dir_subpath.deinit();
+            const cache_dir, const cache_dir_path, var pkg_cache_dir_subpath = installer.packageCacheDirAndSubpath(pkg_name, &pkg_res, patch_info);
+            defer {
+                cache_dir_path.deinit();
+                pkg_cache_dir_subpath.deinit();
+            }
 
             const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
                 .done => false,
@@ -786,13 +847,13 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                     if (patch_info == .none) {
                         const exists = switch (pkg_res.tag) {
                             .npm => exists: {
-                                var cache_dir_subpath_save = cache_dir_subpath.save();
+                                var cache_dir_subpath_save = pkg_cache_dir_subpath.save();
                                 defer cache_dir_subpath_save.restore();
-                                cache_dir_subpath.append("package.json");
+                                pkg_cache_dir_subpath.append("package.json");
 
-                                break :exists sys.existsAt(cache_dir, cache_dir_subpath.sliceZ());
+                                break :exists sys.existsAt(cache_dir, pkg_cache_dir_subpath.sliceZ());
                             },
-                            else => sys.directoryExistsAt(cache_dir, cache_dir_subpath.sliceZ()).unwrapOr(false),
+                            else => sys.directoryExistsAt(cache_dir, pkg_cache_dir_subpath.sliceZ()).unwrapOr(false),
                         };
                         if (exists) manager.setPreinstallState(pkg_id, installer.lockfile, .done);
                         break :missing_from_cache !exists;
@@ -804,7 +865,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             };
 
             if (!missing_from_cache) {
-                installer.scheduleTask(entry_id, .link_package);
+                installer.resumeTask(entry_id);
                 continue;
             }
 
@@ -813,6 +874,7 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             };
 
             const dep_id = node_dep_ids[node_id.get()];
+            const dep = lockfile.buffers.dependencies.items[dep_id];
 
             switch (pkg_res.tag) {
                 .npm => {
@@ -831,8 +893,55 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
                         },
                     };
                 },
+                .git => {
+                    manager.enqueueGitForCheckout(
+                        dep_id,
+                        dep.name.slice(string_buf),
+                        &pkg_res,
+                        ctx,
+                        patch_info.nameAndVersionHash(),
+                    );
+                },
+                .github => {
+                    const url = manager.allocGitHubURL(&pkg_res.value.git);
+                    defer manager.allocator.free(url);
+                    manager.enqueueTarballForDownload(
+                        dep_id,
+                        pkg_id,
+                        url,
+                        ctx,
+                        patch_info.nameAndVersionHash(),
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.InvalidURL => {
+                            @panic("error");
+                        },
+                    };
+                },
+                .local_tarball => {
+                    manager.enqueueTarballForReading(
+                        dep_id,
+                        dep.name.slice(string_buf),
+                        &pkg_res,
+                        ctx,
+                    );
+                },
+                .remote_tarball => {
+                    manager.enqueueTarballForDownload(
+                        dep_id,
+                        pkg_id,
+                        pkg_res.value.remote_tarball.slice(string_buf),
+                        ctx,
+                        patch_info.nameAndVersionHash(),
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.InvalidURL => {
+                            @panic("ooopsies");
+                        },
+                    };
+                },
                 else => {
-                    @panic("todo!!!!");
+                    unreachable;
                 },
             }
 
@@ -887,6 +996,40 @@ pub fn installIsolatedPackages(manager: *PackageManager, install_root_dependenci
             if (wait.err) |err| {
                 Output.err(err, "failed to install packages", .{});
                 Global.exit(1);
+            }
+        }
+
+        {
+            next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
+                const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+                const step = entry_step.load(.monotonic);
+
+                if (step == .done) {
+                    continue;
+                }
+
+                std.debug.print("entry not done: {d}", .{entry_id});
+
+                const deps = store.entries.items(.dependencies)[entry_id.get()];
+                for (deps.slice()) |dep| {
+                    const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
+                    if (dep_step != .done) {
+                        std.debug.print(", parents:\n - ", .{});
+                        const parent_ids = Store.Entry.debugGatherAllParents(entry_id, store);
+                        for (parent_ids) |parent_id| {
+                            if (parent_id == .root) {
+                                std.debug.print("root ", .{});
+                            } else {
+                                std.debug.print("{d} ", .{parent_id.get()});
+                            }
+                        }
+
+                        std.debug.print("\n", .{});
+                        continue :next_entry;
+                    }
+                }
+
+                std.debug.print(" and is able to run\n", .{});
             }
         }
 
@@ -1196,6 +1339,42 @@ pub const Store = struct {
     entries: Entry.List,
     nodes: Node.List,
 
+    pub fn isCycle(this: *const Store, id: Entry.Id, maybe_parent_id: Entry.Id) bool {
+        var i: usize = 0;
+        var len: usize = 0;
+
+        const entry_parents = this.entries.items(.parents);
+
+        var parents: std.AutoArrayHashMapUnmanaged(Entry.Id, void) = .empty;
+        defer parents.deinit(bun.default_allocator);
+
+        for (entry_parents[id.get()].slice()) |parent_id| {
+            if (parent_id == .invalid) {
+                continue;
+            }
+            if (parent_id == maybe_parent_id) {
+                return true;
+            }
+            parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+        }
+
+        len = parents.count();
+        while (i < len) {
+            for (entry_parents[parents.entries.items(.key)[i].get()].slice()) |parent_id| {
+                if (parent_id == .invalid) {
+                    continue;
+                }
+                if (parent_id == maybe_parent_id) {
+                    return true;
+                }
+                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+            }
+            i += 1;
+        }
+
+        return false;
+    }
+
     pub const Installer = struct {
         lockfile: *const Lockfile,
         manager: *PackageManager,
@@ -1204,19 +1383,108 @@ pub const Store = struct {
         tasks: bun.UnboundedQueue(Task, .next) = .{},
         preallocated_tasks: Task.Preallocated,
 
-        // pub fn enqueueParent(this: *Installer, entry_id: Entry.Id) void {}
+        // pub fn startTask(this: *Installer, entry_id: Entry.Id) void {
+        //     const should_be_uninitialized = this.store.entries.items(.step)[entry_id.get()].swap(.link_package, .monotonic);
 
-        pub fn scheduleTask(this: *Installer, entry_id: Entry.Id, step: Task.Step) void {
+        //     bun.debugAssert(should_be_uninitialized == .uninitialized);
+
+        //     const task = this.preallocated_tasks.get();
+
+        //     task.* = .{
+        //         .entry_id = entry_id,
+        //         .installer = this,
+        //     };
+
+        //     _ = this.manager.incrementPendingTasks(1);
+        //     this.manager.thread_pool.schedule(.from(&task.task));
+        // }
+
+        pub fn resumeTask(this: *Installer, entry_id: Entry.Id) void {
             const task = this.preallocated_tasks.get();
+
             task.* = .{
                 .entry_id = entry_id,
                 .installer = this,
-                .step = step,
             };
 
             _ = this.manager.incrementPendingTasks(1);
             this.manager.thread_pool.schedule(.from(&task.task));
         }
+
+        pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
+            if (this.manager.task_queue.fetchRemove(task_id.get())) |removed| {
+                for (removed.value.items) |install_ctx| {
+                    const entry_id = install_ctx.isolated_package_install_context;
+                    this.resumeTask(entry_id);
+                }
+            }
+        }
+
+        pub fn onTask(this: *Installer, task: *Installer.Task) void {
+            const entries = this.store.entries.slice();
+            const entry_steps = entries.items(.step);
+            const step = entry_steps[task.entry_id.get()].load(.monotonic);
+
+            if (step != .done) {
+                // only done will unblock other packages
+                return;
+            }
+
+            const entry_deps = entries.items(.dependencies);
+
+            next_entry: for (0..entries.len) |_entry_id| {
+                const entry_id: Entry.Id = .from(@intCast(_entry_id));
+
+                const entry_step = entry_steps[entry_id.get()].load(.monotonic);
+                if (entry_step != .blocked) {
+                    continue;
+                }
+
+                const deps = entry_deps[entry_id.get()];
+                for (deps.slice()) |dep| {
+                    switch (entry_steps[dep.entry_id.get()].load(.monotonic)) {
+                        .done => {},
+                        else => {
+                            if (!this.store.isCycle(entry_id, dep.entry_id)) {
+                                continue :next_entry;
+                            }
+                        },
+                    }
+                }
+
+                entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                this.resumeTask(entry_id);
+            }
+        }
+
+        // pub fn scheduleAvailableTasks(this: *Installer) void {
+        //     // const entries = this.store.entries.slice();
+        //     // const entry_steps = entries.items(.step);
+        //     // const entry_dependencies = entries.items(.dependency);
+
+        //     // for (0..entries.len) |_entry_id| {
+        //     //     const entry_id: Entry.Id = .from(@intCast(_entry_id));
+
+        //     //     const entry_step = entry_steps[entry_id]
+        //     //     if (entry_steps[entry_id.get()].load(.monotonic) == .done) {
+        //     //         continue;
+        //     //     }
+
+        //     //     const deps = entry_dependencies[entry_id.get()];
+
+        //     //     var available = true;
+
+        //     //     for (deps.slice()) |dep| {
+        //     //         if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+        //     //             available = false;
+        //     //         }
+        //     //     }
+
+        //     //     if (available) {
+        //     //         this.scheduleTask(entry_id);
+        //     //     }
+        //     // }
+        // }
 
         const Task = struct {
             const Preallocated = bun.HiveArray(Task, 128).Fallback;
@@ -1224,51 +1492,58 @@ pub const Store = struct {
             entry_id: Entry.Id,
             installer: *Installer,
 
-            step: Step,
+            // step: Step,
 
             task: ThreadPool.Task = .{ .callback = &callback },
             next: ?*Task = null,
 
             pub const Step = enum(u8) {
-                link_package,
-                symlink_dependencies,
+                uninitialized,
 
+                link_package,
+
+                // blocked can only happen here
+
+                @"symlink dependencies and their binaries",
                 @"run preinstall",
                 binaries,
-                @"run (pre/post)prepare",
-                @"run (post)install",
+                @"run (pre/post)prepare and (post)install",
                 done,
 
                 blocked,
-                waiting_for_script_subprocess,
             };
 
+            fn step(this: *const Task) Step {
+                return this.installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic);
+            }
+
+            fn setStep(this: *Task, new_step: Step) void {
+                this.installer.store.entries.items(.step)[this.entry_id.get()].store(new_step, .monotonic);
+            }
+
             fn nextStep(this: *Task) Step {
-                if (this.step == .done) return .done;
-                const current_step: u8 = @intFromEnum(this.step);
-                this.step = @enumFromInt(current_step + 1);
+                const current_step = this.step();
+                if (current_step == .done) return .done;
 
-                // switch (this.step) {
-                //     .@"run preinstall" => {
-                //         // might be blocked
-                //         // if (blocked) {
-                //         //     return .blocked;
-                //         // }
+                const next_step: Step = @enumFromInt(@intFromEnum(current_step) + 1);
+                this.setStep(next_step);
 
-                //         return this.step;
-                //     }
+                return next_step;
+            }
 
-                // }
-                return this.step;
+            fn done(this: *Task) void {
+                this.installer.tasks.push(this);
+                this.installer.manager.decrementPendingTasks();
+                this.installer.manager.wake();
+            }
+
+            fn blocked(this: *Task) void {
+                std.debug.print("BLOCKED!!!!!\n", .{});
+                this.installer.store.entries.items(.step)[this.entry_id.get()].store(.blocked, .monotonic);
+                this.done();
             }
 
             fn run(this: *Task) OOM!void {
-
-                // defer {
-                //     // _ = PackageManager.get().decrementPendingTasks();
-                //     PackageManager.get().wake();
-                // }
-
                 const installer = this.installer;
 
                 const pkgs = installer.lockfile.packages.slice();
@@ -1279,7 +1554,10 @@ pub const Store = struct {
 
                 const entries = installer.store.entries.slice();
                 const entry_node_ids = entries.items(.node_id);
+                const entry_parent_ids = entries.items(.parent_id);
+                const entry_parents = entries.items(.parents);
                 const entry_dependencies = entries.items(.dependencies);
+                const entry_steps = entries.items(.step);
 
                 const nodes = installer.store.nodes.slice();
                 const node_pkg_ids = nodes.items(.pkg_id);
@@ -1289,14 +1567,16 @@ pub const Store = struct {
                 const node_id = entry_node_ids[this.entry_id.get()];
                 const pkg_id = node_pkg_ids[node_id.get()];
                 const dep_id = node_dep_ids[node_id.get()];
-                _ = dep_id;
                 const peers = node_peers[node_id.get()];
 
                 const pkg_name = pkg_names[pkg_id];
                 const pkg_name_hash = pkg_name_hashes[pkg_id];
                 const pkg_res = pkg_resolutions[pkg_id];
 
-                return next_step: switch (this.step) {
+                return next_step: switch (this.step()) {
+                    .uninitialized => {
+                        @panic("bad state!");
+                    },
                     .link_package => {
                         const patch_info = try installer.packagePatchInfo(
                             pkg_name,
@@ -1304,12 +1584,15 @@ pub const Store = struct {
                             &pkg_res,
                         );
 
-                        const cache_dir, const cache_dir_subpath = this.installer.packageCacheDirAndSubpath(
+                        const cache_dir, const cache_dir_path, const pkg_cache_dir_subpath = this.installer.packageCacheDirAndSubpath(
                             pkg_name,
                             &pkg_res,
                             patch_info,
                         );
-                        defer cache_dir_subpath.deinit();
+                        defer {
+                            cache_dir_path.deinit();
+                            pkg_cache_dir_subpath.deinit();
+                        }
 
                         var dest_dir_subpath: bun.RelPath(.{}) = .init();
                         defer dest_dir_subpath.deinit();
@@ -1324,44 +1607,194 @@ pub const Store = struct {
                         );
 
                         // link the package
-                        if (comptime Environment.isMac) hardlink_fallback: {
-                            switch (sys.clonefileat(cache_dir, cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
-                                .result => {
-                                    // success! move to next step
-                                    continue :next_step this.nextStep();
-                                },
-                                .err => |err| {
-                                    switch (err.getErrno()) {
-                                        .XDEV => break :hardlink_fallback,
-                                        .OPNOTSUPP => break :hardlink_fallback,
-                                        .NOENT => {
-                                            const parent_dest_dir = std.fs.path.dirname(dest_dir_subpath.slice()) orelse {
-                                                @panic("TODO: return error.ENOENT back to main thread");
-                                            };
+                        if (comptime Environment.isMac) {
+                            if (install.PackageInstall.supported_method == .clonefile) hardlink_fallback: {
+                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
+                                    .result => {
+                                        // success! move to next step
+                                        continue :next_step this.nextStep();
+                                    },
+                                    .err => |err| {
+                                        switch (err.getErrno()) {
+                                            .XDEV => break :hardlink_fallback,
+                                            .OPNOTSUPP => break :hardlink_fallback,
+                                            .NOENT => {
+                                                const parent_dest_dir = std.fs.path.dirname(dest_dir_subpath.slice()) orelse {
+                                                    @panic("TODO: return error.ENOENT back to main thread");
+                                                };
 
-                                            FD.cwd().makePath(u8, parent_dest_dir) catch {};
+                                                FD.cwd().makePath(u8, parent_dest_dir) catch {};
 
-                                            switch (sys.clonefileat(cache_dir, cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
-                                                .result => {
-                                                    continue :next_step this.nextStep();
-                                                },
-                                                .err => {
-                                                    @panic("TODO: return error back to main thread");
-                                                },
-                                            }
-                                        },
-                                        else => {
-                                            @panic("oooopss!");
-                                        },
-                                    }
+                                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
+                                                    .result => {
+                                                        continue :next_step this.nextStep();
+                                                    },
+                                                    .err => {
+                                                        @panic("TODO: return error back to main thread");
+                                                    },
+                                                }
+                                            },
+                                            else => {
+                                                @panic("oooopss!");
+                                            },
+                                        }
+                                    },
+                                }
+                            }
+                        }
+
+                        var cached_package_dir = (if (comptime Environment.isWindows)
+                            bun.openDirNoRenamingOrDeletingWindows(cache_dir, pkg_cache_dir_subpath.sliceZ())
+                        else
+                            bun.openDir(cache_dir.stdDir(), pkg_cache_dir_subpath.sliceZ())) catch {
+                            @panic("TODO: report error");
+                        };
+                        defer cached_package_dir.close();
+
+                        var walker: Walker = try .walk(
+                            cached_package_dir,
+                            bun.default_allocator,
+                            &.{},
+                            &.{},
+                        );
+                        defer walker.deinit();
+
+                        while (walker.next() catch @panic("todo!")) |entry| {
+                            if (comptime Environment.isWindows) {
+                                continue;
+                            }
+
+                            const dest_save = dest_dir_subpath.save();
+                            defer dest_save.restore();
+
+                            dest_dir_subpath.append(entry.path);
+
+                            switch (entry.kind) {
+                                .directory => {
+                                    bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_dir_subpath.slice()) catch {};
                                 },
+                                .file => {
+                                    sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch |err| {
+                                        switch (err) {
+                                            error.EEXIST => {
+                                                sys.unlinkat(FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {};
+                                                sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {
+                                                    @panic("OOOPS!");
+                                                };
+                                            },
+                                            error.ENOENT => {
+                                                if (dest_dir_subpath.dirname()) |dest_dir_dir_path| {
+                                                    bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_dir_dir_path) catch {};
+                                                }
+                                                sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {
+                                                    @panic("OOOPS!!");
+                                                };
+                                            },
+                                            else => {
+                                                @panic("OOPS!");
+                                            },
+                                        }
+                                    };
+                                },
+                                else => {},
                             }
                         }
 
                         continue :next_step this.nextStep();
                     },
-                    .symlink_dependencies => {
+                    .@"symlink dependencies and their binaries" => {
+
+                        // before dependencies can be symlinked to the node_modules for this package, the dependencies
+                        // need to have their binaries linked. Before their binaries can be linked, they need to run their
+                        // preinstall scripts. Stop here if any dependencies are not `done`
+
+                        const dependencies = entry_dependencies[this.entry_id.get()];
+                        const parents = entry_parents[this.entry_id.get()];
+                        _ = parents;
+                        const parent_id = entry_parent_ids[this.entry_id.get()];
+                        _ = parent_id;
+                        for (dependencies.slice()) |dep| {
+                            if (entry_steps[dep.entry_id.get()].load(.monotonic) != .done) {
+                                if (installer.store.isCycle(this.entry_id, dep.entry_id)) {
+                                    continue;
+                                }
+
+                                this.blocked();
+                                return;
+                            }
+                        }
+
                         installer.store.linkDependencies(installer.lockfile, this.entry_id);
+
+                        hoisted_symlink: {
+                            var hidden_hoisted_node_modules: bun.RelPath(.{}) = .init();
+                            defer hidden_hoisted_node_modules.deinit();
+
+                            hidden_hoisted_node_modules.append(
+                                "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
+                            );
+                            hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
+
+                            var target: bun.RelPath(.{}) = .init();
+                            defer target.deinit();
+
+                            target.append("..");
+                            if (strings.containsChar(pkg_name.slice(installer.lockfile.buffers.string_bytes.items), '/')) {
+                                // assume valid scoped package name
+                                target.append("..");
+                            }
+                            Entry.appendEntryPath(
+                                &target,
+                                pkg_id,
+                                peers,
+                                installer.lockfile.buffers.string_bytes.items,
+                                pkg_names,
+                                pkg_resolutions,
+                            );
+
+                            if (comptime Environment.isWindows) {
+                                var full_target: bun.AbsPath(.{}) = .initTopLevelDir();
+                                defer full_target.deinit();
+
+                                Entry.appendStorePath(
+                                    &full_target,
+                                    pkg_id,
+                                    peers,
+                                    installer.lockfile.buffers.string_bytes.ietms,
+                                    pkg_names,
+                                    pkg_resolutions,
+                                );
+
+                                sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch |err| switch (err) {
+                                    error.ENOENT => {
+                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), hidden_hoisted_node_modules.dirname() orelse unreachable) catch {
+                                            break :hoisted_symlink;
+                                        };
+                                        sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch {
+                                            break :hoisted_symlink;
+                                        };
+                                    },
+                                    else => {
+                                        break :hoisted_symlink;
+                                    },
+                                };
+                            } else {
+                                sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch |err| switch (err) {
+                                    error.ENOENT => {
+                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), hidden_hoisted_node_modules.dirname() orelse unreachable) catch {
+                                            break :hoisted_symlink;
+                                        };
+                                        sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch {
+                                            break :hoisted_symlink;
+                                        };
+                                    },
+                                    else => {
+                                        break :hoisted_symlink;
+                                    },
+                                };
+                            }
+                        }
+
                         continue :next_step this.nextStep();
                     },
                     .@"run preinstall" => {
@@ -1386,34 +1819,67 @@ pub const Store = struct {
                         continue :next_step this.nextStep();
                     },
                     .binaries => {
-                        if (pkg_bins[pkg_id].tag != .none) {}
+                        const bin = pkg_bins[pkg_id];
+                        if (bin.tag == .none) {
+                            continue :next_step this.nextStep();
+                        }
+
+                        const string_buf = installer.lockfile.buffers.string_bytes.items;
+                        const dependencies = installer.lockfile.buffers.dependencies.items;
+
+                        const dep_name = dependencies[dep_id].name.slice(string_buf);
+
+                        var abs_target_buf: bun.PathBuffer = undefined;
+                        var abs_dest_buf: bun.PathBuffer = undefined;
+                        var rel_buf: bun.PathBuffer = undefined;
+
+                        var node_modules_path: bun.RelPath(.{}) = .init();
+                        defer node_modules_path.deinit();
+
+                        Entry.appendStoreNodeModulesPath(
+                            &node_modules_path,
+                            pkg_id,
+                            peers,
+                            string_buf,
+                            pkg_names,
+                            pkg_resolutions,
+                        );
+
+                        const bin_linker: Bin.Linker = .{
+                            .bin = bin,
+                            .global_bin_path = installer.manager.options.bin_path,
+                            .package_name = strings.StringOrTinyString.init(dep_name),
+                            .string_buf = string_buf,
+                            .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
+                            .seen = null,
+                            .node_modules_path = node_modules_path.slice(),
+                            .node_modules = undefined,
+                            .abs_target_buf = &abs_target_buf,
+                            .abs_dest_buf = &abs_dest_buf,
+                            .rel_buf = &rel_buf,
+                        };
+
+                        _ = bin_linker;
+
                         continue :next_step this.nextStep();
                     },
-                    // .preinstall => {
-
-                    // },
-                    // .binaries => {
-
-                    // },
-                    // .install_and_postinstall => {}
-
-                    else => {
+                    .@"run (pre/post)prepare and (post)install" => {
+                        if (!installer.manager.options.do.run_scripts) {
+                            continue :next_step this.nextStep();
+                        }
                         continue :next_step this.nextStep();
                     },
 
                     .done => {
-                        _ = this.installer.manager.decrementPendingTasks();
-                        this.installer.manager.wake();
+                        this.done();
+                        return;
                     },
 
                     .blocked => {
-                        _ = this.installer.manager.decrementPendingTasks();
-                        this.installer.manager.wake();
-                    },
-
-                    .waiting_for_script_subprocess => {
-                        _ = this.installer.manager.decrementPendingTasks();
-                        this.installer.manager.wake();
+                        // this.setStep(.@"symlink dependencies and their binaries");
+                        this.done();
+                        return;
+                        // continue :next_step .@"symlink dependencies and their binaries";
                     },
                 };
             }
@@ -1427,48 +1893,20 @@ pub const Store = struct {
             }
         };
 
-        pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
-            if (this.manager.task_queue.fetchRemove(task_id.get())) |removed| {
-                for (removed.value.items) |install_ctx| {
-                    const entry_id = install_ctx.isolated_package_install_context;
-                    this.scheduleTask(entry_id, .link_package);
-                }
-            }
-        }
-
         pub fn packageCacheDirAndSubpath(
             this: *Installer,
             pkg_name: String,
             pkg_res: *const Resolution,
             patch_info: PatchInfo,
-        ) struct { FD, bun.RelPath(.{}) } {
+        ) struct { FD, bun.AbsPath(.{}), bun.RelPath(.{}) } {
             const string_buf = this.lockfile.buffers.string_bytes.items;
 
-            const dir, const subpath = switch (pkg_res.tag) {
-                .npm => .{
-                    this.manager.getCacheDirectory(),
-                    this.manager.cachedNPMPackageFolderName(
-                        pkg_name.slice(string_buf),
-                        pkg_res.value.npm.version,
-                        patch_info.contentsHash(),
-                    ),
-                },
-                .git => .{
-                    this.manager.getCacheDirectory(),
-                    this.manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
-                },
-                .github => .{
-                    this.manager.getCacheDirectory(),
-                    this.manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
-                },
-                .local_tarball => .{
-                    this.manager.getCacheDirectory(),
-                    this.manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
-                },
-                .remote_tarball => .{
-                    this.manager.getCacheDirectory(),
-                    this.manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
-                },
+            const subpath = switch (pkg_res.tag) {
+                .npm => this.manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                .git => this.manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
+                .github => this.manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
+                .local_tarball => this.manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
+                .remote_tarball => this.manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
 
                 // should never reach this function. they aren't cached!
                 .workspace => unreachable,
@@ -1481,7 +1919,9 @@ pub const Store = struct {
                 },
             };
 
-            return .{ .fromStdDir(dir), .from(subpath) };
+            const cache_dir, const abs_cache_dir_path = this.manager.getCacheDirectoryAndAbsPath();
+
+            return .{ .fromStdDir(cache_dir), .init(abs_cache_dir_path), .from(subpath) };
         }
 
         const PatchInfo = union(enum) {
@@ -1605,6 +2045,13 @@ pub const Store = struct {
         var maybe_entry_node_modules_dir: ?FD = null;
         defer if (maybe_entry_node_modules_dir) |entry_node_modules_dir| entry_node_modules_dir.close();
 
+        std.debug.print("linking deps ({s}@{} - {s}): {d}\n", .{
+            pkg_names[entry_pkg_id].slice(string_buf),
+            pkg_resolutions[entry_pkg_id].fmt(string_buf, .posix),
+            @tagName(pkg_resolutions[entry_pkg_id].tag),
+            entry_dependencies.list.items.len,
+        });
+
         for (entry_dependencies.slice()) |dep_entry_id| {
             const dep_path_save = dep_path.save();
             defer dep_path_save.restore();
@@ -1695,7 +2142,85 @@ pub const Store = struct {
         parent_id: Id,
         dependencies: Dependencies,
 
+        parents: Parents,
+
         step: std.atomic.Value(Installer.Task.Step) = .init(.link_package),
+
+        // TODO: this should just be an array list.
+        const Parents = union(enum) {
+            id: Id,
+            ids: std.ArrayListUnmanaged(Id),
+
+            pub fn slice(this: *const @This()) []const Id {
+                return switch (this.*) {
+                    .id => |id| &.{id},
+                    .ids => this.ids.items,
+                };
+            }
+
+            pub fn init(id: Id) @This() {
+                return .{ .id = id };
+            }
+
+            pub fn append(this: *@This(), allocator: std.mem.Allocator, id: Id) OOM!void {
+                switch (this.*) {
+                    .id => |existing_id| {
+                        var ids: std.ArrayListUnmanaged(Id) = try .initCapacity(allocator, 2);
+                        ids.appendSliceAssumeCapacity(&.{ existing_id, id });
+                        this.* = .{ .ids = ids };
+                    },
+                    .ids => {
+                        try this.ids.append(allocator, id);
+                    },
+                }
+            }
+
+            pub fn contains(this: *const @This(), id: Id) bool {
+                switch (this.*) {
+                    .id => |parent_id| return id == parent_id,
+                    .ids => {
+                        for (this.ids.items) |parent_id| {
+                            if (id == parent_id) {
+                                return true;
+                            }
+                        }
+                    },
+                }
+
+                return false;
+            }
+        };
+
+        pub fn debugGatherAllParents(entry_id: Id, store: *const Store) []const Id {
+            var i: usize = 0;
+            var len: usize = 0;
+
+            const entry_parents = store.entries.items(.parents);
+
+            var parents: std.AutoArrayHashMapUnmanaged(Entry.Id, void) = .empty;
+            // defer parents.deinit(bun.default_allocator);
+
+            for (entry_parents[entry_id.get()].slice()) |parent_id| {
+                if (parent_id == .invalid) {
+                    continue;
+                }
+                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+            }
+
+            len = parents.count();
+            while (i < len) {
+                for (entry_parents[parents.entries.items(.key)[i].get()].slice()) |parent_id| {
+                    if (parent_id == .invalid) {
+                        continue;
+                    }
+                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    len = parents.count();
+                }
+                i += 1;
+            }
+
+            return parents.keys();
+        }
 
         // const State = enum(u8) {
         //     uninitialized = 0,
@@ -1791,6 +2316,10 @@ pub const Store = struct {
             pub fn tryGet(id: Id) ?u32 {
                 return if (id == .invalid) null else @intFromEnum(id);
             }
+
+            pub fn getOr(id: Id, default: u32) u32 {
+                return if (id == .invalid) default else @intFromEnum(id);
+            }
         };
 
         pub fn appendStoreNodeModulesPath(
@@ -1840,6 +2369,30 @@ pub const Store = struct {
                 else => {
                     const pkg_name = pkg_names[pkg_id];
                     prefix.appendFmt("node_modules/" ++ modules_dir_name ++ "/{s}@{}{}/node_modules/{s}", .{
+                        pkg_name.fmtStorePath(string_buf),
+                        pkg_res.fmt(string_buf, .posix),
+                        Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
+                        pkg_name.slice(string_buf),
+                    });
+                },
+            }
+        }
+
+        pub fn appendEntryPath(
+            prefix: anytype,
+            pkg_id: PackageID,
+            peers: Node.Peers,
+            string_buf: string,
+            pkg_names: []const String,
+            pkg_resolutions: []const Resolution,
+        ) void {
+            const pkg_res = pkg_resolutions[pkg_id];
+            switch (pkg_res.tag) {
+                .root => {},
+                .workspace => {},
+                else => {
+                    const pkg_name = pkg_names[pkg_id];
+                    prefix.appendFmt("{s}@{}{}/node_modules/{s}", .{
                         pkg_name.fmtStorePath(string_buf),
                         pkg_res.fmt(string_buf, .posix),
                         Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
@@ -2063,6 +2616,31 @@ pub const Store = struct {
             list.deinit(allocator);
         }
 
+        pub fn debugPrint(this: *const Node, id: Id, lockfile: *const Lockfile) void {
+            const pkgs = lockfile.packages.slice();
+            const pkg_names = pkgs.items(.name);
+            const pkg_resolutions = pkgs.items(.resolution);
+
+            const string_buf = lockfile.buffers.string_bytes.items;
+            const deps = lockfile.buffers.dependencies.items;
+
+            const dep_name = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].name.slice(string_buf);
+            const dep_version = if (this.dep_id == invalid_dependency_id) "root" else deps[this.dep_id].version.literal.slice(string_buf);
+
+            std.debug.print(
+                \\node({d}):
+                \\  dep: {s}@{s}
+                \\  res: {s}@{}
+                \\
+            , .{
+                id,
+                dep_name,
+                dep_version,
+                pkg_names[this.pkg_id].slice(string_buf),
+                pkg_resolutions[this.pkg_id].fmt(string_buf, .posix),
+            });
+        }
+
         pub const Id = enum(u32) {
             root = 0,
             invalid = max,
@@ -2082,6 +2660,10 @@ pub const Store = struct {
 
             pub fn tryGet(id: Id) ?u32 {
                 return if (id == .invalid) null else @intFromEnum(id);
+            }
+
+            pub fn getOr(id: Id, default: u32) u32 {
+                return if (id == .invalid) default else @intFromEnum(id);
             }
         };
 

@@ -912,13 +912,13 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.posix.linkatZ(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
-                                    std.posix.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
+                                    std.posix.unlinkatZ(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.posix.linkatZ(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
                                 };
 
                                 real_file_count += 1;
@@ -1176,7 +1176,7 @@ pub const PackageInstall = struct {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
-                            _ = PackageManager.get().decrementPendingTasks();
+                            PackageManager.get().decrementPendingTasks();
                             PackageManager.get().wake();
                         }
 

@@ -8,6 +8,7 @@ const Global = bun.Global;
 const JSC = bun.JSC;
 const Timer = std.time.Timer;
 const string = bun.string;
+const Store = bun.install.Store;
 
 const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
@@ -32,6 +33,8 @@ pub const LifecycleScriptSubprocess = struct {
     foreground: bool = false,
     optional: bool = false,
     started_at: u64 = 0,
+
+    entry_id: ?Store.Entry.Id = null,
 
     heap: bun.io.heap.IntrusiveField(LifecycleScriptSubprocess) = .{},
 
@@ -382,6 +385,13 @@ pub const LifecycleScriptSubprocess = struct {
                         );
                     }
                 }
+
+                // if (this.entry_id) |entry_id| {
+                //     this.manager.store_tasks.set(entry_id);
+                //     this.manager.wake();
+                //     _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                //     this.deinit();
+                // }
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts.items[new_script_index] != null) {

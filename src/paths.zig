@@ -90,6 +90,20 @@ pub fn RelPath(comptime opts: Options) type {
             return this._buf[0..this.len :0];
         }
 
+        pub fn basename(this: *@This()) string {
+            return std.fs.path.basename(this.slice());
+        }
+
+        pub fn basenameZ(this: *@This()) stringZ {
+            const full = this.sliceZ();
+            const base = std.fs.path.basename(full);
+            return full[full.len - base.len ..][0..base.len :0];
+        }
+
+        pub fn dirname(this: *@This()) ?string {
+            return std.fs.path.dirname(this.slice());
+        }
+
         pub fn buf(this: *@This()) []u8 {
             return this._buf;
         }

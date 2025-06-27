@@ -1148,7 +1148,6 @@ const PackageManifestMap = struct {
 pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
 
-    // TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
     cache_directory_path: stringZ = "",
     temp_dir_: ?std.fs.Dir = null,
     temp_dir_path: stringZ = "",
@@ -1244,7 +1243,7 @@ pub const PackageManager = struct {
     global_link_dir: ?std.fs.Dir = null,
     global_dir: ?std.fs.Dir = null,
     global_link_dir_path: string = "",
-    wait_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    // wait_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
     onWake: WakeHandler = .{},
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
@@ -1734,7 +1733,7 @@ pub const PackageManager = struct {
             this.onWake.getHandler()(ctx, this);
         }
 
-        _ = this.wait_count.fetchAdd(1, .monotonic);
+        // _ = this.wait_count.fetchAdd(1, .monotonic);
         this.event_loop.wakeup();
     }
 
@@ -2135,6 +2134,11 @@ pub const PackageManager = struct {
             this.cache_directory_ = this.ensureCacheDirectory();
             break :brk this.cache_directory_.?;
         };
+    }
+
+    pub inline fn getCacheDirectoryAndAbsPath(this: *PackageManager) struct { std.fs.Dir, [:0]const u8 } {
+        const cache_dir = this.getCacheDirectory();
+        return .{ cache_dir, this.cache_directory_path };
     }
 
     pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
@@ -4942,7 +4946,7 @@ pub const PackageManager = struct {
         var patch_tasks_iter = patch_tasks_batch.iterator();
         while (patch_tasks_iter.next()) |ptask| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-            _ = manager.decrementPendingTasks();
+            manager.decrementPendingTasks();
             defer ptask.deinit();
             try ptask.runFromMainThread(manager, log_level);
             if (ptask.callback == .apply) {
@@ -4977,11 +4981,21 @@ pub const PackageManager = struct {
             }
         }
 
+        if (Ctx == *Store.Installer) {
+            const installer: *Store.Installer = extract_ctx;
+            const batch = installer.tasks.popBatch();
+            var iter = batch.iterator();
+            while (iter.next()) |task| {
+                defer installer.preallocated_tasks.put(task);
+                installer.onTask(task);
+            }
+        }
+
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
         var network_tasks_iter = network_tasks_batch.iterator();
         while (network_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-            _ = manager.decrementPendingTasks();
+            manager.decrementPendingTasks();
             // We cannot free the network task at the end of this scope.
             // It may continue to be referenced in a future task.
 
@@ -5358,7 +5372,7 @@ pub const PackageManager = struct {
         while (resolve_tasks_iter.next()) |task| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             defer manager.preallocated_resolve_tasks.put(task);
-            _ = manager.decrementPendingTasks();
+            manager.decrementPendingTasks();
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
@@ -8887,8 +8901,8 @@ pub const PackageManager = struct {
         return manager.pending_tasks.fetchAdd(count, .monotonic);
     }
 
-    pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
-        return manager.pending_tasks.fetchSub(1, .monotonic);
+    pub inline fn decrementPendingTasks(manager: *PackageManager) void {
+        _ = manager.pending_tasks.fetchSub(1, .monotonic);
     }
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {

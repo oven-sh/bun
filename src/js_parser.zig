@@ -12409,37 +12409,7 @@ pub fn NewParser_(
             }
         }
 
-        fn visitAndAppendStmt(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt) anyerror!void {
-            // By default any statement ends the const local prefix
-            const was_after_after_const_local_prefix = p.current_scope.is_after_const_local_prefix;
-            p.current_scope.is_after_const_local_prefix = true;
-
-            switch (@as(Stmt.Tag, stmt.data)) {
-                .s_directive, .s_comment, .s_empty => {
-                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    try stmts.append(stmt.*);
-                },
-                .s_type_script => {
-                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    return;
-                },
-                .s_debugger => {
-                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
-                    if (p.define.drop_debugger) {
-                        return;
-                    }
-                    try stmts.append(stmt.*);
-                },
-
-                inline .s_enum, .s_local => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)), was_after_after_const_local_prefix),
-                inline else => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag))),
-
-                // Only used by the bundler for lazy export ASTs.
-                .s_lazy_export => unreachable,
-            }
-        }
-
-        const visitors = @import("ast/visitStmt.zig").Visitors(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitors;
+        const visitAndAppendStmt = @import("ast/visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
 
         pub fn isExportToEliminate(p: *P, ref: Ref) bool {
             const symbol_name = p.loadNameFromRef(ref);

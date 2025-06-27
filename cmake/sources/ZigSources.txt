@@ -13,7 +13,9 @@ src/api/schema.zig
 src/ast/base.zig
 src/ast/Parser.zig
 src/ast/parseStmt.zig
+src/ast/parseSuffix.zig
 src/ast/SideEffects.zig
+src/ast/template.zig
 src/ast/visitExpr.zig
 src/ast/visitors.zig
 src/async/posix_event_loop.zig

@@ -18,7 +18,6 @@ Usage: bun scripts/sortImports [options] <files...>
 Options:
   --help                   Show this help message
   --no-include-pub         Exclude pub imports from sorting
-  --no-remove-unused       Don't remove unused imports
   --include-unsorted       Process files even if they don't have @sortImports marker
 
 Markers:

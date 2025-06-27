@@ -290,7 +290,7 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun";
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
         try log.addMsg(.{

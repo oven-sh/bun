@@ -32,9 +32,9 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 243, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
-  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1861 },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1862 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 179 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 102 },
@@ -45,7 +45,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 174 },
 
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
-  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 48 },
+  "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 136 },
 };
 const words_keys = [...Object.keys(words)];

@@ -25,6 +25,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub const deref = RefCount.deref;
         pub const Socket = uws.NewSocketHandler(ssl);
 
+        pub const DeflateNegotiationResult = struct {
+            enabled: bool = false,
+            params: WebSocketDeflate.Params = .{},
+        };
+
         ref_count: RefCount,
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket,
@@ -343,6 +348,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
             var visited_protocol = this.websocket_protocol == 0;
             // var visited_version = false;
+            var deflate_result = DeflateNegotiationResult{};
 
             if (response.status_code != 101) {
                 this.terminate(ErrorCode.expected_101_status_code);
@@ -354,17 +360,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     "Connection".len => {
                         if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {
                             connection_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
-                                break;
-                            }
                         }
                     },
                     "Upgrade".len => {
                         if (upgrade_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Upgrade", false)) {
                             upgrade_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
-                                break;
-                            }
                         }
                     },
                     "Sec-WebSocket-Version".len => {
@@ -378,9 +378,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     "Sec-WebSocket-Accept".len => {
                         if (websocket_accept_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Accept", false)) {
                             websocket_accept_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
-                                break;
-                            }
                         }
                     },
                     "Sec-WebSocket-Protocol".len => {
@@ -390,9 +387,61 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                                 return;
                             }
                             visited_protocol = true;
+                        }
+                    },
+                    "Sec-WebSocket-Extensions".len => {
+                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions", false)) {
+                            // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
+                            var it = std.mem.splitScalar(u8, header.value, ',');
+                            while (it.next()) |ext_str| {
+                                var ext_it = std.mem.splitScalar(u8, std.mem.trim(u8, ext_str, " \t"), ';');
+                                const ext_name = std.mem.trim(u8, ext_it.next() orelse "", " \t");
+                                if (strings.eqlComptime(ext_name, "permessage-deflate")) {
+                                    deflate_result.enabled = true;
+                                    while (ext_it.next()) |param_str| {
+                                        var param_it = std.mem.splitScalar(u8, std.mem.trim(u8, param_str, " \t"), '=');
+                                        const key = std.mem.trim(u8, param_it.next() orelse "", " \t");
+                                        const value = std.mem.trim(u8, param_it.next() orelse "", " \t");
 
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
-                                break;
+                                        if (strings.eqlComptime(key, "server_no_context_takeover")) {
+                                            deflate_result.params.server_no_context_takeover = 1;
+                                        } else if (strings.eqlComptime(key, "client_no_context_takeover")) {
+                                            deflate_result.params.client_no_context_takeover = 1;
+                                        } else if (strings.eqlComptime(key, "server_max_window_bits")) {
+                                            if (value.len > 0) {
+                                                // Remove quotes if present
+                                                const trimmed_value = if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"')
+                                                    value[1 .. value.len - 1]
+                                                else
+                                                    value;
+
+                                                if (std.fmt.parseInt(u8, trimmed_value, 10) catch null) |bits| {
+                                                    if (bits >= WebSocketDeflate.Params.MIN_WINDOW_BITS and bits <= WebSocketDeflate.Params.MAX_WINDOW_BITS) {
+                                                        deflate_result.params.server_max_window_bits = bits;
+                                                    }
+                                                }
+                                            }
+                                        } else if (strings.eqlComptime(key, "client_max_window_bits")) {
+                                            if (value.len > 0) {
+                                                // Remove quotes if present
+                                                const trimmed_value = if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"')
+                                                    value[1 .. value.len - 1]
+                                                else
+                                                    value;
+
+                                                if (std.fmt.parseInt(u8, trimmed_value, 10) catch null) |bits| {
+                                                    if (bits >= WebSocketDeflate.Params.MIN_WINDOW_BITS and bits <= WebSocketDeflate.Params.MAX_WINDOW_BITS) {
+                                                        deflate_result.params.client_max_window_bits = bits;
+                                                    }
+                                                }
+                                            } else {
+                                                // client_max_window_bits without value means use default (15)
+                                                deflate_result.params.client_max_window_bits = 15;
+                                            }
+                                        }
+                                    }
+                                    break; // Found and parsed permessage-deflate, stop.
+                                }
                             }
                         }
                     },
@@ -462,7 +511,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Once again for the TCP socket.
                 defer this.deref();
 
-                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len);
+                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
             } else if (this.outgoing_websocket == null) {
@@ -618,6 +667,7 @@ fn buildRequestBody(
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
+            "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
             "{s}" ++
             "{s}" ++
             "\r\n",
@@ -642,5 +692,6 @@ const Async = bun.Async;
 const websocket_client = @import("../websocket_client.zig");
 const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
 const ErrorCode = websocket_client.ErrorCode;
+const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 
 const log = Output.scoped(.WebSocketUpgradeClient, false);

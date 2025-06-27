@@ -677,6 +677,11 @@ pub const Framework = struct {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
         }
+        // Ensure "node" condition is included for server-side rendering in dev mode
+        // This helps with package.json imports field resolution
+        if (mode == .development and (renderer == .server or renderer == .ssr)) {
+            try out.options.conditions.appendSlice(&.{"node"});
+        }
         if (bundler_options.conditions.count() > 0) {
             try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }

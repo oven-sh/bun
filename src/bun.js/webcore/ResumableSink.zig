@@ -384,7 +384,6 @@ pub fn ResumableSink(
                     };
                     this.endPipe(err);
                 } else if (stopStream) {
-                    // this means that we need to pause the stream, this only one way of pausing the stream that is detaching
                     this.pausePipe();
                 }
             }

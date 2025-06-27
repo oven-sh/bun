@@ -1,10 +1,5 @@
-pub fn ParseTypescript(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn ParseTypescript(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -458,7 +453,6 @@ const js_lexer = bun.js_lexer;
 const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
-const JSXTransformType = js_parser.JSXTransformType;
 const ParseStatementOptions = js_parser.ParseStatementOptions;
 const Ref = js_parser.Ref;
 const ScopeOrder = js_parser.ScopeOrder;

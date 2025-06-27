@@ -1,10 +1,5 @@
-pub fn VisitStmt(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn VisitStmt(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -1544,7 +1539,6 @@ const G = js_ast.G;
 const Decl = G.Decl;
 
 const js_parser = bun.js_parser;
-const JSXTransformType = js_parser.JSXTransformType;
 const Prefill = js_parser.Prefill;
 const PrependTempRefsOpts = js_parser.PrependTempRefsOpts;
 const ReactRefresh = js_parser.ReactRefresh;

@@ -1,10 +1,5 @@
-pub fn VisitExpr(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn VisitExpr(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -1595,7 +1590,6 @@ const js_parser = bun.js_parser;
 const ExprIn = js_parser.ExprIn;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const IdentifierOpts = js_parser.IdentifierOpts;
-const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
 const Prefill = js_parser.Prefill;
 const PrependTempRefsOpts = js_parser.PrependTempRefsOpts;

@@ -1,5 +1,5 @@
 - [x] consider splitting visitExpr the same way visitStmt is split up
-- [ ] consider modifying the functions to accept (comptime P: type) rather than the three seperate parser features flags
+- [x] consider modifying the functions to accept (comptime P: type) rather than the three seperate parser features flags
 - [ ] remove template.zig
 - [ ] remove js_parser_longest.zig
 - [ ] remove @noRemoveUnused from any that still have it

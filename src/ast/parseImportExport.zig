@@ -1,10 +1,5 @@
-pub fn ParseImportExport(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn ParseImportExport(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -440,7 +435,6 @@ const Level = js_ast.Op.Level;
 const js_parser = bun.js_parser;
 const ExportClauseResult = js_parser.ExportClauseResult;
 const ImportClause = js_parser.ImportClause;
-const JSXTransformType = js_parser.JSXTransformType;
 const isEvalOrArguments = js_parser.isEvalOrArguments;
 const options = js_parser.options;
 

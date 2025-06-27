@@ -1,10 +1,5 @@
-pub fn Visit(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn Visit(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -17,9 +12,9 @@ pub fn Visit(
         const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
         const isSimpleParameterList = P.isSimpleParameterList;
 
-        pub const visitExpr = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
-        pub const visitExprInOut = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
-        pub const visitAndAppendStmt = @import("visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
+        pub const visitExpr = @import("visitExpr.zig").VisitExpr(P).visitExpr;
+        pub const visitExprInOut = @import("visitExpr.zig").VisitExpr(P).visitExprInOut;
+        pub const visitAndAppendStmt = @import("visitStmt.zig").VisitStmt(P).visitAndAppendStmt;
 
         pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
@@ -1354,7 +1349,6 @@ const ExprIn = js_parser.ExprIn;
 const FnOnlyDataVisit = js_parser.FnOnlyDataVisit;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const ImportItemForNamespaceMap = js_parser.ImportItemForNamespaceMap;
-const JSXTransformType = js_parser.JSXTransformType;
 const PrependTempRefsOpts = js_parser.PrependTempRefsOpts;
 const Ref = js_parser.Ref;
 const RuntimeFeatures = js_parser.RuntimeFeatures;

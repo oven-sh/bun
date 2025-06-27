@@ -1,10 +1,5 @@
-pub fn ParseSuffix(
-    comptime parser_feature__typescript: bool,
-    comptime parser_feature__jsx: JSXTransformType,
-    comptime parser_feature__scan_only: bool,
-) type {
+pub fn ParseSuffix(comptime P: type) type {
     return struct {
-        const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         const jsx_transform_type = P.jsx_transform_type;
         const allow_macros = P.allow_macros;
         const BinaryExpressionVisitor = P.BinaryExpressionVisitor;
@@ -810,7 +805,6 @@ const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
 const DeferredErrors = js_parser.DeferredErrors;
-const JSXTransformType = js_parser.JSXTransformType;
 const SideEffects = js_parser.SideEffects;
 const TypeScript = js_parser.TypeScript;
 const options = js_parser.options;

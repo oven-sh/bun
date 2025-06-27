@@ -2385,7 +2385,7 @@ pub fn NewParser_(
         pub const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
 
-        const skipTypescript_zig = @import("ast/skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const skipTypescript_zig = @import("ast/skipTypescript.zig").SkipTypescript(P);
         pub const skipTypescriptReturnType = skipTypescript_zig.skipTypescriptReturnType;
         pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_zig.skipTypescriptReturnTypeWithMetadata;
         pub const skipTypeScriptType = skipTypescript_zig.skipTypeScriptType;
@@ -2400,7 +2400,7 @@ pub fn NewParser_(
         pub const skipTypeScriptInterfaceStmt = skipTypescript_zig.skipTypeScriptInterfaceStmt;
         pub const skipTypeScriptTypeArguments = skipTypescript_zig.skipTypeScriptTypeArguments;
 
-        const parse_zig = @import("ast/parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const parse_zig = @import("ast/parse.zig").Parse(P);
         pub const parsePrefix = parse_zig.parsePrefix;
         pub const parseSuffix = parse_zig.parseSuffix;
         pub const parseStmt = parse_zig.parseStmt;
@@ -6647,7 +6647,7 @@ pub fn NewParser_(
             };
         }
 
-        const astVisit = @import("ast/visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const astVisit = @import("ast/visit.zig").Visit(P);
         pub const visitStmtsAndPrependTempRefs = astVisit.visitStmtsAndPrependTempRefs;
         pub const recordDeclaredSymbol = astVisit.recordDeclaredSymbol;
         pub const visitExpr = astVisit.visitExpr;

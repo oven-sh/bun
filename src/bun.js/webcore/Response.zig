@@ -658,7 +658,7 @@ pub const Init = struct {
         }
 
         if (try response_init.fastGet(globalThis, .status)) |status_value| {
-            const number = status_value.coerceToInt64(globalThis);
+            const number = try status_value.coerceToInt64(globalThis);
             if ((200 <= number and number < 600) or number == 101) {
                 result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
             } else {

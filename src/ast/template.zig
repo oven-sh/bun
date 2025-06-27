@@ -1,4 +1,4 @@
-pub fn Visit(
+pub fn Template(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,
     comptime parser_feature__scan_only: bool,
@@ -64,9 +64,13 @@ const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
 const AsyncPrefixExpression = js_parser.AsyncPrefixExpression;
+const AwaitOrYield = js_parser.AwaitOrYield;
+const DeferredArrowArgErrors = js_parser.DeferredArrowArgErrors;
 const DeferredErrors = js_parser.DeferredErrors;
 const DeferredTsDecorators = js_parser.DeferredTsDecorators;
 const ExprIn = js_parser.ExprIn;
+const ExprListLoc = js_parser.ExprListLoc;
+const ExprOrLetStmt = js_parser.ExprOrLetStmt;
 const FnOnlyDataVisit = js_parser.FnOnlyDataVisit;
 const FnOrArrowDataParse = js_parser.FnOrArrowDataParse;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
@@ -75,7 +79,9 @@ const ImportItemForNamespaceMap = js_parser.ImportItemForNamespaceMap;
 const ImportKind = js_parser.ImportKind;
 const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
+const LocList = js_parser.LocList;
 const ParenExprOpts = js_parser.ParenExprOpts;
+const ParseBindingOptions = js_parser.ParseBindingOptions;
 const ParseClassOptions = js_parser.ParseClassOptions;
 const ParseStatementOptions = js_parser.ParseStatementOptions;
 const ParsedPath = js_parser.ParsedPath;

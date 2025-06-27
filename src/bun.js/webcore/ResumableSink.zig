@@ -93,6 +93,7 @@ pub fn ResumableSink(
 
                         const bytes = byte_stream.drain().listManaged(bun.default_allocator);
                         defer bytes.deinit();
+                        log("onWrite {}", .{bytes.items.len});
                         _ = onWrite(this.context, bytes.items);
                         onEnd(this.context, err);
                         this.deref();
@@ -103,20 +104,15 @@ pub fn ResumableSink(
                     defer bytes.deinit();
                     // lets write and see if we can still pipe or if we have backpressure
                     if (bytes.items.len > 0) {
-                        if (onWrite(this.context, bytes.items)) {
-                            this.status = .piped;
-                            byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
-                            this.ref(); // one ref for the pipe
-                        } else {
-                            // drained but got backpressure so we need to pause
-                            this.status = .paused;
-                        }
-                    } else {
-                        // no bytes from drain so lets just pipe
-                        this.status = .piped;
-                        byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
-                        this.ref(); // one ref for the pipe
+                        log("onWrite {}", .{bytes.items.len});
+                        // we ignore the return value here because we dont want to pause the stream
+                        // if we pause will just buffer in the pipe and we can do the buffer in one place
+                        _ = onWrite(this.context, bytes.items);
                     }
+                    this.status = .piped;
+                    byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
+                    this.ref(); // one ref for the pipe
+
                     // we only need the stream, we dont need to touch JS side yet
                     this.stream = JSC.WebCore.ReadableStream.Strong.init(stream, this.globalThis);
                     return this;
@@ -180,8 +176,10 @@ pub fn ResumableSink(
             if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer)) |sb| {
                 defer sb.deinit();
                 const bytes = sb.slice();
+                log("jsWrite {}", .{bytes.len});
                 const should_continue = onWrite(this.context, bytes);
                 if (!should_continue) {
+                    log("paused", .{});
                     this.status = .paused;
                 }
                 return JSC.jsBoolean(should_continue);
@@ -204,78 +202,9 @@ pub fn ResumableSink(
         }
 
         pub fn drain(this: *@This()) void {
+            log("drain", .{});
             if (this.status != .paused) {
                 return;
-            }
-
-            if (this.stream.get(this.globalThis)) |stream| {
-                // We have a stream and is a Bytes stream so we can directly read from it!
-                if (stream.ptr == .Bytes) {
-                    const byte_stream: *bun.webcore.ByteStream = stream.ptr.Bytes;
-                    // if pipe is empty, we can pipe otherwise we need
-                    if (byte_stream.pipe.isEmpty()) {
-                        if (byte_stream.has_received_last_chunk) {
-                            this.status = .done;
-                            const err = brk_err: {
-                                const pending = byte_stream.pending.result;
-                                if (pending == .err) {
-                                    const js_err, const was_strong = pending.err.toJSWeak(this.globalThis);
-                                    js_err.ensureStillAlive();
-                                    if (was_strong == .Strong)
-                                        js_err.unprotect();
-                                    break :brk_err js_err;
-                                }
-                                break :brk_err null;
-                            };
-                            const bytes = byte_stream.drain().listManaged(bun.default_allocator);
-                            defer bytes.deinit();
-                            _ = onWrite(this.context, bytes.items);
-                            onEnd(this.context, err);
-
-                            if (this.self.has()) {
-                                // JS owns the stream, so we need to detach the JS and let finalize handle the deref
-                                this.detachJS();
-                            } else {
-                                // no js attached, so we can just deref
-                                this.deref();
-                            }
-                            return;
-                        }
-                        // We can pipe but we also wanna to drain as much as possible first
-                        const bytes = byte_stream.drain().listManaged(bun.default_allocator);
-                        defer bytes.deinit();
-                        // lets write and see if we can still pipe or if we have backpressure
-                        if (bytes.items.len > 0) {
-                            if (onWrite(this.context, bytes.items)) {
-                                this.status = .piped;
-                                byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
-                                this.ref(); // one ref for the pipe
-                            } else {
-                                // drained but got backpressure so we need to pause
-                                this.status = .paused;
-                            }
-                        } else {
-                            // no bytes from drain so lets just pipe
-                            this.status = .piped;
-                            byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
-                            this.ref(); // one ref for the pipe
-                        }
-                        return;
-                    } else if (!this.self.has()) {
-                        // we cannot pipe and we dont have a JS side to attach to
-                        // so we create a JS side and attach it
-                        const self = this.toJS(this.globalThis);
-                        self.ensureStillAlive();
-                        const js_stream = stream.toJS();
-                        js_stream.ensureStillAlive();
-                        _ = Bun__assignStreamIntoResumableSink(this.globalThis, js_stream, self);
-                        this.self = JSC.Strong.Optional.create(self, this.globalThis);
-                        setStream(self, this.globalThis, js_stream);
-                        // we dont need the stream ref anymore we are now on JS side
-                        this.stream.deinit();
-                        // let it fall back to this.self.get()
-                    }
-                }
             }
             if (this.self.get()) |js_this| {
                 const globalObject = this.globalThis;
@@ -367,40 +296,26 @@ pub fn ResumableSink(
                 }
             }
             const chunk = stream.slice();
-            log("onWrite", .{chunk.len});
+            log("onWrite {}", .{chunk.len});
             const stopStream = !onWrite(this.context, chunk);
             const is_done = stream.isDone();
-            defer {
-                if (is_done) {
-                    const err: ?JSC.JSValue = brk_err: {
-                        if (stream == .err) {
-                            const js_err, const was_strong = stream.err.toJSWeak(this.globalThis);
-                            js_err.ensureStillAlive();
-                            if (was_strong == .Strong)
-                                js_err.unprotect();
-                            break :brk_err js_err;
-                        }
-                        break :brk_err null;
-                    };
-                    this.endPipe(err);
-                } else if (stopStream) {
-                    this.pausePipe();
-                }
-            }
-        }
 
-        fn pausePipe(this: *@This()) void {
-            log("pausePipe", .{});
-            if (this.status != .piped) return;
-            this.status = .paused;
-
-            if (this.stream.get(this.globalThis)) |stream_| {
-                if (stream_.ptr == .Bytes) {
-                    stream_.ptr.Bytes.pipe = .{};
-                }
+            if (is_done) {
+                const err: ?JSC.JSValue = brk_err: {
+                    if (stream == .err) {
+                        const js_err, const was_strong = stream.err.toJSWeak(this.globalThis);
+                        js_err.ensureStillAlive();
+                        if (was_strong == .Strong)
+                            js_err.unprotect();
+                        break :brk_err js_err;
+                    }
+                    break :brk_err null;
+                };
+                this.endPipe(err);
+            } else if (stopStream) {
+                // dont make sense pausing the stream here
+                // it will be buffered in the pipe anyways
             }
-            // We ref when we attach the stream so we deref when we detach the stream
-            this.deref();
         }
 
         fn endPipe(this: *@This(), err: ?JSC.JSValue) void {
@@ -416,7 +331,9 @@ pub fn ResumableSink(
                 } else {
                     stream_.done(this.globalThis);
                 }
-                this.stream.deinit();
+                var stream = this.stream;
+                this.stream = .{};
+                stream.deinit();
             }
             // We ref when we attach the stream so we deref when we detach the stream
             this.deref();
@@ -424,6 +341,7 @@ pub fn ResumableSink(
             onEnd(this.context, err);
             if (this.self.has()) {
                 // JS owns the stream, so we need to detach the JS and let finalize handle the deref
+                // this should not happen but lets handle it anyways
                 this.detachJS();
             } else {
                 // no js attached, so we can just deref

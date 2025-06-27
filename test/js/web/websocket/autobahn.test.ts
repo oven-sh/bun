@@ -53,6 +53,8 @@ if (isDockerEnabled()) {
         `${CWD}:/reports`,
         "-p",
         "9002:9002",
+        "--platform",
+        "linux/amd64",
         "--name",
         "fuzzingserver",
         "crossbario/autobahn-testsuite",
@@ -157,7 +159,7 @@ if (isDockerEnabled()) {
       it(`Running test case ${info.id}: ${info.description}`, async () => {
         await runTestCase(i);
         const result = (await getCaseStatus(i)) as { behavior: string };
-        expect(["OK", "INFORMATIONAL", "NON-STRICT"]).toContain(result.behavior);
+        expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
       });
     }
 

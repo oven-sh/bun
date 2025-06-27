@@ -54,8 +54,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         message_is_compressed: bool = false,
 
         const stack_frame_size = 1024;
-        // Maximum size for buffered fragmented messages (100MB)
-        const MAX_BUFFERED_MESSAGE_SIZE = 100 * 1024 * 1024;
         // Minimum message size to compress (RFC 7692 recommendation)
         const MIN_COMPRESS_SIZE = 860;
         // DEFLATE overhead
@@ -240,10 +238,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
             };
 
-            // Dispatch the decompressed data
             this.dispatchData(decompressed.items, kind);
         }
 
+        /// Data will be cloned in C++.
         fn dispatchData(this: *WebSocket, data_: []const u8, kind: Opcode) void {
             var out = this.outgoing_websocket orelse {
                 this.clearData();
@@ -288,12 +286,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.receiving_compressed) {
                 // Always buffer compressed data
                 if (data_.len > 0) {
-                    // Check if buffering this data would exceed the maximum message size
-                    if (this.receive_buffer.count + data_.len > MAX_BUFFERED_MESSAGE_SIZE) {
-                        this.terminate(ErrorCode.message_too_big);
-                        return 0;
-                    }
-
                     var writable = this.receive_buffer.writableWithSize(data_.len) catch {
                         this.terminate(ErrorCode.closed);
                         return 0;

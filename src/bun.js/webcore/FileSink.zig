@@ -80,8 +80,6 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
     this.done = true;
     var readable_stream = this.readable_stream;
     this.readable_stream = .{};
-    this.writer.close();
-
     if (readable_stream.has()) {
         if (this.event_loop_handle.globalObject()) |global| {
             if (readable_stream.get(global)) |*stream| {
@@ -98,6 +96,8 @@ pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) v
         // Clean up the readable stream reference
         readable_stream.deinit();
     }
+
+    this.writer.close();
 
     this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
     this.runPending();

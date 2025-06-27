@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isCI } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -546,7 +546,11 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   test("ReadableStream object type count", async () => {
-    const iterations = 50;
+    const iterations =
+      isASAN && isCI
+        ? // With ASAN, entire process gets killed, including the test runner in CI. Likely an OOM or out of file descriptors.
+          10
+        : 50;
 
     async function main() {
       async function iterate(i: number) {

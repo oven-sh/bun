@@ -71,6 +71,10 @@ pub const Pipe = struct {
     ctx: ?*anyopaque = null,
     onPipe: ?Function = null,
 
+    pub inline fn isEmpty(this: *const Pipe) bool {
+        return this.ctx == null and this.onPipe == null;
+    }
+
     pub const Function = *const fn (
         ctx: *anyopaque,
         stream: streams.Result,

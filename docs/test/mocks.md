@@ -185,7 +185,14 @@ If you want to prevent the original module from being evaluated, you should use 
 
 ### `__mocks__` directory and auto-mocking
 
-Auto-mocking is not supported yet. If this is blocking you from switching to Bun, please file an issue.
+When running `bun test`, modules imported by non-test files will automatically resolve to files in a nearby `__mocks__` directory if one exists. Place manual mocks next to the files you want to mock:
+
+```text
+src/foo.ts
+src/__mocks__/foo.ts
+```
+
+Test files always import the real module while other files in your project get the mocked version.
 
 ### Implementation details
 

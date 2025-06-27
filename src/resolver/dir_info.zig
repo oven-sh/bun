@@ -53,11 +53,19 @@ pub inline fn isInsideNodeModules(this: *const DirInfo) bool {
     return this.flags.contains(.inside_node_modules);
 }
 
+/// Does this directory contain a `__mocks__` folder?
+pub inline fn hasMocks(this: *const DirInfo) bool {
+    return this.flags.contains(.has_mocks);
+}
+
 pub const Flags = enum {
     /// This directory is a node_modules directory
     is_node_modules,
     /// This directory has a node_modules subdirectory
     has_node_modules,
+
+    /// This directory has a __mocks__ subdirectory
+    has_mocks,
 
     inside_node_modules,
 

@@ -26,6 +26,7 @@ const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = bun.Mutex;
 const FileDescriptorType = bun.FileDescriptor;
+const JSC = @import("../bun.js/VirtualMachine.zig");
 const JSC = bun.JSC;
 
 const allocators = @import("../allocators.zig");
@@ -61,6 +62,20 @@ pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
             !strings.startsWith(non_absolute_path, "..\\"))
     else
         true;
+}
+
+const test_name_suffixes = [_][]const u8{ ".test", "_test", ".spec", "_spec" };
+
+fn isTestFilePath(path: string) bool {
+    if (strings.contains(path, "__tests__")) return true;
+    const base = std.fs.path.basename(path);
+    const ext = std.fs.path.extension(base);
+    if (ext.len == 0) return false;
+    const name_without_ext = base[0 .. base.len - ext.len];
+    inline for (test_name_suffixes) |suffix| {
+        if (strings.endsWith(name_without_ext, suffix)) return true;
+    }
+    return false;
 }
 
 pub const SideEffectsData = struct {
@@ -3625,6 +3640,20 @@ pub const Resolver = struct {
     pub fn loadAsFileOrDirectory(r: *ThisResolver, path: string, kind: ast.ImportKind) ?MatchResult {
         const extension_order = r.extension_order;
 
+        if (JSC.VirtualMachine.isBunTest and !isTestFilePath(path)) {
+            const dir = Dirname.dirname(path);
+            if (r.dirInfoCached(dir) catch null) |dinfo| {
+                if (dinfo.hasMocks()) {
+                    const base = std.fs.path.basename(path);
+                    const parts = [_]string{ dir, "__mocks__", base };
+                    const mock_path = r.fs.absBuf(&parts, bufs(.load_as_file));
+                    if (r.loadAsFile(mock_path, extension_order)) |res| {
+                        return res;
+                    }
+                }
+            }
+        }
+
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
             // Determine the package folder by looking at the last node_modules/ folder in the path
@@ -4021,6 +4050,10 @@ pub const Resolver = struct {
             if (entries.getComptimeQuery("node_modules")) |entry| {
                 info.flags.setPresent(.has_node_modules, (entry.entry.kind(rfs, r.store_fd)) == .dir);
             }
+        }
+
+        if (entries.getComptimeQuery("__mocks__")) |entry| {
+            info.flags.setPresent(.has_mocks, (entry.entry.kind(rfs, r.store_fd)) == .dir);
         }
 
         if (r.care_about_bin_folder) {

@@ -528,6 +528,7 @@ src/http/mime_type.zig
 src/http/url_path.zig
 src/http/websocket_client.zig
 src/http/websocket_client/CppWebSocket.zig
+src/http/websocket_client/WebSocketDeflate.zig
 src/http/websocket_client/WebSocketUpgradeClient.zig
 src/http/websocket_http_client.zig
 src/http/websocket.zig

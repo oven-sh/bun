@@ -639,18 +639,51 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    const SourceContentPtr = packed struct(u64) {
-        load_hint: SourceMapLoadHint,
-        data: u62,
+    const SourceProviderKind = enum(u1) { zig, bake };
+    const AnySourceProvider = union(enum) {
+        zig: *SourceProviderMap,
+        bake: *BakeSourceProvider,
 
-        pub const none: SourceContentPtr = .{ .load_hint = .none, .data = 0 };
-
-        fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
-            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)) };
+        pub fn ptr(this: AnySourceProvider) *anyopaque {
+            return switch (this) {
+                .zig => @ptrCast(this.zig),
+                .bake => @ptrCast(this.bake),
+            };
         }
 
-        pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
-            return @ptrFromInt(sc.data);
+        pub fn getSourceMap(
+            this: AnySourceProvider,
+            source_filename: []const u8,
+            load_hint: SourceMapLoadHint,
+            result: ParseUrlResultHint,
+        ) ?SourceMap.ParseUrl {
+            return switch (this) {
+                .zig => this.zig.getSourceMap(source_filename, load_hint, result),
+                .bake => this.bake.getSourceMap(source_filename, load_hint, result),
+            };
+        }
+    };
+
+    const SourceContentPtr = packed struct(u64) {
+        load_hint: SourceMapLoadHint,
+        kind: SourceProviderKind,
+        data: u61,
+
+        pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .zig, .data = 0 };
+
+        fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .zig };
+        }
+
+        fn fromBakeProvider(p: *BakeSourceProvider) SourceContentPtr {
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .bake };
+        }
+
+        pub fn provider(sc: SourceContentPtr) ?AnySourceProvider {
+            switch (sc.kind) {
+                .zig => return .{ .zig = @ptrFromInt(sc.data) },
+                .bake => return .{ .bake = @ptrFromInt(sc.data) },
+            }
         }
     };
 
@@ -735,27 +768,27 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+    const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
+    const found = bun.strings.indexOfT(T, source, needle) orelse return null;
+    const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
+    const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
+    return switch (T) {
+        u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.JSC.ZigString.Slice.init(
+            alloc,
+            bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
+        ),
+        else => @compileError("Not Supported"),
+    };
+}
+
 /// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
 /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 ///
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 pub const SourceProviderMap = opaque {
     extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
-
-    fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
-        const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
-        const found = bun.strings.indexOfT(T, source, needle) orelse return null;
-        const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
-        const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
-        return switch (T) {
-            u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
-            u16 => bun.JSC.ZigString.Slice.init(
-                alloc,
-                bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
-            ),
-            else => @compileError("Not Supported"),
-        };
-    }
 
     /// The last two arguments to this specify loading hints
     pub fn getSourceMap(
@@ -849,6 +882,108 @@ pub const SourceProviderMap = opaque {
         };
         if (parsed.map) |ptr| {
             ptr.underlying_provider = ParsedSourceMap.SourceContentPtr.fromProvider(provider);
+            ptr.underlying_provider.load_hint = new_load_hint;
+        }
+        return parsed;
+    }
+};
+
+pub const BakeSourceProvider = opaque {
+    extern fn BakeSourceProvider__getSourceSlice(*BakeSourceProvider) bun.String;
+
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *BakeSourceProvider,
+        source_filename: []const u8,
+        load_hint: SourceMap.SourceMapLoadHint,
+        result: SourceMap.ParseUrlResultHint,
+    ) ?SourceMap.ParseUrl {
+        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(sfb.get());
+        defer arena.deinit();
+        const allocator = arena.allocator();
+
+        const new_load_hint: SourceMap.SourceMapLoadHint, const parsed = parsed: {
+            var inline_err: ?anyerror = null;
+
+            // try to get an inline source map
+            if (load_hint != .is_external_map) try_inline: {
+                const source = BakeSourceProvider__getSourceSlice(provider);
+                defer source.deref();
+                bun.assert(source.tag == .ZigString);
+
+                const found_url = (if (source.is8Bit())
+                    findSourceMappingURL(u8, source.latin1(), allocator)
+                else
+                    findSourceMappingURL(u16, source.utf16(), allocator)) orelse
+                    break :try_inline;
+                defer found_url.deinit();
+
+                break :parsed .{
+                    .is_inline_map,
+                    parseUrl(
+                        bun.default_allocator,
+                        allocator,
+                        found_url.slice(),
+                        result,
+                    ) catch |err| {
+                        inline_err = err;
+                        break :try_inline;
+                    },
+                };
+            }
+
+            // try to load a .map file
+            if (load_hint != .is_inline_map) try_external: {
+                var load_path_buf: bun.PathBuffer = undefined;
+                if (source_filename.len + 4 > load_path_buf.len)
+                    break :try_external;
+                @memcpy(load_path_buf[0..source_filename.len], source_filename);
+                @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
+
+                const load_path = load_path_buf[0 .. source_filename.len + 4];
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, allocator)) {
+                    .err => break :try_external,
+                    .result => |data| data,
+                };
+
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        data,
+                        result,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
+                };
+            }
+
+            if (inline_err) |err| {
+                bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                    source_filename,
+                    @errorName(err),
+                });
+                // Disable the "try using --sourcemap=external" hint
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                return null;
+            }
+
+            return null;
+        };
+
+        if (parsed.map) |ptr| {
+            ptr.underlying_provider = ParsedSourceMap.SourceContentPtr.fromBakeProvider(provider);
             ptr.underlying_provider.load_hint = new_load_hint;
         }
         return parsed;

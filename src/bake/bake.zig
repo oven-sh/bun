@@ -594,6 +594,37 @@ pub const Framework = struct {
         out: *bun.transpiler.Transpiler,
         bundler_options: *const BuildConfigSubset,
     ) !void {
+        const source_map: bun.options.SourceMapOption = switch (mode) {
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
+            .development => .external,
+            // TODO: follow user configuration
+            else => .none,
+        };
+
+        return initTranspilerWithSourceMap(
+            framework,
+            arena,
+            log,
+            mode,
+            renderer,
+            out,
+            bundler_options,
+            source_map,
+        );
+    }
+
+    pub fn initTranspilerWithSourceMap(
+        framework: *Framework,
+        arena: std.mem.Allocator,
+        log: *bun.logger.Log,
+        mode: Mode,
+        renderer: Graph,
+        out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
+        source_map: bun.options.SourceMapOption,
+    ) !void {
         const JSAst = bun.JSAst;
 
         var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
@@ -661,14 +692,7 @@ pub const Framework = struct {
         if (bundler_options.ignoreDCEAnnotations) |ignore|
             out.options.ignore_dce_annotations = ignore;
 
-        out.options.source_map = switch (mode) {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            .development => .external,
-            // TODO: follow user configuration
-            else => .none,
-        };
+        out.options.source_map = source_map;
         if (bundler_options.env != ._none) {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix orelse "";

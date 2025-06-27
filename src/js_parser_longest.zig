@@ -1,4 +1,3 @@
-
 const js_parser_jsx = js_parser_features.jsx;
 const is_typescript_enabled = js_parser_features.typescript;
 const is_jsx_enabled = js_parser_jsx != .none;

@@ -7037,7 +7037,7 @@ pub fn NewParser_(
 
             return createDefaultName(p, loc) catch unreachable;
         }
-        
+
         pub const parseStmt = @import("ast/parseStmt.zig").ParseStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseStmt;
 
         pub fn discardScopesUpTo(p: *P, scope_index: usize) void {

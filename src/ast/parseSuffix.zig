@@ -790,7 +790,6 @@ pub fn ParseSuffix(
                 }
             }
         }
-
     };
 }
 

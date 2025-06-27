@@ -1294,7 +1294,6 @@ pub fn Visit(
             stmts.deinit();
             stmts.* = output;
         }
-
     };
 }
 

@@ -1520,7 +1520,6 @@ pub fn VisitStmt(
                 return;
             }
         };
-
     };
 }
 

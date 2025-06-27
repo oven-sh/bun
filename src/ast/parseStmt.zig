@@ -1330,7 +1330,6 @@ pub fn ParseStmt(
 
             return js_ast.Stmt.empty();
         }
-
     };
 }
 

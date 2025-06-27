@@ -654,7 +654,6 @@ pub fn ParsePrefix(
             }
             return error.SyntaxError;
         }
-
     };
 }
 

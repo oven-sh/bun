@@ -1697,7 +1697,10 @@ pub const Error = enum(i32) {
             const system_error = JSC.SystemError{
                 .errno = @intCast(@intFromEnum(this.errno)),
                 .code = bun.String.static(this.errno.code()),
-                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .message = if (this.hostname) |hostname|
+                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
+                else
+                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
                 .syscall = bun.String.createUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
@@ -1745,31 +1748,23 @@ pub const Error = enum(i32) {
         return Deferred.init(this, syscall, host_string, promise.*);
     }
 
-    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
-            .errno = @intCast(@intFromEnum(this)),
-            .code = bun.String.static(this.code()),
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()[4..]),
+            .syscall = bun.String.static(syscall),
+            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
     }
 
-    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
-            .errno = @intCast(@intFromEnum(this)),
-            .code = bun.String.static(this.code()),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
-        }).toErrorInstance(globalThis);
-        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
-        return instance;
-    }
-
-    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
-        const instance = (JSC.SystemError{
-            .errno = @intCast(@intFromEnum(this)),
-            .code = bun.String.static(this.code()),
+            .errno = @intFromEnum(this),
+            .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+            .syscall = bun.String.static(syscall),
             .hostname = bun.String.createUTF8(hostname),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));

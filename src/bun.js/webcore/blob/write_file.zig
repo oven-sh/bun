@@ -693,7 +693,13 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             => {
                 var blob = value.use();
                 // TODO: this should be one promise not two!
-                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists });
+                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists }) catch |err| {
+                    file_blob.detach();
+                    this.promise.deinit();
+                    bun.destroy(this);
+                    promise.reject(globalThis, err);
+                    return;
+                };
                 if (new_promise.asAnyPromise()) |p| {
                     switch (p.unwrap(globalThis.vm(), .mark_handled)) {
                         // Fulfill the new promise using the pending promise

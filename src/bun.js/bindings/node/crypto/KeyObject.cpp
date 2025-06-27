@@ -1220,7 +1220,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         auto keyObject = create(key);
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
-            return {};
+            RELEASE_AND_RETURN(scope, {});
         }
         KeyObject handle = keyObject.releaseReturnValue();
         RETURN_IF_EXCEPTION(scope, {});
@@ -1288,6 +1288,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             auto keyObject = create(key);
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
+                RELEASE_AND_RETURN(scope, {});
             }
             KeyObject handle = keyObject.releaseReturnValue();
             return { .keyData = handle.data() };

@@ -318,7 +318,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
-            return global.throwValue(err.toJSC(global));
+            return global.throwValue(err.toJS(global));
         }
         return bun.String.createUTF8(out[0..size]);
     } else {
@@ -372,7 +372,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 @enumFromInt(ret),
                 .uv_os_homedir,
-            ).toJSC(global));
+            ).toJS(global));
         }
 
         if (result == null) {
@@ -380,7 +380,7 @@ pub fn homedir(global: *JSC.JSGlobalObject) !bun.String {
             return global.throwValue(bun.sys.Error.fromCode(
                 .NOENT,
                 .uv_os_homedir,
-            ).toJSC(global));
+            ).toJS(global));
         }
 
         return if (pw.pw_dir) |dir|

@@ -9,7 +9,7 @@ pub const SystemError = extern struct {
     errno: c_uint = 0,
     /// label for errno
     code: String = .empty,
-    message: String = .empty,
+    message: String, // it is illegal to have an empty message
     path: String = .empty,
     syscall: String = .empty,
     hostname: String = .empty,
@@ -52,7 +52,6 @@ pub const SystemError = extern struct {
 
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
         return SystemError__toErrorInstance(this, global);
     }
 
@@ -77,7 +76,6 @@ pub const SystemError = extern struct {
     /// to match the error code that `node:os` throws.
     pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 

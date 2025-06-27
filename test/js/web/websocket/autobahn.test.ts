@@ -2,7 +2,6 @@ import { which } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { isLinux, tempDirWithFiles } from "harness";
-import * as Buffer from "buffer";
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
   if (!dockerCLI) {

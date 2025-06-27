@@ -20,6 +20,7 @@ pub const ConnectionFlags = packed struct(u8) {
 pub const Status = enum {
     disconnected,
     connecting,
+    selecting,
     connected,
     failed,
 };
@@ -616,7 +617,8 @@ pub const ValkeyClient = struct {
                 return;
             },
             .SimpleString => |str| {
-                if (std.mem.eql(u8, str, "OK")) {
+                if (std.mem.eql(u8, str, "OK") and this.status == .selecting) {
+                    debug("Database {0} selected", .{this.database});
                     this.status = .connected;
                     this.flags.is_authenticated = true;
                     this.onValkeyConnect(value);
@@ -650,9 +652,11 @@ pub const ValkeyClient = struct {
                 }
 
                 // Authentication successful via HELLO
-                this.status = .connected;
-                this.flags.is_authenticated = true;
-                this.onValkeyConnect(value);
+                if (this.database == 0) {
+                    this.flags.is_authenticated = true;
+                    this.status = .connected;
+                    this.onValkeyConnect(value);
+                } else this.status = .selecting;
                 return;
             },
             else => {
@@ -875,7 +879,7 @@ pub const ValkeyClient = struct {
         const js_promise = promise.promise.get();
         // Handle disconnected state with offline queue
         switch (this.status) {
-            .connecting, .connected => {
+            .connecting, .selecting, .connected => {
                 try this.enqueue(command, &promise);
 
                 // Schedule auto-flushing to process this command if pipelining is enabled

@@ -12439,7 +12439,7 @@ pub fn NewParser_(
             }
         }
 
-        const visitors = @import("ast/visitors.zig").Visitors(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitors;
+        const visitors = @import("ast/visitStmt.zig").Visitors(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitors;
 
         pub fn isExportToEliminate(p: *P, ref: Ref) bool {
             const symbol_name = p.loadNameFromRef(ref);

@@ -2674,7 +2674,7 @@ pub const bindings = struct {
             if (entry.contents) |contents| {
                 obj.put(global, "contents", contents.toJS(global));
             }
-            entries.putIndex(global, @intCast(i), obj);
+            try entries.putIndex(global, @intCast(i), obj);
         }
 
         const result = JSValue.createEmptyObject(global, 2);

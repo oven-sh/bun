@@ -5401,7 +5401,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         const args = callFrame.arguments();
         const array = try JSValue.createEmptyArray(globalThis, args.len);
         for (args, 0..) |arg, i| {
-            array.putIndex(globalThis, @truncate(i), arg);
+            try array.putIndex(globalThis, @truncate(i), arg);
         }
         js.capturedArgsSetCached(instance_jsvalue, globalThis, array);
         array.ensureStillAlive();

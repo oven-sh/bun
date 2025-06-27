@@ -388,7 +388,7 @@ pub fn constructJSON(
         var str = bun.String.empty;
         // calling JSON.stringify on an empty string adds extra quotes
         // so this is correct
-        json_value.jsonStringify(globalThis, 0, &str);
+        try json_value.jsonStringify(globalThis, 0, &str);
 
         if (globalThis.hasException()) {
             return .zero;

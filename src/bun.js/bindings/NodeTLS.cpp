@@ -69,7 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
         BIO_free(bio);
     }
 
-    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
 } // namespace Bun

@@ -440,6 +440,7 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
         return jsUndefined();
 
     JSObject* obj = GetX509NameObject<X509_get_subject_name>(globalObject, cert);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!obj)
         return jsUndefined();
 
@@ -449,12 +450,12 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
 JSValue JSX509Certificate::computeIssuer(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.getIssuer();
     if (!bio) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         throwCryptoOperationFailed(globalObject, scope);
-        return jsEmptyString(vm);
+        return {};
     }
 
     if (!legacy) {
@@ -551,10 +552,10 @@ JSString* JSX509Certificate::computeFingerprint512(ncrypto::X509View view, JSGlo
 JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.toDER();
     if (!bio) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         throwCryptoOperationFailed(globalObject, scope);
         return nullptr;
     }

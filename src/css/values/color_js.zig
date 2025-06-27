@@ -304,17 +304,17 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 },
                                 .@"[rgb]" => {
                                     const object = try JSC.JSValue.createEmptyArray(globalThis, 3);
-                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgba]" => {
                                     const object = try JSC.JSValue.createEmptyArray(globalThis, 4);
-                                    object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
-                                    object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
-                                    object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
-                                    object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
+                                    try object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
+                                    try object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
+                                    try object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
+                                    try object.putIndex(globalThis, 3, JSC.JSValue.jsNumber(rgba.alpha));
                                     return object;
                                 },
                                 .number => {

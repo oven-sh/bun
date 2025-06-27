@@ -281,7 +281,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onDataCallback = .create(dataCallback, globalThis);
             break :brk dataCallback;
         };
-        array.putIndex(globalThis, 0, callback);
+        try array.putIndex(globalThis, 0, callback);
     }
 
     {
@@ -301,7 +301,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onEndCallback = .create(endCallback, globalThis);
             break :brk endCallback;
         };
-        array.putIndex(globalThis, 1, callback);
+        try array.putIndex(globalThis, 1, callback);
     }
 
     {
@@ -320,7 +320,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onWritableCallback = .create(writableCallback, globalThis);
             break :brk writableCallback;
         };
-        array.putIndex(globalThis, 2, callback);
+        try array.putIndex(globalThis, 2, callback);
     }
 
     {
@@ -339,7 +339,7 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun
             this.onCloseCallback = .create(closeCallback, globalThis);
             break :brk closeCallback;
         };
-        array.putIndex(globalThis, 3, callback);
+        try array.putIndex(globalThis, 3, callback);
     }
 
     return array;

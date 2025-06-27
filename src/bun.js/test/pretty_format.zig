@@ -1402,7 +1402,7 @@ pub const JestPrettyFormat = struct {
                     var str = bun.String.empty;
                     defer str.deref();
 
-                    value.jsonStringify(this.globalThis, this.indent, &str);
+                    try value.jsonStringify(this.globalThis, this.indent, &str);
                     this.addForNewLine(str.length());
                     if (jsType == .JSDate) {
                         // in the code for printing dates, it never exceeds this amount

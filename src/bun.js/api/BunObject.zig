@@ -1328,7 +1328,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.J
         const blob = JSC.WebCore.Blob.new(input_blob.dupeWithContentType(true));
         blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
-        array.putIndex(globalThis, i, blob.toJS(globalThis));
+        try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
     }
 

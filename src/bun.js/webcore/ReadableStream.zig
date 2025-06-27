@@ -571,7 +571,7 @@ pub fn NewSource(
                 }
                 return switch (this.context.setRawMode(flag == .true)) {
                     .result => .js_undefined,
-                    .err => |e| e.toJSC(global),
+                    .err => |e| e.toJS(global),
                 };
             }
 
@@ -636,7 +636,7 @@ pub fn NewSource(
                     .ready => return JSValue.jsNumber(16384),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        return globalThis.throwValue(err.toJSC(globalThis));
+                        return globalThis.throwValue(err.toJS(globalThis));
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -653,7 +653,7 @@ pub fn NewSource(
                 switch (result) {
                     .err => |err| {
                         if (err == .Error) {
-                            return globalThis.throwValue(err.Error.toJSC(globalThis));
+                            return globalThis.throwValue(err.Error.toJS(globalThis));
                         } else {
                             const js_err = err.JSValue;
                             js_err.ensureStillAlive();
@@ -662,7 +662,7 @@ pub fn NewSource(
                         }
                     },
                     .pending => {
-                        const out = result.toJS(globalThis);
+                        const out = try result.toJS(globalThis);
                         js.pendingPromiseSetCached(this_jsvalue, globalThis, out);
                         return out;
                     },

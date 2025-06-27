@@ -281,14 +281,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
     }
 
     auto view = str->view(global);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
@@ -321,13 +321,13 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
     WTF::String message = toString(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
-        return JSC::JSValue();
+        return {};
     }
 
     JSC::JSObject* result = JSC::createError(globalObject, message);
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -335,7 +335,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -343,7 +343,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -351,7 +351,7 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)

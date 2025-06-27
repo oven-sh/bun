@@ -62,4 +62,16 @@ JSC::GCClient::IsoSubspace* JSYogaConfig::subspaceFor(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSYogaConfig = std::forward<decltype(space)>(space); });
 }
 
+DEFINE_VISIT_CHILDREN(JSYogaConfig);
+
+template<typename Visitor>
+void JSYogaConfig::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+{
+    JSYogaConfig* thisObject = jsCast<JSYogaConfig*>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_context);
+    visitor.append(thisObject->m_loggerFunc);
+    visitor.append(thisObject->m_cloneNodeFunc);
+}
+
 } // namespace Bun

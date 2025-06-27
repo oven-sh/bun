@@ -2,6 +2,7 @@
 #include "root.h"
 #include <memory>
 #include <JavaScriptCore/JSDestructibleObject.h>
+#include <JavaScriptCore/WriteBarrier.h>
 
 // Forward declarations
 typedef struct YGConfig* YGConfigRef;
@@ -23,9 +24,19 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     YGConfigRef internal() { return m_config; }
     void clearInternal() { m_config = nullptr; }
+    
+    // Context storage
+    JSC::WriteBarrier<JSC::Unknown> m_context;
+    
+    // Logger callback
+    JSC::WriteBarrier<JSC::JSObject> m_loggerFunc;
+    
+    // Clone node callback
+    JSC::WriteBarrier<JSC::JSObject> m_cloneNodeFunc;
 
 private:
     JSYogaConfig(JSC::VM&, JSC::Structure*);

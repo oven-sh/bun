@@ -24,14 +24,14 @@ JSYogaNode::~JSYogaNode()
     }
 }
 
-JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config)
+JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
 {
     JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure);
-    node->finishCreation(vm, config);
+    node->finishCreation(vm, config, jsConfig);
     return node;
 }
 
-void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config)
+void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* jsConfig)
 {
     Base::finishCreation(vm);
     if (config) {
@@ -42,6 +42,11 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config)
 
     // Essential: store JS wrapper in Yoga node's context for callbacks and hierarchy traversal
     YGNodeSetContext(m_node, this);
+    
+    // Store the JSYogaConfig if provided
+    if (jsConfig) {
+        m_config.set(vm, this, jsConfig);
+    }
 }
 
 JSC::Structure* JSYogaNode::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -87,6 +92,8 @@ void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_measureFunc);
     visitor.append(thisObject->m_dirtiedFunc);
+    visitor.append(thisObject->m_baselineFunc);
+    visitor.append(thisObject->m_config);
 }
 
 } // namespace Bun

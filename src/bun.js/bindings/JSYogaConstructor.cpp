@@ -114,10 +114,11 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
 
     // Optional config parameter
     YGConfigRef config = nullptr;
+    JSYogaConfig* jsConfig = nullptr;
     if (callFrame->argumentCount() > 0) {
         JSC::JSValue configArg = callFrame->uncheckedArgument(0);
         if (!configArg.isUndefinedOrNull()) {
-            auto* jsConfig = JSC::jsDynamicCast<JSYogaConfig*>(configArg);
+            jsConfig = JSC::jsDynamicCast<JSYogaConfig*>(configArg);
             if (!jsConfig) {
                 throwTypeError(globalObject, scope, "First argument must be a Yoga.Config instance"_s);
                 return {};
@@ -126,7 +127,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
         }
     }
 
-    return JSC::JSValue::encode(JSYogaNode::create(vm, structure, config));
+    return JSC::JSValue::encode(JSYogaNode::create(vm, structure, config, jsConfig));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callJSYogaNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

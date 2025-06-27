@@ -545,6 +545,7 @@ src/http/ThreadSafeStreamBuffer.zig
 src/http/URLPath.zig
 src/http/websocket_client.zig
 src/http/websocket_client/CppWebSocket.zig
+src/http/websocket_client/WebSocketDeflate.zig
 src/http/websocket_client/WebSocketUpgradeClient.zig
 src/http/websocket_http_client.zig
 src/http/websocket.zig

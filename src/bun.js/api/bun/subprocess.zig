@@ -1290,6 +1290,9 @@ const Writable = union(enum) {
                             .err => |err| {
                                 _ = err; // autofix
                                 pipe.deref();
+                                if (stdio.* == .readable_stream) {
+                                    stdio.readable_stream.cancel(event_loop.global);
+                                }
                                 return error.UnexpectedCreatingStdin;
                             },
                         }
@@ -1303,8 +1306,10 @@ const Writable = union(enum) {
                             const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                             if (assign_result.toError()) |err| {
                                 pipe.deref();
+                                subprocess.deref();
                                 return event_loop.global.throwValue(err);
                             }
+                            promise_for_stream.* = assign_result;
                         }
 
                         return Writable{

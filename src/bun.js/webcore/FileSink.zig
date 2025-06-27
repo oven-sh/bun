@@ -657,6 +657,7 @@ fn handleResolveStream(this: *FileSink, globalThis: *JSC.JSGlobalObject) void {
 fn handleRejectStream(this: *FileSink, globalThis: *JSC.JSGlobalObject, _: JSC.JSValue) void {
     if (this.readable_stream.get(globalThis)) |*stream| {
         stream.abort(globalThis);
+        this.readable_stream.deinit();
     }
 
     if (!this.done) {
@@ -706,6 +707,7 @@ pub fn assignToStream(this: *FileSink, stream: *JSC.WebCore.ReadableStream, glob
         if (promise_result.asAnyPromise()) |promise| {
             switch (promise.status(globalThis.vm())) {
                 .pending => {
+                    this.writer.enableKeepingProcessAlive(this.event_loop_handle);
                     this.ref();
                     promise_result.then(globalThis, this, onResolveStream, onRejectStream);
                 },

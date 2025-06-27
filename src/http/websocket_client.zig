@@ -751,6 +751,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     .latin1 => |latin1| brk: {
                         // Convert Latin1 to UTF8 for compression
                         const content_byte_len: usize = strings.elementLengthLatin1IntoUTF8(latin1);
+                        if (content_byte_len == latin1.len) {
+                            // It's all ascii, we don't need to copy it an extra time.
+                            break :brk latin1;
+                        }
+
                         temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
                         const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, []const u8, latin1);
                         break :brk temp_buffer.?[0..encode_result.written];
@@ -1504,7 +1509,7 @@ const Copy = union(enum) {
 
         // Copy compressed data and mask it
         @memcpy(to_mask[0..content_byte_len], compressed_data);
-        Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
+        Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], compressed_data);
     }
 };
 

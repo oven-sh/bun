@@ -74,4 +74,26 @@ describe("ReadableStream conversion methods", () => {
     expect(process.exitCode).toBe(0);
     expect(result).toBeInstanceOf(Uint8Array);
   });
+
+  test("ReadableStream.text() should throw when called with wrong this value", () => {
+    // Test that calling .text() with wrong this value throws an error
+    // @ts-ignore
+    const textMethod = ReadableStream.prototype.text;
+
+    expect(() => {
+      textMethod.call(null);
+    }).toThrowErrorMatchingInlineSnapshot(`"Can only call ReadableStream.text on instances of ReadableStream"`);
+
+    expect(() => {
+      textMethod.call(undefined);
+    }).toThrowErrorMatchingInlineSnapshot(`"Can only call ReadableStream.text on instances of ReadableStream"`);
+
+    expect(() => {
+      textMethod.call({});
+    }).toThrowErrorMatchingInlineSnapshot(`"Can only call ReadableStream.text on instances of ReadableStream"`);
+
+    expect(() => {
+      textMethod.call("not a stream");
+    }).toThrowErrorMatchingInlineSnapshot(`"Can only call ReadableStream.text on instances of ReadableStream"`);
+  });
 });

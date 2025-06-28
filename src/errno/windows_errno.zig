@@ -1162,6 +1162,7 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
     pub const NODATA = -uv.UV_ENODATA;
     pub const UNATCH = -uv.UV_EUNATCH;
+    pub const NOEXEC = -uv.UV_ENOEXEC;
 };
 const std = @import("std");
 const bun = @import("bun");

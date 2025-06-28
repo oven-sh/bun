@@ -318,6 +318,12 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
         },
         inline .stdout, .stderr => |tag| {
             const out: *Readable = &@field(this, @tagName(tag));
+            const globalThis = this.globalThis;
+            
+            // Get the cached promise from the correct property (stdout/stderr)
+            const get_cached_fn = if (tag == .stdout) JSC.Codegen.JSSubprocess.stdoutGetCached else JSC.Codegen.JSSubprocess.stderrGetCached;
+            const maybe_promise = if (this.this_jsvalue != .zero) get_cached_fn(this.this_jsvalue) else null;
+            
             switch (out.*) {
                 .pipe => |pipe| {
                     if (pipe.state == .done) {
@@ -326,6 +332,35 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
                     } else {
                         out.* = .{ .ignore = {} };
                     }
+                    pipe.deref();
+                },
+                .buffer_promise => |pipe| {
+                    const bytes = pipe.toOwnedSlice();
+                    if (maybe_promise) |js_promise| {
+                        if (js_promise.asAnyPromise()) |promise_obj| {
+                            const buffer_val = JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                            promise_obj.resolve(globalThis, buffer_val);
+                        }
+                    }
+                    // Replace the readable with the final buffered value
+                    out.* = .{ .buffer = CowString.initOwned(bytes, bun.default_allocator) };
+                    pipe.deref();
+                },
+                .text_promise => |pipe| {
+                    const bytes = pipe.toOwnedSlice();
+                    if (maybe_promise) |js_promise| {
+                       if (js_promise.asAnyPromise()) |promise_obj| {
+                            const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8) catch |err| {
+                                _ = err; // autofix
+                                promise_obj.reject(globalThis, globalThis.bunVM().exception);
+                                out.* = .{ .buffer = CowString.initOwned(&.{}, bun.default_allocator) };
+                                pipe.deref();
+                                return;
+                            };
+                            promise_obj.resolve(globalThis, str.toJS(globalThis));
+                       }
+                    }
+                    out.* = .{ .buffer = CowString.initOwned(bytes, bun.default_allocator) };
                     pipe.deref();
                 },
                 else => {},
@@ -383,6 +418,8 @@ const Readable = union(enum) {
     fd: bun.FileDescriptor,
     memfd: bun.FileDescriptor,
     pipe: *PipeReader,
+    buffer_promise: *PipeReader, // New variant for "buffer"
+    text_promise: *PipeReader,   // New variant for "text"
     inherit: void,
     ignore: void,
     closed: void,
@@ -397,6 +434,7 @@ const Readable = union(enum) {
     pub fn memoryCost(this: *const Readable) usize {
         return switch (this.*) {
             .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
+            .buffer_promise, .text_promise => |p| @sizeOf(PipeReader) + p.memoryCost(),
             .buffer => this.buffer.length(),
             else => 0,
         };
@@ -405,6 +443,7 @@ const Readable = union(enum) {
     pub fn hasPendingActivity(this: *const Readable) bool {
         return switch (this.*) {
             .pipe => this.pipe.hasPendingActivity(),
+            .buffer_promise, .text_promise => |p| p.hasPendingActivity(),
             else => false,
         };
     }
@@ -414,6 +453,9 @@ const Readable = union(enum) {
             .pipe => {
                 this.pipe.updateRef(true);
             },
+            .buffer_promise, .text_promise => |p| {
+                p.updateRef(true);
+            },
             else => {},
         }
     }
@@ -422,6 +464,9 @@ const Readable = union(enum) {
         switch (this.*) {
             .pipe => {
                 this.pipe.updateRef(false);
+            },
+            .buffer_promise, .text_promise => |p| {
+                p.updateRef(false);
             },
             else => {},
         }
@@ -433,7 +478,7 @@ const Readable = union(enum) {
         assertStdioResult(result);
 
         if (comptime Environment.isPosix) {
-            if (stdio == .pipe) {
+            if (stdio == .pipe or stdio == .buffer or stdio == .text) {
                 _ = bun.sys.setNonblocking(result.?);
             }
         }
@@ -445,6 +490,8 @@ const Readable = union(enum) {
             .memfd => if (Environment.isPosix) Readable{ .memfd = stdio.memfd } else Readable{ .ignore = {} },
             .dup2 => |dup2| if (Environment.isPosix) Output.panic("TODO: implement dup2 support in Stdio readable", .{}) else Readable{ .fd = dup2.out.toFd() },
             .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, max_size) },
+            .buffer => Readable{ .buffer_promise = PipeReader.create(event_loop, process, result, max_size) },
+            .text => Readable{ .text_promise = PipeReader.create(event_loop, process, result, max_size) },
             .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
             .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
             .readable_stream => Readable{ .ignore = {} }, // ReadableStream is handled separately
@@ -471,6 +518,9 @@ const Readable = union(enum) {
             .pipe => {
                 this.pipe.close();
             },
+            .buffer_promise, .text_promise => |p| {
+                p.close();
+            },
             else => {},
         }
     }
@@ -486,6 +536,10 @@ const Readable = union(enum) {
             },
             .pipe => |pipe| {
                 defer pipe.detach();
+                this.* = .{ .closed = {} };
+            },
+            .buffer_promise, .text_promise => |p| {
+                defer p.detach();
                 this.* = .{ .closed = {} };
             },
             .buffer => |*buf| {
@@ -508,6 +562,37 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
                 return pipe.toJS(globalThis);
+            },
+            .buffer_promise => |pipe| {
+                // Check if the PipeReader has already finished reading
+                if (pipe.state == .done) {
+                    const bytes = pipe.toOwnedSlice();
+                    defer this.* = .{ .closed = {} };
+                    const buffer = JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                    return JSC.JSPromise.resolvedPromiseValue(globalThis, buffer);
+                }
+
+                // Create a new pending promise
+                const promise = JSC.JSPromise.create(globalThis).toJS();
+                // The getter in JS will cache this value
+                return promise;
+            },
+            .text_promise => |pipe| {
+                // Check if the PipeReader has already finished reading
+                if (pipe.state == .done) {
+                    const bytes = pipe.toOwnedSlice();
+                    defer this.* = .{ .closed = {} };
+                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8) catch {
+                        // On failure, return a rejected promise with the error
+                        const exception = globalThis.bunVM().exception;
+                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, exception);
+                    };
+                    return JSC.JSPromise.resolvedPromiseValue(globalThis, str.toJS(globalThis));
+                }
+
+                // Create a new pending promise
+                const promise = JSC.JSPromise.create(globalThis).toJS();
+                return promise;
             },
             .buffer => |*buffer| {
                 defer this.* = .{ .closed = {} };
@@ -540,6 +625,11 @@ const Readable = union(enum) {
                 return JSC.ArrayBuffer.toJSBufferFromMemfd(fd, globalThis);
             },
             .pipe => |pipe| {
+                defer pipe.detach();
+                this.* = .{ .closed = {} };
+                return pipe.toBuffer(globalThis);
+            },
+            .buffer_promise, .text_promise => |pipe| {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
                 return pipe.toBuffer(globalThis);

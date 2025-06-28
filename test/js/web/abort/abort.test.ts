@@ -70,4 +70,28 @@ describe("AbortSignal", () => {
     await testAny(0);
     await testAny(1);
   });
+
+  function fmt(value: any) {
+    const res = {};
+    for (const key in value) {
+      if (key === "column" || key === "line" || key === "sourceURL") continue;
+      res[key] = value[key];
+    }
+    return res;
+  }
+
+  test(".signal.reason should be a DOMException", () => {
+    const ac = new AbortController();
+    ac.abort();
+    expect(ac.signal.reason).toBeInstanceOf(DOMException);
+    expect(fmt(ac.signal.reason)).toEqual(fmt(new DOMException("The operation was aborted.", "AbortError")));
+    expect(ac.signal.reason.code).toBe(20);
+  });
+  test(".signal.reason should be a DOMException for timeout", async () => {
+    const ac = AbortSignal.timeout(0);
+    await Bun.sleep(10);
+    expect(ac.reason).toBeInstanceOf(DOMException);
+    expect(fmt(ac.reason)).toEqual(fmt(new DOMException("The operation timed out.", "TimeoutError")));
+    expect(ac.reason.code).toBe(23);
+  });
 });

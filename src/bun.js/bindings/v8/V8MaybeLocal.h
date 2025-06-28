@@ -8,17 +8,17 @@ template<class T>
 class MaybeLocal {
 public:
     MaybeLocal()
-        : local_(Local<T>()) {};
+        : m_local(Local<T>()) {};
 
     template<class S> MaybeLocal(Local<S> that)
-        : local_(that)
+        : m_local(that)
     {
     }
 
-    bool IsEmpty() const { return local_.IsEmpty(); }
+    bool IsEmpty() const { return m_local.IsEmpty(); }
 
 private:
-    Local<T> local_;
+    Local<T> m_local;
 };
 
-}
+} // namespace v8

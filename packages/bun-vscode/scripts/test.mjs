@@ -1,12 +1,8 @@
 import { exec } from "node:child_process";
 import { readdirSync } from "node:fs";
-import path from "node:path";
+import { dirname } from "node:path";
 
-let { pathname } = new URL("..", import.meta.url);
-if (process.platform === "win32") {
-  pathname = path.normalize(pathname).substring(1); // remove leading slash
-}
-process.chdir(pathname);
+process.chdir(dirname(import.meta.dirname));
 
 let extPath;
 for (const filename of readdirSync("extension")) {
@@ -20,6 +16,6 @@ if (!extPath) {
   throw new Error("No .vsix file found");
 }
 
-exec(`code --new-window --install-extension=${path} --extensionDevelopmentPath=${pathname} example`, {
+exec(`code --new-window --install-extension=${extPath} --extensionDevelopmentPath=${process.cwd()} example`, {
   stdio: "inherit",
 });

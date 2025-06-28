@@ -20,6 +20,18 @@
 
 #include <stdint.h>
 
+#if defined(__APPLE__)
+#include <os/lock.h>
+typedef os_unfair_lock zig_mutex_t;
+#elif defined(__linux__)
+typedef uint32_t zig_mutex_t;
+#elif defined(_WIN32)
+// SRWLOCK
+typedef void* zig_mutex_t;
+#else
+#error "Unsupported platform"
+#endif
+
 // IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
 struct us_internal_loop_data_t {
     struct us_timer_t *sweep_timer;
@@ -39,11 +51,12 @@ struct us_internal_loop_data_t {
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
-    uint32_t mutex;
+    zig_mutex_t mutex;
     void *parent_ptr;
     char parent_tag;
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
+    void* jsc_vm;
 };
 
 #endif // LOOP_DATA_H

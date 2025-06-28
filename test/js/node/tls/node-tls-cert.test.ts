@@ -1,16 +1,17 @@
 import { expect, it } from "bun:test";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
 
-const client = {
+const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
 };
-const server = {
+const serverTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
@@ -23,8 +24,8 @@ function split(file: any, into: any) {
 }
 
 // Split out the single end-entity cert and the subordinate CA for later use.
-split(client.cert, client);
-split(server.cert, server);
+split(clientTls.cert, clientTls);
+split(serverTls.cert, serverTls);
 
 // The certificates aren't for "localhost", so override the identity check.
 function checkServerIdentity(hostname: string, cert: any) {
@@ -109,15 +110,15 @@ function connect(options: any) {
 it("complete cert chains sent to peer.", async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.cert,
-      ca: server.ca,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca,
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca,
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
       requestCert: true,
     },
   });
@@ -126,13 +127,13 @@ it("complete cert chains sent to peer.", async () => {
 it("complete cert chains sent to peer, but without requesting client's cert.", async () => {
   await connect({
     client: {
-      ca: server.ca,
+      ca: serverTls.ca,
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca,
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
     },
   });
 });
@@ -143,13 +144,13 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
     await connect({
       client: {
         maxVersion: "TLSv1.2",
-        ca: server.ca,
+        ca: serverTls.ca,
         checkServerIdentity,
       },
       server: {
-        key: server.key,
-        cert: server.cert,
-        ca: client.ca,
+        key: serverTls.key,
+        cert: serverTls.cert,
+        ca: clientTls.ca,
         requestCert: true,
       },
     });
@@ -162,15 +163,15 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
 it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer.", async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.single,
-      ca: [server.ca, server.subca],
+      key: clientTls.key,
+      cert: clientTls.single,
+      ca: [serverTls.ca, serverTls.subca],
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.single,
-      ca: [client.ca, client.subca],
+      key: serverTls.key,
+      cert: serverTls.single,
+      ca: [clientTls.ca, clientTls.subca],
       requestCert: true,
     },
   });
@@ -179,15 +180,15 @@ it("Typical configuration error, incomplete cert chains sent, we have to know th
 it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM", async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.single,
-      ca: server.ca + "\n" + server.subca,
+      key: clientTls.key,
+      cert: clientTls.single,
+      ca: serverTls.ca + "\n" + serverTls.subca,
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.single,
-      ca: client.ca + "\n" + client.subca,
+      key: serverTls.key,
+      cert: serverTls.single,
+      ca: clientTls.ca + "\n" + clientTls.subca,
       requestCert: true,
     },
   });
@@ -196,15 +197,15 @@ it("Typical configuration error, incomplete cert chains sent, we have to know th
 it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM in an array", async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.single,
-      ca: [server.ca + "\n" + server.subca],
+      key: clientTls.key,
+      cert: clientTls.single,
+      ca: [serverTls.ca + "\n" + serverTls.subca],
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.single,
-      ca: [client.ca + "\n" + client.subca],
+      key: serverTls.key,
+      cert: serverTls.single,
+      ca: [clientTls.ca + "\n" + clientTls.subca],
       requestCert: true,
     },
   });
@@ -214,12 +215,12 @@ it("Fail to complete server's chain", async () => {
   try {
     await connect({
       client: {
-        ca: server.ca,
+        ca: serverTls.ca,
         checkServerIdentity,
       },
       server: {
-        key: server.key,
-        cert: server.single,
+        key: serverTls.key,
+        cert: serverTls.single,
       },
     });
     expect.unreachable();
@@ -232,15 +233,15 @@ it("Fail to complete client's chain.", async () => {
   try {
     await connect({
       client: {
-        key: client.key,
-        cert: client.single,
-        ca: server.ca,
+        key: clientTls.key,
+        cert: clientTls.single,
+        ca: serverTls.ca,
         checkServerIdentity,
       },
       server: {
-        key: server.key,
-        cert: server.cert,
-        ca: client.ca,
+        key: serverTls.key,
+        cert: serverTls.cert,
+        ca: clientTls.ca,
         requestCert: true,
       },
     });
@@ -257,8 +258,8 @@ it("Fail to find CA for server.", async () => {
         checkServerIdentity,
       },
       server: {
-        key: server.key,
-        cert: server.cert,
+        key: serverTls.key,
+        cert: serverTls.cert,
       },
     });
     expect.unreachable();
@@ -274,8 +275,8 @@ it("Server sent their CA, but CA cannot be trusted if it is not locally known.",
         checkServerIdentity,
       },
       server: {
-        key: server.key,
-        cert: server.cert + "\n" + server.ca,
+        key: serverTls.key,
+        cert: serverTls.cert + "\n" + serverTls.ca,
       },
     });
     expect.unreachable();
@@ -288,11 +289,11 @@ it("Server sent their CA, wrongly, but its OK since we know the CA locally.", as
   await connect({
     client: {
       checkServerIdentity,
-      ca: server.ca,
+      ca: serverTls.ca,
     },
     server: {
-      key: server.key,
-      cert: server.cert + "\n" + server.ca,
+      key: serverTls.key,
+      cert: serverTls.cert + "\n" + serverTls.ca,
     },
   });
 });
@@ -300,15 +301,15 @@ it("Server sent their CA, wrongly, but its OK since we know the CA locally.", as
 it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.cert,
-      ca: server.ca.replace(/CERTIFICATE/g, "TRUSTED CERTIFICATE"),
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca.replace(/CERTIFICATE/g, "TRUSTED CERTIFICATE"),
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca,
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
       requestCert: true,
     },
   });
@@ -317,15 +318,15 @@ it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
 it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.cert,
-      ca: server.ca,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca,
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca.replace(/CERTIFICATE/g, "TRUSTED CERTIFICATE"),
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca.replace(/CERTIFICATE/g, "TRUSTED CERTIFICATE"),
       requestCert: true,
     },
   });
@@ -334,15 +335,15 @@ it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
 it('Confirm client support for "BEGIN X509 CERTIFICATE".', async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.cert,
-      ca: server.ca.replace(/CERTIFICATE/g, "X509 CERTIFICATE"),
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca.replace(/CERTIFICATE/g, "X509 CERTIFICATE"),
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca,
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
       requestCert: true,
     },
   });
@@ -351,15 +352,15 @@ it('Confirm client support for "BEGIN X509 CERTIFICATE".', async () => {
 it('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
   await connect({
     client: {
-      key: client.key,
-      cert: client.cert,
-      ca: server.ca,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca,
       checkServerIdentity,
     },
     server: {
-      key: server.key,
-      cert: server.cert,
-      ca: client.ca.replace(/CERTIFICATE/g, "X509 CERTIFICATE"),
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca.replace(/CERTIFICATE/g, "X509 CERTIFICATE"),
       requestCert: true,
     },
   });
@@ -403,7 +404,7 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
   }
 });
 
-it("should not accept untrusted certificates", async () => {
+it("tls.connect should not accept untrusted certificates", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
@@ -437,5 +438,133 @@ it("should not accept untrusted certificates", async () => {
     //@ts-ignore
     socket?.end();
     server?.close();
+  }
+});
+
+async function createTLSServer(options: tls.TlsOptions) {
+  const server = await new Promise<tls.Server>((resolve, reject) => {
+    const server = tls
+      .createServer(options)
+      .on("error", reject)
+      .listen(0, () => resolve(server));
+  });
+
+  const address = server.address() as AddressInfo;
+
+  return {
+    server,
+    address,
+    [Symbol.dispose]() {
+      server.close();
+    },
+  };
+}
+
+it("tls.connect should load extra CA from NODE_EXTRA_CA_CERTS", async () => {
+  const caPath = join(tmpdirSync(), "ca.pem");
+  await Bun.write(caPath, serverTls.ca);
+
+  await using server = await createTLSServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    passphrase: "123123123",
+  });
+
+  const proc = Bun.spawn({
+    env: {
+      ...bunEnv,
+      SERVER_PORT: server.address.port.toString(),
+      NODE_EXTRA_CA_CERTS: caPath,
+    },
+    stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
+    cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
+it("tls.connect should use NODE_EXTRA_CA_CERTS even if the used CA is not first in bundle", async () => {
+  const bundlePath = join(tmpdirSync(), "bundle.pem");
+  const bundleContent = `${clientTls.cert}\n${serverTls.ca}`;
+  await Bun.write(bundlePath, bundleContent);
+
+  await using server = await createTLSServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    passphrase: "123123123",
+  });
+
+  const proc = Bun.spawn({
+    env: {
+      ...bunEnv,
+      SERVER_PORT: server.address.port.toString(),
+      NODE_EXTRA_CA_CERTS: bundlePath,
+    },
+    stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
+    cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
+it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
+  await using server = await createTLSServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    passphrase: "123123123",
+  });
+
+  for (const invalid of ["not-exist.pem", "", " "]) {
+    const proc = Bun.spawn({
+      env: {
+        ...bunEnv,
+        SERVER_PORT: server.address.port.toString(),
+        NODE_EXTRA_CA_CERTS: invalid,
+      },
+      stderr: "pipe",
+      stdout: "inherit",
+      stdin: "inherit",
+      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+    });
+
+    expect(await proc.exited).toBe(1);
+    const stderr = await Bun.readableStreamToText(proc.stderr);
+    expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+  }
+});
+
+it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", async () => {
+  const mixedValidAndInvalidCertsBundlePath = join(tmpdirSync(), "mixed-valid-and-invalid-certs-bundle.pem");
+  await Bun.write(mixedValidAndInvalidCertsBundlePath, `${invalidTls.cert}\n${serverTls.ca}`);
+
+  const mixedInvalidAndValidCertsBundlePath = join(tmpdirSync(), "mixed-invalid-and-valid-certs-bundle.pem");
+  await Bun.write(mixedInvalidAndValidCertsBundlePath, `${serverTls.ca}\n${invalidTls.cert}`);
+
+  await using server = await createTLSServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    passphrase: "123123123",
+  });
+
+  for (const invalid of [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath]) {
+    const proc = Bun.spawn({
+      env: {
+        ...bunEnv,
+        SERVER_PORT: server.address.port.toString(),
+        NODE_EXTRA_CA_CERTS: invalid,
+      },
+      stderr: "pipe",
+      stdout: "inherit",
+      stdin: "inherit",
+      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+    });
+
+    expect(await proc.exited).toBe(1);
+    const stderr = await Bun.readableStreamToText(proc.stderr);
+    expect(stderr).toContain("ignoring extra certs");
   }
 });

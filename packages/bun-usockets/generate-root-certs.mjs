@@ -18,8 +18,7 @@ const __filename = fileURLToPath(import.meta.url);
 const now = new Date();
 
 const formatDate = d => {
-  const iso = d.toISOString();
-  return iso.substring(0, iso.indexOf("T"));
+  return d;
 };
 
 const getCertdataURL = version => {
@@ -146,26 +145,35 @@ if (values.help) {
   process.exit(0);
 }
 
-const scheduleURL = "https://wiki.mozilla.org/NSS:Release_Versions";
-if (values.verbose) {
-  console.log(`Fetching NSS release schedule from ${scheduleURL}`);
-}
-const schedule = await fetch(scheduleURL);
-if (!schedule.ok) {
-  console.error(`Failed to fetch ${scheduleURL}: ${schedule.status}: ${schedule.statusText}`);
-  process.exit(-1);
-}
-const scheduleText = await schedule.text();
-const nssReleases = getReleases(scheduleText);
+const versions = await fetch("https://nucleus.mozilla.org/rna/all-releases.json").then(res => res.json());
 
-// Retrieve metadata for the NSS release being updated to.
-const version = positionals[0] ?? (await getLatestVersion(nssReleases));
-const release = nssReleases.find(r => {
-  return new RegExp(`^${version.replace(".", "\\.")}\\b`).test(r[kNSSVersion]);
-});
-if (!pastRelease(release)) {
-  console.warn(`Warning: NSS ${version} is not due to be released until ${formatDate(release[kNSSDate])}`);
+const today = new Date().toISOString().split("T")[0].trim();
+const releases = versions
+  .filter(
+    version =>
+      version.channel == "Release" &&
+      version.product === "Firefox" &&
+      version.is_public &&
+      version.release_date <= today,
+  )
+  .sort((a, b) => (a > b ? (a == b ? 0 : -1) : 1));
+const latest = releases[0];
+const release_tag = `FIREFOX_${latest.version.replaceAll(".", "_")}_RELEASE`;
+if (values.verbose) {
+  console.log(`Fetching NSS release from ${release_tag}`);
 }
+const version = await fetch(
+  `https://hg.mozilla.org/releases/mozilla-release/raw-file/${release_tag}/security/nss/TAG-INFO`,
+)
+  .then(res => res.text())
+  .then(txt => txt.trim().split("NSS_")[1].split("_RTM").join("").split("_").join(".").trim());
+
+const release = {
+  version: version,
+  firefoxVersion: latest.version,
+  firefoxDate: latest.release_date,
+  date: latest.release_date,
+};
 if (values.verbose) {
   console.log("Found NSS version:");
   console.log(release);

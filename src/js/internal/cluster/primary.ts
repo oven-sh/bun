@@ -1,5 +1,4 @@
 const EventEmitter = require("node:events");
-const child_process = require("node:child_process");
 const Worker = require("internal/cluster/Worker");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
 const path = require("node:path");
@@ -7,6 +6,8 @@ const { throwNotImplemented, kHandle } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
+
+let child_process;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -86,6 +87,7 @@ function createWorkerProcess(id, env) {
   //   ArrayPrototypePush(execArgv, `--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
   // }
 
+  child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
     cwd: cluster.settings.cwd,
     env: workerEnv,
@@ -151,6 +153,7 @@ cluster.fork = function (env) {
   });
 
   worker.process.once("disconnect", () => {
+    worker.process.channel = null;
     /*
      * Now is a good time to remove the handles
      * associated with this worker because it is
@@ -205,7 +208,7 @@ const methodMessageMapping = {
   queryServer,
 };
 
-function onmessage(message, handle) {
+function onmessage(message, _handle) {
   const worker = this;
 
   const fn = methodMessageMapping[message.act];

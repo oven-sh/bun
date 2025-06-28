@@ -98,6 +98,7 @@ it("should remove existing package", async () => {
   const err1 = await new Response(stderr1).text();
 
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun remove v1."),
     "",
     `+ pkg2@${pkg2_path.replace(/\\/g, "/")}`,
     "",
@@ -105,7 +106,7 @@ it("should remove existing package", async () => {
     "Removed: 1",
     "",
   ]);
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun remove", "Saved lockfile", ""]);
+  expect(err1.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
       {
@@ -136,13 +137,14 @@ it("should remove existing package", async () => {
   const out2 = await new Response(stdout2).text();
   const err2 = await new Response(stderr2).text();
 
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual(["", "- pkg2", "1 package removed", ""]);
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun remove",
+  expect(out2.replace(/ \[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun remove v1."),
     "",
-    "package.json has no dependencies! Deleted empty lockfile",
+    "- pkg2",
+    "1 package removed",
     "",
   ]);
+  expect(err2.split(/\r?\n/)).toEqual(["", "package.json has no dependencies! Deleted empty lockfile", ""]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
       {
@@ -211,10 +213,9 @@ it("should not affect if package is not installed", async () => {
   });
   expect(await exited).toBe(0);
   const out = await new Response(stdout).text();
-  expect(out).toEqual("");
+  expect(out.split("\n")).toEqual([expect.stringContaining("bun remove v1."), ""]);
   const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun remove",
+  expect(err.replace(/ \[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
     "package.json doesn't have dependencies, there's nothing to remove!",
     "",
   ]);
@@ -306,7 +307,12 @@ it("should remove peerDependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([" done", ""]);
+  expect(out.replace(/\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun remove v1."),
+    "",
+    " done",
+    "",
+  ]);
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",

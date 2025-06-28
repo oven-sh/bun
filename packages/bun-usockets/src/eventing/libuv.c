@@ -24,7 +24,7 @@
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0,
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
                                   events);
 }
 
@@ -104,7 +104,6 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
-
     uv_poll_start(p->uv_p, events, poll_cb);
   }
 }

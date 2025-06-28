@@ -109,7 +109,7 @@ it("custom condition 'import' in package.json resolves in bun test", async () =>
   });
 
   expect(exitCode).toBe(0);
-  expect(stdout.toString("utf8")).toBe("1\n");
+  expect(stdout.toString("utf8")).toBe(`bun test ${Bun.version_with_sha}\n1\n`);
 });
 
 it("custom condition 'import' in package.json resolves in bun test with browser condition", async () => {
@@ -120,7 +120,7 @@ it("custom condition 'import' in package.json resolves in bun test with browser 
   });
 
   expect(exitCode).toBe(0);
-  expect(stdout.toString("utf8")).toBe("2\n");
+  expect(stdout.toString("utf8")).toBe(`bun test ${Bun.version_with_sha}\n2\n`);
 });
 
 it("custom condition 'require' in package.json resolves", async () => {

@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 function deprecateUsingClosure(fn, msg, code) {
   if (process.noDeprecation === true) {
     return fn;

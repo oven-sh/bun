@@ -1,8 +1,9 @@
 import assert from "assert";
 import { copyFileSync } from "fs";
 import { join } from "path";
-import { ConsoleMessage, Page, launch } from "puppeteer";
-
+import type { ConsoleMessage, Page } from "puppeteer";
+import { launch } from "puppeteer";
+import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -12,29 +13,50 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
+const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
+if (!browserPath) {
+  console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
+}
+
 const b = await launch({
-  // While puppeteer is migrating to their new headless: `true` mode,
-  // this causes strange issues on macOS in the cloud (AWS and MacStadium).
-  //
-  // There is a GitHub issue, but the discussion is unhelpful:
-  // https://github.com/puppeteer/puppeteer/issues/10153
-  //
-  // Fixes: 'TargetCloseError: Protocol error (Target.setAutoAttach): Target closed'
-  headless: "shell",
+  // On macOS, there are issues using the new headless mode.
+  // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
+  headless: process.platform === "darwin" ? "shell" : true,
+  // Inherit the stdout and stderr of the browser process.
   dumpio: true,
+  // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
   pipe: true,
+  // Disable timeouts.
+  timeout: 0,
+  protocolTimeout: 0,
+  // Specify that chrome should be used, for consistent test results.
+  // If a browser path is not found, it will be downloaded.
+  browser: "chrome",
+  executablePath: browserPath,
   args: [
-    // Fixes: 'dock_plist is not an NSDictionary'
+    // On Linux, there are issues with the sandbox, so disable it.
+    // On macOS, this fixes: "dock_plist is not an NSDictionary"
     "--no-sandbox",
-    "--single-process",
     "--disable-setuid-sandbox",
+
+    // On Docker, the default /dev/shm is too small for Chrome, which causes
+    // crashes when rendering large pages, so disable it.
     "--disable-dev-shm-usage",
-    // Fixes: 'Navigating frame was detached'
+
+    // Fixes: "Navigating frame was detached"
     "--disable-features=site-per-process",
-    // Uncomment if you want debug logs from Chromium:
-    // "--enable-logging=stderr",
-    // "--v=1",
   ],
+});
+
+process.on("beforeExit", async reason => {
+  await b?.close?.();
+});
+
+process.once("SIGTERM", () => {
+  b?.close?.();
+  setTimeout(() => {
+    process.exit(0);
+  }, 100);
 });
 
 async function main() {

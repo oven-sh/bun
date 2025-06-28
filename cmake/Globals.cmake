@@ -30,6 +30,10 @@ macro(optionx variable type description)
   set(multiValueArgs)
   cmake_parse_arguments(${variable} "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
+  if(DEFINED ${variable})
+    set(${variable}_VALUE ${${variable}})
+  endif()
+
   if(NOT ${type} MATCHES "^(BOOL|STRING|FILEPATH|PATH|INTERNAL)$")
     set(${variable}_REGEX ${type})
     set(${variable}_TYPE STRING)
@@ -65,7 +69,9 @@ macro(optionx variable type description)
     message(FATAL_ERROR "Invalid ${${variable}_SOURCE}: ${${variable}_PREVIEW}=\"${${variable}}\", please use ${${variable}_PREVIEW}=<${${variable}_REGEX}>")
   endif()
 
-  message(STATUS "Set ${variable}: ${${variable}}")
+  if(NOT ${variable}_VALUE STREQUAL ${variable})
+    message(STATUS "Set ${variable}: ${${variable}}")
+  endif()
 endmacro()
 
 # unsupported()
@@ -122,33 +128,25 @@ optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PA
 optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
+optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
 
 if(CI)
-  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+  set(WARNING FATAL_ERROR)
 else()
-  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+  set(WARNING WARNING)
 endif()
 
-optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
+# TODO: This causes flaky zig builds in CI, so temporarily disable it.
+# if(CI)
+#   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+# else()
+#   set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+# endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
-optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
-optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
-
 # --- Helper functions ---
-
-function(parse_semver value variable)
-  string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${value}")
-  
-  if(NOT match)
-    message(FATAL_ERROR "Invalid semver: \"${value}\"")
-  endif()
-  
-  set(${variable}_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}" PARENT_SCOPE)
-  set(${variable}_VERSION_MAJOR "${CMAKE_MATCH_1}" PARENT_SCOPE)
-  set(${variable}_VERSION_MINOR "${CMAKE_MATCH_2}" PARENT_SCOPE)
-  set(${variable}_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
-endfunction()
 
 # setenv()
 # Description:
@@ -187,102 +185,154 @@ function(setenv variable value)
   message(STATUS "Set ENV ${variable}: ${value}")
 endfunction()
 
-# check_command()
+# satisfies_range()
 # Description:
-#   Checks if a command is available, used by `find_command()` as a validator.
+#   Check if a version satisfies a version range
 # Arguments:
-#   FOUND bool   - The variable to set to true if the version is found
-#   CMD   string - The executable to check the version of
-function(check_command FOUND CMD)
-  set(${FOUND} OFF PARENT_SCOPE)
-
-  if(${CMD} MATCHES "zig")
-    set(CHECK_COMMAND ${CMD} version)
-  else()
-    set(CHECK_COMMAND ${CMD} --version)
-  endif()
-
-  execute_process(
-    COMMAND ${CHECK_COMMAND}
-    RESULT_VARIABLE RESULT
-    OUTPUT_VARIABLE OUTPUT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-
-  if(NOT RESULT EQUAL 0 OR NOT OUTPUT)
-    message(DEBUG "${CHECK_COMMAND}, exited with code ${RESULT}")
+#   version  string - The version to check (e.g. "1.2.3")
+#   range    string - The range to check against (e.g. ">=1.2.3")
+#   variable string - The variable to store the result in
+function(satisfies_range version range variable)
+  if(range STREQUAL "ignore")
+    set(${variable} ON PARENT_SCOPE)
     return()
   endif()
 
-  parse_semver(${OUTPUT} CMD)
-  parse_semver(${CHECK_COMMAND_VERSION} CHECK)
+  set(${variable} OFF PARENT_SCOPE)
 
-  if(CHECK_COMMAND_VERSION MATCHES ">=")
-    if(NOT CMD_VERSION VERSION_GREATER_EQUAL ${CHECK_VERSION})
-      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: ${CHECK_COMMAND_VERSION}")
-      return()
-    endif()
-  elseif(CHECK_COMMAND_VERSION MATCHES ">")
-    if(NOT CMD_VERSION VERSION_GREATER ${CHECK_VERSION})
-      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: ${CHECK_COMMAND_VERSION}")
-      return()
-    endif()
+  string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${version}")
+  if(NOT match)
+    return()
+  endif()
+  set(version ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3})
+
+  string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${range}")
+  if(NOT match)
+    return()
+  endif()
+  set(comparator ${CMAKE_MATCH_1})
+  set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
+
+  if(comparator STREQUAL ">=")
+    set(comparator VERSION_GREATER_EQUAL)
+  elseif(comparator STREQUAL ">")
+    set(comparator VERSION_GREATER)
+  elseif(comparator STREQUAL "<=")
+    set(comparator VERSION_LESS_EQUAL)
+  elseif(comparator STREQUAL "<")
+    set(comparator VERSION_LESS)
   else()
-    if(NOT CMD_VERSION VERSION_EQUAL ${CHECK_VERSION})
-      message(DEBUG "${CHECK_COMMAND}, actual: ${CMD_VERSION}, expected: =${CHECK_COMMAND_VERSION}")
-      return()
-    endif()
+    set(comparator VERSION_EQUAL)
   endif()
 
-  set(${FOUND} TRUE PARENT_SCOPE)
+  if(version ${comparator} ${range})
+    set(${variable} ON PARENT_SCOPE)
+  endif()
 endfunction()
 
 # find_command()
 # Description:
 #   Finds a command, similar to `find_program()`, but allows for version checking.
 # Arguments:
-#   VARIABLE  string   - The variable to set
-#   COMMAND   string[] - The names of the command to find
-#   PATHS     string[] - The paths to search for the command
-#   REQUIRED  bool     - If false, the command is optional
-#   VERSION   string   - The version of the command to find (e.g. "1.2.3" or ">1.2.3")
+#   VARIABLE         string   - The variable to set
+#   VERSION_VARIABLE string   - The variable to check for the version
+#   COMMAND          string[] - The names of the command to find
+#   PATHS            string[] - The paths to search for the command
+#   REQUIRED         bool     - If false, the command is optional
+#   VERSION          string   - The version of the command to find (e.g. "1.2.3" or ">1.2.3")
 function(find_command)
-  set(options)
-  set(args VARIABLE VERSION MIN_VERSION REQUIRED)
+  set(args VARIABLE VERSION_VARIABLE REQUIRED VERSION)
   set(multiArgs COMMAND PATHS)
-  cmake_parse_arguments(CMD "${options}" "${args}" "${multiArgs}" ${ARGN})
+  cmake_parse_arguments(FIND "" "${args}" "${multiArgs}" ${ARGN})
 
-  if(NOT CMD_VARIABLE)
-    message(FATAL_ERROR "find_command: VARIABLE is required")
+  if(NOT FIND_VARIABLE OR NOT FIND_COMMAND)
+    message(FATAL_ERROR "${CMAKE_CURRENT_FUNCTION}: VARIABLE and COMMAND are required")
   endif()
 
-  if(NOT CMD_COMMAND)
-    message(FATAL_ERROR "find_command: COMMAND is required")
+  if(NOT FIND_VERSION_VARIABLE)
+    set(FIND_VERSION_VARIABLE ${FIND_VARIABLE}_VERSION)
   endif()
 
-  if(CMD_VERSION)
-    set(CHECK_COMMAND_VERSION ${CMD_VERSION}) # special global variable
-    set(CMD_VALIDATOR VALIDATOR check_command)
+  list(GET FIND_COMMAND 0 FIND_NAME)
+  if(FIND_VERSION)
+    optionx(${FIND_VERSION_VARIABLE} STRING "The version of ${FIND_NAME} to find" DEFAULT "${FIND_VERSION}")
+
+    function(find_command_version variable exe)
+      set(${variable} OFF PARENT_SCOPE)
+
+      if(${exe} MATCHES "(go|zig)(\.exe)?$")
+        set(command ${exe} version)
+      else()
+        set(command ${exe} --version)
+      endif()
+
+      execute_process(
+        COMMAND ${command}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE output
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+      )
+
+      if(NOT result EQUAL 0)
+        set(reason "exited with ${result}")
+      elseif(NOT output)
+        set(reason "no output")
+      else()
+        string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${output}")
+        if(match)
+          set(version ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3})
+          set(reason "\"${version}\"")
+        else()
+          set(reason "no version")
+        endif()
+      endif()
+
+      set_property(GLOBAL PROPERTY ${FIND_NAME} "${exe}: ${reason}" APPEND)
+
+      if(version)
+        satisfies_range(${version} ${FIND_VERSION} ${variable})
+        set(${variable} ${${variable}} PARENT_SCOPE)
+      endif()
+    endfunction()
+
+    set(FIND_VALIDATOR VALIDATOR find_command_version)
   endif()
 
   find_program(
-    ${CMD_VARIABLE}
-    NAMES ${CMD_COMMAND}
-    PATHS ${CMD_PATHS}
-    ${CMD_VALIDATOR}
+    ${FIND_VARIABLE}
+    NAMES ${FIND_COMMAND}
+    PATHS ${FIND_PATHS}
+    ${FIND_VALIDATOR}
   )
 
-  if(NOT CMD_REQUIRED STREQUAL "OFF" AND ${CMD_VARIABLE} MATCHES "NOTFOUND")
-    if(CMD_VERSION)
-      message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\" that matches version \"${CHECK_COMMAND_VERSION}\"")
+  if(NOT FIND_REQUIRED STREQUAL "OFF" AND ${FIND_VARIABLE} MATCHES "NOTFOUND")
+    set(error "Command not found: \"${FIND_NAME}\"")
+
+    if(FIND_VERSION)
+      set(error "${error} that satisfies version \"${${FIND_VERSION_VARIABLE}}\"")
     endif()
-    message(FATAL_ERROR "Command not found: \"${CMD_COMMAND}\"")
+
+    get_property(FIND_RESULTS GLOBAL PROPERTY ${FIND_NAME})
+    if(NOT FIND_RESULTS MATCHES "NOTFOUND")
+      set(error "${error}\nThe following commands did not satisfy the requirement:")
+      foreach(result ${FIND_RESULTS})
+        set(error "${error}\n  ${result}")
+      endforeach()
+    endif()
+
+    set(error "${error}\nTo fix this, either:
+  1. Install ${FIND_NAME} ${${FIND_VERSION_VARIABLE}}
+  2. Set -D${FIND_VERSION_VARIABLE}=<version> to require a different version
+  3. Set -D${FIND_VERSION_VARIABLE}=ignore to allow any version
+")
+    message(FATAL_ERROR ${error})
   endif()
 
-  if(${CMD_VARIABLE} MATCHES "NOTFOUND")
-    unset(${CMD_VARIABLE} PARENT_SCOPE)
+  if(${FIND_VARIABLE} MATCHES "NOTFOUND")
+    unset(${FIND_VARIABLE} PARENT_SCOPE)
   else()
-    setx(${CMD_VARIABLE} ${${CMD_VARIABLE}} PARENT_SCOPE)
+    setx(${FIND_VARIABLE} ${${FIND_VARIABLE}} PARENT_SCOPE)
   endif()
 endfunction()
 
@@ -319,7 +369,7 @@ function(register_command)
   if(CMD_ENVIRONMENT)
     set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
   endif()
-  
+
   if(NOT CMD_COMMENT)
     string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
   endif()
@@ -369,7 +419,20 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
     if(BUILDKITE)
       file(RELATIVE_PATH filename ${BUILD_PATH} ${artifact})
-      list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      if(filename STREQUAL "libbun-profile.a")
+        # libbun-profile.a is now over 5gb in size, compress it first
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-profile.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-profile.a.gz)
+      elseif(filename STREQUAL "libbun-asan.a")
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-asan.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-asan.a.gz)
+      else()
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      endif()
     endif()
   endforeach()
 
@@ -377,12 +440,12 @@ function(register_command)
     get_source_file_property(generated ${output} GENERATED)
     if(generated)
       list(REMOVE_ITEM CMD_EFFECTIVE_OUTPUTS ${output})
-      list(APPEND CMD_EFFECTIVE_OUTPUTS ${output}.always_run)
+      list(APPEND CMD_EFFECTIVE_OUTPUTS ${output}.always_run_${CMD_TARGET})
     endif()
   endforeach()
 
   if(CMD_ALWAYS_RUN)
-    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run)
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run_${CMD_TARGET})
   endif()
 
   if(CMD_TARGET_PHASE)
@@ -469,7 +532,7 @@ function(parse_package_json)
     set(NPM_NODE_MODULES)
     set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
     set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
-    
+
     foreach(property ${NPM_NODE_MODULES_PROPERTIES})
       string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
       if(error MATCHES "not found")
@@ -575,15 +638,7 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  if(GIT_COMMIT)
-    set(GIT_REF ${GIT_COMMIT})
-  elseif(GIT_TAG)
-    set(GIT_REF refs/tags/${GIT_TAG})
-  else()
-    set(GIT_REF refs/heads/${GIT_BRANCH})
-  endif()
-
-  set(GIT_EFFECTIVE_OUTPUTS)
+  set(GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/.ref)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
   endforeach()
@@ -597,8 +652,10 @@ function(register_repository)
       ${CMAKE_COMMAND}
         -DGIT_PATH=${GIT_PATH}
         -DGIT_REPOSITORY=${GIT_REPOSITORY}
-        -DGIT_REF=${GIT_REF}
         -DGIT_NAME=${GIT_NAME}
+        -DGIT_COMMIT=${GIT_COMMIT}
+        -DGIT_TAG=${GIT_TAG}
+        -DGIT_BRANCH=${GIT_BRANCH}
         -P ${CWD}/cmake/scripts/GitClone.cmake
     OUTPUTS
       ${GIT_PATH}
@@ -699,11 +756,17 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
   endif()
 
+  set(MAKE_SOURCES)
+  if(TARGET clone-${MAKE_TARGET})
+    list(APPEND MAKE_SOURCES ${MAKE_CWD}/.ref)
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
@@ -755,6 +818,7 @@ function(register_cmake_command)
     TARGETS configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     ARTIFACTS ${MAKE_ARTIFACTS}
   )
 
@@ -831,7 +895,7 @@ function(register_compiler_flags)
       if(NOT COMPILER_TARGETS)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
-      
+
       foreach(target ${COMPILER_TARGETS})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
@@ -843,7 +907,7 @@ function(register_compiler_flags)
 endfunction()
 
 function(register_compiler_definitions)
-  
+
 endfunction()
 
 # register_linker_flags()

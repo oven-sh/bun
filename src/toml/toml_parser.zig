@@ -2,48 +2,20 @@ const std = @import("std");
 const logger = bun.logger;
 const toml_lexer = @import("./toml_lexer.zig");
 const Lexer = toml_lexer.Lexer;
-const importRecord = @import("../import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("../options.zig");
 
-const fs = @import("../fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
 
-const StmtNodeIndex = js_ast.StmtNodeIndex;
-const ExprNodeIndex = js_ast.ExprNodeIndex;
-const ExprNodeList = js_ast.ExprNodeList;
-const StmtNodeList = js_ast.StmtNodeList;
-const BindingNodeList = js_ast.BindingNodeList;
+const expect = std.testing.expect;
+
 const assert = bun.assert;
 
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
-const G = js_ast.G;
 const T = toml_lexer.T;
 const E = js_ast.E;
-const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 
-const LEXER_DEBUGGER_WORKAROUND = false;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const HashMapPool = struct {
@@ -81,9 +53,9 @@ pub const TOML = struct {
     log: *logger.Log,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !TOML {
+    pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log, redact_logs: bool) !TOML {
         return TOML{
-            .lexer = try Lexer.init(log, source_, allocator),
+            .lexer = try Lexer.init(log, source_, allocator, redact_logs),
             .allocator = allocator,
             .log = log,
         };
@@ -95,7 +67,7 @@ pub const TOML = struct {
 
     pub fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr {
         const Type = @TypeOf(t);
-        if (@typeInfo(Type) == .Pointer) {
+        if (@typeInfo(Type) == .pointer) {
             return Expr.init(std.meta.Child(Type), t.*, loc);
         } else {
             return Expr.init(Type, t, loc);
@@ -166,7 +138,7 @@ pub const TOML = struct {
         return head;
     }
 
-    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, redact_logs: bool) !Expr {
         switch (source_.contents.len) {
             // This is to be consisntent with how disabled JS files are handled
             0 => {
@@ -175,7 +147,7 @@ pub const TOML = struct {
             else => {},
         }
 
-        var parser = try TOML.init(allocator, source_.*, log);
+        var parser = try TOML.init(allocator, source_.*, log, redact_logs);
 
         return try parser.runParser();
     }
@@ -251,6 +223,7 @@ pub const TOML = struct {
     pub fn parseAssignment(p: *TOML, obj: *E.Object, allocator: std.mem.Allocator) anyerror!void {
         p.lexer.allow_double_bracket = false;
         const rope = try p.parseKey(allocator);
+        const rope_end = p.lexer.start;
 
         const is_array = p.lexer.token == .t_empty_array;
         if (is_array) {
@@ -262,7 +235,11 @@ pub const TOML = struct {
             obj.setRope(rope, p.allocator, try p.parseValue()) catch |err| {
                 switch (err) {
                     error.Clobber => {
-                        try p.lexer.addDefaultError("Cannot redefine key");
+                        const loc = rope.head.loc;
+                        assert(loc.start > 0);
+                        const start: u32 = @intCast(loc.start);
+                        const key_name = std.mem.trimRight(u8, p.source().contents[start..rope_end], &std.ascii.whitespace);
+                        p.lexer.addError(start, "Cannot redefine key '{s}'", .{key_name});
                         return error.SyntaxError;
                     },
                     else => return err,
@@ -349,6 +326,7 @@ pub const TOML = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
+                p.lexer.allow_double_bracket = true;
                 try p.lexer.expect(.t_close_brace);
                 return expr;
             },
@@ -386,8 +364,8 @@ pub const TOML = struct {
                 if (p.lexer.has_newline_before) {
                     is_single_line = false;
                 }
-                try p.lexer.expect(.t_close_bracket);
                 p.lexer.allow_double_bracket = true;
+                try p.lexer.expect(.t_close_bracket);
                 return array_;
             },
             else => {

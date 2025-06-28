@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
-
+#include <span>
 #include <iostream>
 
 #include "MoveOnlyFunction.h"
@@ -35,44 +35,8 @@ namespace uWS {
 
 template <class USERDATA>
 struct HttpRouter {
-    /* These are public for now */
-    std::vector<std::string> upperCasedMethods = {
-        "ACL",
-        "BIND",
-        "CHECKOUT",
-        "CONNECT",
-        "COPY",
-        "DELETE",
-        "GET",
-        "HEAD",
-        "LINK",
-        "LOCK",
-        "M-SEARCH" ,
-        "MERGE",
-        "MKACTIVITY",
-        "MKCALENDAR",
-        "MKCOL",
-        "MOVE",
-        "NOTIFY",
-        "OPTIONS",
-        "PATCH",
-        "POST",
-        "PROPFIND",
-        "PROPPATCH",
-        "PURGE",
-        "PUT",
-        "REBIND",
-        "REPORT",
-        "SEARCH",
-        "SOURCE",
-        "SUBSCRIBE",
-        "TRACE",
-        "UNBIND",
-        "UNLINK",
-        "UNLOCK",
-        "UNSUBSCRIBE",
-    };
-    static const uint32_t HIGH_PRIORITY = 0xd0000000, MEDIUM_PRIORITY = 0xe0000000, LOW_PRIORITY = 0xf0000000;
+    static constexpr std::string_view ANY_METHOD_TOKEN = "*";
+    static constexpr uint32_t HIGH_PRIORITY = 0xd0000000, MEDIUM_PRIORITY = 0xe0000000, LOW_PRIORITY = 0xf0000000;
 
 private:
     USERDATA userData;
@@ -81,30 +45,27 @@ private:
     /* Handler ids are 32-bit */
     static const uint32_t HANDLER_MASK = 0x0fffffff;
 
-    /* Methods and their respective priority */
-    std::map<std::string, int> priority;
-
     /* List of handlers */
     std::vector<MoveOnlyFunction<bool(HttpRouter *)>> handlers;
 
     /* Current URL cache */
-    std::string_view currentUrl;
-    std::string_view urlSegmentVector[MAX_URL_SEGMENTS];
-    int urlSegmentTop;
+    std::string_view currentUrl = {};
+    std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
+    int urlSegmentTop = -1;
 
     /* The matching tree */
     struct Node {
-        std::string name;
-        std::vector<std::unique_ptr<Node>> children;
-        std::vector<uint32_t> handlers;
-        bool isHighPriority;
+        std::string name = {};
+        std::vector<std::unique_ptr<Node>> children = {};
+        std::vector<uint32_t> handlers = {};
+        bool isHighPriority = false;
 
-        Node(std::string name) : name(name) {}
+        Node(std::string name) : name(std::move(name)) {}
     } root = {"rootNode"};
 
     /* Sort wildcards after alphanum */
-    int lexicalOrder(std::string &name) {
-        if (!name.length()) {
+    int lexicalOrder(std::string_view name) {
+        if (name.empty()) {
             return 2;
         }
         if (name[0] == ':') {
@@ -118,7 +79,7 @@ private:
 
     /* Advance from parent to child, adding child if necessary */
     Node *getNode(Node *parent, std::string child, bool isHighPriority) {
-        for (std::unique_ptr<Node> &node : parent->children) {
+        for (const std::unique_ptr<Node> &node : parent->children) {
             if (node->name == child && node->isHighPriority == isHighPriority) {
                 return node.get();
             }
@@ -127,22 +88,21 @@ private:
         /* Insert sorted, but keep order if parent is root (we sort methods by priority elsewhere) */
         std::unique_ptr<Node> newNode(new Node(child));
         newNode->isHighPriority = isHighPriority;
-        return parent->children.emplace(std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
-
+        auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
             if (a->isHighPriority != b->isHighPriority) {
                 return a->isHighPriority;
             }
-
-            return b->name.length() && (parent != &root) && (lexicalOrder(b->name) < lexicalOrder(a->name));
-        }), std::move(newNode))->get();
+            return !b->name.empty() && (parent != &root) && (lexicalOrder(b->name) < lexicalOrder(a->name));
+        });
+        return parent->children.emplace(iter, std::move(newNode))->get();
     }
 
     /* Basically a pre-allocated stack */
     struct RouteParameters {
         friend struct HttpRouter;
     private:
-        std::string_view params[MAX_URL_SEGMENTS];
-        int paramsTop;
+        std::string_view params[MAX_URL_SEGMENTS] = {};
+        int paramsTop = -1;
 
         void reset() {
             paramsTop = -1;
@@ -173,7 +133,7 @@ private:
     inline std::pair<std::string_view, bool> getUrlSegment(int urlSegment) {
         if (urlSegment > urlSegmentTop) {
             /* Signal as STOP when we have no more URL or stack space */
-            if (!currentUrl.length() || urlSegment > 99) {
+            if (!currentUrl.length() || urlSegment > int(MAX_URL_SEGMENTS - 1)) {
                 return {{}, true};
             }
 
@@ -221,14 +181,14 @@ private:
         }
 
         for (auto &p : parent->children) {
-            if (p->name.length() && p->name[0] == '*') {
+            if (p->name.starts_with('*')) {
                 /* Wildcard match (can be seen as a shortcut) */
                 for (uint32_t handler : p->handlers) {
                     if (handlers[handler & HANDLER_MASK](this)) {
                         return true;
                     }
                 }
-            } else if (p->name.length() && p->name[0] == ':' && segment.length()) {
+            } else if (p->name.starts_with(':') && !segment.empty()) {
                 /* Parameter match */
                 routeParameters.push(segment);
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
@@ -246,17 +206,17 @@ private:
     }
 
     /* Scans for one matching handler, returning the handler and its priority or UINT32_MAX for not found */
-    uint32_t findHandler(std::string method, std::string pattern, uint32_t priority) {
-        for (std::unique_ptr<Node> &node : root.children) {
+    uint32_t findHandler(std::string_view method, std::string_view pattern, uint32_t priority) {
+        for (const std::unique_ptr<Node> &node : root.children) {
             if (method == node->name) {
                 setUrl(pattern);
                 Node *n = node.get();
                 for (int i = 0; !getUrlSegment(i).second; i++) {
                     /* Go to next segment or quit */
-                    std::string segment = std::string(getUrlSegment(i).first);
+                    std::string segment(getUrlSegment(i).first);
                     Node *next = nullptr;
-                    for (std::unique_ptr<Node> &child : n->children) {
-                        if (child->name == segment && child->isHighPriority == (priority == HIGH_PRIORITY)) {
+                    for (const std::unique_ptr<Node> &child : n->children) {
+                        if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
                             next = child.get();
                             break;
                         }
@@ -280,10 +240,8 @@ private:
 
 public:
     HttpRouter() {
-        int p = 0;
-        for (std::string &method : upperCasedMethods) {
-            priority[method] = p++;
-        }
+        /* Always have ANY route */
+        getNode(&root, std::string(ANY_METHOD_TOKEN), false);
     }
 
     std::pair<int, std::string_view *> getParameters() {
@@ -304,39 +262,61 @@ public:
         for (auto &p : root.children) {
             if (p->name == method) {
                 /* Then route the url */
-                return executeHandlers(p.get(), 0, userData);
+                if (executeHandlers(p.get(), 0, userData)) {
+                    return true;
+                } else {
+                    break;
+                }
             }
         }
 
-        /* We did not find any handler for this method and url */
-        return false;
+        /* Always test any route last (this check should not be necessary if we always have at least one handler) */
+        if (root.children.empty()) [[unlikely]] {
+            return false;
+        }
+        return executeHandlers(root.children.back().get(), 0, userData);
     }
 
     /* Adds the corresponding entires in matching tree and handler list */
-    void add(std::vector<std::string> methods, std::string pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
+    void add(const std::span<const std::string> &methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
 
-        for (std::string method : methods) {
+        for (const std::string &method : methods) {
             /* Lookup method */
             Node *node = getNode(&root, method, false);
             /* Iterate over all segments */
             setUrl(pattern);
             for (int i = 0; !getUrlSegment(i).second; i++) {
-                node = getNode(node, std::string(getUrlSegment(i).first), priority == HIGH_PRIORITY);
+                std::string strippedSegment(getUrlSegment(i).first);
+                if (strippedSegment.length() > 1 && strippedSegment[0] == ':') {
+                    /* Parameter routes must be named only : */
+                    strippedSegment.resize(1);
+                }
+                node = getNode(node, strippedSegment, priority == HIGH_PRIORITY);
             }
             /* Insert handler in order sorted by priority (most significant 1 byte) */
-            node->handlers.insert(std::upper_bound(node->handlers.begin(), node->handlers.end(), (uint32_t) (priority | handlers.size())), (uint32_t) (priority | handlers.size()));
+            uint32_t new_priority(priority | handlers.size());
+            node->handlers.insert(std::upper_bound(node->handlers.begin(), node->handlers.end(), new_priority), new_priority);
         }
 
         /* Alloate this handler */
         handlers.emplace_back(std::move(handler));
 
-        /* Assume can find this handler again */
-        if (((handlers.size() - 1) | priority) != findHandler(methods[0], pattern, priority)) {
-            std::cerr << "Error: Internal routing error" << std::endl;
-            std::abort();
-        }
+        /* ANY method must be last, GET must be first */
+        std::sort(root.children.begin(), root.children.end(), [](const auto &a, const auto &b) {
+            if (a->name == "GET" && b->name != "GET") {
+                return true;
+            } else if (b->name == "GET" && a->name != "GET") {
+                return false;
+            } else if (a->name == ANY_METHOD_TOKEN && b->name != ANY_METHOD_TOKEN) {
+                return false;
+            } else if (b->name == ANY_METHOD_TOKEN && a->name != ANY_METHOD_TOKEN) {
+                return true;
+            } else {
+                return a->name < b->name;
+            }
+        });
     }
 
     bool cullNode(Node *parent, Node *node, uint32_t handler) {
@@ -379,11 +359,11 @@ public:
     /* Removes ALL routes with the same handler as can be found with the given parameters.
      * Removing a wildcard is done by removing ONE OF the methods the wildcard would match with.
      * Example: If wildcard includes POST, GET, PUT, you can remove ALL THREE by removing GET. */
-    void remove(std::string method, std::string pattern, uint32_t priority) {
+    bool remove(std::string_view method, std::string_view pattern, uint32_t priority) {
         uint32_t handler = findHandler(method, pattern, priority);
         if (handler == UINT32_MAX) {
             /* Not found or already removed, do nothing */
-            return;
+            return false;
         }
 
         /* Cull the entire tree */
@@ -394,6 +374,8 @@ public:
 
         /* Now remove the actual handler */
         handlers.erase(handlers.begin() + (handler & HANDLER_MASK));
+
+        return true;
     }
 };
 

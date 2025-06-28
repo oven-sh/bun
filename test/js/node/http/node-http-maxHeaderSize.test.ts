@@ -18,22 +18,23 @@ test("maxHeaderSize", async () => {
       },
     });
 
-    expect(
-      async () =>
-        await fetch(`${server.url}/`, {
-          headers: {
-            "Huge": Buffer.alloc(8 * 1024, "abc").toString(),
-          },
-        }),
-    ).toThrow();
-    expect(
-      async () =>
-        await fetch(`${server.url}/`, {
-          headers: {
-            "Huge": Buffer.alloc(512, "abc").toString(),
-          },
-        }),
-    ).not.toThrow();
+    {
+      const response = await fetch(`${server.url}/`, {
+        headers: {
+          "Huge": Buffer.alloc(8 * 1024, "abc").toString(),
+        },
+      });
+      expect(response.status).toBe(431);
+    }
+
+    {
+      const response = await fetch(`${server.url}/`, {
+        headers: {
+          "Huge": Buffer.alloc(15 * 1024, "abc").toString(),
+        },
+      });
+      expect(response.status).toBe(431);
+    }
   }
   http.maxHeaderSize = 16 * 1024;
   {
@@ -45,22 +46,23 @@ test("maxHeaderSize", async () => {
       },
     });
 
-    expect(
-      async () =>
-        await fetch(`${server.url}/`, {
-          headers: {
-            "Huge": Buffer.alloc(15 * 1024, "abc").toString(),
-          },
-        }),
-    ).not.toThrow();
-    expect(
-      async () =>
-        await fetch(`${server.url}/`, {
-          headers: {
-            "Huge": Buffer.alloc(17 * 1024, "abc").toString(),
-          },
-        }),
-    ).toThrow();
+    {
+      const response = await fetch(`${server.url}/`, {
+        headers: {
+          "Huge": Buffer.alloc(15 * 1024, "abc").toString(),
+        },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    {
+      const response = await fetch(`${server.url}/`, {
+        headers: {
+          "Huge": Buffer.alloc(17 * 1024, "abc").toString(),
+        },
+      });
+      expect(response.status).toBe(431);
+    }
   }
 
   http.maxHeaderSize = originalMaxHeaderSize;

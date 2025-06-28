@@ -63,4 +63,4 @@ process.on("exit", kill);
 
 ---
 
-At the time of writing, Bun hasn't implemented the `node:cluster` module yet, but this is a faster, simple, and limited alternative. We will also implement `node:cluster` in the future.
+Bun has also implemented the `node:cluster` module, but this is a faster, simple, and limited alternative.

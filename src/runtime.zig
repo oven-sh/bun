@@ -1,23 +1,13 @@
-const options = @import("./options.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = bun.JSAst;
-const content = @import("root").content;
-// packages/bun-cli-*/bun
-const BUN_ROOT = "../../";
 
 const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
@@ -31,50 +21,8 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
 
     return code;
 }
-pub const ErrorCSS = struct {
-    pub inline fn sourceContent() string {
-        if (comptime Environment.isDebug) {
-            var out_buffer: bun.PathBuffer = undefined;
-            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
-            const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
-                .{ .mode = .read_only },
-            ) catch return embedDebugFallback(
-                "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
-                content.error_css,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return content.error_css;
-        }
-    }
-};
-
-pub const ErrorJS = struct {
-    pub inline fn sourceContent() string {
-        if (comptime Environment.isDebug) {
-            var out_buffer: bun.PathBuffer = undefined;
-            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
-            const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
-                .{ .mode = .read_only },
-            ) catch return embedDebugFallback(
-                "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
-                content.error_js,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return content.error_js;
-        }
-    }
-};
 
 pub const Fallback = struct {
-    pub const ProdSourceContent = @embedFile("./fallback.out.js");
     pub const HTMLTemplate = @embedFile("./fallback.html");
     pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
@@ -113,29 +61,27 @@ pub const Fallback = struct {
         };
     };
 
-    pub inline fn scriptContent() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ "/" ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
-            var buf: bun.PathBuffer = undefined;
-            const user = bun.getUserName(&buf) orelse "";
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                user,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"",
-                ProdSourceContent,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContent;
-        }
+    pub inline fn errorJS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("bun-error/index.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "bun-error/index.js");
     }
+
+    pub inline fn errorCSS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("bun-error/bun-error.css")
+        else
+            bun.runtimeEmbedFile(.codegen, "bun-error/bun-error.css");
+    }
+
+    pub inline fn fallbackDecoderJS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("fallback-decoder.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "fallback-decoder.js");
+    }
+
     pub const version_hash = @import("build_options").fallback_html_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
@@ -166,7 +112,7 @@ pub const Fallback = struct {
         try writer.print(HTMLTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .preload = preload,
-            .fallback = scriptContent(),
+            .fallback = fallbackDecoderJS(),
             .entry_point = entry_point,
         });
     }
@@ -186,22 +132,24 @@ pub const Fallback = struct {
         };
         try writer.print(HTMLBackendTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
-            .bun_error_css = ErrorCSS.sourceContent(),
-            .bun_error = ErrorJS.sourceContent(),
+            .bun_error_css = errorCSS(),
+            .bun_error = errorJS(),
             .bun_error_page_css = "",
-            .fallback = scriptContent(),
+            .fallback = fallbackDecoderJS(),
         });
     }
 };
 
 pub const Runtime = struct {
-    pub const source_code = @embedFile("./runtime.out.js");
+    pub fn sourceCode() string {
+        return if (Environment.codegen_embed)
+            @embedFile("runtime.out.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "runtime.out.js");
+    }
 
-    pub const hash = brk: {
-        @setEvalBranchQuota(source_code.len * 50);
-        break :brk bun.Wyhash11.hash(0, source_code);
-    };
     pub fn versionHash() u32 {
+        const hash = bun.Wyhash11.hash(0, sourceCode());
         return @truncate(hash);
     }
 
@@ -209,13 +157,14 @@ pub const Runtime = struct {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
-
-        /// `hot_module_reloading` is specific to if we are using bun.kit.DevServer.
-        /// It can be enabled on the command line with --format=internal_kit_dev
+        /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
+        /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
+        /// Control how the parser handles server components and server functions.
+        server_components: ServerComponentsMode = .none,
 
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
@@ -237,9 +186,8 @@ pub const Runtime = struct {
 
         trim_unused_imports: bool = false,
 
-        /// Use `import.meta.require()` instead of require()?
-        /// This is only supported with --target=bun
-        use_import_meta_require: bool = false,
+        /// Allow runtime usage of require(), converting `require` into `__require`
+        auto_polyfill_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 
@@ -259,6 +207,7 @@ pub const Runtime = struct {
         unwrap_commonjs_packages: []const string = &.{},
 
         commonjs_at_runtime: bool = false,
+        unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
 
@@ -282,7 +231,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
@@ -316,38 +264,58 @@ pub const Runtime = struct {
 
             pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
         };
+
+        pub const ServerComponentsMode = enum {
+            /// Server components is disabled, strings "use client" and "use server" mean nothing.
+            none,
+            /// This is a server-side file outside of the SSR graph, but not a "use server" file.
+            /// - Handle functions with "use server", creating secret exports for them.
+            wrap_anon_server_functions,
+            /// This is a "use client" file on the server, and separate_ssr_graph is off.
+            /// - Wrap all exports in a call to `registerClientReference`
+            /// - Ban "use server" functions???
+            wrap_exports_for_client_reference,
+            /// This is a "use server" file on the server
+            /// - Wrap all exports in a call to `registerServerReference`
+            /// - Ban "use server" functions, since this directive is already applied.
+            wrap_exports_for_server_reference,
+            /// This is a client side file.
+            /// - Ban "use server" functions since it is on the client-side
+            client_side,
+
+            pub fn wrapsExports(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_client_reference,
+                    .wrap_exports_for_server_reference,
+                    => true,
+                    else => false,
+                };
+            }
+        };
     };
 
     pub const Names = struct {
         pub const ActivateFunction = "activate";
     };
 
-    /// See js_parser.StaticSymbolName
-    pub const GeneratedSymbol = struct {
-        primary: Ref,
-        backup: Ref,
-        ref: Ref,
-
-        pub const empty: GeneratedSymbol = .{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None };
-    };
-
     // If you change this, remember to update "runtime.js"
     pub const Imports = struct {
-        __name: ?GeneratedSymbol = null,
-        __require: ?GeneratedSymbol = null,
-        __export: ?GeneratedSymbol = null,
-        __reExport: ?GeneratedSymbol = null,
-        __exportValue: ?GeneratedSymbol = null,
-        __exportDefault: ?GeneratedSymbol = null,
+        __name: ?Ref = null,
+        __require: ?Ref = null,
+        __export: ?Ref = null,
+        __reExport: ?Ref = null,
+        __exportValue: ?Ref = null,
+        __exportDefault: ?Ref = null,
         // __refreshRuntime: ?GeneratedSymbol = null,
         // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-        __merge: ?GeneratedSymbol = null,
-        __legacyDecorateClassTS: ?GeneratedSymbol = null,
-        __legacyDecorateParamTS: ?GeneratedSymbol = null,
-        __legacyMetadataTS: ?GeneratedSymbol = null,
-        @"$$typeof": ?GeneratedSymbol = null,
-        __using: ?GeneratedSymbol = null,
-        __callDispose: ?GeneratedSymbol = null,
+        __merge: ?Ref = null,
+        __legacyDecorateClassTS: ?Ref = null,
+        __legacyDecorateParamTS: ?Ref = null,
+        __legacyMetadataTS: ?Ref = null,
+        @"$$typeof": ?Ref = null,
+        __using: ?Ref = null,
+        __callDispose: ?Ref = null,
+        __jsonParse: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -363,6 +331,7 @@ pub const Runtime = struct {
             "$$typeof",
             "__using",
             "__callDispose",
+            "__jsonParse",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);
@@ -412,7 +381,7 @@ pub const Runtime = struct {
                     switch (this.i) {
                         inline 0...all.len - 1 => |t| {
                             if (@field(this.runtime_imports, all[t])) |val| {
-                                return Entry{ .key = t, .value = val.ref };
+                                return Entry{ .key = t, .value = val };
                             }
                         },
                         else => {
@@ -443,15 +412,15 @@ pub const Runtime = struct {
             return false;
         }
 
-        pub fn put(imports: *Imports, comptime key: string, generated_symbol: GeneratedSymbol) void {
-            @field(imports, key) = generated_symbol;
+        pub fn put(imports: *Imports, comptime key: string, ref: Ref) void {
+            @field(imports, key) = ref;
         }
 
         pub fn at(
             imports: *Imports,
             comptime key: string,
         ) ?Ref {
-            return (@field(imports, key) orelse return null).ref;
+            return (@field(imports, key) orelse return null);
         }
 
         pub fn get(
@@ -459,7 +428,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null),
                 else => null,
             };
         }

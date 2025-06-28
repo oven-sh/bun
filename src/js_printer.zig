@@ -6,33 +6,24 @@ const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
-const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
 
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
-
-const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;
 const G = js_ast.G;
-const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
@@ -40,22 +31,17 @@ const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Ast = js_ast.Ast;
 
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
-const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
 const assert = bun.assert;
 
-threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
-threadlocal var imported_module_ids_list_unset: bool = true;
 const ImportRecord = bun.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
@@ -82,9 +68,9 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
 
 pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime ascii_only: bool) bool {
     if (c <= last_ascii) {
-        return c >= first_ascii and c != '\\' and c != '"';
+        return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
-        return !ascii_only and c != 0xFEFF and (c < first_high_surrogate or c > last_low_surrogate);
+        return !ascii_only and c != 0xFEFF and c != 0x2028 and c != 0x2029 and (c < first_high_surrogate or c > last_low_surrogate);
     }
 }
 
@@ -95,9 +81,8 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
     var single_cost: usize = 0;
     var double_cost: usize = 0;
     var backtick_cost: usize = 0;
-    var char: u8 = 0;
     var i: usize = 0;
-    while (i < str.len) {
+    while (i < @min(str.len, 1024)) {
         switch (str[i]) {
             '\'' => {
                 single_cost += 1;
@@ -108,10 +93,9 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
             '`' => {
                 backtick_cost += 1;
             },
-            '\r', '\n' => {
-                if (allow_backtick) {
-                    return '`';
-                }
+            '\n' => {
+                single_cost += 1;
+                double_cost += 1;
             },
             '\\' => {
                 i += 1;
@@ -126,18 +110,13 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
         i += 1;
     }
 
-    char = '"';
-    if (double_cost > single_cost) {
-        char = '\'';
-
-        if (single_cost > backtick_cost and allow_backtick) {
-            char = '`';
-        }
-    } else if (double_cost > backtick_cost and allow_backtick) {
-        char = '`';
+    if (allow_backtick and backtick_cost < @min(single_cost, double_cost)) {
+        return '`';
     }
-
-    return char;
+    if (single_cost < double_cost) {
+        return '\'';
+    }
+    return '"';
 }
 
 const Whitespacer = struct {
@@ -170,11 +149,11 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
+pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
     var remaining = input;
     var len: usize = 2; // for quotes
 
-    while (strings.indexOfNeedsEscape(remaining)) |i| {
+    while (strings.indexOfNeedsEscapeForJavaScriptString(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
@@ -212,110 +191,184 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
-    try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
-    try bytes.appendChar('"');
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
+    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+    if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
-        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
+        const width = switch (comptime encoding) {
+            .latin1, .ascii => 1,
+            .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
+            .utf16 => 1,
+        };
         const clamped_width = @min(@as(usize, width), n -| i);
-        const c = strings.decodeWTF8RuneT(
-            &switch (clamped_width) {
-                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                1 => .{ text[i], 0, 0, 0 },
-                2 => text[i..][0..2].* ++ .{ 0, 0 },
-                3 => text[i..][0..3].* ++ .{0},
-                4 => text[i..][0..4].*,
-                else => unreachable,
+        const c = switch (encoding) {
+            .utf8 => strings.decodeWTF8RuneT(
+                &switch (clamped_width) {
+                    // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                    1 => .{ text[i], 0, 0, 0 },
+                    2 => text[i..][0..2].* ++ .{ 0, 0 },
+                    3 => text[i..][0..3].* ++ .{0},
+                    4 => text[i..][0..4].*,
+                    else => unreachable,
+                },
+                width,
+                i32,
+                0,
+            ),
+            .ascii => brk: {
+                std.debug.assert(text[i] <= 0x7F);
+                break :brk text[i];
             },
-            width,
-            i32,
-            0,
-        );
+            .latin1 => brk: {
+                if (text[i] <= 0x7F) break :brk text[i];
+                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
+            },
+            .utf16 => brk: {
+                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
+                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
+                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
+                break :brk @as(i32, text[i]);
+            },
+        };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];
-            if (strings.indexOfNeedsEscape(remain)) |j| {
-                const text_chunk = text[i .. i + clamped_width];
-                try bytes.appendSlice(text_chunk);
-                i += clamped_width;
-                try bytes.appendSlice(remain[0..j]);
-                i += j;
-                continue;
-            } else {
-                try bytes.appendSlice(text[i..]);
-                i = n;
-                break;
+
+            switch (encoding) {
+                .ascii, .utf8 => {
+                    if (strings.indexOfNeedsEscapeForJavaScriptString(remain, quote_char)) |j| {
+                        const text_chunk = text[i .. i + clamped_width];
+                        try writer.writeAll(text_chunk);
+                        i += clamped_width;
+                        try writer.writeAll(remain[0..j]);
+                        i += j;
+                    } else {
+                        try writer.writeAll(text[i..]);
+                        i = n;
+                        break;
+                    }
+                },
+                .latin1, .utf16 => {
+                    var codepoint_bytes: [4]u8 = undefined;
+                    const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
+                    try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+                    i += clamped_width;
+                },
             }
+            continue;
         }
         switch (c) {
             0x07 => {
-                try bytes.appendSlice("\\x07");
+                try writer.writeAll("\\x07");
                 i += 1;
             },
             0x08 => {
-                try bytes.appendSlice("\\b");
+                try writer.writeAll("\\b");
                 i += 1;
             },
             0x0C => {
-                try bytes.appendSlice("\\f");
+                try writer.writeAll("\\f");
                 i += 1;
             },
             '\n' => {
-                try bytes.appendSlice("\\n");
+                if (quote_char == '`') {
+                    try writer.writeAll("\n");
+                } else {
+                    try writer.writeAll("\\n");
+                }
                 i += 1;
             },
             std.ascii.control_code.cr => {
-                try bytes.appendSlice("\\r");
+                try writer.writeAll("\\r");
                 i += 1;
             },
             // \v
             std.ascii.control_code.vt => {
-                try bytes.appendSlice("\\v");
+                try writer.writeAll("\\v");
                 i += 1;
             },
             // "\\"
             '\\' => {
-                try bytes.appendSlice("\\\\");
+                try writer.writeAll("\\\\");
                 i += 1;
             },
             '"' => {
-                try bytes.appendSlice("\\\"");
+                if (quote_char == '"') {
+                    try writer.writeAll("\\\"");
+                } else {
+                    try writer.writeAll("\"");
+                }
+                i += 1;
+            },
+            '\'' => {
+                if (quote_char == '\'') {
+                    try writer.writeAll("\\'");
+                } else {
+                    try writer.writeAll("'");
+                }
+                i += 1;
+            },
+            '`' => {
+                if (quote_char == '`') {
+                    try writer.writeAll("\\`");
+                } else {
+                    try writer.writeAll("`");
+                }
+                i += 1;
+            },
+            '$' => {
+                if (quote_char == '`') {
+                    const remain = text[i + clamped_width ..];
+                    if (remain.len > 0 and remain[0] == '{') {
+                        try writer.writeAll("\\$");
+                    } else {
+                        try writer.writeAll("$");
+                    }
+                } else {
+                    try writer.writeAll("$");
+                }
                 i += 1;
             },
 
             '\t' => {
-                try bytes.appendSlice("\\t");
+                if (quote_char == '`') {
+                    try writer.writeAll("\t");
+                } else {
+                    try writer.writeAll("\\t");
+                }
                 i += 1;
             },
 
             else => {
                 i += @as(usize, width);
 
-                if (c < 0xFFFF) {
+                if (c <= 0xFF and !json) {
                     const k = @as(usize, @intCast(c));
-                    bytes.ensureUnusedCapacity(6) catch unreachable;
-                    const old = bytes.list.items.len;
-                    bytes.list.items.len += 6;
 
-                    bytes.list.items[old .. old + 6].ptr[0..6].* = [_]u8{
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'x',
+                        hex_chars[(k >> 4) & 0xF],
+                        hex_chars[k & 0xF],
+                    });
+                } else if (c <= 0xFFFF) {
+                    const k = @as(usize, @intCast(c));
+
+                    try writer.writeAll(&[_]u8{
                         '\\',
                         'u',
                         hex_chars[(k >> 12) & 0xF],
                         hex_chars[(k >> 8) & 0xF],
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
-                    };
+                    });
                 } else {
-                    bytes.ensureUnusedCapacity(12) catch unreachable;
-                    const old = bytes.list.items.len;
-                    bytes.list.items.len += 12;
-
                     const k = c - 0x10000;
                     const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
                     const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
-                    bytes.list.items[old .. old + 12][0..12].* = [_]u8{
+                    try writer.writeAll(&[_]u8{
                         '\\',
                         'u',
                         hex_chars[lo >> 12],
@@ -328,164 +381,24 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
                         hex_chars[(hi >> 8) & 15],
                         hex_chars[(hi >> 4) & 15],
                         hex_chars[hi & 15],
-                    };
+                    });
                 }
             },
         }
     }
+}
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
+    const writer = bytes.writer();
+
+    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.appendChar('"');
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
     bytes.appendChar('"') catch unreachable;
-}
-
-const JSONFormatter = struct {
-    input: []const u8,
-
-    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
-    }
-};
-
-const JSONFormatterUTF8 = struct {
-    input: []const u8,
-
-    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
-    }
-};
-
-/// Expects latin1
-pub fn formatJSONString(text: []const u8) JSONFormatter {
-    return .{ .input = text };
-}
-
-pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
-    return .{ .input = text };
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    var text = input;
-    const end = text.ptr + text.len;
-    if (comptime encoding == .utf16) {
-        @compileError("not implemented yet");
-    }
-
-    while (text.ptr != end) {
-        const width = if (comptime encoding == .latin1 or encoding == .ascii)
-            1
-        else
-            strings.wtf8ByteSequenceLengthWithInvalid(text[0]);
-
-        const c: i32 = if (comptime encoding == .utf8)
-            strings.decodeWTF8RuneT(text.ptr[0..4], width, i32, 0)
-        else brk: {
-            const char = text[0];
-            if (char <= 0x7F) {
-                break :brk char;
-            } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
-        };
-        if (canPrintWithoutEscape(i32, c, false)) {
-            const remain = text[width..];
-            if (encoding != .utf8 and width > 0) {
-                var codepoint_bytes: [4]u8 = undefined;
-                std.mem.writeInt(i32, &codepoint_bytes, c, .little);
-                try writer.writeAll(
-                    codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
-                );
-            } else if (encoding == .utf8) {
-                try writer.writeAll(text[0..width]);
-            }
-
-            if (strings.indexOfNeedsEscape(remain)) |j| {
-                try writer.writeAll(remain[0..j]);
-                text = remain[j..];
-                continue;
-            } else {
-                try writer.writeAll(remain);
-                break;
-            }
-        }
-        switch (c) {
-            // Special-case the bell character since it may cause dumping this file to
-            // the terminal to make a sound, which is undesirable. Note that we can't
-            // use an octal literal to print this shorter since octal literals are not
-            // allowed in strict mode (or in template strings).
-            0x07 => {
-                try writer.writeAll("\\x07");
-                text = text[1..];
-            },
-            0x08 => {
-                try writer.writeAll("\\b");
-                text = text[1..];
-            },
-            0x0C => {
-                try writer.writeAll("\\f");
-                text = text[1..];
-            },
-            '\n' => {
-                try writer.writeAll("\\n");
-                text = text[1..];
-            },
-            std.ascii.control_code.cr => {
-                try writer.writeAll("\\r");
-                text = text[1..];
-            },
-            // \v
-            std.ascii.control_code.vt => {
-                try writer.writeAll("\\v");
-                text = text[1..];
-            },
-            // "\\"
-            '\\' => {
-                try writer.writeAll("\\\\");
-                text = text[1..];
-            },
-            '"' => {
-                try writer.writeAll("\\\"");
-                text = text[1..];
-            },
-
-            '\t' => {
-                try writer.writeAll("\\t");
-                text = text[1..];
-            },
-
-            else => {
-                text = text[@as(usize, width)..];
-
-                if (c < 0xFFFF) {
-                    const k = @as(usize, @intCast(c));
-
-                    try writer.writeAll(&[_]u8{
-                        '\\',
-                        'u',
-                        hex_chars[(k >> 12) & 0xF],
-                        hex_chars[(k >> 8) & 0xF],
-                        hex_chars[(k >> 4) & 0xF],
-                        hex_chars[k & 0xF],
-                    });
-                } else {
-                    const k = c - 0x10000;
-                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
-
-                    try writer.writeAll(&[_]u8{
-                        '\\',
-                        'u',
-                        hex_chars[lo >> 12],
-                        hex_chars[(lo >> 8) & 15],
-                        hex_chars[(lo >> 4) & 15],
-                        hex_chars[lo & 15],
-                        '\\',
-                        'u',
-                        hex_chars[hi >> 12],
-                        hex_chars[(hi >> 8) & 15],
-                        hex_chars[(hi >> 4) & 15],
-                        hex_chars[hi & 15],
-                    });
-                }
-            },
-        }
-    }
+    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
     try writer.writeAll("\"");
 }
 
@@ -493,14 +406,14 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
-    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void;
+    pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
 
-    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
+    pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void)) type {
         return struct {
-            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+            pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
                 try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
             }
 
@@ -512,24 +425,26 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
+    bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,
     to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
     import_meta_ref: Ref = Ref.None,
+    hmr_ref: Ref = Ref.None,
     indent: Indentation = .{},
-    externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
     allocator: std.mem.Allocator = default_allocator,
+    source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
-    input_files_for_kit: ?[]logger.Source = null,
+    input_files_for_dev_server: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
@@ -554,25 +469,11 @@ pub const Options = struct {
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
-    // TODO: remove this
-    // The reason for this is:
-    // 1. You're bundling a React component
-    // 2. jsx auto imports are prepended to the list of parts
-    // 3. The AST modification for bundling only applies to the final part
-    // 4. This means that it will try to add a toplevel part which is not wrapped in the arrow function, which is an error
-    //     TypeError: $30851277 is not a function. (In '$30851277()', '$30851277' is undefined)
-    //        at (anonymous) (0/node_modules.server.e1b5ffcd183e9551.jsb:1463:21)
-    //        at #init_react/jsx-dev-runtime.js (0/node_modules.server.e1b5ffcd183e9551.jsb:1309:8)
-    //        at (esm) (0/node_modules.server.e1b5ffcd183e9551.jsb:1480:30)
-
-    // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
-    // Then, when we're JUST about to print it, we print the body of prepend_part_value first
-    prepend_part_key: ?*anyopaque = null,
-    prepend_part_value: ?*js_ast.Part = null,
-
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
+
+    mangled_props: ?*const bun.bundle_v2.MangledProps,
 
     // Default indentation is 2 spaces
     pub const Indentation = struct {
@@ -655,7 +556,7 @@ pub const PrintResult = union(enum) {
 // do not make this a packed struct
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
-// this test failure was caused by the packed structi mplementation
+// this test failure was caused by the packed struct implementation
 const ExprFlag = enum {
     forbid_call,
     forbid_in,
@@ -772,7 +673,6 @@ fn NewPrinter(
         writer: Writer,
 
         has_printed_bundled_import_statement: bool = false,
-        imported_module_ids: std.ArrayList(u32),
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
@@ -783,6 +683,8 @@ fn NewPrinter(
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
+        was_lazy_export: bool = false,
 
         const Printer = @This();
 
@@ -1044,6 +946,15 @@ fn NewPrinter(
             }
         }
 
+        pub fn mangledPropName(p: *Printer, _ref: Ref) string {
+            const ref = p.symbols().follow(_ref);
+            // TODO: we don't support that
+            if (p.options.mangled_props != null) {
+                if (p.options.mangled_props.?.get(ref)) |name| return name;
+            }
+            return p.renamer.nameForSymbol(ref);
+        }
+
         pub inline fn printSpace(p: *Printer) void {
             if (!p.options.minify_whitespace)
                 p.print(" ");
@@ -1090,11 +1001,6 @@ fn NewPrinter(
         fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
             printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
-        }
-
-        fn printHardcodedImportStatement(p: *Printer, import: S.Import) void {
-            if (comptime !is_bun_platform) unreachable;
-            printInternalBunImport(p, import, void, {});
         }
 
         fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) void {
@@ -1257,18 +1163,22 @@ fn NewPrinter(
         pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
             p.addSourceMapping(loc);
             p.print("{");
-            p.printNewline();
+            if (stmts.len > 0) {
+                @branchHint(.likely);
+                p.printNewline();
 
-            p.indent();
-            p.printBlockBody(stmts);
-            p.unindent();
-            p.needs_semicolon = false;
+                p.indent();
+                p.printBlockBody(stmts);
+                p.unindent();
 
-            p.printIndent();
+                p.printIndent();
+            }
             if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
                 p.addSourceMapping(close_brace_loc.?);
             }
             p.print("}");
+
+            p.needs_semicolon = false;
         }
 
         pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []const Stmt, prepend: []const Stmt) void {
@@ -1442,11 +1352,18 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
+            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
+            // if (printer.symbols().get(printer.symbols().follow(ref))) |original_symbol| {
+            //     if (!bun.strings.eql( original_symbol.original_name, name)) {
+            //         printer.source_map_builder.addSourceMapping(location, originalName);
+            //         return;
+            //     }
+            // }
             printer.addSourceMapping(location);
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            bun.assert(!ref.isNull());
+            bun.assert(!ref.isNull()); // Invalid Symbol
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1458,7 +1375,7 @@ fn NewPrinter(
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
-                p.printQuotedUTF8(alias, false);
+                p.printStringLiteralUTF8(alias, false);
             }
         }
 
@@ -1507,6 +1424,7 @@ fn NewPrinter(
             p.printSpace();
             p.printBlock(func.body.loc, func.body.stmts, null);
         }
+
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
                 p.print(" extends");
@@ -1672,228 +1590,25 @@ fn NewPrinter(
             p.fmt("{d}", .{float}) catch {};
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            var i: usize = 0;
-            const n: usize = text.len;
+        pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
+            const writer = e.writer.stdWriter();
+            (switch (quote) {
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                else => unreachable,
+            }) catch |err| switch (err) {};
+        }
+        pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
+            const slice = std.mem.sliceAsBytes(text);
 
-            outer: while (i < n) {
-                const CodeUnitType = u32;
-
-                const c: CodeUnitType = text[i];
-                i += 1;
-
-                switch (c) {
-
-                    // Special-case the null character since it may mess with code written in C
-                    // that treats null characters as the end of the string.
-                    0x00 => {
-                        // We don't want "\x001" to be written as "\01"
-                        if (i < n and text[i] >= '0' and text[i] <= '9') {
-                            e.print("\\x00");
-                        } else {
-                            e.print("\\0");
-                        }
-                    },
-
-                    // Special-case the bell character since it may cause dumping this file to
-                    // the terminal to make a sound, which is undesirable. Note that we can't
-                    // use an octal literal to print this shorter since octal literals are not
-                    // allowed in strict mode (or in template strings).
-                    0x07 => {
-                        e.print("\\x07");
-                    },
-                    0x08 => {
-                        if (quote == '`')
-                            e.print(0x08)
-                        else
-                            e.print("\\b");
-                    },
-                    0x0C => {
-                        if (quote == '`')
-                            e.print(0x000C)
-                        else
-                            e.print("\\f");
-                    },
-                    '\t' => {
-                        if (quote == '`')
-                            e.print("\t")
-                        else
-                            e.print("\\t");
-                    },
-                    '\n' => {
-                        if (quote == '`') {
-                            e.print('\n');
-                        } else {
-                            e.print("\\n");
-                        }
-                    },
-                    // we never print \r un-escaped
-                    std.ascii.control_code.cr => {
-                        e.print("\\r");
-                    },
-                    // \v
-                    std.ascii.control_code.vt => {
-                        if (quote == '`') {
-                            e.print(std.ascii.control_code.vt);
-                        } else {
-                            e.print("\\v");
-                        }
-                    },
-                    // "\\"
-                    '\\' => {
-                        e.print("\\\\");
-                    },
-
-                    '\'' => {
-                        if (quote == '\'') {
-                            e.print('\\');
-                        }
-                        e.print("'");
-                    },
-
-                    '"' => {
-                        if (quote == '"') {
-                            e.print('\\');
-                        }
-
-                        e.print("\"");
-                    },
-                    '`' => {
-                        if (quote == '`') {
-                            e.print('\\');
-                        }
-
-                        e.print("`");
-                    },
-                    '$' => {
-                        if (quote == '`' and i < n and text[i] == '{') {
-                            e.print('\\');
-                        }
-
-                        e.print('$');
-                    },
-                    0x2028 => {
-                        e.print("\\u2028");
-                    },
-                    0x2029 => {
-                        e.print("\\u2029");
-                    },
-                    0xFEFF => {
-                        e.print("\\uFEFF");
-                    },
-
-                    else => {
-                        switch (c) {
-                            first_ascii...last_ascii => {
-                                e.print(@as(u8, @intCast(c)));
-
-                                // Fast path for printing long UTF-16 template literals
-                                // this only applies to template literal strings
-                                // but we print a template literal if there is a \n or a \r
-                                // which is often if the string is long and UTF-16
-                                if (quote == '`') {
-                                    const remain = text[i..];
-                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
-                                        remain[0] != '$' and
-                                        remain[0] != '\\' and
-                                        remain[0] != '`')
-                                    {
-                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
-                                            if (count_ == 0)
-                                                unreachable; // conditional above checks this
-
-                                            const len = count_ - 1;
-                                            i += len;
-                                            var ptr = e.writer.reserve(len) catch unreachable;
-                                            const to_copy = ptr[0..len];
-
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                                            e.writer.advance(len);
-                                            continue :outer;
-                                        } else {
-                                            const count = @as(u32, @truncate(remain.len));
-                                            var ptr = e.writer.reserve(count) catch unreachable;
-                                            const to_copy = ptr[0..count];
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
-                                            e.writer.advance(count);
-                                            i += count;
-                                        }
-                                    }
-                                }
-                            },
-                            first_high_surrogate...last_high_surrogate => {
-
-                                // Is there a next character?
-
-                                if (i < n) {
-                                    const c2: CodeUnitType = text[i];
-
-                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
-                                        i += 1;
-
-                                        // Escape this character if UTF-8 isn't allowed
-                                        if (ascii_only_always_on_unless_minifying) {
-                                            var ptr = e.writer.reserve(12) catch unreachable;
-                                            ptr[0..12].* = [_]u8{
-                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
-                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
-                                            };
-                                            e.writer.advance(12);
-
-                                            continue;
-                                            // Otherwise, encode to UTF-8
-                                        }
-
-                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
-
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
-                                        continue;
-                                    }
-                                }
-
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            // Is this an unpaired low surrogate or four-digit hex escape?
-                            first_low_surrogate...last_low_surrogate => {
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            else => {
-                                if (ascii_only_always_on_unless_minifying) {
-                                    if (c > 0xFF) {
-                                        var ptr = e.writer.reserve(6) catch unreachable;
-                                        // Write an unpaired high surrogate
-                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                        e.writer.advance(6);
-                                    } else {
-                                        // Can this be a two-digit hex escape?
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                    }
-                                } else {
-                                    // chars < 255 as two digit hex escape
-                                    if (c <= 0xFF) {
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                        continue;
-                                    }
-
-                                    var ptr = e.writer.reserve(4) catch return;
-                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
-                                }
-                            },
-                        }
-                    },
-                }
-            }
+            const writer = e.writer.stdWriter();
+            (switch (quote) {
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                else => unreachable,
+            }) catch |err| switch (err) {};
         }
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
@@ -1915,9 +1630,9 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{throw new Error(`Cannot require module ");
-            p.printQuotedUTF8(text, false);
-            p.print("`);})()");
+            p.print("(()=>{throw new Error(\"Cannot require module \"+");
+            p.printStringLiteralUTF8(text, false);
+            p.print(");})()");
         }
 
         pub inline fn importRecord(
@@ -1945,6 +1660,7 @@ fn NewPrinter(
 
             assert(p.import_records.len > import_record_index);
             const record = p.importRecord(import_record_index);
+            const module_type = p.options.module_type;
 
             if (comptime is_bun_platform) {
                 // "bun" is not a real module. It's just globalThis.Bun.
@@ -1961,20 +1677,21 @@ fn NewPrinter(
                     .bun => {
                         if (record.kind == .dynamic) {
                             p.print("Promise.resolve(globalThis.Bun)");
-                        } else if (record.kind == .require) {
+                            return;
+                        } else if (record.kind == .require or record.kind == .stmt) {
                             p.print("globalThis.Bun");
+                            return;
                         }
-                        return;
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {
-                            if (p.options.module_type == .cjs) {
+                            if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
-                            if (p.options.module_type == .cjs) {
+                            if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
                                 p.print("globalThis.Bun.jest(import.meta.path)");
@@ -2032,15 +1749,13 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (p.options.input_files_for_kit) |input_files| {
-                    bun.assert(p.options.module_type == .internal_kit_dev);
+                if (p.options.input_files_for_dev_server) |input_files| {
+                    bun.assert(module_type == .internal_bake_dev);
                     p.printSpaceBeforeIdentifier();
-                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.printSymbol(p.options.hmr_ref);
                     p.print(".require(");
-                    {
-                        const path = input_files[record.source_index.get()].path;
-                        p.printInlinedEnum(.{ .number = @floatFromInt(path.hashForKit()) }, path.pretty, level);
-                    }
+                    const path = input_files[record.source_index.get()].path;
+                    p.printStringLiteralUTF8(path.pretty, false);
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
                     // Call the wrapper
@@ -2074,7 +1789,7 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (p.options.module_type.isESM()) {
+                    if (module_type.isESM()) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");
@@ -2085,18 +1800,12 @@ fn NewPrinter(
                 return;
             }
 
-            const is_external = std.mem.indexOfScalar(
-                u32,
-                p.options.externals,
-                import_record_index,
-            ) != null;
-
             // External "require()"
             if (record.kind != .dynamic) {
                 p.printSpaceBeforeIdentifier();
 
                 if (p.options.inline_require_and_import_errors) {
-                    if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                    if (record.path.is_disabled and record.handles_import_errors) {
                         p.printRequireError(record.path.text);
                         return;
                     }
@@ -2107,9 +1816,26 @@ fn NewPrinter(
                     }
                 }
 
-                if (p.options.module_type == .esm and is_bun_platform) {
-                    p.print("import.meta.require");
-                } else if (p.options.require_ref) |ref| {
+                const wrap_with_to_esm = record.wrap_with_to_esm;
+
+                if (module_type == .internal_bake_dev) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.hmr_ref);
+                    if (record.tag == .builtin)
+                        p.print(".builtin(")
+                    else
+                        p.print(".require(");
+                    const path = record.path;
+                    p.printStringLiteralUTF8(path.pretty, false);
+                    p.print(")");
+                    return;
+                } else if (wrap_with_to_esm) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.to_esm_ref);
+                    p.print("(");
+                }
+
+                if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
                 } else {
                     p.print("require");
@@ -2118,6 +1844,10 @@ fn NewPrinter(
                 p.print("(");
                 p.printImportRecordPath(record);
                 p.print(")");
+
+                if (wrap_with_to_esm) {
+                    p.print(")");
+                }
                 return;
             }
 
@@ -2135,16 +1865,19 @@ fn NewPrinter(
             p.printSpaceBeforeIdentifier();
 
             // Allow it to fail at runtime, if it should
-            p.print("import(");
-            p.printImportRecordPath(record);
+            if (module_type != .internal_bake_dev) {
+                p.print("import(");
+                p.printImportRecordPath(record);
+            } else {
+                p.printSymbol(p.options.hmr_ref);
+                p.print(".dynamicImport(");
+                const path = record.path;
+                p.printStringLiteralUTF8(path.pretty, false);
+            }
 
             if (!import_options.isMissing()) {
-                // since we previously stripped type, it is a breaking change to
-                // enable this for non-bun platforms
-                if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                    p.printWhitespacer(ws(", "));
-                    p.printExpr(import_options, .comma, .{});
-                }
+                p.printWhitespacer(ws(", "));
+                p.printExpr(import_options, .comma, .{});
             }
 
             p.print(")");
@@ -2163,14 +1896,22 @@ fn NewPrinter(
             p.printWhitespacer(ws("/* @__PURE__ */ "));
         }
 
-        pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
+        pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
+            const quote = bestQuoteCharForEString(str, allow_backtick);
+            p.print(quote);
+            p.printStringCharactersEString(str, quote);
+            p.print(quote);
+        }
+        pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
+            if (Environment.allow_assert) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
+
             const quote = if (comptime !is_json)
                 bestQuoteCharForString(u8, str, allow_backtick)
             else
                 '"';
 
             p.print(quote);
-            p.print(str);
+            p.printStringCharactersUTF8(str, quote);
             p.print(quote);
         }
 
@@ -2182,13 +1923,14 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
             if (comptime as == .import) {
-                p.printClauseAlias(item.alias);
-
-                if (!strings.eql(name, item.alias)) {
+                if (strings.eql(name, item.alias)) {
+                    p.printIdentifier(name);
+                } else {
+                    p.printClauseAlias(item.alias);
                     p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printIdentifier(name);
@@ -2212,16 +1954,6 @@ fn NewPrinter(
                 }
             } else {
                 @compileError("Unknown as");
-            }
-        }
-
-        pub inline fn canPrintIdentifier(_: *Printer, name: string) bool {
-            if (comptime is_json) return false;
-
-            if (comptime ascii_only or ascii_only_always_on_unless_minifying) {
-                return js_lexer.isLatin1Identifier(string, name);
-            } else {
-                return js_lexer.isIdentifier(name);
             }
         }
 
@@ -2298,6 +2030,7 @@ fn NewPrinter(
             switch (expr.data) {
                 .e_missing => {},
                 .e_undefined => {
+                    p.addSourceMapping(expr.loc);
                     p.printUndefined(expr.loc, level);
                 },
                 .e_super => {
@@ -2328,9 +2061,10 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    if (p.options.module_type == .internal_kit_dev) {
-                        p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".importMeta()");
+                    if (p.options.module_type == .internal_bake_dev) {
+                        bun.assert(p.options.hmr_ref.isValid());
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
@@ -2340,8 +2074,9 @@ fn NewPrinter(
                         //
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
-                        if (comptime Environment.allow_assert)
-                            bun.assert(p.options.module_type == .cjs);
+                        //
+                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
+                        bun.debugAssert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
                     }
@@ -2359,7 +2094,7 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
-                        bun.assert(p.options.module_type != .internal_kit_dev);
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
@@ -2376,12 +2111,12 @@ fn NewPrinter(
 
                         if (p.options.target == .node) {
                             // "__require.module"
-                            if (p.options.require_ref) |require|
-                                p.printSymbol(require)
-                            else
-                                p.print("require");
-
-                            p.print(".module");
+                            if (p.options.require_ref) |require| {
+                                p.printSymbol(require);
+                                p.print(".module");
+                            } else {
+                                p.print("module");
+                            }
                         } else if (p.options.commonjs_module_ref.isValid()) {
                             p.printSymbol(p.options.commonjs_module_ref);
                         } else {
@@ -2389,21 +2124,52 @@ fn NewPrinter(
                         }
                     }
                 },
-                .e_module_dot_exports => {
-                    p.printSpaceBeforeIdentifier();
-                    p.addSourceMapping(expr.loc);
+                .e_special => |special| switch (special) {
+                    .module_exports => {
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
 
-                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
-                        if (p.options.commonjs_module_ref.isValid()) {
-                            p.printSymbol(p.options.commonjs_module_ref);
+                        if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                            if (p.options.commonjs_module_ref.isValid()) {
+                                p.printSymbol(p.options.commonjs_module_ref);
+                            } else {
+                                p.print("module");
+                            }
+                            p.print(".exports");
                         } else {
-                            p.print("module");
+                            p.printSymbol(p.options.commonjs_named_exports_ref);
                         }
-                        p.print(".exports");
-                    } else {
-                        p.printSymbol(p.options.commonjs_named_exports_ref);
-                    }
+                    },
+                    .hot_enabled => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".indirectHot");
+                    },
+                    .hot_data => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".data");
+                    },
+                    .hot_accept => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".accept");
+                    },
+                    .hot_accept_visited => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".acceptSpecifiers");
+                    },
+                    .hot_disabled => {
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
+                        p.printExpr(.{ .data = .e_undefined, .loc = expr.loc }, level, in_flags);
+                    },
+                    .resolved_specifier_string => |index| {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
+                    },
                 },
+
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2421,12 +2187,12 @@ fn NewPrinter(
                                     p.printSymbol(p.options.commonjs_named_exports_ref);
                                 }
 
-                                if (p.canPrintIdentifier(key)) {
+                                if (js_lexer.isIdentifier(key)) {
                                     p.print(".");
                                     p.print(key);
                                 } else {
                                     p.print("[");
-                                    p.printPossiblyEscapedIdentifierString(key, true);
+                                    p.printStringLiteralUTF8(key, false);
                                     p.print("]");
                                 }
                             } else {
@@ -2545,11 +2311,11 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.main");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.print("false"); // there is no true main entry point
                     } else {
                         p.print("require.main");
                     }
@@ -2558,10 +2324,11 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".require");
                     } else {
                         p.print("require");
                     }
@@ -2570,11 +2337,12 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".requireResolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -2599,9 +2367,7 @@ fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else {
@@ -2609,7 +2375,7 @@ fn NewPrinter(
                     }
 
                     p.print("(");
-                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
                     p.print(")");
 
                     if (wrap) {
@@ -2626,7 +2392,12 @@ fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
-                        p.print("import(");
+                        if (p.options.module_type == .internal_bake_dev) {
+                            p.printSymbol(p.options.hmr_ref);
+                            p.print(".dynamicImport(");
+                        } else {
+                            p.print("import(");
+                        }
                         // TODO:
                         // if (e.leading_interior_comments.len > 0) {
                         //     p.printNewline();
@@ -2639,12 +2410,8 @@ fn NewPrinter(
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
                         if (!e.options.isMissing()) {
-                            // since we previously stripped type, it is a breaking change to
-                            // enable this for non-bun platforms
-                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                                p.printWhitespacer(ws(", "));
-                                p.printExpr(e.options, .comma, .{});
-                            }
+                            p.printWhitespacer(ws(", "));
+                            p.printExpr(e.options, .comma, .{});
                         }
 
                         // TODO:
@@ -2696,7 +2463,7 @@ fn NewPrinter(
                         flags,
                     );
 
-                    if (p.canPrintIdentifier(e.name)) {
+                    if (js_lexer.isIdentifier(e.name)) {
                         if (isOptionalChain) {
                             p.print("?.");
                         } else {
@@ -2717,10 +2484,7 @@ fn NewPrinter(
                             p.print("[");
                         }
 
-                        p.printPossiblyEscapedIdentifierString(
-                            e.name,
-                            true,
-                        );
+                        p.printStringLiteralUTF8(e.name, false);
 
                         p.print("]");
                     }
@@ -2816,15 +2580,6 @@ fn NewPrinter(
                     p.printWhitespacer(ws(" => "));
 
                     var wasPrinted = false;
-
-                    // This is more efficient than creating a new Part just for the JSX auto imports when bundling
-                    if (comptime rewrite_esm_to_cjs) {
-                        if (@intFromPtr(p.options.prepend_part_key) > 0 and @intFromPtr(e.body.stmts.ptr) == @intFromPtr(p.options.prepend_part_key)) {
-                            p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
-                            wasPrinted = true;
-                        }
-                    }
-
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
@@ -2855,8 +2610,8 @@ fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     if (e.func.flags.contains(.is_async)) {
-                        p.addSourceMapping(expr.loc);
                         p.print("async ");
                     }
                     p.print("function");
@@ -2955,7 +2710,7 @@ fn NewPrinter(
                             p.indent();
                         }
 
-                        if (e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
                             p.printSpace();
                         } else {
                             p.printNewline();
@@ -2967,7 +2722,7 @@ fn NewPrinter(
                             for (props[1..]) |property| {
                                 p.print(",");
 
-                                if (e.is_single_line) {
+                                if (e.is_single_line and !is_json) {
                                     p.printSpace();
                                 } else {
                                     p.printNewline();
@@ -2977,12 +2732,12 @@ fn NewPrinter(
                             }
                         }
 
-                        if (!e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
+                            p.printSpace();
+                        } else {
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else {
-                            p.printSpace();
                         }
                     }
                     if (e.close_brace_loc.start > expr.loc.start) {
@@ -3013,22 +2768,68 @@ fn NewPrinter(
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template and !p.options.minify_syntax) {
                         p.print("`");
-                        p.printStringContent(e, '`');
+                        p.printStringCharactersEString(e, '`');
                         p.print("`");
                         return;
                     }
 
-                    const c = bestQuoteCharForEString(e, true);
-
-                    p.print(c);
-                    p.printStringContent(e, c);
-                    p.print(c);
-                },
-                .e_utf8_string => |e| {
-                    p.addSourceMapping(expr.loc);
-                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
+                    p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
+                    if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
+                        var replaced = std.ArrayList(E.TemplatePart).init(p.options.allocator);
+                        for (e.parts, 0..) |_part, i| {
+                            var part = _part;
+                            const inlined_value: ?js_ast.Expr = switch (part.value.data) {
+                                .e_name_of_symbol => |e2| Expr.init(
+                                    E.String,
+                                    E.String.init(p.mangledPropName(e2.ref)),
+                                    part.value.loc,
+                                ),
+                                .e_dot => brk: {
+                                    // TODO: handle inlining of dot properties
+                                    break :brk null;
+                                },
+                                else => null,
+                            };
+
+                            if (inlined_value) |value| {
+                                if (replaced.items.len == 0) {
+                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                }
+                                part.value = value;
+                                replaced.append(part) catch bun.outOfMemory();
+                            } else if (replaced.items.len > 0) {
+                                replaced.append(part) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (replaced.items.len > 0) {
+                            var copy = e.*;
+                            copy.parts = replaced.items;
+                            const e2 = copy.fold(p.options.allocator, expr.loc);
+                            switch (e2.data) {
+                                .e_string => {
+                                    p.print('"');
+                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
+                                    p.print('"');
+                                    return;
+                                },
+                                .e_template => {
+                                    e.* = e2.data.e_template.*;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        // Convert no-substitution template literals into strings if it's smaller
+                        if (e.parts.len == 0) {
+                            p.addSourceMapping(expr.loc);
+                            p.printStringCharactersEString(&e.head.cooked, '`');
+                            return;
+                        }
+                    }
+
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);
                         // Optional chains are forbidden in template tags
@@ -3049,7 +2850,7 @@ fn NewPrinter(
                         .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
-                                p.printStringContent(cooked, '`');
+                                p.printStringCharactersEString(cooked, '`');
                             }
                         },
                     }
@@ -3063,7 +2864,7 @@ fn NewPrinter(
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);
-                                    p.printStringContent(cooked, '`');
+                                    p.printStringCharactersEString(cooked, '`');
                                 }
                             },
                         }
@@ -3104,11 +2905,15 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    const ref = if (p.options.module_type != .internal_kit_dev)
+                    const ref = if (p.options.module_type != .internal_bake_dev)
                         p.symbols().follow(e.ref)
                     else
                         e.ref;
                     const symbol = p.symbols().get(ref).?;
+
+                    // if (bun.strings.eql(symbol.original_name, "registerClientReference")) {
+                    //     @breakpoint();
+                    // }
 
                     if (symbol.import_item_status == .missing) {
                         p.printUndefined(expr.loc, level);
@@ -3164,7 +2969,7 @@ fn NewPrinter(
                             p.addSourceMapping(expr.loc);
                             p.printSymbol(namespace.namespace_ref);
                             const alias = namespace.alias;
-                            if (p.canPrintIdentifier(alias)) {
+                            if (js_lexer.isIdentifier(alias)) {
                                 p.print(".");
                                 // TODO: addSourceMappingForName
                                 p.printIdentifier(alias);
@@ -3172,7 +2977,7 @@ fn NewPrinter(
                                 p.print("[");
                                 // TODO: addSourceMappingForName
                                 // p.addSourceMappingForName(alias);
-                                p.printPossiblyEscapedIdentifierString(alias, true);
+                                p.printStringLiteralUTF8(alias, false);
                                 p.print("]");
                             }
 
@@ -3191,7 +2996,6 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
-                        // assert(p.options.module_type != .internal_kit_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -3251,6 +3055,7 @@ fn NewPrinter(
 
                     if (entry.is_keyword) {
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.print(entry.text);
                         p.printSpace();
                     } else {
@@ -3310,7 +3115,7 @@ fn NewPrinter(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        var last = p.binary_expression_stack.pop();
+                        var last = p.binary_expression_stack.pop().?;
                         last.visitRightAndFinish(p);
                     }
                 },
@@ -3322,10 +3127,21 @@ fn NewPrinter(
                         p.print(" */");
                     }
                 },
+                .e_name_of_symbol => |e| {
+                    const name = p.mangledPropName(e.ref);
+                    p.addSourceMappingForName(expr.loc, name, e.ref);
+
+                    if (!p.options.minify_whitespace and e.has_property_key_comment) {
+                        p.print(" /* @__KEY__ */");
+                    }
+
+                    p.print('"');
+                    p.printStringCharactersUTF8(name, '"');
+                    p.print('"');
+                },
 
                 .e_jsx_element,
                 .e_private_identifier,
-                .e_template_part,
                 => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
@@ -3353,104 +3169,21 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn printDotThenSuffix(
-            p: *Printer,
-        ) void {
+        pub inline fn printDotThenSuffix(p: *Printer) void {
             p.print(")");
         }
 
         // This assumes the string has already been quoted.
-        pub fn printStringContent(p: *Printer, str: *const E.String, c: u8) void {
+        pub fn printStringCharactersEString(p: *Printer, str: *const E.String, c: u8) void {
             if (!str.isUTF8()) {
-                // its already quoted for us!
-                p.printQuotedUTF16(str.slice16(), c);
+                p.printStringCharactersUTF16(str.slice16(), c);
             } else {
-                p.printUTF8StringEscapedQuotes(str.data, c);
+                p.printStringCharactersUTF8(str.data, c);
             }
         }
 
-        // Add one outer branch so the inner loop does fewer branches
-        pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
-            switch (c) {
-                '`' => _printUTF8StringEscapedQuotes(p, str, '`'),
-                '"' => _printUTF8StringEscapedQuotes(p, str, '"'),
-                '\'' => _printUTF8StringEscapedQuotes(p, str, '\''),
-                else => unreachable,
-            }
-        }
-
-        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, comptime c: u8) void {
-            var utf8 = str;
-            var i: usize = 0;
-            // Walk the string searching for quote characters
-            // Escape any we find
-            // Skip over already-escaped strings
-            var len = utf8.len;
-            while (i < len) {
-                switch (utf8[i]) {
-                    '\\' => i += 2,
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-                            utf8 = utf8[i + 1 ..];
-                            len = utf8.len;
-                            i = 0;
-                        } else {
-                            i += 1;
-                        }
-                    },
-                    c => {
-                        p.print(utf8[0..i]);
-                        p.print("\\" ++ &[_]u8{c});
-                        utf8 = utf8[i + 1 ..];
-                        len = utf8.len;
-                        i = 0;
-                    },
-
-                    else => i += 1,
-                }
-            }
-            if (utf8.len > 0) {
-                p.print(utf8);
-            }
-        }
-
-        fn printBindingIdentifierName(p: *Printer, name: string, name_loc: logger.Loc) void {
-            p.addSourceMapping(name_loc);
-
-            if (comptime !is_json and ascii_only) {
-                const quote = bestQuoteCharForString(u8, name, false);
-                p.print(quote);
-                p.printQuotedIdentifier(name);
-                p.print(quote);
-            } else {
-                p.printQuotedUTF8(name, false);
-            }
-        }
-
-        fn printPossiblyEscapedIdentifierString(p: *Printer, name: string, allow_backtick: bool) void {
-            if (comptime !ascii_only or is_json) {
-                p.printQuotedUTF8(name, allow_backtick);
-            } else {
-                const quote = if (comptime !is_json)
-                    bestQuoteCharForString(u8, name, allow_backtick)
-                else
-                    '"';
-
-                p.print(quote);
-                p.printQuotedIdentifier(name);
-                p.print(quote);
-            }
-        }
-
-        pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
-            if (import_record.module_id > 0 and !import_record.contains_import_star) {
-                p.print("$");
-                p.printModuleId(import_record.module_id);
-            } else {
-                p.printSymbol(namespace.namespace_ref);
-            }
+        pub fn printNamespaceAlias(p: *Printer, _: ImportRecord, namespace: G.NamespaceAlias) void {
+            p.printSymbol(namespace.namespace_ref);
 
             // In the case of code like this:
             // module.exports = require("foo")
@@ -3459,12 +3192,12 @@ fn NewPrinter(
             // that means the namespace alias is empty
             if (namespace.alias.len == 0) return;
 
-            if (p.canPrintIdentifier(namespace.alias)) {
+            if (js_lexer.isIdentifier(namespace.alias)) {
                 p.print(".");
                 p.printIdentifier(namespace.alias);
             } else {
                 p.print("[");
-                p.printPossiblyEscapedIdentifierString(namespace.alias, true);
+                p.printStringLiteralUTF8(namespace.alias, false);
                 p.print("]");
             }
         }
@@ -3690,11 +3423,11 @@ fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if (p.canPrintIdentifier(key.data)) {
-                            p.print(key.data);
+                        if (!is_json and js_lexer.isIdentifier(key.data)) {
+                            p.printIdentifier(key.data);
                         } else {
                             allow_shorthand = false;
-                            p.printBindingIdentifierName(key.data, logger.Loc.Empty);
+                            p.printStringLiteralEString(key, false);
                         }
 
                         // Use a shorthand property if the names are the same
@@ -3710,9 +3443,10 @@ fn NewPrinter(
                                         }
                                     }
                                 },
-                                // .e_import_identifier => |e| inner: {
-                                .e_import_identifier => |e| {
+                                .e_import_identifier => |e| inner: {
                                     const ref = p.symbols().follow(e.ref);
+                                    if (p.options.input_files_for_dev_server != null)
+                                        break :inner;
                                     // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
                                     //     break :inner;
 
@@ -3730,7 +3464,7 @@ fn NewPrinter(
                                 else => {},
                             }
                         }
-                    } else if (p.canPrintIdentifierUTF16(key.slice16())) {
+                    } else if (!is_json and p.canPrintIdentifierUTF16(key.slice16())) {
                         p.printSpaceBeforeIdentifier();
                         p.printIdentifierUTF16(key.slice16()) catch unreachable;
 
@@ -3773,7 +3507,7 @@ fn NewPrinter(
                     } else {
                         const c = bestQuoteCharForString(u16, key.slice16(), false);
                         p.print(c);
-                        p.printQuotedUTF16(key.slice16(), c);
+                        p.printStringCharactersUTF16(key.slice16(), c);
                         p.print(c);
                     }
                 },
@@ -3931,7 +3665,7 @@ fn NewPrinter(
                                             //              ^
                                             // That needs to be:
                                             //          "aria-label": ariaLabel,
-                                            if (p.canPrintIdentifier(str.data)) {
+                                            if (js_lexer.isIdentifier(str.data)) {
                                                 p.printIdentifier(str.data);
 
                                                 // Use a shorthand property if the names are the same
@@ -3945,7 +3679,7 @@ fn NewPrinter(
                                                     else => {},
                                                 }
                                             } else {
-                                                p.printPossiblyEscapedIdentifierString(str.data, false);
+                                                p.printStringLiteralUTF8(str.data, false);
                                             }
                                         } else if (p.canPrintIdentifierUTF16(str.slice16())) {
                                             p.printSpaceBeforeIdentifier();
@@ -4007,7 +3741,6 @@ fn NewPrinter(
                 p.prev_stmt_tag = std.meta.activeTag(stmt.data);
             }
 
-            p.addSourceMapping(stmt.loc);
             switch (stmt.data) {
                 .s_comment => |s| {
                     p.printIndentedComment(s.text);
@@ -4015,6 +3748,7 @@ fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     const name = s.func.name orelse Output.panic("Internal error: expected func to have a name ref\n{any}", .{s});
                     const nameRef = name.ref orelse Output.panic("Internal error: expected func to have a name\n{any}", .{s});
 
@@ -4030,9 +3764,10 @@ fn NewPrinter(
                     if (s.func.flags.contains(.is_generator)) {
                         p.print("*");
                         p.printSpace();
+                    } else {
+                        p.printSpaceBeforeIdentifier();
                     }
 
-                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(name.loc);
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
@@ -4062,6 +3797,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     const nameRef = s.class.class_name.?.ref.?;
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
@@ -4092,12 +3828,14 @@ fn NewPrinter(
                     if (p.prev_stmt_tag == .s_empty and p.options.indent.count == 0) return;
 
                     p.printIndent();
+                    p.addSourceMapping(stmt.loc);
                     p.print(";");
                     p.printNewline();
                 },
                 .s_export_default => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("export default ");
 
                     switch (s.value) {
@@ -4164,6 +3902,7 @@ fn NewPrinter(
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     if (s.alias != null)
                         p.printWhitespacer(comptime ws("export *").append(" as "))
@@ -4183,6 +3922,7 @@ fn NewPrinter(
                     if (rewrite_esm_to_cjs) {
                         p.printIndent();
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(stmt.loc);
 
                         switch (s.items.len) {
                             0 => {},
@@ -4243,6 +3983,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("export");
                     p.printSpace();
 
@@ -4342,64 +4083,9 @@ fn NewPrinter(
                 .s_export_from => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     const import_record = p.importRecord(s.import_record_index);
-
-                    if (comptime is_bun_platform) {
-                        if (import_record.do_commonjs_transform_in_printer) {
-                            if (s.items.len == 0)
-                                return;
-                            p.print("var {");
-                            var symbol_counter: u32 = p.symbol_counter;
-
-                            for (s.items, 0..) |item, i| {
-                                if (i > 0) {
-                                    p.print(",");
-                                }
-
-                                p.print(item.original_name);
-                                assert(item.original_name.len > 0);
-                                p.print(":");
-                                // this is unsound
-                                // this is technical debt
-                                // we need to handle symbol collisions for this
-                                p.print("$eXp0rT_");
-                                var buf: [16]u8 = undefined;
-                                p.print(std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(symbol_counter)}) catch unreachable);
-                                symbol_counter +|= 1;
-                            }
-
-                            p.print("}=import.meta.require(");
-                            p.printImportRecordPath(import_record);
-                            p.print(")");
-                            p.printSemicolonAfterStatement();
-                            p.printWhitespacer(ws("export {"));
-
-                            // reset symbol counter back
-                            symbol_counter = p.symbol_counter;
-
-                            for (s.items, 0..) |item, i| {
-                                if (i > 0) {
-                                    p.print(",");
-                                }
-
-                                // this is unsound
-                                // this is technical debt
-                                // we need to handle symbol collisions for this
-                                p.print("$eXp0rT_");
-                                var buf: [16]u8 = undefined;
-                                p.print(std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(symbol_counter)}) catch unreachable);
-                                symbol_counter +|= 1;
-                                p.printWhitespacer(ws(" as "));
-                                p.print(item.alias);
-                            }
-
-                            p.print("}");
-                            p.printSemicolonAfterStatement();
-                            p.symbol_counter = symbol_counter;
-                            return;
-                        }
-                    }
 
                     p.printWhitespacer(ws("export {"));
 
@@ -4437,6 +4123,9 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     switch (s.kind) {
                         .k_const => {
                             p.printDeclStmt(s.is_export, "const", s.decls.slice());
@@ -4457,11 +4146,12 @@ fn NewPrinter(
                 },
                 .s_if => |s| {
                     p.printIndent();
-                    p.printIf(s);
+                    p.printIf(s, stmt.loc);
                 },
                 .s_do_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("do");
                     switch (s.body.data) {
                         .s_block => {
@@ -4489,6 +4179,7 @@ fn NewPrinter(
                 .s_for_in => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     p.printSpace();
                     p.print("(");
@@ -4504,6 +4195,7 @@ fn NewPrinter(
                 .s_for_of => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     if (s.is_await) {
                         p.print(" await");
@@ -4523,6 +4215,7 @@ fn NewPrinter(
                 .s_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("while");
                     p.printSpace();
                     p.print("(");
@@ -4533,6 +4226,7 @@ fn NewPrinter(
                 .s_with => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("with");
                     p.printSpace();
                     p.print("(");
@@ -4542,10 +4236,10 @@ fn NewPrinter(
                 },
                 .s_label => |s| {
                     if (!p.options.minify_whitespace and p.options.indent.count > 0) {
-                        p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
@@ -4553,12 +4247,14 @@ fn NewPrinter(
                 .s_try => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("try");
                     p.printSpace();
                     p.printBlock(s.body_loc, s.body, null);
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
+                        p.addSourceMapping(catch_.loc);
                         p.print("catch");
                         if (catch_.binding) |binding| {
                             p.printSpace();
@@ -4567,7 +4263,7 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.loc, catch_.body, null);
+                        p.printBlock(catch_.body_loc, catch_.body, null);
                     }
 
                     if (s.finally) |finally| {
@@ -4582,6 +4278,7 @@ fn NewPrinter(
                 .s_for => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     p.printSpace();
                     p.print("(");
@@ -4609,6 +4306,7 @@ fn NewPrinter(
                 .s_switch => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("switch");
                     p.printSpace();
                     p.print("(");
@@ -4664,86 +4362,12 @@ fn NewPrinter(
                 },
                 .s_import => |s| {
                     bun.assert(s.import_record_index < p.import_records.len);
+                    bun.debugAssert(p.options.module_type != .internal_bake_dev);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
-
-                    switch (record.print_mode) {
-                        .css => {
-                            switch (p.options.css_import_behavior) {
-                                .facade => {
-
-                                    // This comment exists to let tooling authors know which files CSS originated from
-                                    // To parse this, you just look for a line that starts with //@import url("
-                                    p.print("//@import url(\"");
-                                    // We do not URL escape here.
-                                    p.print(record.path.text);
-
-                                    // If they actually use the code, then we emit a facade that just echos whatever they write
-                                    if (s.default_name) |name| {
-                                        p.print("\"); css-module-facade\nvar ");
-                                        p.printSymbol(name.ref.?);
-                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                    } else {
-                                        p.print("\"); css-import-facade\n");
-                                    }
-
-                                    return;
-                                },
-
-                                .auto_onimportcss, .facade_onimportcss => {
-                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
-                                    p.print(record.path.text);
-                                    p.print("\"}));\n");
-
-                                    // If they actually use the code, then we emit a facade that just echos whatever they write
-                                    if (s.default_name) |name| {
-                                        p.print("var ");
-                                        p.printSymbol(name.ref.?);
-                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                    }
-                                },
-                                else => {},
-                            }
-                            return;
-                        },
-                        .import_path => {
-                            if (s.default_name) |name| {
-                                p.print("var ");
-                                p.printSymbol(name.ref.?);
-                                p.@"print = "();
-                                p.printImportRecordPath(record);
-                                p.printSemicolonAfterStatement();
-                            } else if (record.contains_import_star) {
-                                // this case is particularly important for running files without an extension in bun's runtime
-                                p.print("var ");
-                                p.printSymbol(s.namespace_ref);
-                                p.@"print = "();
-                                p.print("{default:");
-                                p.printImportRecordPath(record);
-                                p.print("}");
-                                p.printSemicolonAfterStatement();
-                            }
-                            return;
-                        },
-                        .napi_module => {
-                            if (comptime is_bun_platform) {
-                                p.printIndent();
-                                p.print("var ");
-                                p.printSymbol(s.namespace_ref);
-                                p.@"print = "();
-
-                                p.print("import.meta.require(");
-                                p.printImportRecordPath(record);
-                                p.print(")");
-                                p.printSemicolonAfterStatement();
-                            }
-                            return;
-                        },
-                        else => {},
-                    }
-
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     if (comptime is_bun_platform) {
                         switch (record.tag) {
@@ -4755,47 +4379,17 @@ fn NewPrinter(
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
                             },
-                            // .hardcoded => {
-                            //     p.printHardcodedImportStatement(s.*);
-                            //     return;
-                            // },
                             else => {},
                         }
                     }
 
-                    if (record.do_commonjs_transform_in_printer or record.path.is_disabled) {
-                        const require_ref = p.options.require_ref;
-
-                        const module_id = record.module_id;
-
-                        if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
-                            p.printWhitespacer(ws("import * as"));
-                            p.print(" ");
-                            p.printModuleId(module_id);
-                            p.print(" ");
-                            p.printWhitespacer(ws("from "));
-                            p.print("\"");
-                            p.print(record.path.text);
-                            p.print("\"");
-                            p.printSemicolonAfterStatement();
-                            try p.imported_module_ids.append(module_id);
-                        }
-
+                    if (record.path.is_disabled) {
                         if (record.contains_import_star) {
                             p.print("var ");
                             p.printSymbol(s.namespace_ref);
                             p.@"print = "();
-                            if (!record.path.is_disabled) {
-                                p.printSymbol(require_ref.?);
-                                p.print("(");
-                                p.printModuleId(module_id);
-
-                                p.print(");");
-                                p.printNewline();
-                            } else {
-                                p.printDisabledImport();
-                                p.printSemicolonAfterStatement();
-                            }
+                            p.printDisabledImport();
+                            p.printSemicolonAfterStatement();
                         }
 
                         if (s.items.len > 0 or s.default_name != null) {
@@ -4838,12 +4432,6 @@ fn NewPrinter(
 
                             if (record.contains_import_star) {
                                 p.printSymbol(s.namespace_ref);
-                                p.printSemicolonAfterStatement();
-                            } else if (!record.path.is_disabled) {
-                                p.printSymbol(require_ref.?);
-                                p.print("(");
-                                p.printModuleId(module_id);
-                                p.print(")");
                                 p.printSemicolonAfterStatement();
                             } else {
                                 p.printDisabledImport();
@@ -4931,36 +4519,27 @@ fn NewPrinter(
 
                     p.printImportRecordPath(record);
 
-                    switch (record.tag) {
-                        .with_type_sqlite, .with_type_sqlite_embedded => {
-                            // we do not preserve "embed": "true" since it is not necessary
-                            p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
-                        },
-                        .with_type_text => {
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"text\" }"));
-                            }
-                        },
-                        .with_type_json => {
-                            // backwards compatibility: previously, we always stripped type json
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"json\" }"));
-                            }
-                        },
-                        .with_type_toml => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"toml\" }"));
-                            }
-                        },
-                        .with_type_file => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"file\" }"));
-                            }
-                        },
-                        else => {},
-                    }
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) if (record.loader) |loader| switch (loader) {
+                        .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
+                        .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
+                        .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
+                        .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
+                        .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
+                        .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
+                        .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
+                        .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
+                        .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
+                        .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
+                        .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
+                        .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
+                        .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
+                        .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
+                        // sqlite_embedded only relevant when bundling
+                        .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
+                        .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                    };
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4971,6 +4550,7 @@ fn NewPrinter(
                 .s_debugger => {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("debugger");
                     p.printSemicolonAfterStatement();
                 },
@@ -4980,12 +4560,14 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.printQuotedUTF8(s.value, false);
+                    p.addSourceMapping(stmt.loc);
+                    p.printStringLiteralUTF8(s.value, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_break => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("break");
                     if (s.label) |label| {
                         p.print(" ");
@@ -4997,6 +4579,7 @@ fn NewPrinter(
                 .s_continue => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("continue");
 
                     if (s.label) |label| {
@@ -5008,6 +4591,7 @@ fn NewPrinter(
                 .s_return => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("return");
 
                     if (s.value) |value| {
@@ -5019,6 +4603,7 @@ fn NewPrinter(
                 .s_throw => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("throw");
                     p.printSpace();
                     p.printExpr(s.value, .lowest, ExprFlag.None());
@@ -5026,7 +4611,6 @@ fn NewPrinter(
                 },
                 .s_expr => |s| {
                     if (!p.options.minify_whitespace and p.options.indent.count > 0) {
-                        p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
 
@@ -5034,15 +4618,8 @@ fn NewPrinter(
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
-                else => {
-                    var slice = p.writer.slice();
-                    const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
-
-                    if (to_print.len > 0) {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
-                    } else {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
-                    }
+                else => |tag| {
+                    Output.panic("Unexpected tag in printStmt: .{s}", .{@tagName(tag)});
                 },
             }
         }
@@ -5056,21 +4633,15 @@ fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
-            if (import_record.print_namespace_in_path and import_record.module_id != 0) {
+            if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
-                p.print(import_record.path.namespace);
+                p.printStringCharactersUTF8(import_record.path.namespace, quote);
                 p.print(":");
-                p.printModuleIdAssumeEnabled(import_record.module_id);
-                p.print(quote);
-            } else if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
-                p.print(quote);
-                p.print(import_record.path.namespace);
-                p.print(":");
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             }
         }
@@ -5214,7 +4785,7 @@ fn NewPrinter(
             p.print("Object.defineProperty(");
             p.printModuleExportSymbol();
             p.print(",");
-            p.printQuotedUTF8(name, true);
+            p.printStringLiteralUTF8(name, true);
 
             p.printWhitespacer(ws(",{get: () => ("));
             p.printLoadFromBundle(import_record_index);
@@ -5231,7 +4802,7 @@ fn NewPrinter(
             p.print("Object.defineProperty(");
             p.printModuleExportSymbol();
             p.print(",");
-            p.printQuotedUTF8(name, true);
+            p.printStringLiteralUTF8(name, true);
             p.print(",{get: () => ");
             p.printIdentifier(identifier);
             p.print(", enumerable: true, configurable: true})");
@@ -5272,8 +4843,9 @@ fn NewPrinter(
                 },
             }
         }
-        pub fn printIf(p: *Printer, s: *const S.If) void {
+        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc) void {
             p.printSpaceBeforeIdentifier();
+            p.addSourceMapping(loc);
             p.print("if");
             p.printSpace();
             p.print("(");
@@ -5326,6 +4898,7 @@ fn NewPrinter(
             if (s.no) |no_block| {
                 p.printSemicolonIfNeeded();
                 p.printSpaceBeforeIdentifier();
+                p.addSourceMapping(no_block.loc);
                 p.print("else");
 
                 switch (no_block.data) {
@@ -5335,7 +4908,7 @@ fn NewPrinter(
                         p.printNewline();
                     },
                     .s_if => {
-                        p.printIf(no_block.data.s_if);
+                        p.printIf(no_block.data.s_if, no_block.loc);
                     },
                     else => {
                         p.printNewline();
@@ -5422,9 +4995,6 @@ fn NewPrinter(
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
-            p.printIndent();
-            p.printSpaceBeforeIdentifier();
-
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
@@ -5484,13 +5054,13 @@ fn NewPrinter(
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
             if (comptime ascii_only) {
-                p.printQuotedIdentifier(identifier);
+                p.printIdentifierAsciiOnly(identifier);
             } else {
                 p.print(identifier);
             }
         }
 
-        fn printQuotedIdentifier(p: *Printer, identifier: string) void {
+        fn printIdentifierAsciiOnly(p: *Printer, identifier: string) void {
             var ascii_start: usize = 0;
             var is_ascii = false;
             var iter = CodepointIterator.init(identifier);
@@ -5659,18 +5229,10 @@ fn NewPrinter(
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
-            if (imported_module_ids_list_unset) {
-                imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
-                imported_module_ids_list_unset = false;
-            }
-
-            imported_module_ids_list.clearRetainingCapacity();
-
             var printer = Printer{
                 .import_records = import_records,
                 .options = opts,
                 .writer = writer,
-                .imported_module_ids = imported_module_ids_list,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
@@ -5678,12 +5240,147 @@ fn NewPrinter(
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
                 printer.source_map_builder.line_offset_table_byte_offset_list =
                     printer
-                    .source_map_builder
-                    .line_offset_tables
-                    .items(.byte_offset_to_start_of_line);
+                        .source_map_builder
+                        .line_offset_tables
+                        .items(.byte_offset_to_start_of_line);
             }
 
             return printer;
+        }
+
+        fn printDevServerModule(
+            p: *Printer,
+            source: *const logger.Source,
+            ast: *const Ast,
+            part: *const js_ast.Part,
+        ) void {
+            p.indent();
+            p.printIndent();
+
+            p.printStringLiteralUTF8(source.path.pretty, false);
+
+            const func = part.stmts[0].data.s_expr.value.data.e_function.func;
+
+            // Special-case lazy-export AST
+            if (ast.has_lazy_export) {
+                @branchHint(.unlikely);
+                p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
+                p.printSpace();
+                p.print("{\n");
+                if (func.body.stmts[0].data.s_lazy_export.* != .e_undefined) {
+                    p.indent();
+                    p.printIndent();
+                    p.printSymbol(p.options.hmr_ref);
+                    p.print(".cjs.exports = ");
+                    p.printExpr(.{
+                        .data = func.body.stmts[0].data.s_lazy_export.*,
+                        .loc = func.body.stmts[0].loc,
+                    }, .comma, .{});
+                    p.print("; // bun .s_lazy_export\n");
+                    p.unindent();
+                }
+                p.printIndent();
+                p.print("},\n");
+                return;
+            }
+
+            // ESM is represented by an array tuple [ dependencies, exports, starImports, load, async ];
+            else if (ast.exports_kind == .esm) {
+                p.print(": [ [");
+                // Print the dependencies.
+                if (part.stmts.len > 1) {
+                    p.indent();
+                    p.print("\n");
+                    for (part.stmts[1..]) |stmt| {
+                        p.printIndent();
+                        const import = stmt.data.s_import;
+                        const record = p.importRecord(import.import_record_index);
+                        p.printStringLiteralUTF8(record.path.pretty, false);
+
+                        const item_count = @as(u32, @intFromBool(import.default_name != null)) +
+                            @as(u32, @intCast(import.items.len));
+                        p.fmt(", {d},", .{item_count}) catch {};
+                        if (item_count == 0) {
+                            // Add a comment explaining why the number could be zero
+                            p.print(if (import.star_name_loc != null) " // namespace import" else " // bare import");
+                        } else {
+                            if (import.default_name != null) {
+                                p.print(" \"default\",");
+                            }
+                            for (import.items) |item| {
+                                p.print(" ");
+                                p.printStringLiteralUTF8(item.alias, false);
+                                p.print(",");
+                            }
+                        }
+                        p.print("\n");
+                    }
+                    p.unindent();
+                    p.printIndent();
+                }
+                p.print("], [");
+
+                // Print the exports
+                if (ast.named_exports.count() > 0) {
+                    p.indent();
+                    var len: usize = std.math.maxInt(usize);
+                    for (ast.named_exports.keys()) |key| {
+                        if (len > 120) {
+                            p.printNewline();
+                            p.printIndent();
+                            len = 0;
+                        } else {
+                            p.print(" ");
+                        }
+                        len += key.len;
+                        p.printStringLiteralUTF8(key, false);
+                        p.print(",");
+                    }
+                    p.unindent();
+                    p.printNewline();
+                    p.printIndent();
+                }
+                p.print("], [");
+
+                // Print export stars
+                p.indent();
+                var had_any_stars = false;
+                for (ast.export_star_import_records) |star| {
+                    const record = p.importRecord(star);
+                    if (record.path.is_disabled) continue;
+                    had_any_stars = true;
+                    p.printNewline();
+                    p.printIndent();
+                    p.printStringLiteralUTF8(record.path.pretty, false);
+                    p.print(",");
+                }
+                p.unindent();
+                if (had_any_stars) {
+                    p.printNewline();
+                    p.printIndent();
+                }
+                p.print("], ");
+
+                // Print the code
+                if (!ast.top_level_await_keyword.isEmpty()) p.print("async");
+                p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
+                p.print(" => {\n");
+                p.indent();
+                p.printBlockBody(func.body.stmts);
+                p.unindent();
+                p.printIndent();
+                p.print("}, ");
+
+                // Print isAsync
+                p.print(if (!ast.top_level_await_keyword.isEmpty()) "true" else "false");
+                p.print("],\n");
+            } else {
+                bun.assert(ast.exports_kind == .cjs);
+                p.printFunc(func);
+                p.print(",\n");
+            }
+
+            p.unindent();
         }
     };
 }
@@ -5717,6 +5414,14 @@ pub fn NewWriter(
             return .{
                 .ctx = ctx,
             };
+        }
+
+        pub fn stdWriter(self: *Self) std.io.Writer(*Self, error{}, stdWriterWrite) {
+            return .{ .context = self };
+        }
+        pub fn stdWriterWrite(self: *Self, bytes: []const u8) error{}!usize {
+            self.print([]const u8, bytes);
+            return bytes.len;
         }
 
         pub fn isCopyFileRangeSupported() bool {
@@ -5826,128 +5531,6 @@ pub const DirectWriter = struct {
     pub const Error = std.posix.WriteError;
 };
 
-// Unbuffered           653ms
-//   Buffered    65k     47ms
-//   Buffered    16k     43ms
-//   Buffered     4k     55ms
-const FileWriterInternal = struct {
-    file: std.fs.File,
-    last_bytes: [2]u8 = [_]u8{ 0, 0 },
-    threadlocal var buffer: MutableString = undefined;
-    threadlocal var has_loaded_buffer: bool = false;
-
-    pub fn getBuffer() *MutableString {
-        buffer.reset();
-        return &buffer;
-    }
-
-    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
-        return &buffer;
-    }
-
-    pub fn init(file: std.fs.File) FileWriterInternal {
-        if (!has_loaded_buffer) {
-            buffer = MutableString.init(default_allocator, 0) catch unreachable;
-            has_loaded_buffer = true;
-        }
-
-        buffer.reset();
-
-        return FileWriterInternal{
-            .file = file,
-        };
-    }
-    pub fn writeByte(this: *FileWriterInternal, byte: u8) anyerror!usize {
-        try buffer.appendChar(byte);
-
-        this.last_bytes = .{ this.last_bytes[1], byte };
-        return 1;
-    }
-    pub fn writeAll(this: *FileWriterInternal, bytes: anytype) anyerror!usize {
-        try buffer.append(bytes);
-        if (bytes.len >= 2) {
-            this.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
-        } else if (bytes.len >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], bytes[bytes.len - 1] };
-        }
-        return bytes.len;
-    }
-
-    pub fn slice(_: *@This()) string {
-        return buffer.list.items;
-    }
-
-    pub fn getLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[1];
-    }
-
-    pub fn getLastLastByte(this: *const FileWriterInternal) u8 {
-        return this.last_bytes[0];
-    }
-
-    pub fn reserveNext(_: *FileWriterInternal, count: u64) anyerror![*]u8 {
-        try buffer.growIfNeeded(count);
-        return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
-    }
-    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
-        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
-
-        buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
-        if (count >= 2) {
-            this.last_bytes = buffer.list.items[buffer.list.items.len - 2 ..][0..2].*;
-        } else if (count >= 1) {
-            this.last_bytes = .{ this.last_bytes[1], buffer.list.items[buffer.list.items.len - 1] };
-        }
-    }
-
-    pub fn done(
-        ctx: *FileWriterInternal,
-    ) anyerror!void {
-        defer buffer.reset();
-        const result_ = buffer.toOwnedSliceLeaky();
-        var result = result_;
-
-        while (result.len > 0) {
-            switch (result.len) {
-                0...4096 => {
-                    const written = try ctx.file.write(result);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-                else => {
-                    const first = result.ptr[0 .. result.len / 3];
-                    const second = result[first.len..][0..first.len];
-                    const remain = first.len + second.len;
-                    const third: []const u8 = result[remain..];
-
-                    var vecs = [_]std.posix.iovec_const{
-                        .{
-                            .base = first.ptr,
-                            .len = first.len,
-                        },
-                        .{
-                            .base = second.ptr,
-                            .len = second.len,
-                        },
-                        .{
-                            .base = third.ptr,
-                            .len = third.len,
-                        },
-                    };
-
-                    const written = try std.posix.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
-                    if (written == 0 or result.len - written == 0) return;
-                    result = result[written..];
-                },
-            }
-        }
-    }
-
-    pub fn flush(
-        _: *FileWriterInternal,
-    ) anyerror!void {}
-};
-
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
     written: []u8 = &[_]u8{},
@@ -5965,14 +5548,20 @@ pub const BufferWriter = struct {
         return this.buffer.list.items;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) BufferWriter {
         return BufferWriter{
-            .buffer = MutableString.init(
-                allocator,
-                0,
-            ) catch unreachable,
+            .buffer = MutableString.initEmpty(allocator),
         };
     }
+
+    pub fn print(ctx: *BufferWriter, comptime fmt: string, args: anytype) anyerror!void {
+        try ctx.buffer.list.writer(ctx.buffer.allocator).print(fmt, args);
+    }
+
+    pub fn writeByteNTimes(ctx: *BufferWriter, byte: u8, n: usize) anyerror!void {
+        try ctx.buffer.appendCharNTimes(byte, n);
+    }
+
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
         ctx.approximate_newline_count += @intFromBool(byte == '\n');
@@ -6045,10 +5634,10 @@ pub const BufferWriter = struct {
         }
 
         if (ctx.append_null_byte) {
-            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.sentinel = ctx.buffer.sliceWithSentinel();
+            ctx.written = ctx.buffer.slice();
         } else {
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.written = ctx.buffer.slice();
         }
     }
 
@@ -6065,19 +5654,6 @@ pub const BufferPrinter = NewWriter(
     BufferWriter.reserveNext,
     BufferWriter.advanceBy,
 );
-pub const FileWriter = NewWriter(
-    FileWriterInternal,
-    FileWriterInternal.writeByte,
-    FileWriterInternal.writeAll,
-    FileWriterInternal.getLastByte,
-    FileWriterInternal.getLastLastByte,
-    FileWriterInternal.reserveNext,
-    FileWriterInternal.advanceBy,
-);
-pub fn NewFileWriter(file: std.fs.File) FileWriter {
-    const internal = FileWriterInternal.init(file);
-    return FileWriter.init(internal);
-}
 
 pub const Format = enum {
     esm,
@@ -6108,8 +5684,8 @@ pub fn getSourceMapBuilder(
         return undefined;
 
     return .{
-        .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
-            opts.allocator,
+        .source_map = .init(
+            opts.source_map_allocator orelse opts.allocator,
             is_bun_platform and generate_source_map == .lazy,
         ),
         .cover_lines_without_mappings = true,
@@ -6117,15 +5693,14 @@ pub fn getSourceMapBuilder(
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
-                opts.allocator,
+                opts.source_map_allocator orelse opts.allocator,
                 source.contents,
                 @as(
                     i32,
                     @intCast(tree.approximate_newline_count),
                 ),
             );
-
-            break :brk SourceMap.LineOffsetTable.List{};
+            break :brk .empty;
         },
     };
 }
@@ -6145,7 +5720,7 @@ pub fn printAst(
     var module_scope = tree.module_scope;
     if (opts.minify_identifiers) {
         const allocator = opts.allocator;
-        var reserved_names = try rename.computeInitialReservedNames(allocator);
+        var reserved_names = try rename.computeInitialReservedNames(allocator, opts.module_type);
         for (module_scope.children.slice()) |child| {
             child.parent = &module_scope;
         }
@@ -6237,20 +5812,28 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
+    printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
+
+    if (!opts.bundling and
+        tree.uses_require_ref and
+        tree.exports_kind == .esm and
+        opts.target == .bun)
+    {
+        // Hoist the `var {require}=import.meta;` declaration. Previously,
+        // `import.meta.require` was inlined into transpiled files, which
+        // meant calling `func.toString()` on a function with `require`
+        // would observe `import.meta.require` inside of the source code.
+        // Normally, Bun doesn't guarantee `Function.prototype.toString`
+        // will match the untranspiled source code, but in this case the new
+        // code is not valid outside of an ES module (eg, in `new Function`)
+        // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+        //
+        // This is never a symbol collision because `uses_require_ref` means
+        // `require` must be an unbound variable.
+        printer.print("var {require}=import.meta;");
     }
 
     for (tree.parts.slice()) |part| {
@@ -6270,7 +5853,7 @@ pub fn printAst(
                 cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
 
-            try handler.onSourceMapChunk(source_maps_chunk, source.*);
+            try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
             if (opts.runtime_transpiler_cache) |cache| {
                 cache.put(printer.writer.ctx.getWritten(), "");
@@ -6278,7 +5861,7 @@ pub fn printAst(
         }
     } else if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 
@@ -6338,10 +5921,10 @@ pub fn print(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
-    const trace = bun.tracy.traceNamed(@src(), "JSPrinter.print");
+    const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
-    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator);
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(
@@ -6360,7 +5943,7 @@ pub fn print(
 
 pub fn printWithWriter(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     target: options.Target,
     ast: Ast,
     source: *const logger.Source,
@@ -6373,7 +5956,7 @@ pub fn printWithWriter(
     return switch (target.isBun()) {
         inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
-            _writer,
+            writer,
             is_bun,
             ast,
             source,
@@ -6389,7 +5972,7 @@ pub fn printWithWriter(
 /// The real one
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     comptime is_bun_platform: bool,
     ast: Ast,
     source: *const logger.Source,
@@ -6412,7 +5995,6 @@ pub fn printWithWriterAndPlatform(
         false,
         generate_source_maps,
     );
-    const writer = _writer;
     var printer = PrinterType.init(
         writer,
         import_records,
@@ -6420,23 +6002,16 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
-    defer _writer.* = printer.writer.*;
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
+    defer writer.* = printer.writer.*;
 
-    if (opts.module_type == .internal_kit_dev) {
-        printer.indent();
-        printer.printIndent();
-        printer.fmt("{d}", .{source.path.hashForKit()}) catch bun.outOfMemory();
-        printer.print(": function");
-        printer.printFunc(parts[0].stmts[0].data.s_expr.value.data.e_function.func);
-        printer.print(",\n");
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
+        printer.printDevServerModule(source, &ast, &parts[0]);
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.
@@ -6457,14 +6032,22 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
-    printer.writer.done() catch |err|
+    printer.writer.done() catch |err| {
+        // In bundle_v2, this is backed by an arena, but incremental uses
+        // `dev.allocator` for this buffer, so it must be freed.
+        printer.source_map_builder.source_map.ctx.data.deinit();
+
         return .{ .err = err };
+    };
 
     const written = printer.writer.ctx.getWritten();
-    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0) brk: {
-        const chunk = printer.source_map_builder.generateChunk(written);
-        if (chunk.should_ignore)
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps) brk: {
+        if (written.len == 0 or printer.source_map_builder.source_map.shouldIgnore()) {
+            printer.source_map_builder.source_map.ctx.data.deinit();
             break :brk null;
+        }
+        const chunk = printer.source_map_builder.generateChunk(written);
+        assert(!chunk.should_ignore);
         break :brk chunk;
     } else null;
 
@@ -6503,19 +6086,7 @@ pub fn printCommonJS(
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
 
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
-    }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
@@ -6531,7 +6102,7 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source);
         }
     }
 

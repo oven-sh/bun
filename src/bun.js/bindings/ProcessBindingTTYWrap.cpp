@@ -199,20 +199,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     Zig::GlobalObject* global = jsCast<Zig::GlobalObject*>(globalObject);
 
-    return Source__setRawModeStdin(raw);
+    return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
 #else
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() != 2) {
         throwTypeError(globalObject, scope, "Expected 2 arguments"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSValue fd = callFrame->argument(0);
     if (!fd.isNumber()) {
         throwTypeError(globalObject, scope, "fd must be a number"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSValue mode = callFrame->argument(1);
@@ -229,25 +229,25 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
         JSC::throwTypeError(globalObject, throwScope, "setRawMode requires 1 argument (a number)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.setRawMode expects a TTYWrapObject as this"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     int fd = ttyWrap->fd;
     JSValue mode = callFrame->argument(0);
     if (!mode.isNumber()) {
         throwTypeError(globalObject, throwScope, "mode must be a number"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
 #if OS(WINDOWS)
@@ -266,25 +266,25 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 1 argument (an array)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.getWindowSize expects a TTYWrapObject as this"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     int fd = ttyWrap->fd;
     JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(0));
     if (!array || array->length() < 2) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize expects an array"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     size_t width, height;
@@ -301,12 +301,12 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
 JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (a file descriptor)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     int fd = callFrame->uncheckedArgument(0).toInt32(globalObject);
@@ -314,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(1));
     if (!array || array->length() < 2) {
         JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (an array)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     size_t width, height;
@@ -323,7 +323,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     }
 
     array->putDirectIndex(globalObject, 0, jsNumber(width));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(globalObject, 1, jsNumber(height));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSC::JSValue::encode(jsBoolean(true));
 }
@@ -387,7 +389,7 @@ public:
     }
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -403,7 +405,7 @@ public:
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         throwTypeError(globalObject, scope, "TTYWrapConstructor cannot be called as a function"_s);
@@ -413,33 +415,33 @@ public:
     // new TTY()
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         auto* constructor = jsDynamicCast<TTYWrapConstructor*>(callframe->jsCallee());
 
         if (!constructor) {
             throwTypeError(globalObject, scope, "TTYWrapConstructor::construct called with wrong 'this' value"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         if (callframe->argumentCount() < 1) {
             throwTypeError(globalObject, scope, "Expected at least 1 argument"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         JSValue fd_value = callframe->argument(0);
         int32_t fd = fd_value.toInt32(globalObject);
 
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (fd < 0) {
             throwTypeError(globalObject, scope, "fd must be a positive number"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         auto prototypeValue = constructor->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        RETURN_IF_EXCEPTION(scope, {});
         if (!prototypeValue.isObject()) {
             throwTypeError(globalObject, scope, "TTYWrapConstructor prototype is not an object"_s);
             return {};
@@ -491,7 +493,7 @@ const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, 
 
 JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
@@ -505,7 +507,7 @@ JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 
 JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);

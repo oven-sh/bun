@@ -76,4 +76,4 @@ public:
     }
 };
 
-}
+} // namespace v8

@@ -33,13 +33,8 @@
 
 namespace WebCore {
 
-static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, const Vector<uint8_t>& data)
+static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, size_t padding, const Vector<uint8_t>& data)
 {
-
-    std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
-    if (!digest)
-        return Exception { OperationError };
-
     auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
     if (!ctx)
         return Exception { OperationError };
@@ -47,22 +42,34 @@ static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, cons
     if (EVP_PKEY_sign_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PADDING) <= 0)
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
+    auto toSign = data;
+    if (md) {
+        if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
+            return Exception { OperationError };
+        std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
+        if (!digest)
+            return Exception { OperationError };
+        toSign = std::move(digest.value());
+    }
 
     size_t signatureLen;
-    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, digest->data(), digest->size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, toSign.begin(), toSign.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> signature(signatureLen);
-    if (EVP_PKEY_sign(ctx.get(), signature.data(), &signatureLen, digest->data(), digest->size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), signature.begin(), &signatureLen, toSign.begin(), toSign.size()) <= 0)
         return Exception { OperationError };
     signature.shrink(signatureLen);
 
     return signature;
+}
+
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignNoAlgorithm(const CryptoKeyRSA& key, size_t padding, const Vector<uint8_t>& data)
+{
+    return signWithEVP_MD(key, nullptr, padding, data);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(const CryptoKeyRSA& key, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& data)
@@ -72,7 +79,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithA
     if (!md)
         return Exception { NotSupportedError };
 
-    return signWithEVP_MD(key, md, data);
+    return signWithEVP_MD(key, md, RSA_PKCS1_PADDING, data);
 }
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
@@ -80,7 +87,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(cons
     if (!md)
         return Exception { NotSupportedError };
 
-    return signWithEVP_MD(key, md, data);
+    return signWithEVP_MD(key, md, RSA_PKCS1_PADDING, data);
 }
 
 static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
@@ -102,7 +109,7 @@ static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD*
     if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
+    int ret = EVP_PKEY_verify(ctx.get(), signature.begin(), signature.size(), digest->begin(), digest->size());
 
     return ret == 1;
 }
@@ -123,6 +130,30 @@ ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoK
         return Exception { NotSupportedError };
 
     return verifyWithEVP_MD(key, md, signature, data);
+}
+
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRecover(const CryptoKeyRSA& key, size_t padding, const Vector<uint8_t>& signature)
+{
+    auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
+    if (!ctx)
+        return Exception { OperationError };
+
+    if (EVP_PKEY_verify_recover_init(ctx.get()) <= 0)
+        return Exception { OperationError };
+
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
+        return Exception { OperationError };
+
+    size_t plaintextLen;
+    if (EVP_PKEY_verify_recover(ctx.get(), nullptr, &plaintextLen, signature.begin(), signature.size()) <= 0)
+        return Exception { OperationError };
+
+    Vector<uint8_t> plaintext(plaintextLen);
+    if (EVP_PKEY_verify_recover(ctx.get(), plaintext.begin(), &plaintextLen, signature.begin(), signature.size()) <= 0)
+        return Exception { OperationError };
+    plaintext.shrink(plaintextLen);
+
+    return plaintext;
 }
 
 } // namespace WebCore

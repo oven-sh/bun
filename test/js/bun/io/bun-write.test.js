@@ -463,7 +463,7 @@ describe("ENOENT", () => {
         await Bun.write(file, "contents", ...opts);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
   };
@@ -479,11 +479,11 @@ describe("ENOENT", () => {
       const file = join(dir, "file");
       try {
         expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
-          "No such file or directory",
+          "no such file or directory",
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 

@@ -1,9 +1,8 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 import fixtures from "./common/fixtures.js";
-
-const isWindows = process.platform === "win32";
 
 describe("path.toNamespacedPath", () => {
   const emptyObj = {};

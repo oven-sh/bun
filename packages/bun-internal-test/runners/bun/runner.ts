@@ -3,9 +3,9 @@
 //
 // In the future, a version of this will be built-in to Bun.
 
-import { join } from "node:path";
-import { readdirSync, writeSync, fsyncSync, symlinkSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { fsyncSync, readdirSync, symlinkSync, unlinkSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 export type TestInfo = {
   name: string;

@@ -42,7 +42,7 @@ public:
 
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
-        auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+        auto* zigGlobal = defaultGlobalObject(globalObject);
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
@@ -65,8 +65,8 @@ public:
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-        JSC::VM& vm = globalObject->vm();
+        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();
@@ -75,17 +75,17 @@ public:
 
             auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
                 // ShadowRealm functions belong to a different global object.
-                getFunctionRealm(globalObject, newTarget));
+                getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
             structure = InternalFunction::createSubclassStructure(
-                globalObject,
+                lexicalGlobalObject,
                 newTarget,
                 functionGlobalObject->JSBlobStructure());
         }
 
-        void* ptr = JSDOMFile__construct(globalObject, callFrame);
+        void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
 
-        if (UNLIKELY(!ptr)) {
+        if (!ptr) [[unlikely]] {
             return JSValue::encode(JSC::jsUndefined());
         }
 

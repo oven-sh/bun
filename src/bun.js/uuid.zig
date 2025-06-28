@@ -1,9 +1,7 @@
 //https://github.com/dmgk/zig-uuid
 const std = @import("std");
-const crypto = std.crypto;
 const fmt = std.fmt;
-const testing = std.testing;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();
@@ -13,7 +11,7 @@ bytes: [16]u8,
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };
 
-    bun.rand(&uuid.bytes);
+    bun.csprng(&uuid.bytes);
     // Version 4
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1
@@ -87,12 +85,11 @@ pub fn format(
     try fmt.format(writer, "{s}", .{buf});
 }
 
-pub fn print(
-    self: UUID,
+fn printBytes(
+    bytes: *const [16]u8,
     buf: *[36]u8,
 ) void {
     const hex = "0123456789abcdef";
-    const bytes = self.bytes;
 
     buf[8] = '-';
     buf[13] = '-';
@@ -102,6 +99,12 @@ pub fn print(
         buf[comptime i + 0] = hex[bytes[j] >> 4];
         buf[comptime i + 1] = hex[bytes[j] & 0x0f];
     }
+}
+pub fn print(
+    self: UUID,
+    buf: *[36]u8,
+) void {
+    printBytes(&self.bytes, buf);
 }
 
 pub fn parse(buf: []const u8) Error!UUID {
@@ -129,3 +132,76 @@ pub const zero: UUID = .{ .bytes = .{0} ** 16 };
 pub fn newV4() UUID {
     return UUID.init();
 }
+
+/// # --- 48 ---   -- 4 --   - 12 -   -- 2 --   - 62 -
+/// # unix_ts_ms | version | rand_a | variant | rand_b
+pub const UUID7 = struct {
+    bytes: [16]u8,
+
+    var uuid_v7_lock = bun.Mutex{};
+    var uuid_v7_last_timestamp: std.atomic.Value(u64) = .{ .raw = 0 };
+    var uuid_v7_counter: std.atomic.Value(u32) = .{ .raw = 0 };
+
+    fn getCount(timestamp: u64) u32 {
+        uuid_v7_lock.lock();
+        defer uuid_v7_lock.unlock();
+        if (uuid_v7_last_timestamp.swap(timestamp, .monotonic) != timestamp) {
+            uuid_v7_counter.store(0, .monotonic);
+        }
+
+        return uuid_v7_counter.fetchAdd(1, .monotonic) % 4096;
+    }
+
+    pub fn init(timestamp: u64, random: *[8]u8) UUID7 {
+        const count = getCount(timestamp);
+
+        var bytes: [16]u8 = undefined;
+
+        // First 6 bytes: timestamp in big-endian
+        bytes[0] = @truncate(timestamp >> 40);
+        bytes[1] = @truncate(timestamp >> 32);
+        bytes[2] = @truncate(timestamp >> 24);
+        bytes[3] = @truncate(timestamp >> 16);
+        bytes[4] = @truncate(timestamp >> 8);
+        bytes[5] = @truncate(timestamp);
+
+        // Byte 6: Version 7 in high nibble, top 4 bits of counter in low nibble
+        bytes[6] = (@as(u8, 7) << 4) | @as(u8, @truncate((count >> 8) & 0x0F));
+
+        // Byte 7: Lower 8 bits of counter
+        bytes[7] = @truncate(count);
+
+        // Byte 8: Variant in top 2 bits, 6 bits of random
+        bytes[8] = 0x80 | (random[0] & 0x3F);
+
+        // Remaining 7 bytes: random
+        @memcpy(bytes[9..16], random[1..8]);
+
+        return UUID7{
+            .bytes = bytes,
+        };
+    }
+
+    fn toBytes(self: UUID7) [16]u8 {
+        return self.bytes;
+    }
+
+    pub fn print(self: UUID7, buf: *[36]u8) void {
+        return printBytes(&self.toBytes(), buf);
+    }
+
+    pub fn toUUID(self: UUID7) UUID {
+        const bytes: [16]u8 = self.toBytes();
+
+        return .{ .bytes = bytes };
+    }
+
+    pub fn format(
+        self: UUID7,
+        comptime layout: []const u8,
+        options: fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        return self.toUUID().format(layout, options, writer);
+    }
+};

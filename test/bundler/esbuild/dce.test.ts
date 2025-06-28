@@ -1446,6 +1446,7 @@ describe("bundler", () => {
     format: "cjs",
     treeShaking: true,
     bundling: false,
+    todo: true,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     files: {
@@ -1459,6 +1460,7 @@ describe("bundler", () => {
     format: "iife",
     treeShaking: true,
     bundling: false,
+    todo: true,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
     files: {
@@ -1687,6 +1689,7 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    todo: true,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {

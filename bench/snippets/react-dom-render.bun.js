@@ -1,6 +1,6 @@
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import { renderToReadableStream } from "react-dom/server.browser";
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const App = () => (
   <div>

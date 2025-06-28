@@ -113,6 +113,9 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
+/**
+ * `JSC::JSModuleLoader`
+ */
 declare var Loader: {
   registry: Map<string, LoaderEntry>;
 
@@ -149,9 +152,10 @@ declare interface Error {
   code?: string;
 }
 
-interface CommonJSModuleRecord {
+interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
-  children: CommonJSModuleRecord[];
+  $requireNativeModule(id: string): any;
+  children: JSCommonJSModule[];
   exports: any;
   id: string;
   loaded: boolean;
@@ -159,9 +163,46 @@ interface CommonJSModuleRecord {
   path: string;
   paths: string[];
   require: typeof require;
+  filename: string;
 }
 
+/**
+ * Call a native c++ binding, getting whatever it returns.
+ *
+ * This is more like a macro; it is replaced with a WebKit intrisic during
+ * codegen. Passing a template parameter will break codegen. Prefer `$cpp(...)
+ * as Foo` instead.
+ *
+ * Binding files are located in `src/bun.js/bindings`
+ *
+ * @see {@link $zig} for native zig bindings.
+ * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
+ *
+ * @param filename name of the c++ file containing the function. Do not pass a path.
+ * @param symbol   The name of the binding function to call. Use `dot.notation` to access
+ *                 member symbols.
+ *
+ * @returns whatever the binding function returns.
+ */
 declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
+/**
+ * Call a native zig binding function, getting whatever it returns.
+ *
+ * This is more like a macro; it is replaced with a WebKit intrisic during
+ * codegen. Passing a template parameter will break codegen. Prefer `$zig(...)
+ * as Foo` instead.
+ *
+ * Binding files are located in `src/bun.js/bindings`
+ *
+ * @see {@link $cpp} for native c++ bindings.
+ * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
+ *
+ * @param filename name of the zig file containing the function. Do not pass a path.
+ * @param symbol   The name of the binding function. Use `dot.notation` to access
+ *                 member symbols.
+ *
+ * @returns whatever the binding function returns.
+ */
 declare function $zig<T = any>(filename: NativeFilenameZig, symbol: string): T;
 declare function $newCppFunction<T = (...args: any) => any>(
   filename: NativeFilenameCPP,
@@ -173,3 +214,27 @@ declare function $newZigFunction<T = (...args: any) => any>(
   symbol: string,
   argCount: number,
 ): T;
+/**
+ * Retrieves a handle to a function defined in Zig or C++, defined in a
+ * `.bind.ts` file. For more information on how to define bindgen functions, see
+ * [bindgen's documentation](https://bun.sh/docs/project/bindgen).
+ * @param filename - The basename of the `.bind.ts` file.
+ * @param symbol - The name of the function to call.
+ */
+declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
+// NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+
+import "node:net";
+declare module "node:net" {
+  export function _normalizeArgs(args: any[]): unknown[];
+
+  interface Socket {
+    _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+    server: Server | null;
+  }
+
+  interface Server {
+    _handle: Bun.SocketListener<Socket> | null;
+    _connections: number;
+  }
+}

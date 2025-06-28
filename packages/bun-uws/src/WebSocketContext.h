@@ -339,7 +339,7 @@ private:
 
             /* We store old backpressure since it is unclear whether write drained anything,
              * however, in case of coming here with 0 backpressure we still need to emit drain event */
-            unsigned int backpressure = asyncSocket->getBufferedAmount();
+            size_t backpressure = asyncSocket->getBufferedAmount();
 
             /* Drain as much as possible */
             asyncSocket->write(nullptr, 0);

@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from "fs";
 import { tls as cert1 } from "harness";
 import { AddressInfo } from "net";
 import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
@@ -318,7 +319,7 @@ describe("tls.createServer", () => {
           expect(cert.ca).toBeFalse();
           expect(cert.bits).toBe(2048);
           expect(cert.modulus).toBe(
-            "BEEE8773AF7C8861EC11351188B9B1798734FB0729B674369BE3285A29FE5DACBFAB700D09D7904CF1027D89298BD68BE0EF1DF94363012B0DEB97F632CB76894BCC216535337B9DB6125EF68996DD35B4BEA07E86C41DA071907A86651E84F8C72141F889CC0F770554791E9F07BBE47C375D2D77B44DBE2AB0ED442BC1F49ABE4F8904977E3DFD61CD501D8EFF819FF1792AEDFFACA7D281FD1DB8C5D972D22F68FA7103CA11AC9AAED1CDD12C33C0B8B47964B37338953D2415EDCE8B83D52E2076CA960385CC3A5CA75A75951AAFDB2AD3DB98A6FDD4BAA32F575FEA7B11F671A9EAA95D7D9FAF958AC609F3C48DEC5BDDCF1BC1542031ED9D4B281D7DD1",
+            "beee8773af7c8861ec11351188b9b1798734fb0729b674369be3285a29fe5dacbfab700d09d7904cf1027d89298bd68be0ef1df94363012b0deb97f632cb76894bcc216535337b9db6125ef68996dd35b4bea07e86c41da071907a86651e84f8c72141f889cc0f770554791e9f07bbe47c375d2d77b44dbe2ab0ed442bc1f49abe4f8904977e3dfd61cd501d8eff819ff1792aedffaca7d281fd1db8c5d972d22f68fa7103ca11ac9aaed1cdd12c33c0b8b47964b37338953d2415edce8b83d52e2076ca960385cc3a5ca75a75951aafdb2ad3db98a6fdd4baa32f575fea7b11f671a9eaa95d7d9faf958ac609f3c48dec5bddcf1bc1542031ed9d4b281d7dd1",
           );
           expect(cert.exponent).toBe("0x10001");
           expect(cert.pubkey).toBeInstanceOf(Buffer);
@@ -332,7 +333,7 @@ describe("tls.createServer", () => {
           expect(cert.fingerprint512).toBe(
             "2D:31:CB:D2:A0:CA:E5:D4:B5:59:11:48:4B:BC:65:11:4F:AB:02:24:59:D8:73:43:2F:9A:31:92:BC:AF:26:66:CD:DB:8B:03:74:0C:C1:84:AF:54:2D:7C:FD:EF:07:6E:85:66:98:6B:82:4F:A5:72:97:A2:19:8C:7B:57:D6:15",
           );
-          expect(cert.serialNumber).toBe("1DA7A7B8D71402ED2D8C3646A5CEDF2B8117EFC8");
+          expect(cert.serialNumber).toBe("1da7a7b8d71402ed2d8c3646a5cedf2b8117efc8");
 
           expect(cert.raw).toBeInstanceOf(Buffer);
           client?.end();
@@ -539,32 +540,14 @@ describe("tls.createServer events", () => {
       });
   });
 
-  it("should call error", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  it("should error on an invalid port", () => {
+    const server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
-    const server: Server = createServer(COMMON_CERT);
-
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall("error not called")();
-    };
-
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
-
-    server
-      .on(
-        "error",
-        mustCall(err => {
-          server.close();
-          clearTimeout(timeout);
-          expect(err).toBeDefined();
-          done();
-        }),
-      )
-      .listen(123456);
+    expect(() => server.listen(123456)).toThrow(
+      expect.objectContaining({
+        code: "ERR_SOCKET_BAD_PORT",
+      }),
+    );
   });
 
   it("should call abort with signal", done => {
@@ -661,4 +644,45 @@ it("tls.rootCertificates should exists", () => {
   expect(rootCertificates).toBeInstanceOf(Array);
   expect(rootCertificates.length).toBeGreaterThan(0);
   expect(typeof rootCertificates[0]).toBe("string");
+});
+
+it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
+  let count = 0;
+  const promises = [];
+  const server: Server = createServer(
+    {
+      ...COMMON_CERT,
+      ALPNProtocols: ["bun"],
+    },
+    socket => {
+      count++;
+      expect(socket.alpnProtocol).toBe("bun");
+      socket.end();
+    },
+  );
+  server.setMaxListeners(100);
+
+  server.listen(0);
+  await once(server, "listening");
+  for (let i = 0; i < 50; i++) {
+    const { promise, resolve } = Promise.withResolvers();
+    promises.push(promise);
+    const socket = connect(
+      {
+        ca: COMMON_CERT.cert,
+        rejectUnauthorized: false,
+        port: server.address().port,
+        host: "127.0.0.1",
+        ALPNProtocols: ["bun"],
+      },
+      () => {
+        socket.on("close", resolve);
+        socket.resume();
+        socket.end();
+      },
+    );
+  }
+
+  await Promise.all(promises);
+  expect(count).toBe(50);
 });

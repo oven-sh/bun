@@ -73,16 +73,15 @@ enum class CrossOriginResourcePolicy : uint8_t {
 enum class RangeAllowWhitespace : bool { No,
     Yes };
 
-bool isValidReasonPhrase(const String&);
-bool isValidHTTPHeaderValue(const String&);
-bool isValidAcceptHeaderValue(const String&);
-bool isValidLanguageHeaderValue(const String&);
+bool isValidReasonPhrase(const StringView&);
+bool isValidHTTPHeaderValue(const StringView&);
+bool isValidAcceptHeaderValue(const StringView&);
+bool isValidLanguageHeaderValue(const StringView&);
 #if USE(GLIB)
-WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const String&);
+WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const StringView&);
 #endif
-bool isValidHTTPToken(const String&);
-bool isValidHTTPToken(StringView);
-std::optional<WallTime> parseHTTPDate(const String&);
+bool isValidHTTPToken(const StringView&);
+std::optional<WallTime> parseHTTPDate(const StringView&);
 StringView filenameFromHTTPContentDisposition(StringView);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);
 StringView extractCharsetFromMediaType(const String&);
@@ -101,15 +100,15 @@ size_t parseHTTPHeader(const uint8_t* data, size_t length, String& failureReason
 size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>& body);
 
 // HTTP Header routine as per https://fetch.spec.whatwg.org/#terminology-headers
-bool isForbiddenHeaderName(const String&);
-bool isNoCORSSafelistedRequestHeaderName(const String&);
-bool isPriviledgedNoCORSRequestHeaderName(const String&);
-bool isForbiddenResponseHeaderName(const String&);
-bool isForbiddenMethod(const String&);
-bool isSimpleHeader(const String& name, const String& value);
+bool isForbiddenHeaderName(const StringView);
+bool isNoCORSSafelistedRequestHeaderName(const StringView);
+bool isPriviledgedNoCORSRequestHeaderName(const StringView);
+bool isForbiddenResponseHeaderName(const StringView);
+bool isForbiddenMethod(const StringView);
+bool isSimpleHeader(const StringView name, const StringView value);
 // bool isCrossOriginSafeHeader(HTTPHeaderName, const HTTPHeaderSet&);
 // bool isCrossOriginSafeHeader(const String&, const HTTPHeaderSet&);
-bool isCrossOriginSafeRequestHeader(HTTPHeaderName, const String&);
+bool isCrossOriginSafeRequestHeader(HTTPHeaderName, const StringView);
 
 String normalizeHTTPMethod(const String&);
 bool isSafeMethod(const String&);
@@ -119,7 +118,7 @@ WEBCORE_EXPORT CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(St
 // -1 could be set to one of the return parameters to indicate the value is not specified.
 WEBCORE_EXPORT bool parseRange(StringView, RangeAllowWhitespace, long long& rangeStart, long long& rangeEnd);
 
-inline bool isHTTPSpace(UChar character)
+inline bool isHTTPSpace(char16_t character)
 {
     return character <= ' ' && (character == ' ' || character == '\n' || character == '\t' || character == '\r');
 }

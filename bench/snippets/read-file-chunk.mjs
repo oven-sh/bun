@@ -1,7 +1,7 @@
 import { createReadStream, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { sep } from "node:path";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 if (!Promise.withResolvers) {
   Promise.withResolvers = function () {

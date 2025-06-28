@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { join } from "path";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -103,7 +104,7 @@ describe("Bun.Transpiler", () => {
   it("doesn't hang indefinitely #2746", () => {
     // this test passes by not hanging
     expect(() => {
-      console.log('1');
+      console.log("1");
       const y = transpiler.transformSync(`
         class Test {
           test() {
@@ -312,6 +313,13 @@ describe("Bun.Transpiler", () => {
       exp("F<{}>()\nclass F<T> {}", "F();\n\nclass F {\n}");
 
       exp("f<{}>()\nfunction f<T>() {}", "let f = function() {\n};\nf()");
+    });
+
+    it("malformed enums", () => {
+      const err = ts.expectParseError;
+
+      err("enum Foo { [2]: 'hi' }", 'Expected identifier but found "["');
+      err("enum [] { a }", 'Expected identifier but found "["');
     });
 
     // TODO: fix all the cases that report generic "Parse error"
@@ -610,7 +618,7 @@ describe("Bun.Transpiler", () => {
       // errX(t, "<in T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"in\" tag\n<stdin>: NOTE: The opening \"in\" tag is here:\n")
       // errX(t, "<out T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"out\" tag\n<stdin>: NOTE: The opening \"out\" tag is here:\n")
       // errX(t, "<in out T extends any>() => {}", jsxErrorArrow+"Unexpected end of file before a closing \"in\" tag\n<stdin>: NOTE: The opening \"in\" tag is here:\n")
-      exp("class Container { get data(): typeof this.#data {} }", "class Container {\n  get data() {\n  }\n}");
+      exp("class Container { get data(): typeof this.#data {} }", "class Container {\n  get data() {}\n}");
       exp("const a: typeof this.#a = 1;", "const a = 1;\n");
       err("const a: typeof #a = 1;", 'Expected identifier but found "#a"');
 
@@ -619,20 +627,20 @@ describe("Bun.Transpiler", () => {
       exp("class Foo<const T extends X> {}", "class Foo {\n}");
       exp("Foo = class <const T> {}", "Foo = class {\n}");
       exp("Foo = class Bar<const T> {}", "Foo = class Bar {\n}");
-      exp("function foo<const T>() {}", "function foo() {\n}");
-      exp("foo = function <const T>() {}", "foo = function() {\n}");
-      exp("foo = function bar<const T>() {}", "foo = function bar() {\n}");
-      exp("class Foo { bar<const T>() {} }", "class Foo {\n  bar() {\n  }\n}");
+      exp("function foo<const T>() {}", "function foo() {}");
+      exp("foo = function <const T>() {}", "foo = function() {}");
+      exp("foo = function bar<const T>() {}", "foo = function bar() {}");
+      exp("class Foo { bar<const T>() {} }", "class Foo {\n  bar() {}\n}");
       exp("interface Foo { bar<const T>(): T }", "");
       exp("interface Foo { new bar<const T>(): T }", "");
       exp("let x: { bar<const T>(): T }", "let x;\n");
       exp("let x: { new bar<const T>(): T }", "let x;\n");
-      exp("foo = { bar<const T>() {} }", "foo = { bar() {\n} }");
+      exp("foo = { bar<const T>() {} }", "foo = { bar() {} }");
       exp("x = <const>(y)", "x = y;\n");
-      exp("export let f = <const T>() => {}", "export let f = () => {\n};\n");
-      exp("export let f = <const const T>() => {}", "export let f = () => {\n};\n");
-      exp("export let f = async <const T>() => {}", "export let f = async () => {\n};\n");
-      exp("export let f = async <const const T>() => {}", "export let f = async () => {\n};\n");
+      exp("export let f = <const T>() => {}", "export let f = () => {};\n");
+      exp("export let f = <const const T>() => {}", "export let f = () => {};\n");
+      exp("export let f = async <const T>() => {}", "export let f = async () => {};\n");
+      exp("export let f = async <const const T>() => {}", "export let f = async () => {};\n");
       exp("let x: <const T>() => T = y", "let x = y;\n");
       exp("let x: <const const T>() => T = y", "let x = y;\n");
       exp("let x: new <const T>() => T = y", "let x = y;\n");
@@ -682,16 +690,16 @@ describe("Bun.Transpiler", () => {
       //   "<const T extends>(y) = {}</const>",
       //   '/* @__PURE__ */ React.createElement("const", { T: true, extends: true }, "(y) = ");\n',
       // );
-      // expectPrintedTSX(t, "<const T,>() => {}", "() => {\n};\n");
-      // expectPrintedTSX(t, "<const T, X>() => {}", "() => {\n};\n");
-      // expectPrintedTSX(t, "<const T, const X>() => {}", "() => {\n};\n");
-      // expectPrintedTSX(t, "<const T, const const X>() => {}", "() => {\n};\n");
-      // expectPrintedTSX(t, "<const T extends X>() => {}", "() => {\n};\n");
-      // expectPrintedTSX(t, "async <const T,>() => {}", "async () => {\n};\n");
-      // expectPrintedTSX(t, "async <const T, X>() => {}", "async () => {\n};\n");
-      // expectPrintedTSX(t, "async <const T, const X>() => {}", "async () => {\n};\n");
-      // expectPrintedTSX(t, "async <const T, const const X>() => {}", "async () => {\n};\n");
-      // expectPrintedTSX(t, "async <const T extends X>() => {}", "async () => {\n};\n");
+      // expectPrintedTSX(t, "<const T,>() => {}", "() => {};\n");
+      // expectPrintedTSX(t, "<const T, X>() => {}", "() => {};\n");
+      // expectPrintedTSX(t, "<const T, const X>() => {}", "() => {};\n");
+      // expectPrintedTSX(t, "<const T, const const X>() => {}", "() => {};\n");
+      // expectPrintedTSX(t, "<const T extends X>() => {}", "() => {};\n");
+      // expectPrintedTSX(t, "async <const T,>() => {}", "async () => {};\n");
+      // expectPrintedTSX(t, "async <const T, X>() => {}", "async () => {};\n");
+      // expectPrintedTSX(t, "async <const T, const X>() => {}", "async () => {};\n");
+      // expectPrintedTSX(t, "async <const T, const const X>() => {}", "async () => {};\n");
+      // expectPrintedTSX(t, "async <const T extends X>() => {}", "async () => {};\n");
       // errX(
       //   t,
       //   "<const T>() => {}",
@@ -717,6 +725,40 @@ describe("Bun.Transpiler", () => {
       // TODO: why doesn't this one fail?
       // err("async <const const T,>() => {}", "Unexpected const");
       // err("async <const const T extends X>() => {}", "Unexpected const");
+    });
+
+    it("non-null assertion with new operator", () => {
+      const exp = ts.expectPrinted_;
+
+      // Basic non-null assertion with new operator on nested class
+      exp(
+        "const obj = { a: class Abc {} }; const instance = new obj!.a();",
+        "const obj = { a: class Abc {\n} };\nconst instance = new obj.a",
+      );
+
+      // with constructor
+      exp(
+        "const obj = { a: class Abc { constructor(x) { this.x = x; }} }; const instance = new obj!.a(1);",
+        "const obj = { a: class Abc {\n  constructor(x) {\n    this.x = x;\n  }\n} };\nconst instance = new obj.a(1)",
+      );
+
+      // Non-null assertion with new operator on nested property
+      exp(
+        "const obj = { nested: { Class: class NestedClass {} } }; const instance = new obj!.nested.Class();",
+        "const obj = { nested: { Class: class NestedClass {\n} } };\nconst instance = new obj.nested.Class",
+      );
+
+      // Multiple non-null assertions in new expression
+      exp(
+        "const obj = { a: { b: class DeepClass {} } }; const instance = new obj!.a!.b();",
+        "const obj = { a: { b: class DeepClass {\n} } };\nconst instance = new obj.a.b",
+      );
+
+      // Non-null assertion with new operator and method call
+      exp(
+        "const obj = { getClass() { return class MyClass {}; } }; const C = obj!.getClass(); const instance = new C();",
+        "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C",
+      );
     });
 
     it("modifiers", () => {
@@ -898,11 +940,11 @@ export default class {
       );
       ts.expectPrinted_(
         "let obj: { f(s: string): void } & Record<string, unknown> = { f(s) { }, g(s) { } } satisfies { g(s: string): void } & Record<string, unknown>;",
-        "let obj = { f(s) {\n}, g(s) {\n} };\n",
+        "let obj = { f(s) {}, g(s) {} };\n",
       );
       ts.expectPrinted_(
         "const car = { start() { }, move(d) { }, stop() { } } satisfies Movable & Record<string, unknown>;",
-        "const car = { start() {\n}, move(d) {\n}, stop() {\n} };\n",
+        "const car = { start() {}, move(d) {}, stop() {} };\n",
       );
       ts.expectPrinted_("var v = undefined satisfies 1;", "var v = undefined;\n");
       ts.expectPrinted_("const a = { x: 10 } satisfies Partial<Point2d>;", "const a = { x: 10 };\n");
@@ -1237,74 +1279,67 @@ export default <>hi</>
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
-  points: () => {
-  }
-}, () => {
-}, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {
+  points: () => {}
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
-  points: () => {
-  }
-}, () => {
-}, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {
+  points: () => {}
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}}></div>);")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  }\n}, () => {\n}, false, undefined, this));\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {}\n}, () => {}, false, undefined, this));\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} a={() => {}} key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}} a={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {
-  points: () => {
-  }
-}, () => {
-}, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {
+  points: () => {}
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV("div", {}, () => {
-}, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div></div>);")).toBe(
-      `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+      `console.log(jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this));
 `,
     );
 
     // key after spread props
     // https://github.com/oven-sh/bun/issues/7328
     expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV_7x81h0kn(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
 `,
     );
     expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
 `,
     );
     expect(
       bun.transformSync(`// @jsx foo;
 console.log(<div {...obj} key="after" />);`),
     ).toBe(
-      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
 `,
     );
   });
@@ -1317,44 +1352,44 @@ console.log(<div {...obj} key="after" />);`),
       },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   foo: true
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   ...foo
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -1362,20 +1397,20 @@ console.log(<div {...obj} key="after" />);`),
 
     // cursed
     expect(bun.transformSync("export var hi = <div {foo[() => true].hi} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   hi: foo[() => true].hi
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")).toBe(
-      `export var hi = jsxDEV(Foo, {
+      `export var hi = jsxDEV_7x81h0kn(Foo, {
       NODE_ENV: "development"
     }, undefined, false, undefined, this);
     `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -1388,22 +1423,22 @@ console.log(<div {...obj} key="after" />);`),
     }
 
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV(Foo, {}, undefined, false, undefined, this)
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
-      `export var hi = jsxDEV("div", {
+      `export var hi = jsxDEV_7x81h0kn("div", {
   children: [
     123,
     "}"
@@ -1421,7 +1456,7 @@ console.log(<div {...obj} key="after" />);`),
       },
     });
     expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   children: [
     ...a,
     "b"
@@ -1431,7 +1466,7 @@ console.log(<div {...obj} key="after" />);`),
     );
 
     expect(bun.transformSync("export var foo = <div>{...a}</div>")).toBe(
-      `export var foo = jsxDEV("div", {
+      `export var foo = jsxDEV_7x81h0kn("div", {
   children: [...a]
 }, undefined, true, undefined, this);
 `,
@@ -1665,11 +1700,36 @@ console.log(<div {...obj} key="after" />);`),
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
-      expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json")`);
+      expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
     });
 
-    it("import with unicode escape", () => {
-      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "mod\\u1011"`);
+    it("import with unicode", () => {
+      expectPrinted_(`import { name } from 'modထ';`, `import { name } from "modထ"`);
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "modထ"`);
+      expectPrinted_(`import('modထ');`, `import("modထ")`);
+      expectPrinted_(`import('mod\\u1011');`, `import("modထ")`);
+    });
+    it("import with quote", () => {
+      expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("string quote selection", () => {
+      expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
+      expectPrinted_(`console.log("\\"")`, `console.log('"')`);
+      expectPrinted_(`console.log('\\'')`, `console.log("'")`);
+      expectPrinted_("console.log(`\\`hi\\``)", "console.log(`\\`hi\\``)");
+      expectPrinted_(`console.log("ထ")`, `console.log("ထ")`);
+      expectPrinted_(`console.log("\\u1011")`, `console.log("ထ")`);
+    });
+
+    it("unicode surrogates", () => {
+      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
+      expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
+      expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
     it("fold string addition", () => {
@@ -1810,7 +1870,7 @@ export const { dead } = { dead: "hello world!" };
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
     });
 
-    it.skip("rewrite string to length", () => {
+    it("rewrite string to length", () => {
       expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
       // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
@@ -1819,6 +1879,8 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
+      // no rope string for non-ascii
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
     });
 
     describe("Bun.js", () => {
@@ -1921,9 +1983,9 @@ console.log(resolve.length)
       expectPrinted_("var [...x] = []", "var [...x] = []");
       expectPrinted_("var {...x} = {}", "var { ...x } = {}");
 
-      expectPrinted_("export var foo = ([...x] = []) => {}", "export var foo = ([...x] = []) => {\n}");
+      expectPrinted_("export var foo = ([...x] = []) => {}", "export var foo = ([...x] = []) => {}");
 
-      expectPrinted_("export var foo = ({...x} = {}) => {}", "export var foo = ({ ...x } = {}) => {\n}");
+      expectPrinted_("export var foo = ({...x} = {}) => {}", "export var foo = ({ ...x } = {}) => {}");
 
       expectParseError("var [...x,] = []", 'Unexpected "," after rest pattern');
       expectParseError("var {...x,} = {}", 'Unexpected "," after rest pattern');
@@ -2068,7 +2130,7 @@ console.log(resolve.length)
         expect(parsed("!0", true, false)).toBe("");
         expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
         expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
-        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {\n}");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {}");
       });
       it("should not DCE with deadCodeElimination: false", () => {
         expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
@@ -2107,14 +2169,14 @@ console.log(resolve.length)
       "class Foo { #foo = #foo in (#bar in this); #bar }",
       "class Foo {\n  #foo = #foo in (#bar in this);\n  #bar;\n}",
     );
-    expectPrinted_("class Foo { #foo() {} }", "class Foo {\n  #foo() {\n  }\n}");
-    expectPrinted_("class Foo { get #foo() {} }", "class Foo {\n  get #foo() {\n  }\n}");
-    expectPrinted_("class Foo { set #foo(x) {} }", "class Foo {\n  set #foo(x) {\n  }\n}");
+    expectPrinted_("class Foo { #foo() {} }", "class Foo {\n  #foo() {}\n}");
+    expectPrinted_("class Foo { get #foo() {} }", "class Foo {\n  get #foo() {}\n}");
+    expectPrinted_("class Foo { set #foo(x) {} }", "class Foo {\n  set #foo(x) {}\n}");
     expectPrinted_("class Foo { static #foo }", "class Foo {\n  static #foo;\n}");
     expectPrinted_("class Foo { static #foo = 1 }", "class Foo {\n  static #foo = 1;\n}");
-    expectPrinted_("class Foo { static #foo() {} }", "class Foo {\n  static #foo() {\n  }\n}");
-    expectPrinted_("class Foo { static get #foo() {} }", "class Foo {\n  static get #foo() {\n  }\n}");
-    expectPrinted_("class Foo { static set #foo(x) {} }", "class Foo {\n  static set #foo(x) {\n  }\n}");
+    expectPrinted_("class Foo { static #foo() {} }", "class Foo {\n  static #foo() {}\n}");
+    expectPrinted_("class Foo { static get #foo() {} }", "class Foo {\n  static get #foo() {}\n}");
+    expectPrinted_("class Foo { static set #foo(x) {} }", "class Foo {\n  static set #foo(x) {}\n}");
 
     expectParseError("class Foo { #foo = #foo in #bar in this; #bar }", "Unexpected #bar");
 
@@ -2143,11 +2205,11 @@ console.log(resolve.length)
 
     expectPrinted_(
       "class Foo { get #foo() {} set #foo(x) { this.#foo } }",
-      "class Foo {\n  get #foo() {\n  }\n  set #foo(x) {\n    this.#foo;\n  }\n}",
+      "class Foo {\n  get #foo() {}\n  set #foo(x) {\n    this.#foo;\n  }\n}",
     );
     expectPrinted_(
       "class Foo { set #foo(x) { this.#foo } get #foo() {} }",
-      "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {\n  }\n}",
+      "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {}\n}",
     );
     expectPrinted_("class Foo { #foo } class Bar { #foo }", "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}");
     expectPrinted_("class Foo { foo = this.#foo; #foo }", "class Foo {\n  foo = this.#foo;\n  #foo;\n}");
@@ -2254,8 +2316,8 @@ class Foo {
   });
 
   it("class static blocks", () => {
-    expectPrinted_("class Foo { static {} }", "class Foo {\n  static {\n  }\n}");
-    expectPrinted_("class Foo { static {} x = 1 }", "class Foo {\n  static {\n  }\n  x = 1;\n}");
+    expectPrinted_("class Foo { static {} }", "class Foo {\n  static {}\n}");
+    expectPrinted_("class Foo { static {} x = 1 }", "class Foo {\n  static {}\n  x = 1;\n}");
     expectPrinted_("class Foo { static { this.foo() } }", "class Foo {\n  static {\n    this.foo();\n  }\n}");
 
     expectParseError("class Foo { static { yield } }", '"yield" is a reserved word and cannot be used in strict mode');
@@ -3207,6 +3269,40 @@ console.log(foo, array);
       expect(exports[1]).toBe("default");
       expect(exports).toHaveLength(3);
     });
+
+    it("#17961 - node target", async () => {
+      // Issue #17961: Transpiler encoding issue with UTF-8 characters
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        target: "node",
+      });
+
+      const input = `let list = ["•", "-", "◦", "▪", "▫"];`;
+      const result = await transpiler.transform(input);
+      expect(result).toBe(`let list = ["•", "-", "◦", "▪", "▫"];\n`);
+    });
+
+    it("#17961 - browser target", async () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        target: "browser",
+      });
+
+      const input = `let list = ["•", "-", "◦", "▪", "▫"];`;
+      const result = await transpiler.transform(input);
+      expect(result).toBe(`let list = ["•", "-", "◦", "▪", "▫"];\n`);
+    });
+
+    it("#17961 - bun target", async () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        target: "bun",
+      });
+
+      const input = `let list = ["•", "-", "◦", "▪", "▫"];\n`;
+      const result = await transpiler.transform(input);
+      expect(result).toBe(`let list = [\"\\u2022\", \"-\", \"\\u25E6\", \"\\u25AA\", \"\\u25AB\"];\n`);
+    });
   });
 
   describe("edge cases", () => {
@@ -3398,4 +3494,46 @@ describe("await can only be used inside an async function message", () => {
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
   });
+});
+
+describe("malformed function definition does not crash due to invalid scope initialization", () => {
+  it("fails with a parse error and exits cleanly", async () => {
+    const tests = ["function:", "function a() {function:}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow("Parse error");
+      }
+    }
+  });
+});
+
+it("does not crash with 9 comments and typescript type skipping", () => {
+  const cmd = [bunExe(), "build", "--minify-identifiers", join(import.meta.dir, "fixtures", "9-comments.ts")];
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toContain("success!");
+  expect(exitCode).toBe(0);
+});
+
+it("runtime transpiler stack overflows", async () => {
+  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transformSync stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("Bun.Transpiler.transform stack overflows", async () => {
+  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+  const transpiler = new Bun.Transpiler();
+  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });

@@ -1,10 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const expectString = std.testing.expectEqualStrings;
-const expect = std.testing.expect;
-const logger = bun.logger;
-const unicode = std.unicode;
-const default_allocator = bun.default_allocator;
+const bun = @import("bun");
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
 const ComptimeStringMap = bun.ComptimeStringMap;
@@ -551,26 +546,6 @@ pub const TypescriptStmtKeyword = enum {
         },
     });
 };
-
-//  Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-pub const ChildlessJSXTags = ComptimeStringMap(void, .{
-    .{ "area", void },
-    .{ "base", void },
-    .{ "br", void },
-    .{ "col", void },
-    .{ "embed", void },
-    .{ "hr", void },
-    .{ "img", void },
-    .{ "input", void },
-    .{ "keygen", void },
-    .{ "link", void },
-    .{ "menuitem", void },
-    .{ "meta", void },
-    .{ "param", void },
-    .{ "source", void },
-    .{ "track", void },
-    .{ "wbr", void },
-});
 
 // In a microbenchmark, this outperforms
 pub const jsxEntity = ComptimeStringMap(CodePoint, .{

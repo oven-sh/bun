@@ -1,4 +1,3 @@
-import { bench, run } from "mitata";
 import {
   arch,
   cpus,
@@ -19,6 +18,7 @@ import {
   userInfo,
   version,
 } from "node:os";
+import { bench, run } from "../../runner.mjs";
 
 bench("cpus()", () => cpus());
 bench("networkInterfaces()", () => networkInterfaces());

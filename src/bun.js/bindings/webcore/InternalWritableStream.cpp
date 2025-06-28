@@ -61,7 +61,7 @@ ExceptionOr<Ref<InternalWritableStream>> InternalWritableStream::createFromUnder
     ASSERT(!arguments.hasOverflowed());
 
     auto result = invokeWritableStreamFunction(globalObject, privateName, arguments);
-    if (UNLIKELY(result.hasException()))
+    if (result.hasException()) [[unlikely]]
         return result.releaseException();
 
     ASSERT(result.returnValue().isObject());
@@ -89,7 +89,7 @@ bool InternalWritableStream::locked() const
     ASSERT(!arguments.hasOverflowed());
 
     auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]]
         scope.clearException();
 
     return result.hasException() ? false : result.returnValue().isTrue();
@@ -110,8 +110,8 @@ void InternalWritableStream::lock()
     arguments.append(guardedObject());
     ASSERT(!arguments.hasOverflowed());
 
-    invokeWritableStreamFunction(*globalObject, privateName, arguments);
-    if (UNLIKELY(scope.exception()))
+    auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
+    if (scope.exception()) [[unlikely]]
         scope.clearException();
 }
 

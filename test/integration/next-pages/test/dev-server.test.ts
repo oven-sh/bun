@@ -79,7 +79,7 @@ async function getDevServerURL() {
   readStream()
     .catch(e => reject(e))
     .finally(() => {
-      dev_server.unref?.();
+      dev_server?.unref?.();
     });
   await promise;
   return baseUrl;

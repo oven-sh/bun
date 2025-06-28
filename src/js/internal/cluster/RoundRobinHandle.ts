@@ -1,6 +1,7 @@
-const net = require("node:net");
 const { append, init, isEmpty, peek, remove } = require("internal/linkedlist");
 const { kHandle } = require("internal/shared");
+
+let net;
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 
@@ -20,6 +21,7 @@ export default class RoundRobinHandle {
   server;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
+    net ??= require("node:net");
     this.key = key;
     this.all = new Map();
     this.free = new Map();
@@ -33,7 +35,7 @@ export default class RoundRobinHandle {
         port,
         host: address,
         // Currently, net module only supports `ipv6Only` option in `flags`.
-        ipv6Only: Boolean(flags & UV_TCP_IPV6ONLY),
+        ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
       });
     } else
@@ -92,7 +94,7 @@ export default class RoundRobinHandle {
       remove(handle);
     }
 
-    this.handle.close();
+    this.handle?.stop(false);
     this.handle = null;
     return true;
   }

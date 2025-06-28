@@ -37,15 +37,32 @@ test("aborted works when provided a resource that was not already aborted", asyn
 
 test("aborted with gc cleanup", async () => {
   const ac = new AbortController();
-  const abortedPromise = aborted(ac.signal, {});
+  let finalized = false;
+  // make a FinalizationRegistry to tell us when the second argument to aborted()
+  // has been garbage collected
+  const registry = new FinalizationRegistry(() => {
+    finalized = true;
+  });
+  const abortedPromise = (() => {
+    const gcMe = {};
+    registry.register(gcMe, undefined);
+    const abortedPromise = aborted(ac.signal, gcMe);
+    return abortedPromise;
+    // gcMe is now out of scope and eligible to be collected
+  })();
+  abortedPromise.then(() => {
+    throw new Error("this promise should never resolve");
+  });
 
-  await new Promise(resolve => setImmediate(resolve));
-  Bun.gc(true);
+  // wait for the object to be GC'd by ticking the event loop and forcing garbage collection
+  while (!finalized) {
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+  }
   ac.abort();
 
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
-  return expect(await abortedPromise).toBeUndefined();
 });
 
 test("fails with error if not provided abort signal", async () => {

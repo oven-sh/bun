@@ -67,6 +67,7 @@ function makeTestJsonResponse(
       }
       // Check to set headers
       headers.set("Content-Type", "text/plain");
+      break;
     default:
   }
 

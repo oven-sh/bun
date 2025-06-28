@@ -41,4 +41,4 @@ struct node_module {
 
 extern "C" BUN_EXPORT void node_module_register(void* mod);
 
-}
+} // namespace node

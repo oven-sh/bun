@@ -14,7 +14,7 @@ namespace uWS {
 
         /* Status is always first header just like for h1 */
         unsigned int headerOffset = 0;
-        
+
         /* Write offset */
         uint64_t offset = 0;
 

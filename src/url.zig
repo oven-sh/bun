@@ -1,16 +1,13 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 
 // This is close to WHATWG URL, but we don't want the validation errors
@@ -38,6 +35,20 @@ pub const URL = struct {
 
     pub fn isFile(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "file");
+    }
+    /// host + path without the ending slash, protocol, searchParams and hash
+    pub fn hostWithPath(this: *const URL) []const u8 {
+        if (this.host.len > 0) {
+            if (this.path.len > 1 and bun.isSliceInBuffer(this.path, this.href) and bun.isSliceInBuffer(this.host, this.href)) {
+                const end = @intFromPtr(this.path.ptr) + this.path.len;
+                const start = @intFromPtr(this.host.ptr);
+                const len: usize = end - start - (if (bun.strings.endsWithComptime(this.path, "/")) @as(usize, 1) else @as(usize, 0));
+                const ptr: [*]u8 = @ptrFromInt(start);
+                return ptr[0..len];
+            }
+            return this.host;
+        }
+        return "";
     }
 
     pub fn isBlob(this: *const URL) bool {
@@ -93,6 +104,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "https");
     }
 
+    pub inline fn isS3(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "s3");
+    }
+
     pub inline fn isHTTP(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "http");
     }
@@ -103,6 +118,12 @@ pub const URL = struct {
         }
 
         return "localhost";
+    }
+
+    pub fn s3Path(this: *const URL) string {
+        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
+        const href = if (this.protocol.len > 0 and this.href.len > this.protocol.len + 2) this.href[this.protocol.len + 2 ..] else this.href;
+        return href[0 .. href.len - (this.search.len + this.hash.len)];
     }
 
     pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {
@@ -127,6 +148,10 @@ pub const URL = struct {
 
     pub fn getDefaultPort(this: *const URL) u16 {
         return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
+    }
+
+    pub fn isIPAddress(this: *const URL) bool {
+        return bun.strings.isIPAddress(this.hostname);
     }
 
     pub fn hasValidPort(this: *const URL) bool {
@@ -488,7 +513,7 @@ pub const QueryStringMap = struct {
     pub const Iterator = struct {
         // Assume no query string param map will exceed 2048 keys
         // Browsers typically limit URL lengths to around 64k
-        const VisitedMap = std.bit_set.ArrayBitSet(usize, 2048);
+        const VisitedMap = bun.bit_set.ArrayBitSet(usize, 2048);
 
         i: usize = 0,
         map: *const QueryStringMap,
@@ -594,7 +619,7 @@ pub const QueryStringMap = struct {
     pub fn initWithScanner(
         allocator: std.mem.Allocator,
         _scanner: CombinedScanner,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
         var scanner = _scanner;
 
@@ -703,7 +728,7 @@ pub const QueryStringMap = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         query_string: string,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
 
         var scanner = Scanner.init(query_string);
@@ -977,13 +1002,13 @@ pub const FormData = struct {
         }
     }
 
-    pub fn jsFunctionFromMultipartData(
+    pub fn fromMultipartData(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const args_ = callframe.arguments(2);
+        const args_ = callframe.arguments_old(2);
 
         const args = args_.ptr[0..2];
 
@@ -997,8 +1022,7 @@ pub const FormData = struct {
         };
 
         if (input_value.isEmptyOrUndefinedOrNull()) {
-            globalThis.throwInvalidArguments("input must not be empty", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must not be empty", .{});
         }
 
         if (!boundary_value.isEmptyOrUndefinedOrNull()) {
@@ -1006,13 +1030,12 @@ pub const FormData = struct {
                 if (array_buffer.byteSlice().len > 0)
                     encoding = .{ .Multipart = array_buffer.byteSlice() };
             } else if (boundary_value.isString()) {
-                boundary_slice = boundary_value.toSliceOrNull(globalThis) orelse return .zero;
+                boundary_slice = try boundary_value.toSliceOrNull(globalThis);
                 if (boundary_slice.len > 0) {
                     encoding = .{ .Multipart = boundary_slice.slice() };
                 }
             } else {
-                globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
-                return .zero;
+                return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
         var input_slice = JSC.ZigString.Slice{};
@@ -1022,24 +1045,20 @@ pub const FormData = struct {
         if (input_value.asArrayBuffer(globalThis)) |array_buffer| {
             input = array_buffer.byteSlice();
         } else if (input_value.isString()) {
-            input_slice = input_value.toSliceOrNull(globalThis) orelse return .zero;
+            input_slice = try input_value.toSliceOrNull(globalThis);
             input = input_slice.slice();
         } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
             input = blob.sharedView();
         } else {
-            globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
-            return .zero;
+            return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
-        return FormData.toJS(globalThis, input, encoding) catch |err| {
-            globalThis.throwError(err, "while parsing FormData");
-            return .zero;
-        };
+        return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");
     }
 
     comptime {
-        if (!JSC.is_bindgen)
-            @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
+        const jsFunctionFromMultipartData = JSC.toJSHostFn(fromMultipartData);
+        @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
     pub fn toJSFromMultipartData(
@@ -1445,5 +1464,3 @@ pub const Scanner = struct {
 };
 
 const expect = std.testing.expect;
-const expectString = std.testing.expectEqualStrings;
-const expectEqual = std.testing.expectEqual;

@@ -1,4 +1,0 @@
-# RFCs
-
-| Number | Name | Issue |
-| ------ | ---- | ----- |

@@ -1,6 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const unicode = std.unicode;
+const bun = @import("bun");
 
 const js_ast = bun.JSAst;
 
@@ -31,7 +30,6 @@ pub const RefCtx = struct {
 
 /// In some parts of Bun, we have many different IDs pointing to different things.
 /// It's easy for them to get mixed up, so we use this type to make sure we don't.
-///
 pub const Index = packed struct(u32) {
     value: Int,
 
@@ -48,6 +46,9 @@ pub const Index = packed struct(u32) {
     pub const invalid = Index{ .value = std.math.maxInt(Int) };
     pub const runtime = Index{ .value = 0 };
 
+    pub const bake_server_data = Index{ .value = 1 };
+    pub const bake_client_data = Index{ .value = 2 };
+
     pub const Int = u32;
 
     pub inline fn source(num: anytype) Index {
@@ -60,7 +61,7 @@ pub const Index = packed struct(u32) {
 
     pub fn init(num: anytype) Index {
         const NumType = @TypeOf(num);
-        if (comptime @typeInfo(NumType) == .Pointer) {
+        if (comptime @typeInfo(NumType) == .pointer) {
             return init(num.*);
         }
 
@@ -111,7 +112,7 @@ pub const Ref = packed struct(u64) {
         allocated_name,
         source_contents_slice,
         symbol,
-    } = .invalid,
+    },
 
     source_index: Int = 0,
 
@@ -186,7 +187,7 @@ pub const Ref = packed struct(u64) {
         return this.tag == .source_contents_slice;
     }
 
-    pub fn init(inner_index: Int, source_index: usize, is_source_contents_slice: bool) Ref {
+    pub fn init(inner_index: Int, source_index: u32, is_source_contents_slice: bool) Ref {
         return .{
             .inner_index = inner_index,
             .source_index = @intCast(source_index),
@@ -229,6 +230,8 @@ pub const Ref = packed struct(u64) {
             *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
             *std.ArrayList(js_ast.Symbol) => symbol_table.items,
             []js_ast.Symbol => symbol_table,
+            *js_ast.Symbol.Map => return symbol_table.get(ref) orelse
+                unreachable, // ref must exist within symbol table
             else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
         };
         return &resolved_symbol_table[ref.innerIndex()];

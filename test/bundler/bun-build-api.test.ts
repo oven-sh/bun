@@ -1,9 +1,65 @@
+import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
+import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
+  test("css works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-css", {
+      "a.css": `
+        @import "./b.css";
+
+        .hi {
+          color: red;
+        }
+      `,
+      "b.css": `
+        .hello {
+          color: blue;
+        }
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "a.css")],
+      minify: true,
+    });
+
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("asset");
+    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
+  test("bytecode works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode", {
+      "package.json": `{}`,
+      "index.ts": `
+        export function hello() {
+          return "world";
+        }
+
+        console.log(hello());
+      `,
+      out: {
+        "hmm.js": "hmm",
+      },
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+
+    expect(build.outputs).toHaveLength(2);
+    expect(build.outputs[0].kind).toBe("entry-point");
+    expect(build.outputs[1].kind).toBe("bytecode");
+    expect([build.outputs[0].path]).toRun("world\n");
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore
@@ -43,7 +99,7 @@ describe("Bun.build", () => {
         }
       `,
     });
-    const y = await Bun.build({
+    const y = await buildNoThrow({
       entrypoints: [join(dir, "src/file1.ts")],
       outdir: join(dir, "out"),
       sourcemap: "external",
@@ -80,7 +136,7 @@ describe("Bun.build", () => {
 
   test("returns errors properly", async () => {
     Bun.gc(true);
-    const build = await Bun.build({
+    const build = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
     });
     expect(build.outputs).toHaveLength(0);
@@ -91,6 +147,25 @@ describe("Bun.build", () => {
     expect(build.logs[0].position).toEqual(null);
     expect(build.logs[0].level).toEqual("error");
     Bun.gc(true);
+  });
+
+  test("errors are thrown", async () => {
+    Bun.gc(true);
+    try {
+      await Bun.build({
+        entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+      });
+      expect.unreachable();
+    } catch (e) {
+      assert(e instanceof AggregateError);
+      expect(e.errors).toHaveLength(1);
+      expect(e.errors[0]).toBeInstanceOf(BuildMessage);
+      expect(e.errors[0].message).toMatch(/ModuleNotFound/);
+      expect(e.errors[0].name).toBe("BuildMessage");
+      expect(e.errors[0].position).toEqual(null);
+      expect(e.errors[0].level).toEqual("error");
+      Bun.gc(true);
+    }
   });
 
   test("returns output files", async () => {
@@ -157,6 +232,7 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
       outdir,
     });
+    console.log(await x.outputs[0].text());
     const [blob] = x.outputs;
     expect(blob).toBeTruthy();
     expect(blob.type).toBe("text/javascript;charset=utf-8");
@@ -301,7 +377,7 @@ describe("Bun.build", () => {
   // });
 
   test("errors are returned as an array", async () => {
-    const x = await Bun.build({
+    const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       outdir: tempDirWithFiles("errors-are-returned-as-an-array", {}),
     });
@@ -464,4 +540,190 @@ describe("Bun.build", () => {
 
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
+
+  test("you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints", async () => {
+    const fixture = tempDirWithFiles("build-html-plugins", {
+      "index.html": `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./style.css">
+            <script src="./script.js"></script>
+          </head>
+        </html>
+      `,
+      "style.css": ".foo { color: red; }",
+
+      // Check we actually do bundle the script
+      "script.js": "console.log(1 + 2)",
+    });
+
+    let onLoadCalled = false;
+    let onResolveCalled = false;
+
+    const build = await Bun.build({
+      entrypoints: [join(fixture, "index.html")],
+      minify: {
+        syntax: true,
+      },
+      plugins: [
+        {
+          name: "test-plugin",
+          setup(build) {
+            build.onLoad({ filter: /\.html$/ }, async args => {
+              onLoadCalled = true;
+              const contents = await Bun.file(args.path).text();
+              return {
+                contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
+                loader: "html",
+              };
+            });
+
+            build.onResolve({ filter: /\.(js|css)$/ }, args => {
+              onResolveCalled = true;
+              return {
+                path: join(fixture, args.path),
+                namespace: "file",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(build.success).toBe(true);
+    expect(onLoadCalled).toBe(true);
+    expect(onResolveCalled).toBe(true);
+
+    // Should have 3 outputs - HTML, JS and CSS
+    expect(build.outputs).toHaveLength(3);
+
+    // Verify we have one of each type
+    const types = build.outputs.map(o => o.type);
+    expect(types).toContain("text/html;charset=utf-8");
+    expect(types).toContain("text/javascript;charset=utf-8");
+    expect(types).toContain("text/css;charset=utf-8");
+
+    // Verify the JS output contains the __dirname
+    const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
+    expect(await js?.text()).toContain("console.log(3)");
+
+    // Verify our plugin modified the HTML
+    const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
+    expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+  });
+});
+
+test("onEnd Plugin does not crash", async () => {
+  expect(
+    (async () => {
+      await Bun.build({
+        entrypoints: ["./build.js"],
+        plugins: [
+          {
+            name: "plugin",
+            setup(build) {
+              // @ts-expect-error
+              build.onEnd();
+            },
+          },
+        ],
+      });
+    })(),
+  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+});
+
+test("macro with nested object", async () => {
+  const dir = tempDirWithFilesAnon({
+    "index.ts": `
+import { testMacro } from "./macro" assert { type: "macro" };
+
+export const testConfig = testMacro({
+  borderRadius: {
+    1: "4px",
+    2: "8px",
+  },
+});
+    `,
+    "macro.ts": `
+export function testMacro(val: any) {
+  return val;
+}
+    `,
+  });
+
+  const build = await Bun.build({
+    entrypoints: [join(dir, "index.ts")],
+    minify: true,
+  });
+
+  expect(build.outputs).toHaveLength(1);
+  expect(build.outputs[0].kind).toBe("entry-point");
+  expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(
+    `var t={borderRadius:{"1":"4px","2":"8px"}};export{t as testConfig};\n`,
+  );
+});
+
+// Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
+test("regression/NODE_PATHBuild api", async () => {
+  const dir = tempDirWithFiles("node-path-build", {
+    "entry.js": `
+      import MyClass from 'MyClass';
+      console.log(new MyClass().constructor.name);
+    `,
+    "src/MyClass.js": `
+      export default class MyClass {}
+    `,
+    "build.js": `
+      import { join } from "path";
+      
+      const build = await Bun.build({
+        entrypoints: [join(import.meta.dir, "entry.js")],
+        outdir: join(import.meta.dir, "out"),
+      });
+      
+      if (!build.success) {
+        console.error("Build failed:", build.logs);
+        process.exit(1);
+      }
+      
+      // Run the built file
+      const runProc = Bun.spawn({
+        cmd: [process.argv[0], join(import.meta.dir, "out", "entry.js")],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      
+      await runProc.exited;
+      const runOutput = await new Response(runProc.stdout).text();
+      const runError = await new Response(runProc.stderr).text();
+      
+      if (runError) {
+        console.error("Run error:", runError);
+        process.exit(1);
+      }
+      
+      console.log(runOutput.trim());
+      
+    `,
+  });
+
+  // Run the build script with NODE_PATH set
+  const proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "build.js")],
+    env: {
+      ...bunEnv,
+      NODE_PATH: join(dir, "src"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: dir,
+  });
+
+  await proc.exited;
+  const output = await new Response(proc.stdout).text();
+  const error = await new Response(proc.stderr).text();
+
+  expect(error).toBe("");
+  expect(output.trim()).toBe("MyClass");
 });

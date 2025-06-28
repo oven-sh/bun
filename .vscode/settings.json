@@ -30,18 +30,22 @@
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
   "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen"],
+  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
   "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
+  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "never",
+    },
   },
 
   // lldb
@@ -52,15 +56,18 @@
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[c]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[h]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
-  "clangd.arguments": ["-header-insertion=never"],
+  "clangd.arguments": ["--header-insertion=never"],
 
   // JavaScript
   "prettier.enable": true,
@@ -75,7 +82,7 @@
   "prettier.prettierPath": "./node_modules/prettier",
 
   // TypeScript
-  "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
@@ -132,13 +139,15 @@
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
     "**/*.i": true,
-
-    // uws WebSocket.cpp conflicts with webcore WebSocket.cpp
-    "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
+    "*.css": "tailwindcss",
     "*.idl": "cpp",
+    "*.mdc": "markdown",
     "array": "cpp",
+    "ios": "cpp",
+    "oxlint.json": "jsonc",
+    "bun.lock": "jsonc",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

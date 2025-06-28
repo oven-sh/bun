@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { tmpdirSync, bunExe, bunEnv } from "harness";
 
 test("snapshots will recognize existing entries", async () => {
   const testDir = tmpdirSync();

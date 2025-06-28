@@ -43,6 +43,47 @@ describe("expect()", () => {
       }
     });
   };
+  describe("toBe()", () => {
+    let obj = {};
+    it.each([
+      [0, 0.0],
+      [+0, +0],
+      [0, +0],
+      [-0, -0],
+      [1, 1],
+      [1, 1.0],
+      [NaN, NaN],
+      [Infinity, Infinity],
+      [obj, obj],
+      [Symbol.for("a"), Symbol.for("a")],
+    ])("expect(%p).toBe(%p) == true", (a, b) => {
+      expect(a).toBe(b);
+      expect(b).toBe(a);
+    });
+    it.each([
+      [0, false],
+      [0, ""],
+      [0, -0],
+      [+0, -0],
+      [1, 2],
+      [1, true],
+      [1, "1"],
+      [Infinity, -Infinity],
+      ["foo", "Foo"],
+      ["foo", "bar"],
+      ["", " "],
+      ["", " "],
+      ["", true],
+      [{}, {}], //
+      [new Set(), new Set()], //
+      [function a() {}, function a() {}], //
+      [Symbol.for("a"), Symbol.for("b")],
+      [Symbol("a"), Symbol("a")],
+    ])("expect(%p).toBe(%p) == false", (a, b) => {
+      expect(a).not.toBe(b);
+      expect(b).not.toBe(a);
+    });
+  });
 
   test("rejects", async () => {
     await expect(Promise.reject(4)).rejects.toBe(4);
@@ -231,6 +272,31 @@ describe("expect()", () => {
     expect([, "boo2"]).toEqual([undefined, "boo2"]);
     expect([, "boo"]).toEqual([, "boo"]);
     expect([, 1]).toEqual([undefined, 1]);
+  });
+
+  describe("toEqual() with DOM types", () => {
+    test("URLSearchParams", () => {
+      expect(new URLSearchParams("a=1")).not.toEqual(new URLSearchParams("b=1"));
+      expect(new URLSearchParams("a=1")).toEqual(new URLSearchParams("a=1"));
+      expect(new URLSearchParams("a=1&b=2")).not.toEqual(new URLSearchParams("a=1&"));
+    });
+
+    if (isBun) {
+      test("URL", () => {
+        expect(new URL("https://example.com")).toEqual(new URL("https://example.com"));
+        expect(new URL("http://wat")).not.toStrictEqual(new URL("http://huh"));
+      });
+    }
+
+    test("Headers", () => {
+      expect(new Headers({ "a": "1" })).toEqual(new Headers({ "a": "1" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "b": "1" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "2" }));
+      expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
+    });
+
+    // TODO: FormData
+    // It would need to compare Blob, which is tricky.
   });
 
   describe("BigInt", () => {
@@ -1103,6 +1169,32 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
+  test("deepEquals Set/Map stress test", () => {
+    const arr1 = [];
+    const arr2 = [];
+    const arr3 = [];
+    const arr4 = [];
+
+    for (let i = 0; i < 150; i++) {
+      arr1[i] = [i];
+      arr2[i] = [i];
+      arr3[i] = [i, [i]];
+      arr4[i] = [i, [i]];
+    }
+
+    for (let i = 0; i < 2000; i++) {
+      let outerSet = new Set(arr1);
+      let innerSet = new Set(arr2);
+      Bun.deepEquals(outerSet, innerSet);
+    }
+
+    for (let i = 0; i < 1000; i++) {
+      let outerMap = new Map(arr3);
+      let innerMap = new Map(arr4);
+      Bun.deepEquals(outerMap, innerMap);
+    }
+  });
+
   test("deepEquals - Date", () => {
     let d = new Date();
     expect(d).toEqual(d);
@@ -1612,6 +1704,12 @@ describe("expect()", () => {
     expect(array2).toEqual(expect.arrayContaining([{ a: 1, b: 2 }]));
     expect(array2).toEqual(expect.arrayContaining([{ a: { a: 1 } }]));
     expect(array2).not.toEqual(expect.arrayContaining([{ a: 2, b: 3 }]));
+  });
+
+  test("toEqual ArrayBuffer with SharedArrayBuffer", () => {
+    const ab1 = new SharedArrayBuffer(1);
+    expect(ab1).toEqual(new SharedArrayBuffer(1));
+    expect(ab1).not.toEqual(new ArrayBuffer(1));
   });
 
   test("symbol based keys in arrays are processed correctly", () => {
@@ -4059,13 +4157,13 @@ describe("expect()", () => {
       expect(expect.objectContaining({ first: { second: {} } })).not.toEqual({
         first: { second: {}, third: {} },
       });
-      expect(
+      (expect(
         expect.objectContaining({
           answer: 42,
           foo: { bar: "baz", foobar: "qux" },
         }),
       ).not.toEqual({ foo: { bar: "baz" } }),
-        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" });
+        expect(expect.objectContaining({ [foo]: "foo" })).not.toEqual({ [bar]: "bar" }));
     });
 
     test("ObjectContaining matches defined properties", () => {
@@ -4693,7 +4791,7 @@ describe("expect()", () => {
     expect(expect("abc").toMatch("a")).toBeUndefined();
   });
   test.todo("toMatchInlineSnapshot to return undefined", () => {
-    expect(expect("abc").toMatchInlineSnapshot()).toBeUndefined();
+    expect(expect("abc").toMatchInlineSnapshot('"abc"')).toBeUndefined();
   });
   test("toMatchObject to return undefined", () => {
     expect(expect({}).toMatchObject({})).toBeUndefined();
@@ -4717,11 +4815,19 @@ describe("expect()", () => {
       }).toThrow(),
     ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingInlineSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingInlineSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingInlineSnapshot("undefined"),
+    ).toBeUndefined();
   });
-  test.todo("toThrowErrorMatchingSnapshot to return undefined", () => {
-    expect(expect(() => {}).toThrowErrorMatchingSnapshot()).toBeUndefined();
+  test("toThrowErrorMatchingSnapshot to return undefined", () => {
+    expect(
+      expect(() => {
+        throw 0;
+      }).toThrowErrorMatchingSnapshot("undefined"),
+    ).toBeUndefined();
   });
 
   test(' " " to contain ""', () => {

@@ -1,0 +1,10 @@
+{
+  "name": "test-pkg",
+  "version": "2.2.2",
+  "scripts": {
+    "postinstall": "echo success!"
+  },
+  "dependencies": {
+    "test-pkg": "."
+  }
+}

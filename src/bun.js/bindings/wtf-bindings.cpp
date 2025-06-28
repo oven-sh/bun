@@ -1,6 +1,7 @@
 #include "root.h"
 #include "wtf-bindings.h"
-
+#include <wtf/StackBounds.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <atomic>
@@ -16,7 +17,7 @@
 #include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
-static _Atomic int orig_termios_spinlock;
+static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
 
 static int current_tty_mode = 0;
@@ -174,11 +175,6 @@ extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* p
     return WTF::parseDouble({ string, length }, *position);
 }
 
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, { source, length });
-}
-
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,
     char* __restrict destinationDataBuffer,
     size_t destinationDataBufferSize)
@@ -195,13 +191,10 @@ String base64URLEncodeToString(Vector<uint8_t> data)
     if (!encodedLength)
         return String();
 
-    LChar* ptr;
+    std::span<LChar> ptr;
     auto result = String::createUninitialized(encodedLength, ptr);
-    if (UNLIKELY(!ptr)) {
-        RELEASE_ASSERT_NOT_REACHED();
-        return String();
-    }
-    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr), encodedLength);
+
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.begin()), data.size(), reinterpret_cast<char*>(ptr.data()), encodedLength);
     if (result.length() != encodedLength) {
         return result.substringSharingImpl(0, encodedLength);
     }
@@ -240,4 +233,20 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     return charactersWritten;
 }
 
+static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
+
+extern "C" void Bun__StackCheck__initialize()
+{
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+}
+
+extern "C" void* Bun__StackCheck__getMaxStack()
+{
+    return stackBoundsForCurrentThread.end();
+}
+
+extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
+{
+    WTFPrintBacktrace({ stack, stack_count });
+}
 }

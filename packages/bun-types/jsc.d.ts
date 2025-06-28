@@ -8,24 +8,8 @@ declare module "bun:jsc" {
   function fullGC(): number;
   function edenGC(): number;
   function heapSize(): number;
-  function heapStats(): {
-    heapSize: number;
-    heapCapacity: number;
-    extraMemorySize: number;
-    objectCount: number;
-    protectedObjectCount: number;
-    globalObjectCount: number;
-    protectedGlobalObjectCount: number;
-    objectTypeCounts: Record<string, number>;
-    protectedObjectTypeCounts: Record<string, number>;
-  };
-  function memoryUsage(): {
-    current: number;
-    peak: number;
-    currentCommit: number;
-    peakCommit: number;
-    pageFaults: number;
-  };
+  function heapStats(): HeapStats;
+  function memoryUsage(): MemoryUsage;
   function getRandomSeed(): number;
   function setRandomSeed(value: number): void;
   function isRope(input: string): boolean;
@@ -77,6 +61,26 @@ declare module "bun:jsc" {
    * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
    */
   function setTimeZone(timeZone: string): string;
+
+  interface HeapStats {
+    heapSize: number;
+    heapCapacity: number;
+    extraMemorySize: number;
+    objectCount: number;
+    protectedObjectCount: number;
+    globalObjectCount: number;
+    protectedGlobalObjectCount: number;
+    objectTypeCounts: Record<string, number>;
+    protectedObjectTypeCounts: Record<string, number>;
+  }
+
+  interface MemoryUsage {
+    current: number;
+    peak: number;
+    currentCommit: number;
+    peakCommit: number;
+    pageFaults: number;
+  }
 
   interface SamplingProfile {
     /**
@@ -214,4 +218,16 @@ declare module "bun:jsc" {
    * Run JavaScriptCore's sampling profiler
    */
   function startSamplingProfiler(optionalDirectory?: string): void;
+
+  /**
+   * Non-recursively estimate the memory usage of an object, excluding the memory usage of
+   * properties or other objects it references. For more accurate per-object
+   * memory usage, use {@link Bun.generateHeapSnapshot}.
+   *
+   * This is a best-effort estimate. It may not be 100% accurate. When it's
+   * wrong, it may mean the memory is non-contiguous (such as a large array).
+   *
+   * Passing a primitive type that isn't heap allocated returns 0.
+   */
+  function estimateShallowMemoryUsageOf(value: object | CallableFunction | bigint | symbol | string): number;
 }

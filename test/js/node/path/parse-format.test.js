@@ -210,7 +210,7 @@ describe("path.parse", () => {
             //
             // While Node's error message is:
             //   The "pathObject" argument must be of type object. Received null
-            message: `"pathObject" property must be of type object, got ${typeof pathObject}`,
+            message: `The "pathObject" property must be of type object, got ${typeof pathObject}`,
           },
         );
       });

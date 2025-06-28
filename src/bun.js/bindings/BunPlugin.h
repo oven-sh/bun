@@ -15,7 +15,7 @@ using namespace JSC;
 
 class BunPlugin {
 public:
-    using VirtualModuleMap = WTF::HashMap<String, JSC::Strong<JSC::JSObject>>;
+    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -25,11 +25,11 @@ public:
         // We want JIT!
         // TODO: evaluate if using JSInternalFieldImpl(2) is faster
         Vector<JSC::Strong<JSC::RegExp>> filters = {};
-        Vector<JSC::Strong<JSC::JSFunction>> callbacks = {};
+        Vector<JSC::Strong<JSC::JSObject>> callbacks = {};
         BunPluginTarget target { BunPluginTargetBun };
 
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func);
-        JSFunction* find(JSC::JSGlobalObject* globalObj, String& path);
+        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func);
+        JSObject* find(JSC::JSGlobalObject* globalObj, String& path);
         void clear()
         {
             filters.clear();
@@ -58,7 +58,7 @@ public:
             return nullptr;
         }
 
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func, String& namespaceString);
+        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
     };
 
     class OnLoad final : public Base {
@@ -69,7 +69,7 @@ public:
         {
         }
 
-        VirtualModuleMap* virtualModules = nullptr;
+        VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 

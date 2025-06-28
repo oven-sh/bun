@@ -297,6 +297,10 @@ export default [
         fn: "toHaveBeenCalled",
         length: 0,
       },
+      toHaveBeenCalledOnce: {
+        fn: "toHaveBeenCalledOnce",
+        length: 0,
+      },
       toHaveBeenCalledTimes: {
         fn: "toHaveBeenCalledTimes",
         length: 1,

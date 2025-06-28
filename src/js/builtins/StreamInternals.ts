@@ -87,10 +87,11 @@ export function validateAndNormalizeQueuingStrategy(size, highWaterMark) {
   return { size: size, highWaterMark: newHighWaterMark };
 }
 
+import type Dequeue from "internal/fifo";
 $linkTimeConstant;
-export function createFIFO() {
-  const Denqueue = require("internal/fifo");
-  return new Denqueue();
+export function createFIFO<T>(): Dequeue<T> {
+  const Dequeue = require("internal/fifo");
+  return new Dequeue();
 }
 
 export function newQueue() {
@@ -162,7 +163,7 @@ export function createFulfilledPromise(value) {
 }
 
 export function toDictionary(value, defaultValue, errorMessage) {
-  if (value === undefined || value === null) return defaultValue;
-  if (!$isObject(value)) throw new TypeError(errorMessage);
+  if ($isUndefinedOrNull(value)) return defaultValue;
+  if (!$isObject(value)) throw $ERR_INVALID_ARG_TYPE(errorMessage);
   return value;
 }

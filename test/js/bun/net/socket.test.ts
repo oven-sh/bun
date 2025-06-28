@@ -1,8 +1,105 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { heapStats } from "bun:jsc";
+import { createSocketPair } from "bun:internal-for-testing";
 import { expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls } from "harness";
+import { closeSync } from "fs";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
+
+it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  const connectError = jest.fn(() => {});
+  {
+    expect(
+      async () =>
+        await Bun.connect({
+          fd: getMaxFD() + 1024,
+          socket: {
+            open,
+            close,
+            data,
+            connectError,
+          },
+        }),
+    ).toThrow();
+    Bun.gc(true);
+    await Bun.sleep(10);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(0);
+  expect(close).toHaveBeenCalledTimes(0);
+  expect(data).toHaveBeenCalledTimes(0);
+  expect(connectError).toHaveBeenCalledTimes(1);
+  connectError.mockClear();
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
+  const [server, client] = createSocketPair();
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  {
+    const socket = await Bun.connect({
+      fd: server,
+      socket: {
+        open,
+        close,
+        data,
+      },
+    });
+    Bun.gc(true);
+    await Bun.sleep(10);
+    closeSync(client);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(data).toHaveBeenCalledTimes(0);
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)(
+  "should not crash when a socket from a file descriptor is already closed after opening",
+  async () => {
+    const [server, client] = createSocketPair();
+    const open = jest.fn();
+    const close = jest.fn();
+    const data = jest.fn();
+    closeSync(client);
+    {
+      const socket = await Bun.connect({
+        fd: server,
+        socket: {
+          open,
+          close,
+          data,
+        },
+      });
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+    }
+    await Bun.sleep(10);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(data).toHaveBeenCalledTimes(0);
+    open.mockClear();
+    close.mockClear();
+    data.mockClear();
+  },
+);
+
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error
@@ -123,7 +220,8 @@ it("should reject on connection error, calling both connectError() and rejecting
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
+        expect(error.code).toBe("ECONNREFUSED");
         expect(error.message).toBe("Failed to connect");
       },
       data() {
@@ -149,7 +247,8 @@ it("should reject on connection error, calling both connectError() and rejecting
     () => done(new Error("Promise should reject instead")),
     err => {
       expect(err).toBeDefined();
-      expect(err.name).toBe("ECONNREFUSED");
+      expect(err.name).toBe("Error");
+      expect(err.code).toBe("ECONNREFUSED");
       expect(err.message).toBe("Failed to connect");
 
       done();
@@ -196,7 +295,7 @@ it("should handle connection error", done => {
         expect(socket).toBeDefined();
         expect(socket.data).toBe(data);
         expect(error).toBeDefined();
-        expect(error.name).toBe("ECONNREFUSED");
+        expect(error.name).toBe("Error");
         expect(error.message).toBe("Failed to connect");
         expect((error as any).code).toBe("ECONNREFUSED");
         done();
@@ -275,7 +374,7 @@ it("should allow large amounts of data to be sent and received", async () => {
 
 it("it should not crash when getting a ReferenceError on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
@@ -293,7 +392,7 @@ it("it should not crash when getting a ReferenceError on client socket open", as
       hostname: server.hostname,
       socket: {
         open(socket) {
-          // ReferenceError: Can't find variable: bytes
+          // ReferenceError: bytes is not defined
           // @ts-expect-error
           socket.write(bytes);
         },
@@ -310,13 +409,13 @@ it("it should not crash when getting a ReferenceError on client socket open", as
     });
 
     const result: any = await promise;
-    expect(result?.message).toBe("Can't find variable: bytes");
+    expect(result?.message).toBe("bytes is not defined");
   }
 });
 
 it("it should not crash when returning a Error on client socket open", async () => {
   using server = Bun.serve({
-    port: 8080,
+    port: 0,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
@@ -498,6 +597,7 @@ it("should not call drain before handshake", async () => {
 });
 it("upgradeTLS handles errors", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");
@@ -599,9 +699,10 @@ it("upgradeTLS handles errors", async () => {
     socket.end();
   }
   Bun.gc(true);
-});
+}, 20_000); // only needed in debug mode
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({
+    port: 0,
     tls,
     async fetch(req) {
       return new Response("Hello World");

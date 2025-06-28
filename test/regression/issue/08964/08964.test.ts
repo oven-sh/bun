@@ -10,7 +10,7 @@ test("issue 8964", async () => {
     stdio: ["ignore", "pipe", "inherit"],
   });
   const stdtext = stdout.toString();
-  const [actual, expected] = stdout.toString().split("\n");
+  const [, actual, expected] = stdout.toString().split("\n");
   expect(actual.replace("EXPECTED:", "ACTUAL:")).toBe(expected);
   expect(exitCode).toBe(0);
   expect(signalCode).toBeUndefined();

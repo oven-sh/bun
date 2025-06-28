@@ -1,6 +1,6 @@
 import { allocUnsafe } from "bun";
 import { readFileSync } from "fs";
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 function polyfill(chunks) {
   var size = 0;
@@ -41,15 +41,16 @@ const chunkGroups = [
 ];
 
 for (const chunks of chunkGroups) {
-  group(`${chunks.reduce((prev, curr, i, a) => prev + curr.byteLength, 0)} bytes for ${chunks.length} chunks`, () => {
-    bench("Bun.concatArrayBuffers", () => {
+  const name = `${chunks.reduce((prev, curr, i, a) => prev + curr.byteLength, 0)} bytes for ${chunks.length} chunks`
+  group(name, () => {
+    bench(`Bun.concatArrayBuffers (${name})`, () => {
       Bun.concatArrayBuffers(chunks);
     });
-    bench("Uint8Array.set", () => {
+    bench(`Uint8Array.set (${name})`, () => {
       polyfill(chunks);
     });
 
-    bench("Uint8Array.set (uninitialized memory)", () => {
+    bench(`Uint8Array.set (uninitialized memory) (${name})`, () => {
       polyfillUninitialized(chunks);
     });
   });

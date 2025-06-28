@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "sqlite3.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -90,6 +91,7 @@ typedef int (*lazy_sqlite3_deserialize_type)(
 );
 
 typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_stmt_busy_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
 typedef int64_t (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
 
@@ -135,6 +137,7 @@ static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
 static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
 static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
+static lazy_sqlite3_stmt_busy_type lazy_sqlite3_stmt_busy;
 static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
 static lazy_sqlite3_config_type lazy_sqlite3_config;
 static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes;
@@ -185,6 +188,7 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_serialize lazy_sqlite3_serialize
 #define sqlite3_deserialize lazy_sqlite3_deserialize
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
+#define sqlite3_stmt_busy lazy_sqlite3_stmt_busy
 #define sqlite3_column_int64 lazy_sqlite3_column_int64
 #define sqlite3_compileoption_used lazy_sqlite3_compileoption_used
 #define sqlite3_config lazy_sqlite3_config
@@ -229,6 +233,8 @@ static int lazyLoadSQLite()
     if (!sqlite3_handle) {
         return -1;
     }
+    lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
+    if (!lazy_sqlite3_open_v2) return -1;
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
     lazy_sqlite3_bind_int = (lazy_sqlite3_bind_int_type)dlsym(sqlite3_handle, "sqlite3_bind_int");
@@ -259,7 +265,6 @@ static int lazyLoadSQLite()
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");
     lazy_sqlite3_get_autocommit = (lazy_sqlite3_get_autocommit_type)dlsym(sqlite3_handle, "sqlite3_get_autocommit");
-    lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
     lazy_sqlite3_prepare_v3 = (lazy_sqlite3_prepare_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare_v3");
     lazy_sqlite3_prepare16_v3 = (lazy_sqlite3_prepare16_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare16_v3");
     lazy_sqlite3_reset = (lazy_sqlite3_reset_type)dlsym(sqlite3_handle, "sqlite3_reset");
@@ -270,6 +275,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_deserialize = (lazy_sqlite3_deserialize_type)dlsym(sqlite3_handle, "sqlite3_deserialize");
     lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
     lazy_sqlite3_stmt_readonly = (lazy_sqlite3_stmt_readonly_type)dlsym(sqlite3_handle, "sqlite3_stmt_readonly");
+    lazy_sqlite3_stmt_busy = (lazy_sqlite3_stmt_busy_type)dlsym(sqlite3_handle, "sqlite3_stmt_busy");
     lazy_sqlite3_compileoption_used = (lazy_sqlite3_compileoption_used_type)dlsym(sqlite3_handle, "sqlite3_compileoption_used");
     lazy_sqlite3_config = (lazy_sqlite3_config_type)dlsym(sqlite3_handle, "sqlite3_config");
     lazy_sqlite3_extended_result_codes = (lazy_sqlite3_extended_result_codes_type)dlsym(sqlite3_handle, "sqlite3_extended_result_codes");

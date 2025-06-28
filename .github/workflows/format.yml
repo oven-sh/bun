@@ -1,19 +1,18 @@
-name: Format
+name: format
 
 permissions:
   contents: write
 
-concurrency:
-  group: format-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}
-  cancel-in-progress: true
-
 on:
+  workflow_call:
   workflow_dispatch:
-    inputs:
-      run-id:
-        type: string
-        description: The workflow ID to download artifacts (skips the build step)
   pull_request:
+  merge_group:
+
+env:
+  BUN_VERSION: "1.2.11"
+  LLVM_VERSION: "19.1.7"
+  LLVM_VERSION_MAJOR: "19"
 
 jobs:
   format:
@@ -23,39 +22,47 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            .prettierrc-ci
-            .github
-            .vscode
-            src
-            scripts
-            packages
-            test
-            bench
-            package.json
-            bun.lockb
-            .clang-format
+          fetch-depth: 0
+      - name: Configure Git
+        run: |
+          git config --global core.autocrlf true
+          git config --global core.ignorecase true
+          git config --global core.precomposeUnicode true
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.25"
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Setup Dependencies
+        run: |
+          bun install
+      - name: Install LLVM
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
         with:
-          version: 0.13.0
-      - name: Install Dependencies
+          version: 0.14.0
+      - name: Zig Format
         run: |
-          bun install
-      - name: Format
-        run: |
-          bun fmt
-      - name: Format Zig
-        run: |
-          bun fmt:zig
-      - name: Format Cpp
-        run: |
-          bun fmt:cpp
+          bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
+          zig fmt src
+          bun scripts/sortImports src
+          zig fmt src
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: Apply formatting changes
+          commit_message: "`bun run zig-format`"
+      - name: Prettier Format
+        run: |
+          bun run prettier
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "`bun run prettier`"
+      - name: Clang Format
+        run: |
+          bun run clang-format
+      - name: Commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "`bun run clang-format`"

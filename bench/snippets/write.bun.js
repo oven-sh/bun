@@ -1,6 +1,6 @@
 import { write } from "bun";
 import { openSync } from "fs";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench('write(/tmp/foo.txt, "short string")', async () => {
   await write("/tmp/foo.txt", "short string");

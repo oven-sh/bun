@@ -1,250 +1,27 @@
 import { define } from "../../codegen/class-definitions";
 
-export default [
-  define({
-    name: "BrotliEncoder",
+function generate(name: string) {
+  return define({
+    name,
     construct: true,
-    noConstructor: true,
+    noConstructor: false,
     finalize: true,
     configurable: false,
-    hasPendingActivity: true,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["callback"],
-    proto: {
-      transform: {
-        fn: "transform",
-        length: 2,
-      },
-      transformSync: {
-        fn: "transformSync",
-        length: 2,
-      },
-      reset: {
-        fn: "reset",
-        length: 0,
-      },
-      bytesWritten: {
-        getter: "getBytesWritten",
-      },
-      bytesRead: {
-        // deprecated
-        value: "bytesWritten",
-      },
-      closed: {
-        getter: "getClosed",
-      },
-      close: {
-        fn: "close",
-        length: 0,
-      },
-      chunkSize: {
-        getter: "getChunkSize",
-      },
-      flush: {
-        getter: "getFlush",
-      },
-      finishFlush: {
-        getter: "getFinishFlush",
-      },
-      fullFlush: {
-        getter: "getFullFlush",
-      },
-      maxOutputLength: {
-        getter: "getMaxOutputLength",
-      },
-    },
-  }),
-  define({
-    name: "BrotliDecoder",
-    construct: true,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    hasPendingActivity: true,
-    klass: {},
-    JSType: "0b11101110",
-    values: ["callback"],
+    values: ["writeCallback", "errorCallback", "dictionary"],
 
     proto: {
-      transform: {
-        fn: "transform",
-        length: 2,
-      },
-      transformSync: {
-        fn: "transformSync",
-        length: 2,
-      },
-      reset: {
-        fn: "reset",
-        length: 0,
-      },
-      bytesWritten: {
-        getter: "getBytesWritten",
-      },
-      bytesRead: {
-        // deprecated
-        value: "bytesWritten",
-      },
-      closed: {
-        getter: "getClosed",
-      },
-      close: {
-        fn: "close",
-        length: 0,
-      },
-      chunkSize: {
-        getter: "getChunkSize",
-      },
-      flush: {
-        getter: "getFlush",
-      },
-      finishFlush: {
-        getter: "getFinishFlush",
-      },
-      fullFlush: {
-        getter: "getFullFlush",
-      },
-      maxOutputLength: {
-        getter: "getMaxOutputLength",
-      },
+      init: { fn: "init" },
+      write: { fn: "write" },
+      writeSync: { fn: "writeSync" },
+      params: { fn: "params" },
+      reset: { fn: "reset" },
+      close: { fn: "close" },
+      onerror: { setter: "setOnError", this: true, getter: "getOnError" },
     },
-  }),
-  define({
-    name: "ZlibEncoder",
-    construct: true,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    hasPendingActivity: true,
-    klass: {},
-    JSType: "0b11101110",
-    values: ["callback"],
-    proto: {
-      transform: {
-        fn: "transform",
-        length: 2,
-      },
-      transformSync: {
-        fn: "transformSync",
-        length: 2,
-      },
-      transformWith: {
-        fn: "transformWith",
-        length: 4,
-      },
-      reset: {
-        fn: "reset",
-        length: 0,
-      },
-      bytesWritten: {
-        getter: "getBytesWritten",
-      },
-      bytesRead: {
-        // deprecated
-        value: "bytesWritten",
-      },
-      level: {
-        getter: "getLevel",
-      },
-      strategy: {
-        getter: "getStrategy",
-      },
-      closed: {
-        getter: "getClosed",
-      },
-      close: {
-        fn: "close",
-        length: 0,
-      },
-      params: {
-        fn: "params",
-        length: 3,
-      },
-      chunkSize: {
-        getter: "getChunkSize",
-      },
-      flush: {
-        getter: "getFlush",
-      },
-      finishFlush: {
-        getter: "getFinishFlush",
-      },
-      fullFlush: {
-        getter: "getFullFlush",
-      },
-      maxOutputLength: {
-        getter: "getMaxOutputLength",
-      },
-    },
-  }),
-  define({
-    name: "ZlibDecoder",
-    construct: true,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    hasPendingActivity: true,
-    klass: {},
-    JSType: "0b11101110",
-    values: ["callback"],
+  });
+}
 
-    proto: {
-      transform: {
-        fn: "transform",
-        length: 2,
-      },
-      transformSync: {
-        fn: "transformSync",
-        length: 2,
-      },
-      transformWith: {
-        fn: "transformWith",
-        length: 4,
-      },
-      reset: {
-        fn: "reset",
-        length: 0,
-      },
-      bytesWritten: {
-        getter: "getBytesWritten",
-      },
-      bytesRead: {
-        // deprecated
-        value: "bytesWritten",
-      },
-      level: {
-        getter: "getLevel",
-      },
-      strategy: {
-        getter: "getStrategy",
-      },
-      closed: {
-        getter: "getClosed",
-      },
-      close: {
-        fn: "close",
-        length: 0,
-      },
-      params: {
-        fn: "params",
-        length: 3,
-      },
-      chunkSize: {
-        getter: "getChunkSize",
-      },
-      flush: {
-        getter: "getFlush",
-      },
-      finishFlush: {
-        getter: "getFinishFlush",
-      },
-      fullFlush: {
-        getter: "getFullFlush",
-      },
-      maxOutputLength: {
-        getter: "getMaxOutputLength",
-      },
-    },
-  }),
-];
+export default [generate("NativeZlib"), generate("NativeBrotli"), generate("NativeZstd")];

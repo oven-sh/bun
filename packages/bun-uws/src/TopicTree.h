@@ -15,9 +15,7 @@
  * limitations under the License.
  */
 
-#ifndef UWS_TOPICTREE_H
-#define UWS_TOPICTREE_H
-
+#pragma once
 #include <map>
 #include <list>
 #include <iostream>
@@ -262,7 +260,7 @@ public:
             /* This one always resets needsDrainage before it calls any cb's.
              * Otherwise we would stackoverflow when sending after publish but before drain. */
             drainImpl(s);
-            
+
             /* If we drained last subscriber, also clear outgoingMessages */
             if (!drainableSubscribers) {
                 outgoingMessages.clear();
@@ -365,5 +363,3 @@ public:
 };
 
 }
-
-#endif

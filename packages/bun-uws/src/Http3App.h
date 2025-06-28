@@ -33,8 +33,8 @@ namespace uWS {
         }
 
         /* Host, port, callback */
-        H3App &&listen(std::string host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-            if (!host.length()) {
+        H3App &&listen(const std::string &host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+            if (host.empty()) {
                 return listen(port, std::move(handler));
             }
             handler(http3Context ? (us_listen_socket_t *) http3Context->listen(host.c_str(), port) : nullptr);
@@ -42,8 +42,8 @@ namespace uWS {
         }
 
         /* Host, port, options, callback */
-        H3App &&listen(std::string host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-            if (!host.length()) {
+        H3App &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+            if (host.empty()) {
                 return listen(port, options, std::move(handler));
             }
             handler(http3Context ? (us_listen_socket_t *) http3Context->listen(host.c_str(), port) : nullptr);
@@ -62,63 +62,63 @@ namespace uWS {
             return std::move(*this);
         }
 
-        H3App &&get(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&get(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("GET", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&post(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&post(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("POST", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&options(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&options(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("OPTIONS", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&del(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&del(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("DELETE", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&patch(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&patch(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("PATCH", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&put(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&put(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("PUT", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&head(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&head(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("HEAD", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&connect(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&connect(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("CONNECT", pattern, std::move(handler));
             }
             return std::move(*this);
         }
 
-        H3App &&trace(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&trace(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("TRACE", pattern, std::move(handler));
             }
@@ -126,7 +126,7 @@ namespace uWS {
         }
 
         /* This one catches any method */
-        H3App &&any(std::string pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        H3App &&any(std::string_view pattern, MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
             if (http3Context) {
                 http3Context->onHttp("*", pattern, std::move(handler));
             }

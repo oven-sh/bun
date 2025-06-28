@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
 import * as fs from "fs";
 import { bunEnv, bunExe } from "harness";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 
 it("should not log .env when quiet", async () => {
   writeDirectoryTree("/tmp/log-test-silent", {
@@ -36,6 +36,7 @@ it("should log .env by default", async () => {
 });
 
 function writeDirectoryTree(base: string, paths: Record<string, any>) {
+  base = resolve(base);
   for (const path of Object.keys(paths)) {
     const content = paths[path];
     const joined = join(base, path);

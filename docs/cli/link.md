@@ -36,3 +36,5 @@ In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencie
     }
   }
 ```
+
+{% bunCLIUsage command="link" /%}

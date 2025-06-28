@@ -3,8 +3,8 @@
   "scripts": {
     "deps": "exit 0",
     "build": "exit 0",
-    "bench:bun": "$BUN bun.js",
-    "bench:node": "$NODE node.mjs",
+    "bench:bun": "bun bun.js",
+    "bench:node": "node node.mjs",
     "bench": "bun run bench:bun && bun run bench:node"
   }
 }

@@ -1,5 +1,5 @@
 import npmStringWidth from "string-width";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const bunStringWidth = globalThis?.Bun?.stringWidth;
 

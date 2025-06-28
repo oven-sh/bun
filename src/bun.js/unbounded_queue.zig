@@ -1,16 +1,11 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-const posix = std.posix;
-const mem = std.mem;
 const meta = std.meta;
 const atomic = std.atomic;
 const builtin = std.builtin;
-const testing = std.testing;
 
 const assert = bun.assert;
-
-const mpsc = @This();
 
 pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
     .x86_64, .aarch64, .powerpc64 => 128,

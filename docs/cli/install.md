@@ -15,10 +15,10 @@ If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wik
 
 ```bash
 # If this returns a version >= 5.6, you don't need to do anything
-uname -r
+$ uname -r
 
 # Install the official Ubuntu hardware enablement kernel
-sudo apt install --install-recommends linux-generic-hwe-20.04
+$ sudo apt install --install-recommends linux-generic-hwe-20.04
 ```
 
 {% /details %}
@@ -33,7 +33,7 @@ Running `bun install` will:
 
 - **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
-- **Write** a `bun.lockb` lockfile to the project root.
+- **Write** a `bun.lock` lockfile to the project root.
 
 ## Logging
 
@@ -81,6 +81,20 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 }
 ```
 
+## Installing dependencies for specific packages
+
+In a monorepo, you can install the dependencies for a subset of packages using the `--filter` flag.
+
+```bash
+# Install dependencies for all workspaces except `pkg-c`
+$ bun install --filter '!pkg-c'
+
+# Install dependencies for only `pkg-a` in `./packages/pkg-a`
+$ bun install --filter './packages/pkg-a'
+```
+
+For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.sh/docs/cli/filter#bun-install-and-bun-outdated)
+
 ## Overrides and resolutions
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.sh/docs/install/overrides) for complete documentation.
@@ -122,13 +136,27 @@ To install in production mode (i.e. without `devDependencies` or `optionalDepend
 $ bun install --production
 ```
 
-For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. The lockfile will not be updated.
+For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lock`, Bun will exit with an error. The lockfile will not be updated.
 
 ```bash
 $ bun install --frozen-lockfile
 ```
 
-For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
+For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.sh/docs/install/lockfile).
+
+## Omitting dependencies
+
+To omit dev, peer, or optional dependencies use the `--omit` flag.
+
+```bash
+# Exclude "devDependencies" from the installation. This will apply to the
+# root package and workspaces if they exist. Transitive dependencies will
+# not have "devDependencies".
+$ bun install --omit dev
+
+# Install only dependencies from "dependencies"
+$ bun install --omit=dev --omit=peer --omit=optional
+```
 
 ## Dry run
 
@@ -149,7 +177,8 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
     "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
     "moment": "git@github.com:moment/moment.git",
     "zod": "github:colinhacks/zod",
-    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
   }
 }
 ```
@@ -172,6 +201,9 @@ peer = true
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--save-text-lockfile` flag
+saveTextLockfile = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
@@ -197,9 +229,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
       - name: Install bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install
       - name: Build app
         run: bun run build
 ```
+
+{% bunCLIUsage command="install" /%}

@@ -1,35 +1,29 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const C = @import("std").zig.c_builtins;
 const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
 const time_t = C.time_t;
 const va_list = C.va_list;
 const struct_timeval = C.struct_timeval;
-const __attribute__ = C.__attribute__;
-const ERR_LIB_DSO = C.ERR_LIB_DSO;
-const ERR_LIB_STORE = C.ERR_LIB_STORE;
-const ERR_LIB_FIPS = C.ERR_LIB_FIPS;
-const ERR_LIB_CMS = C.ERR_LIB_CMS;
-const ERR_LIB_TS = C.ERR_LIB_TS;
-const ERR_LIB_JPAKE = C.ERR_LIB_JPAKE;
 const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
-const __FILE__ = C.__FILE__;
 const struct_timespec = C.struct_timespec;
-const _CLOCK_REALTIME = C._CLOCK_REALTIME;
-const _CLOCK_MONOTONIC = C._CLOCK_MONOTONIC;
-const _CLOCK_MONOTONIC_RAW = C._CLOCK_MONOTONIC_RAW;
-const _CLOCK_MONOTONIC_RAW_APPROX = C._CLOCK_MONOTONIC_RAW_APPROX;
-const _CLOCK_UPTIME_RAW = C._CLOCK_UPTIME_RAW;
-const _CLOCK_UPTIME_RAW_APPROX = C._CLOCK_UPTIME_RAW_APPROX;
-const _CLOCK_PROCESS_CPUTIME_ID = C._CLOCK_PROCESS_CPUTIME_ID;
-const _CLOCK_THREAD_CPUTIME_ID = C._CLOCK_THREAD_CPUTIME_ID;
 const NULL = C.NULL;
 const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
 const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
 const timercmp = C.timercmp;
-const doesnt_exist = C.doesnt_exist;
 const struct_tm = C.struct_tm;
 const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+/// `isize` alias. Kept for clarity.
+///
+/// Docs from OpenSSL:
+/// > ossl_ssize_t is a signed type which is large enough to fit the size of any
+/// > valid memory allocation. We prefer using |size_t|, but sometimes we need a
+/// > signed type for OpenSSL API compatibility. This type can be used in such
+/// > cases to avoid overflow.
+/// >
+/// > Not all |size_t| values fit in |ossl_ssize_t|, but all |size_t| values that
+/// > are sizes of or indices into C objects, can be converted without overflow.
+const ossl_ssize_t = isize;
 
 pub const CRYPTO_THREADID = c_int;
 pub const struct_asn1_null_st = opaque {};
@@ -143,7 +137,20 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-pub const struct_x509_st = opaque {};
+pub const struct_x509_st = opaque {
+    pub fn dup(this: *X509) ?*X509 {
+        return X509_dup(this);
+    }
+
+    pub fn ref(this: *X509) *X509 {
+        _ = X509_up_ref(this);
+        return this;
+    }
+
+    pub fn free(this: *X509) void {
+        X509_free(this);
+    }
+};
 pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {
@@ -642,13 +649,12 @@ pub const ERR_LIB_HKDF: c_int = 31;
 pub const ERR_LIB_TRUST_TOKEN: c_int = 32;
 pub const ERR_LIB_USER: c_int = 33;
 pub const ERR_NUM_LIBS: c_int = 34;
-const enum_unnamed_6 = c_uint;
 pub extern fn ERR_remove_state(pid: c_ulong) void;
 pub extern fn ERR_remove_thread_state(tid: [*c]const CRYPTO_THREADID) void;
 pub extern fn ERR_func_error_string(packed_error: u32) [*c]const u8;
 pub extern fn ERR_error_string(packed_error: u32, buf: [*c]u8) [*c]u8;
 pub extern fn ERR_clear_system_error() void;
-// pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: c_uint) void;
+pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: u32) void;
 pub extern fn ERR_add_error_data(count: c_uint, ...) void;
 pub extern fn ERR_add_error_dataf(format: [*c]const u8, ...) void;
 pub extern fn ERR_set_error_data(data: [*c]u8, flags: c_int) void;
@@ -1105,7 +1111,15 @@ pub extern fn BIO_hexdump(bio: [*c]BIO, data: [*c]const u8, len: usize, indent: 
 pub extern fn ERR_print_errors(bio: [*c]BIO) void;
 pub extern fn BIO_read_asn1(bio: [*c]BIO, out: [*c][*c]u8, out_len: [*c]usize, max_len: usize) c_int;
 pub extern fn BIO_s_mem() ?*const BIO_METHOD;
-// pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
+
+/// BIO_new_mem_buf creates read-only BIO that reads from |len| bytes at |buf|.
+/// It returns the BIO or NULL on error. This function does not copy or take
+/// ownership of |buf|. The caller must ensure the memory pointed to by |buf|
+/// outlives the |BIO|.
+///
+/// If |len| is negative, then |buf| is treated as a NUL-terminated string, but
+/// don't depend on this in new code.
+pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
 // pub extern fn BIO_mem_contents(bio: [*c]const BIO, out_contents: [*c][*c]const u8, out_len: [*c]usize) c_int;
 pub extern fn BIO_get_mem_data(bio: [*c]BIO, contents: [*c][*c]u8) c_long;
 pub extern fn BIO_get_mem_ptr(bio: [*c]BIO, out: [*c][*c]BUF_MEM) c_int;
@@ -1394,6 +1408,7 @@ pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, ind
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC(password: ?[*]const u8, password_len: usize, salt: ?[*]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: ?[*]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
+pub extern fn EVP_PBE_validate_scrypt_params(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_new_id(id: c_int, e: ?*ENGINE) ?*EVP_PKEY_CTX;
@@ -1439,7 +1454,7 @@ pub extern fn OpenSSL_add_all_ciphers() void;
 pub extern fn OpenSSL_add_all_digests() void;
 pub extern fn EVP_cleanup() void;
 pub extern fn EVP_CIPHER_do_all_sorted(callback: ?*const fn (?*const EVP_CIPHER, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn EVP_MD_do_all_sorted(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_MD_do_all_sorted(callback: *const fn (*const EVP_MD, ?[*:0]const u8, ?[*:0]const u8, *anyopaque) callconv(.C) void, arg: *anyopaque) void;
 pub extern fn EVP_MD_do_all(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
 pub extern fn i2d_PrivateKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
 pub extern fn i2d_PublicKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
@@ -18759,7 +18774,7 @@ pub extern fn ERR_get_next_error_library() c_int;
 
 pub const struct_bio_st = extern struct {
     method: [*c]const BIO_METHOD,
-    init: c_int,
+    _init: c_int,
     shutdown: c_int,
     flags: c_int,
     retry_reason: c_int,
@@ -18776,6 +18791,22 @@ pub const struct_bio_st = extern struct {
 
     pub fn init() !*struct_bio_st {
         return BIO_new(BIO_s_mem()) orelse error.OutOfMemory;
+    }
+
+    /// Create a read-only `BIO` using an existing buffer. `buffer` is not
+    /// copied, and ownership is not transfered.
+    ///
+    /// `buffer` must outlive the returned `BIO`.
+    ///
+    /// Returns an error if
+    /// - the buffer is empty
+    /// - BIO initialization fails (same as `.init()`).
+    pub fn initReadonlyView(buffer: []const u8) !*struct_bio_st {
+        // NOTE: not exposing len parameter. If we want to ignore their
+        // suggestion and pass a negative value to make it treat `buffer` as a
+        // null-terminated string, create a separate `initReadonlyViewZ`
+        // constructor.
+        return BIO_new_mem_buf(buffer.ptr, buffer.len);
     }
 
     pub fn deinit(this: *struct_bio_st) void {
@@ -18883,7 +18914,7 @@ pub const CertError = error{
     INVALID_CALL,
     STORE_LOOKUP,
     NAME_CONSTRAINTS_WITHOUT_SANS,
-    UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+    UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
 };
 
 pub fn getCertErrorFromNo(error_no: i32) CertError {
@@ -18954,7 +18985,7 @@ pub fn getCertErrorFromNo(error_no: i32) CertError {
         X509_V_ERR_INVALID_CALL => error.INVALID_CALL,
         X509_V_ERR_STORE_LOOKUP => error.STORE_LOOKUP,
         X509_V_ERR_NAME_CONSTRAINTS_WITHOUT_SANS => error.NAME_CONSTRAINTS_WITHOUT_SANS,
-        else => error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+        else => error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     };
 }
 
@@ -18980,6 +19011,10 @@ pub const SSL = opaque {
         WantRenegotiate,
         HandshakeHintsReady,
     };
+    extern fn us_ssl_socket_verify_error_from_ssl(ssl: *SSL) bun.uws.us_bun_verify_error_t;
+    pub fn getVerifyError(this: *SSL) bun.uws.us_bun_verify_error_t {
+        return us_ssl_socket_verify_error_from_ssl(this);
+    }
 
     pub fn shutdown(this: *SSL) void {
         _ = SSL_shutdown(this);

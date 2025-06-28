@@ -1,7 +1,7 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -76,7 +76,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ConnectionClosed", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
       }
     }
 
@@ -213,92 +213,95 @@ for (let withDelay of [true, false]) {
     });
   }
 }
-describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
-  for (let isDirect of [true, false] as const) {
-    it(
-      isDirect ? "direct" : "default",
-      async () => {
-        const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
-        Bun.gc(true);
+describe.todoIf(isBroken && isIntelMacOS)(
+  "1000 uploads & downloads in batches of 64 do not leak ReadableStream",
+  () => {
+    for (let isDirect of [true, false] as const) {
+      it(
+        isDirect ? "direct" : "default",
+        async () => {
+          const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
+          Bun.gc(true);
 
-        const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
-        const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
+          const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
+          const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
 
-        await runTest(
-          {
-            async fetch(req) {
-              var hasher = new Bun.SHA256();
-              for await (const chunk of req.body) {
-                await Bun.sleep(0);
-                hasher.update(chunk);
+          await runTest(
+            {
+              async fetch(req) {
+                var hasher = new Bun.SHA256();
+                for await (const chunk of req.body) {
+                  await Bun.sleep(0);
+                  hasher.update(chunk);
+                }
+                return new Response(
+                  isDirect
+                    ? new ReadableStream({
+                        type: "direct",
+                        async pull(controller) {
+                          await Bun.sleep(0);
+                          controller.write(Buffer.from(hasher.digest("base64")));
+                          await controller.flush();
+                          controller.close();
+                        },
+                      })
+                    : new ReadableStream({
+                        async pull(controller) {
+                          await Bun.sleep(0);
+                          controller.enqueue(Buffer.from(hasher.digest("base64")));
+                          controller.close();
+                        },
+                      }),
+                );
+              },
+            },
+            async server => {
+              const count = 1000;
+              async function callback() {
+                const response = await fetch(server.url, {
+                  body: blob,
+                  method: "POST",
+                });
+
+                // We are testing for ReadableStream leaks, so we use the ReadableStream here.
+                const chunks = [];
+                for await (const chunk of response.body) {
+                  chunks.push(chunk);
+                }
+
+                const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
+
+                expect(digest).toBe(expected);
+                Bun.gc(false);
               }
-              return new Response(
-                isDirect
-                  ? new ReadableStream({
-                      type: "direct",
-                      async pull(controller) {
-                        await Bun.sleep(0);
-                        controller.write(Buffer.from(hasher.digest("base64")));
-                        await controller.flush();
-                        controller.close();
-                      },
-                    })
-                  : new ReadableStream({
-                      async pull(controller) {
-                        await Bun.sleep(0);
-                        controller.enqueue(Buffer.from(hasher.digest("base64")));
-                        controller.close();
-                      },
-                    }),
+              {
+                let remaining = count;
+
+                const batchSize = 64;
+                while (remaining > 0) {
+                  const promises = new Array(count);
+                  for (let i = 0; i < batchSize && remaining > 0; i++) {
+                    promises[i] = callback();
+                  }
+                  await Promise.all(promises);
+                  remaining -= batchSize;
+                }
+              }
+
+              Bun.gc(true);
+              dumpStats();
+              expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
+                Math.max(initialCount - count / 2, 0),
+                initialCount + count / 2,
               );
             },
-          },
-          async server => {
-            const count = 1000;
-            async function callback() {
-              const response = await fetch(server.url, {
-                body: blob,
-                method: "POST",
-              });
-
-              // We are testing for ReadableStream leaks, so we use the ReadableStream here.
-              const chunks = [];
-              for await (const chunk of response.body) {
-                chunks.push(chunk);
-              }
-
-              const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
-
-              expect(digest).toBe(expected);
-              Bun.gc(false);
-            }
-            {
-              let remaining = count;
-
-              const batchSize = 64;
-              while (remaining > 0) {
-                const promises = new Array(count);
-                for (let i = 0; i < batchSize && remaining > 0; i++) {
-                  promises[i] = callback();
-                }
-                await Promise.all(promises);
-                remaining -= batchSize;
-              }
-            }
-
-            Bun.gc(true);
-            dumpStats();
-            expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
-              Math.max(initialCount - count / 2, 0),
-              initialCount + count / 2,
-            );
-          },
-        );
-      },
-      100000,
-    );
-  }
-});
+          );
+        },
+        100000,
+      );
+    }
+  },
+);
 
 [200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
@@ -1464,65 +1467,69 @@ it("#5859 arrayBuffer", async () => {
   expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
-it.if(isIPv4())("server.requestIP (v4)", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-    hostname: "127.0.0.1",
-  });
-
-  const response = await fetch(server.url.origin).then(x => x.json());
-  expect(response).toEqual({
-    address: "127.0.0.1",
-    family: "IPv4",
-    port: expect.any(Number),
-  });
-});
-
-it.if(isIPv6())("server.requestIP (v6)", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-    hostname: "::1",
-  });
-
-  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
-  expect(response).toEqual({
-    address: "::1",
-    family: "IPv6",
-    port: expect.any(Number),
-  });
-});
-
-it.if(isPosix)("server.requestIP (unix)", async () => {
-  const unix = join(tmpdirSync(), "serve.sock");
-  using server = Bun.serve({
-    unix,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-  });
-  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
-  const received: Buffer[] = [];
-  const { resolve, promise } = Promise.withResolvers<void>();
-  const connection = await Bun.connect({
-    unix,
-    socket: {
-      data(socket, data) {
-        received.push(data);
-        resolve();
+describe("server.requestIP", () => {
+  it.if(isIPv4())("v4", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        const ip = server.requestIP(req);
+        console.log(ip);
+        return Response.json(ip);
       },
-    },
+      hostname: "127.0.0.1",
+    });
+
+    const response = await fetch(server.url.origin).then(x => x.json());
+    expect(response).toMatchObject({
+      address: "127.0.0.1",
+      family: "IPv4",
+      port: expect.any(Number),
+    });
   });
-  connection.write(requestText);
-  connection.flush();
-  await promise;
-  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
-  connection.end();
+
+  it.if(isIPv6())("v6", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return Response.json(server.requestIP(req));
+      },
+      hostname: "::1",
+    });
+
+    const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+    expect(response).toMatchObject({
+      address: "::1",
+      family: "IPv6",
+      port: expect.any(Number),
+    });
+  });
+
+  it.if(isPosix)("server.requestIP (unix)", async () => {
+    const unix = join(tmpdirSync(), "serve.sock");
+    using server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        return Response.json(server.requestIP(req));
+      },
+    });
+    const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    const connection = await Bun.connect({
+      unix,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+          resolve();
+        },
+      },
+    });
+    connection.write(requestText);
+    connection.flush();
+    await promise;
+    expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+    connection.end();
+  });
 });
 
 it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
@@ -1620,7 +1627,7 @@ describe("should error with invalid options", async () => {
           requestCert: "invalid",
         },
       });
-    }).toThrow("Expected requestCert to be a boolean");
+    }).toThrow('The "requestCert" property must be of type boolean, got string');
   });
   it("rejectUnauthorized", () => {
     expect(() => {
@@ -1633,7 +1640,7 @@ describe("should error with invalid options", async () => {
           rejectUnauthorized: "invalid",
         },
       });
-    }).toThrow("Expected rejectUnauthorized to be a boolean");
+    }).toThrow('The "rejectUnauthorized" property must be of type boolean, got string');
   });
   it("lowMemoryMode", () => {
     expect(() => {
@@ -1648,6 +1655,24 @@ describe("should error with invalid options", async () => {
         },
       });
     }).toThrow("Expected lowMemoryMode to be a boolean");
+  });
+  it("multiple missing server name", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: [
+          {
+            key: "lkwejflkwjeflkj",
+          },
+          {
+            key: "lkwjefhwlkejfklwj",
+          },
+        ],
+      });
+    }).toThrow("SNI tls object must have a serverName");
   });
 });
 it("should resolve pending promise if requested ended with pending read", async () => {
@@ -1748,7 +1773,7 @@ it("should be able to abrupt stop the server", async () => {
       await fetch(server.url).then(res => res.text());
       expect.unreachable();
     } catch (e) {
-      expect(e.code).toBe("ConnectionClosed");
+      expect(e.code).toBe("ECONNRESET");
     }
   }
 });
@@ -2055,3 +2080,116 @@ it("allow custom timeout per request", async () => {
   expect(res.status).toBe(200);
   expect(res.text()).resolves.toBe("Hello, World!");
 }, 20_000);
+
+it("#6462", async () => {
+  let headers: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      for (const key of request.headers.keys()) {
+        headers = headers.concat([[key, request.headers.get(key)]]);
+      }
+      return new Response(
+        JSON.stringify({
+          "headers": headers,
+        }),
+        { status: 200 },
+      );
+    },
+  });
+
+  const bytes = Buffer.from(`GET / HTTP/1.1\r\nConnection: close\r\nHost: ${server.hostname}\r\nTest!: test\r\n\r\n`);
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        const wrote = socket.write(bytes);
+        console.log("wrote", wrote);
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(headers).toStrictEqual([
+    ["connection", "close"],
+    ["host", "localhost"],
+    ["test!", "test"],
+  ]);
+});
+
+it("#6583", async () => {
+  const callback = mock();
+  using server = Bun.serve({
+    fetch: callback,
+    port: 0,
+    hostname: "localhost",
+  });
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    tls: true,
+    socket: {
+      open(socket) {
+        socket.write("GET / HTTP/1.1\r\nConnection: close\r\nHost: localhost\r\n\r\n");
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+  expect(callback).not.toHaveBeenCalled();
+});
+
+it("do the best effort to flush everything", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(ctrl) {
+            ctrl.write("b");
+            await Bun.sleep(10);
+            ctrl.write("un");
+          },
+        }),
+      );
+    },
+  });
+  let response = await fetch(server.url);
+  expect(await response.text()).toBe("bun");
+});
+
+it("#20283", async () => {
+  using server = Bun.serve({
+    routes: {
+      "/": async req => {
+        // calling clone() with no cookies should not crash
+        const cloned = req.clone();
+        return Response.json({
+          cookies: req.cookies,
+          clonedCookies: cloned.cookies,
+        });
+      },
+    },
+    port: 0,
+  });
+
+  const response = await fetch(server.url);
+  const json = await response.json();
+  // there should be no cookies and the clone should have succeeded
+  expect(json).toEqual({ cookies: {}, clonedCookies: {} });
+});

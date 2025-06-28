@@ -17,6 +17,21 @@ beforeEach(() => {
   cwd = hotPath;
 });
 
+it("preload not found should exit with code 1 and not time out", async () => {
+  const root = hotRunnerRoot;
+  const runner = spawn({
+    cmd: [bunExe(), "--preload=/dev/foobarbarbar", "--hot", root],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  await runner.exited;
+  expect(runner.signalCode).toBe(null);
+  expect(runner.exitCode).toBe(1);
+  expect(await new Response(runner.stderr).text()).toContain("preload not found");
+});
+
 it(
   "should hot reload when file is overwritten",
   async () => {
@@ -435,7 +450,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -480,7 +495,7 @@ it(
 throw new Error('0');`,
     );
     await using bundler = spawn({
-      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap", "--outfile", hotRunnerRoot],
+      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap=inline", "--outfile", hotRunnerRoot],
       env: bunEnv,
       cwd,
       stdout: "inherit",
@@ -508,14 +523,15 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     }
     let str = "";
     outer: for await (const chunk of runner.stderr) {
-      str += new TextDecoder().decode(chunk);
+      const s = new TextDecoder().decode(chunk);
+      str += s;
       var any = false;
       if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -567,7 +583,7 @@ throw new Error('0');`,
         "--watch",
         bundleIn,
         "--target=bun",
-        "--sourcemap",
+        "--sourcemap=inline",
         "--outfile",
         hotRunnerRoot,
       ],

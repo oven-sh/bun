@@ -1,4 +1,5 @@
 // Hardcoded module "sqlite"
+import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
@@ -47,6 +48,8 @@ const constants = {
   SQLITE_PREPARE_PERSISTENT: 0x01,
   SQLITE_PREPARE_NORMALIZE: 0x02,
   SQLITE_PREPARE_NO_VTAB: 0x04,
+
+  SQLITE_DESERIALIZE_READONLY: 0x00000004 /* Ok for sqlite3_deserialize() */,
 
   SQLITE_FCNTL_LOCKSTATE: 1,
   SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
@@ -103,6 +106,7 @@ class Statement {
       case 0: {
         this.get = this.#getNoArgs;
         this.all = this.#allNoArgs;
+        this.iterate = this.#iterateNoArgs;
         this.values = this.#valuesNoArgs;
         this.run = this.#runNoArgs;
         break;
@@ -110,6 +114,7 @@ class Statement {
       default: {
         this.get = this.#get;
         this.all = this.#all;
+        this.iterate = this.#iterate;
         this.values = this.#values;
         this.run = this.#run;
         break;
@@ -119,10 +124,11 @@ class Statement {
 
   #raw;
 
-  get;
-  all;
-  values;
-  run;
+  get: SqliteTypes.Statement["get"];
+  all: SqliteTypes.Statement["all"];
+  iterate: SqliteTypes.Statement["iterate"];
+  values: SqliteTypes.Statement["values"];
+  run: SqliteTypes.Statement["run"];
   isFinalized = false;
 
   toJSON() {
@@ -154,6 +160,12 @@ class Statement {
     return this.#raw.all();
   }
 
+  *#iterateNoArgs() {
+    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
+      yield res;
+    }
+  }
+
   #valuesNoArgs() {
     return this.#raw.values();
   }
@@ -179,6 +191,7 @@ class Statement {
     return this;
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #get(...args) {
     if (args.length === 0) return this.#getNoArgs();
     var arg0 = args[0];
@@ -191,6 +204,7 @@ class Statement {
       : this.#raw.get(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #all(...args) {
     if (args.length === 0) return this.#allNoArgs();
     var arg0 = args[0];
@@ -203,6 +217,24 @@ class Statement {
       : this.#raw.all(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
+  *#iterate(...args) {
+    if (args.length === 0) return yield* this.#iterateNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    let res =
+      !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+        ? this.#raw.iterate(args)
+        : this.#raw.iterate(...args);
+    for (; res; res = this.#raw.iterate()) {
+      yield res;
+    }
+  }
+
+  // eslint-disable-next-line no-unused-private-class-members
   #values(...args) {
     if (args.length === 0) return this.#valuesNoArgs();
     var arg0 = args[0];
@@ -215,11 +247,13 @@ class Statement {
       : this.#raw.values(...args);
   }
 
+  // eslint-disable-next-line no-unused-private-class-members
   #run(...args) {
     if (args.length === 0) {
       this.#runNoArgs();
       return createChangesObject();
     }
+
     var arg0 = args[0];
 
     !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
@@ -233,6 +267,14 @@ class Statement {
     return this.#raw.columns;
   }
 
+  get columnTypes() {
+    return this.#raw.columnTypes;
+  }
+
+  get declaredTypes() {
+    return this.#raw.declaredTypes;
+  }
+
   get paramsCount() {
     return this.#raw.paramsCount;
   }
@@ -240,6 +282,10 @@ class Statement {
   finalize(...args) {
     this.isFinalized = true;
     return this.#raw.finalize(...args);
+  }
+
+  *[Symbol.iterator]() {
+    yield* this.#iterateNoArgs();
   }
 
   [Symbol.dispose]() {
@@ -255,6 +301,7 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
+        let deserializeFlags = 0;
         if (options && typeof options === "object") {
           if (options.strict) {
             this.#internalFlags |= kStrictFlag;
@@ -263,14 +310,13 @@ class Database {
           if (options.safeIntegers) {
             this.#internalFlags |= kSafeIntegersFlag;
           }
+
+          if (options.readonly) {
+            deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
+          }
         }
 
-        this.#handle = Database.#deserialize(
-          filenameGiven,
-          typeof options === "object" && options
-            ? !!options.readonly
-            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
-        );
+        this.#handle = Database.#deserialize(filenameGiven, this.#internalFlags, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -331,9 +377,9 @@ class Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys = [];
-  #cachedQueriesLengths = [];
-  #cachedQueriesValues = [];
+  #cachedQueriesKeys: string[] = [];
+  #cachedQueriesLengths: number[] = [];
+  #cachedQueriesValues: Statement[] = [];
   filename;
   #hasClosed = false;
   get handle() {
@@ -356,16 +402,26 @@ class Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized, isReadOnly = false) {
+  static #deserialize(serialized, openFlags, deserializeFlags) {
     if (!SQL) {
       initializeSQL();
     }
 
-    return SQL.deserialize(serialized, isReadOnly);
+    return SQL.deserialize(serialized, openFlags, deserializeFlags);
   }
 
-  static deserialize(serialized, isReadOnly = false) {
-    return new Database(serialized, isReadOnly ? constants.SQLITE_OPEN_READONLY : 0);
+  static deserialize(
+    serialized,
+    options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
+  ) {
+    if (typeof options === "boolean") {
+      // Maintain backward compatibility with existing API
+      return new Database(serialized, { readonly: options });
+    } else if (options && typeof options === "object") {
+      return new Database(serialized, options);
+    } else {
+      return new Database(serialized, 0);
+    }
   }
 
   [Symbol.dispose]() {
@@ -382,7 +438,7 @@ class Database {
     return SQL.setCustomSQLite(path);
   }
 
-  fileControl(cmd, arg) {
+  fileControl(_cmd, _arg) {
     const handle = this.#handle;
 
     if (arguments.length <= 2) {
@@ -442,14 +498,14 @@ class Database {
     const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
     // this list should be pretty small
-    var index = this.#cachedQueriesLengths.indexOf(query.length);
+    let index = this.#cachedQueriesLengths.indexOf(query.length);
     while (index !== -1) {
       if (this.#cachedQueriesKeys[index] !== query) {
         index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
         continue;
       }
 
-      var stmt = this.#cachedQueriesValues[index];
+      const stmt = this.#cachedQueriesValues[index];
       if (stmt.isFinalized) {
         return (this.#cachedQueriesValues[index] = this.prepare(
           query,
@@ -507,7 +563,7 @@ class Database {
 Database.prototype.exec = Database.prototype.run;
 
 // Return the database's cached transaction controller, or create a new one
-const getController = (db, self) => {
+const getController = (db, _self) => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {

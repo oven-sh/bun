@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -12,6 +13,42 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/HelloWorldWithProcessVersionsBun", {
+    compile: true,
+    files: {
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+      "/entry.ts": /* js */ `
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+    },
+    run: { exitCode: 0 },
+  });
+  itBundled("compile/HelloWorldBytecode", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("Hello, world!");
+      `,
+    },
+    run: {
+      stdout: "Hello, world!",
+      stderr: [
+        "[Disk Cache] Cache hit for sourceCode",
+
+        // TODO: remove this line once bun:main is removed.
+        "[Disk Cache] Cache miss for sourceCode",
+      ].join("\n"),
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+    },
   });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
@@ -36,7 +73,7 @@ describe("bundler", () => {
         import {rmSync} from 'fs';
         // Verify we're not just importing from the filesystem
         rmSync("./worker.ts", {force: true});
-        
+
         console.log("Hello, world!");
         new Worker("./worker");
       `,
@@ -65,6 +102,43 @@ describe("bundler", () => {
     entryPointsRaw: ["./entry.ts", "./worker.ts"],
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker("./worker.ts");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Hello, world!\nWorker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
+      stderr: [
+        "[Disk Cache] Cache hit for sourceCode",
+
+        // TODO: remove this line once bun:main is removed.
+        "[Disk Cache] Cache miss for sourceCode",
+
+        "[Disk Cache] Cache hit for sourceCode",
+
+        // TODO: remove this line once bun:main is removed.
+        "[Disk Cache] Cache miss for sourceCode",
+      ].join("\n"),
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+    },
   });
   itBundled("compile/Bun.embeddedFiles", {
     compile: true,
@@ -155,7 +229,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperclover)
     compile: true,
     files: {
       "/entry.ts": `
@@ -188,10 +262,31 @@ describe("bundler", () => {
     },
     run: { stdout: "ok" },
   });
-  itBundled("compile/ReactSSR", {
-    install: ["react@next", "react-dom@next"],
-    files: {
-      "/entry.tsx": /* tsx */ `
+
+  const additionalOptionsIters: Array<{
+    bytecode?: boolean;
+    minify?: boolean;
+    format: "cjs" | "esm";
+  }> = [
+    { bytecode: true, minify: true, format: "cjs" },
+    { format: "cjs" },
+    { format: "cjs", minify: true },
+    { format: "esm" },
+    { format: "esm", minify: true },
+  ];
+
+  for (const additionalOptions of additionalOptionsIters) {
+    const { bytecode = false, format, minify = false } = additionalOptions;
+    const NODE_ENV = minify ? "'production'" : undefined;
+    itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
+      install: ["react@19.2.0-canary-b94603b9-20250513", "react-dom@19.2.0-canary-b94603b9-20250513"],
+      format,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      define: NODE_ENV ? { "process.env.NODE_ENV": NODE_ENV } : undefined,
+      files: {
+        "/entry.tsx": /* tsx */ `
         import React from "react";
         import { renderToReadableStream } from "react-dom/server";
 
@@ -210,23 +305,37 @@ describe("bundler", () => {
           </html>
         );
 
-        const port = 0;
-        using server = Bun.serve({
-          port,
-          async fetch(req) {
-            return new Response(await renderToReadableStream(<App />), headers);
-          },
-        });
-        const res = await fetch(server.url);
-        if (res.status !== 200) throw "status error";
-        console.log(await res.text());
+        async function main() {
+          const port = 0;
+          using server = Bun.serve({
+            port,
+            async fetch(req) {
+              return new Response(await renderToReadableStream(<App />), headers);
+            },
+          });
+          const res = await fetch(server.url);
+          if (res.status !== 200) throw "status error";
+          console.log(await res.text());
+        }
+
+        main();
       `,
-    },
-    run: {
-      stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
-    },
-    compile: true,
-  });
+      },
+      run: {
+        stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
+        stderr: bytecode
+          ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
+          : undefined,
+        env: bytecode
+          ? {
+              BUN_JSC_verboseDiskCache: "1",
+            }
+          : undefined,
+      },
+      compile: true,
+      bytecode,
+    });
+  }
   itBundled("compile/DynamicRequire", {
     files: {
       "/entry.tsx": /* tsx */ `
@@ -337,6 +446,10 @@ describe("bundler", () => {
         fs.readFileSync(big).toString("hex");
         await Bun.file(big).arrayBuffer();
         fs.readFileSync(small).toString("hex");
+        if ((await fs.promises.readFile(small)).length !== 31) throw "fail readFile";
+        if (fs.statSync(small).size !== 31) throw "fail statSync";
+        if (fs.statSync(big).size !== (4096 + (32 - 2))) throw "fail statSync";
+        if (((await fs.promises.stat(big)).size) !== (4096 + (32 - 2))) throw "fail stat";
         await Bun.file(small).arrayBuffer();
         console.log("PASS");
       `,
@@ -493,5 +606,24 @@ error: Hello World`,
         expect(stderr).toInclude("entry.ts:8:19");
       },
     },
+  });
+  itBundled("compile/BunBeBunEnvVar", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("This is compiled code");
+      `,
+    },
+    run: [
+      {
+        stdout: "This is compiled code",
+      },
+      {
+        env: { BUN_BE_BUN: "1" },
+        validate({ stdout }) {
+          expect(stdout).not.toContain("This is compiled code");
+        },
+      },
+    ],
   });
 });

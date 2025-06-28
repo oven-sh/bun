@@ -13,6 +13,7 @@ public:
     BUN_EXPORT bool IsObject() const;
     BUN_EXPORT bool IsNumber() const;
     BUN_EXPORT bool IsUint32() const;
+    BUN_EXPORT bool IsFunction() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
 
     // usually inlined:
@@ -29,4 +30,4 @@ private:
     BUN_EXPORT bool FullIsFalse() const;
 };
 
-}
+} // namespace v8

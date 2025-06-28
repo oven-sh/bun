@@ -1,0 +1,51 @@
+.surrogate-test {
+  content: "𝌆";
+  content: "uD800";
+  content: "au0301u0302u0303";
+  content: "Hellou202Eu0301World";
+}
+.ሴ {
+  color: red;
+}
+.test​test {
+  color: #00f;
+}
+.rtl-test {
+  colu202eor: green;
+}
+.unicode-max {
+  content: "U0010FFFF";
+  content: "U00110000";
+}
+.control-chars {
+  content: "�";
+  content: "\1 ";
+  content: "1";
+  font-family: "\f ont";
+}
+.whitespace-test {
+  margin: 1px　2px　3px　4px;
+  padding: 1px␣2px␣3px␣4px;
+}
+:root {
+  --combining-mark: "nu0303";
+  --rtl-value: "u202Evalueu202C";
+}
+.variation-test {
+  content: "⌘︎";
+  content: "☺︎";
+}
+.bidi-test {
+  content: "Hello u202B Arabic text u202C World";
+  content: "Test u202E reversed text u202C normal";
+}
+.invalid-utf16 {
+  content: "uD800A";
+  content: "uDC00";
+  content: "uD800uD800";
+}
+.overlong-utf8 {
+  content: "xC1x81";
+  content: "xE0x81x81";
+  content: "xF0x80x81x81";
+}

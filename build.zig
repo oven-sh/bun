@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const Build = std.Build;
 const Step = Build.Step;
 const Compile = Step.Compile;
-const LazyPath = Step.LazyPath;
+const LazyPath = Build.LazyPath;
 const Target = std.Target;
 const ResolvedTarget = std.Build.ResolvedTarget;
 const CrossTarget = std.zig.CrossTarget;
@@ -18,20 +18,21 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.13.0";
+/// When updating this, make sure to adjust SetupZig.cmake
+const recommended_zig_version = "0.14.0";
 
-comptime {
-    if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-        @compileError(
-            "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ". This is" ++
-                "automatically configured via Bun's CMake setup. You likely meant to run" ++
-                "`bun setup`. If you are trying to upgrade the Zig compiler," ++
-                "run `./scripts/download-zig.sh master` or comment this message out.",
-        );
-    }
-}
+// comptime {
+//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
+//         @compileError(
+//             "" ++
+//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
+//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
+//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
+//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
+//                 "comment this error out.",
+//         );
+//     }
+// }
 
 const zero_sha = "0000000000000000000000000000000000000000";
 
@@ -46,21 +47,23 @@ const BunBuildOptions = struct {
     sha: []const u8,
     /// enable debug logs in release builds
     enable_logs: bool = false,
+    enable_asan: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
     /// instead of at compile time. This is disabled in release or if this flag
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
-    /// - src/kit/runtime.ts (bundled)
+    /// - src/bake/runtime.ts (bundled)
     /// - src/bun.js/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
-    force_embed_code: bool = false,
+    codegen_embed: bool = false,
 
     /// `./build/codegen` or equivalent
-    generated_code_dir: []const u8,
+    codegen_path: []const u8,
     no_llvm: bool,
+    override_no_export_cpp_apis: bool,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -71,7 +74,7 @@ const BunBuildOptions = struct {
     }
 
     pub fn shouldEmbedCode(opts: *const BunBuildOptions) bool {
-        return opts.optimize != .Debug or opts.force_embed_code;
+        return opts.optimize != .Debug or opts.codegen_embed;
     }
 
     pub fn buildOptionsModule(this: *BunBuildOptions, b: *Build) *Module {
@@ -81,19 +84,19 @@ const BunBuildOptions = struct {
 
         var opts = b.addOptions();
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
-        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
-            b.build_root.path.?,
-            this.generated_code_dir,
-        }) catch @panic("OOM"));
+        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{ b.build_root.path.?, this.codegen_path }) catch @panic("OOM"));
 
-        opts.addOption(bool, "embed_code", this.shouldEmbedCode());
+        opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
         opts.addOption(bool, "is_canary", this.canary_revision != null);
         opts.addOption(Version, "version", this.version);
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
+        opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
+        opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -152,20 +155,12 @@ pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
 
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
-
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("vendor/zig/lib");
-
-    // TODO: Upgrade path for 0.14.0
-    // b.graph.zig_lib_directory = brk: {
-    //     const sub_path = "src/deps/zig/lib";
-    //     const dir = try b.build_root.handle.openDir(sub_path, .{});
-    //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
-    // };
+    checked_file_exists = std.AutoHashMap(u64, void).init(b.allocator);
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const os, const arch = brk: {
+    const os, const arch, const abi = brk: {
         // resolve the target query to pick up what operating system and cpu
         // architecture that is desired. this information is used to slightly
         // refine the query.
@@ -179,7 +174,8 @@ pub fn build(b: *Build) !void {
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
-        break :brk .{ os, arch };
+        const abi = temp_resolved.result.abi;
+        break :brk .{ os, arch, abi };
     };
 
     // target must be refined to support older but very popular devices on
@@ -191,25 +187,28 @@ pub fn build(b: *Build) !void {
     }
 
     target_query.os_version_min = getOSVersionMin(os);
-    target_query.glibc_version = getOSGlibCVersion(os);
+    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os) else null;
 
     const target = b.resolveTargetQuery(target_query);
 
-    const generated_code_dir = b.pathFromRoot(
-        b.option([]const u8, "generated-code", "Set the generated code directory") orelse
+    const codegen_path = b.pathFromRoot(
+        b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
             "build/debug/codegen",
     );
-    const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
-    const force_embed_js_code = b.option(bool, "force_embed_js_code", "Always embed JavaScript builtins") orelse false;
-
-    b.reference_trace = ref_trace: {
-        const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 16;
-        break :ref_trace if (trace == 0) null else trace;
+    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse switch (b.release_mode) {
+        .off => false,
+        else => true,
     };
+
+    const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
+
+    // Lower the default reference trace for incremental
+    b.reference_trace = b.reference_trace orelse if (b.graph.incremental == true) 8 else 16;
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -218,9 +217,10 @@ pub fn build(b: *Build) !void {
         .os = os,
         .arch = arch,
 
-        .generated_code_dir = generated_code_dir,
-        .force_embed_code = force_embed_js_code,
+        .codegen_path = codegen_path,
+        .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
+        .override_no_export_cpp_apis = override_no_export_cpp_apis,
 
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -234,9 +234,10 @@ pub fn build(b: *Build) !void {
         ),
 
         .sha = sha: {
-            const sha = b.option([]const u8, "sha", "Force the git sha") orelse
-                b.graph.env_map.get("GITHUB_SHA") orelse
-                b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
+            const sha_buildoption = b.option([]const u8, "sha", "Force the git sha");
+            const sha_github = b.graph.env_map.get("GITHUB_SHA");
+            const sha_env = b.graph.env_map.get("GIT_SHA");
+            const sha = sha_buildoption orelse sha_github orelse sha_env orelse fetch_sha: {
                 const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
@@ -270,6 +271,7 @@ pub fn build(b: *Build) !void {
 
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
+        .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
     };
 
     // zig build obj
@@ -278,6 +280,40 @@ pub fn build(b: *Build) !void {
         var bun_obj = addBunObject(b, &build_options);
         step.dependOn(&bun_obj.step);
         step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
+    }
+
+    // zig build test
+    {
+        var step = b.step("test", "Build Bun's unit test suite");
+        var o = build_options;
+        var unit_tests = b.addTest(.{
+            .name = "bun-test",
+            .optimize = build_options.optimize,
+            .root_source_file = b.path("src/unit_test.zig"),
+            .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
+            .target = build_options.target,
+            .use_llvm = !build_options.no_llvm,
+            .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
+            .omit_frame_pointer = false,
+            .strip = false,
+        });
+        configureObj(b, &o, unit_tests);
+        // Setting `linker_allow_shlib_undefined` causes the linker to ignore
+        // all undefined symbols.  We want this because all we care about is the
+        // object file Zig creates; we perform our own linking later. There is
+        // currently no way to make a test build that only creates an object
+        // file w/o creating an executable.
+        //
+        // See: https://github.com/ziglang/zig/issues/23374
+        unit_tests.linker_allow_shlib_undefined = true;
+        unit_tests.link_function_sections = true;
+        unit_tests.link_data_sections = true;
+        unit_tests.bundle_ubsan_rt = false;
+
+        const bin = unit_tests.getEmittedBin();
+        const obj = bin.dirname().path(b, "bun-test.o");
+        const cpy_obj = b.addInstallFile(obj, "bun-test.o");
+        step.dependOn(&cpy_obj.step);
     }
 
     // zig build windows-shim
@@ -295,12 +331,28 @@ pub fn build(b: *Build) !void {
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
-        // The default install step will run zig build check This is so ZLS
+        // The default install step will run zig build check. This is so ZLS
         // identifies the codebase, as well as performs checking if build on
         // save is enabled.
 
         // For building Bun itself, one should run `bun setup`
         b.default_step.dependOn(step);
+    }
+
+    // zig build watch
+    // const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
+    // if (no_llvm or enable_watch_step) {
+    //     self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
+    // }
+
+    // zig build check-debug
+    {
+        const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+        }, &.{.Debug});
     }
 
     // zig build check-all
@@ -312,7 +364,23 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
-        });
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }, &.{ .Debug, .ReleaseFast });
+    }
+
+    // zig build check-all-debug
+    {
+        const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }, &.{.Debug});
     }
 
     // zig build check-windows
@@ -320,26 +388,104 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
-        });
+        }, &.{ .Debug, .ReleaseFast });
+    }
+    {
+        const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+        }, &.{.Debug});
+    }
+    {
+        const step = b.step("check-macos", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+        }, &.{ .Debug, .ReleaseFast });
+    }
+    {
+        const step = b.step("check-macos-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+        }, &.{.Debug});
+    }
+    {
+        const step = b.step("check-linux", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+        }, &.{ .Debug, .ReleaseFast });
+    }
+    {
+        const step = b.step("check-linux-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+        }, &.{.Debug});
+    }
+
+    // zig build translate-c-headers
+    {
+        const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
+        for ([_]TargetDescription{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }) |t| {
+            const resolved = t.resolveTarget(b);
+            step.dependOn(
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug), b.fmt("translated-c-headers/{s}.zig", .{
+                    resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
+                })).step,
+            );
+        }
+    }
+
+    // zig build enum-extractor
+    {
+        // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
+        // const exe = b.addExecutable(.{
+        //     .name = "enum_extractor",
+        //     .root_source_file = b.path("./src/generated_enum_extractor.zig"),
+        //     .target = b.graph.host,
+        //     .optimize = .Debug,
+        // });
+        // const run = b.addRunArtifact(exe);
+        // step.dependOn(&run.step);
     }
 }
 
-pub inline fn addMultiCheck(
+const TargetDescription = struct {
+    os: OperatingSystem,
+    arch: Arch,
+    musl: bool = false,
+
+    fn resolveTarget(desc: TargetDescription, b: *Build) std.Build.ResolvedTarget {
+        return b.resolveTargetQuery(.{
+            .os_tag = OperatingSystem.stdOSTag(desc.os),
+            .cpu_arch = desc.arch,
+            .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
+            .os_version_min = getOSVersionMin(desc.os),
+            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+        });
+    }
+};
+
+fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch },
+    to_check: []const TargetDescription,
+    optimize: []const std.builtin.OptimizeMode,
 ) void {
-    inline for (to_check) |check| {
-        inline for (.{ .Debug, .ReleaseFast }) |mode| {
-            const check_target = b.resolveTargetQuery(.{
-                .os_tag = OperatingSystem.stdOSTag(check.os),
-                .cpu_arch = check.arch,
-                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
-                .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = getOSGlibCVersion(check.os),
-            });
-
+    for (to_check) |check| {
+        for (optimize) |mode| {
+            const check_target = check.resolveTarget(b);
             var options: BunBuildOptions = .{
                 .target = check_target,
                 .os = check.os,
@@ -351,8 +497,10 @@ pub inline fn addMultiCheck(
                 .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
                 .version = root_build_options.version,
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
-                .generated_code_dir = root_build_options.generated_code_dir,
+                .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .enable_asan = root_build_options.enable_asan,
+                .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
 
             var obj = addBunObject(b, &options);
@@ -362,27 +510,106 @@ pub inline fn addMultiCheck(
     }
 }
 
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+    const target = b.resolveTargetQuery(q: {
+        var query = initial_target.query;
+        if (query.os_tag == .windows)
+            query.abi = .gnu;
+        break :q query;
+    });
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c-headers-for-zig.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    inline for ([_](struct { []const u8, bool }){
+        .{ "WINDOWS", translate_c.target.result.os.tag == .windows },
+        .{ "POSIX", translate_c.target.result.os.tag != .windows },
+        .{ "LINUX", translate_c.target.result.os.tag == .linux },
+        .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+    }) |entry| {
+        const str, const value = entry;
+        translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
+    }
+
+    translate_c.addIncludePath(b.path("vendor/zstd/lib"));
+
+    if (target.result.os.tag == .windows) {
+        // translate-c is unable to translate the unsuffixed windows functions
+        // like `SetCurrentDirectory` since they are defined with an odd macro
+        // that translate-c doesn't handle.
+        //
+        //     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
+        //
+        // In these cases, it's better to just reference the underlying function
+        // directly: SetCurrentDirectoryW. To make the error better, a post
+        // processing step is applied to the translate-c file.
+        //
+        // Additionally, this step makes it so that decls like NTSTATUS and
+        // HANDLE point to the standard library structures.
+        const helper_exe = b.addExecutable(.{
+            .name = "process_windows_translate_c",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
+        });
+        const in = translate_c.getOutput();
+        const run = b.addRunArtifact(helper_exe);
+        run.addFileArg(in);
+        const out = run.addOutputFileArg("c-headers-for-zig.zig");
+        return out;
+    }
+    return translate_c.getOutput();
+}
+
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
-    const obj = b.addObject(.{
-        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
-        .root_source_file = switch (opts.os) {
-            .wasm => b.path("root_wasm.zig"),
-            else => b.path("root.zig"),
-        },
+    // Create `@import("bun")`, containing most of Bun's code.
+    const bun = b.createModule(.{
+        .root_source_file = b.path("src/bun.zig"),
+    });
+    bun.addImport("bun", bun); // allow circular "bun" import
+    addInternalImports(b, bun, opts);
+
+    const root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+
+        // Root module gets compilation flags. Forwarded as default to dependencies.
         .target = opts.target,
         .optimize = opts.optimize,
-        .use_llvm = !opts.no_llvm,
-        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
-
-        // https://github.com/ziglang/zig/issues/17430
-        .pic = true,
-
-        .omit_frame_pointer = false,
-        .strip = false, // stripped at the end
     });
-    obj.bundle_compiler_rt = false;
-    obj.formatted_panics = true;
+    root.addImport("bun", bun);
+
+    const obj = b.addObject(.{
+        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
+        .root_module = root,
+    });
+    configureObj(b, opts, obj);
+    return obj;
+}
+
+fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
+    // Flags on root module get used for the compilation
     obj.root_module.omit_frame_pointer = false;
+    obj.root_module.strip = false; // stripped at the end
+    // https://github.com/ziglang/zig/issues/17430
+    obj.root_module.pic = true;
+
+    // Object options
+    obj.use_llvm = !opts.no_llvm;
+    obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
+    if (opts.enable_asan) {
+        if (@hasField(Build.Module, "sanitize_address")) {
+            obj.root_module.sanitize_address = true;
+        } else {
+            const fail_step = b.addFail("asan is not supported on this platform");
+            obj.step.dependOn(&fail_step.step);
+        }
+    }
+    obj.bundle_compiler_rt = false;
+    obj.bundle_ubsan_rt = false;
 
     // Link libc
     if (opts.os != .wasm) {
@@ -392,6 +619,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
 
     // Disable stack probing on x86 so we don't need to include compiler_rt
     if (opts.arch.isX86()) {
+        // TODO: enable on debug please.
         obj.root_module.stack_check = false;
         obj.root_module.stack_protector = false;
     }
@@ -406,13 +634,18 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
             obj.root_module.valgrind = true;
         }
     }
-    addInternalPackages(b, obj, opts);
-    obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
-    return obj;
 }
 
 const ObjectFormat = enum {
+    /// Emitting LLVM bc files could allow a stronger LTO pass, however it
+    /// doesn't yet work. It is left accessible with `-Dobj_format=bc` or in
+    /// CMake with `-DZIG_OBJECT_FORMAT=bc`.
+    ///
+    /// To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
+    /// LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
+    /// Change to "bc" to experiment, "Invalid record" means it is not valid output.
     bc,
+    /// Emit a .o / .obj file for the bun-zig object.
     obj,
 };
 
@@ -430,24 +663,25 @@ pub fn addInstallObjectFile(
     }, b.fmt("{s}.o", .{name})).step;
 }
 
+var checked_file_exists: std.AutoHashMap(u64, void) = undefined;
 fn exists(path: []const u8) bool {
-    const file = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch return false;
-    file.close();
+    const entry = checked_file_exists.getOrPut(std.hash.Wyhash.hash(0, path)) catch unreachable;
+    if (entry.found_existing) {
+        // It would've panicked.
+        return true;
+    }
+
+    std.fs.accessAbsolute(path, .{ .mode = .read_only }) catch return false;
     return true;
 }
 
-fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
+fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     const os = opts.os;
 
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
+    mod.addImport("build_options", opts.buildOptionsModule(b));
+
+    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
@@ -455,7 +689,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         else => null,
     };
     if (zlib_internal_path) |path| {
-        obj.root_module.addAnonymousImport("zlib-internal", .{
+        mod.addAnonymousImport("zlib-internal", .{
             .root_source_file = b.path(path),
         });
     }
@@ -465,7 +699,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .windows => "src/async/windows_event_loop.zig",
         else => "src/async/stub_event_loop.zig",
     };
-    obj.root_module.addAnonymousImport("async", .{
+    mod.addAnonymousImport("async", .{
         .root_source_file = b.path(async_path),
     });
 
@@ -474,22 +708,85 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
-        .{ .file = "kit.client.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "kit.server.js", .import = "kit-codegen/kit.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "runtime.out.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
+        .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/react-refresh.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/constants.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/crypto.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/domain.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/events.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/http.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/https.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/net.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/os.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/path.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/process.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/punycode.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/querystring.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/stream.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/string_decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/sys.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/timers.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/tty.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/url.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/util.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/zlib.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
-            const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });
+            const path = b.pathJoin(&.{ opts.codegen_path, entry.file });
             validateGeneratedPath(path);
-            obj.root_module.addAnonymousImport(entry.import, .{
+            const import_path = if (@hasField(@TypeOf(entry), "import"))
+                entry.import
+            else
+                entry.file;
+            mod.addAnonymousImport(import_path, .{
                 .root_source_file = .{ .cwd_relative = path },
             });
         }
     }
+    inline for (.{
+        .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
+        .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
+        .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
+    }) |entry| {
+        mod.addAnonymousImport(entry.import, .{
+            .root_source_file = entry.file,
+        });
+    }
 
     if (os == .windows) {
-        obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{
+        mod.addAnonymousImport("bun_shim_impl.exe", .{
             .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),
         });
+    }
+
+    // Finally, make it so all modules share the same import table.
+    propagateImports(mod) catch @panic("OOM");
+}
+
+/// Makes all imports of `source_mod` visible to all of its dependencies.
+/// Does not replace existing imports.
+fn propagateImports(source_mod: *Module) !void {
+    var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
+    defer seen.deinit();
+    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    defer queue.deinit();
+    try queue.appendSlice(source_mod.import_table.values());
+    while (queue.pop()) |mod| {
+        if ((try seen.getOrPut(mod)).found_existing) continue;
+        try queue.appendSlice(mod.import_table.values());
+
+        for (source_mod.import_table.keys(), source_mod.import_table.values()) |k, v|
+            if (mod.import_table.get(k) == null)
+                mod.addImport(k, v);
     }
 }
 
@@ -519,30 +816,34 @@ const WindowsShim = struct {
 
         const exe = b.addExecutable(.{
             .name = "bun_shim_impl",
-            .root_source_file = path,
-            .target = target,
-            .optimize = .ReleaseFast,
+            .root_module = b.createModule(.{
+                .root_source_file = path,
+                .target = target,
+                .optimize = .ReleaseFast,
+                .unwind_tables = .none,
+                .omit_frame_pointer = true,
+                .strip = true,
+                .sanitize_thread = false,
+                .single_threaded = true,
+                .link_libc = false,
+            }),
+            .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
-            .unwind_tables = false,
-            .omit_frame_pointer = true,
-            .strip = true,
-            .linkage = .static,
-            .sanitize_thread = false,
-            .single_threaded = true,
-            .link_libc = false,
         });
 
         const dbg = b.addExecutable(.{
             .name = "bun_shim_debug",
-            .root_source_file = path,
-            .target = target,
-            .optimize = .Debug,
+            .root_module = b.createModule(.{
+                .root_source_file = path,
+                .target = target,
+                .optimize = .Debug,
+                .single_threaded = true,
+                .link_libc = false,
+            }),
+            .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
-            .linkage = .static,
-            .single_threaded = true,
-            .link_libc = false,
         });
 
         return .{ .exe = exe, .dbg = dbg };

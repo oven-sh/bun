@@ -1,8 +1,16 @@
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
+/**
+ * This file is loaded in every test file in the repository.
+ *
+ * Avoid adding external dependencies here so that we can still run some tests
+ * without always needing to run `bun install` in development.
+ */
+
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile } from "fs/promises";
-import fs, { closeSync, openSync } from "node:fs";
+import { ChildProcess, fork } from "child_process";
+import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
+import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 
@@ -17,10 +25,29 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const isBuildKite = process.env.BUILDKITE === "true";
+export const libcFamily: "glibc" | "musl" =
+  process.platform !== "linux"
+    ? "glibc"
+    : // process.report.getReport() has incorrect type definitions.
+      (process.report.getReport() as any).header.glibcVersionRuntime
+      ? "glibc"
+      : "musl";
 
-export const bunEnv: NodeJS.ProcessEnv = {
-  ...process.env,
+export const isMusl = isLinux && libcFamily === "musl";
+export const isGlibc = isLinux && libcFamily === "glibc";
+export const isBuildKite = process.env.BUILDKITE === "true";
+export const isVerbose = process.env.DEBUG === "1";
+
+// Use these to mark a test as flaky or broken.
+// This will help us keep track of these tests.
+//
+// test.todoIf(isFlaky && isMacOS)("this test is flaky");
+export const isFlaky = isCI;
+export const isBroken = isCI;
+export const isASAN = basename(process.execPath).includes("bun-asan");
+
+export const bunEnv: NodeJS.Dict<string> = {
+  ...(process.env as NodeJS.Dict<string>),
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -30,7 +57,15 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+  BUN_DEBUG_linkerctx: "0",
 };
+
+const ciEnv = { ...bunEnv };
+
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+}
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -38,11 +73,18 @@ if (isWindows) {
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
+    delete ciEnv[key];
     delete bunEnv[key];
   }
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete ciEnv[key];
     delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUILDKITE")) {
+    delete bunEnv[key];
+    delete process.env[key];
   }
 }
 
@@ -133,7 +175,7 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-type DirectoryTree = {
+export type DirectoryTree = {
   [name: string]:
     | string
     | Buffer
@@ -141,31 +183,92 @@ type DirectoryTree = {
     | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  async function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, raw_contents] of Object.entries(tree)) {
-      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
-      const joined = join(base, name);
-      if (name.includes("/")) {
-        const dir = dirname(name);
-        if (dir !== name && dir !== ".") {
-          fs.mkdirSync(join(base, dir), { recursive: true });
-        }
+export async function makeTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
       }
-      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
-        fs.mkdirSync(joined);
-        makeTree(joined, contents);
-        continue;
-      }
-      fs.writeFileSync(joined, contents);
     }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTree(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
   }
+}
+
+export function makeTreeSyncFromDirectoryTree(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = (typeof raw_contents === "function" ? raw_contents({ root: base }) : raw_contents) as string;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
+      }
+    }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTreeSync(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
+  }
+}
+
+export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string) {
+  if (typeof filesOrAbsolutePathToCopyFolderFrom === "string") {
+    fs.cpSync(filesOrAbsolutePathToCopyFolderFrom, base, { recursive: true });
+    return;
+  }
+
+  return makeTreeSyncFromDirectoryTree(base, filesOrAbsolutePathToCopyFolderFrom);
+}
+
+/**
+ * Recursively create files within a new temporary directory.
+ *
+ * @param basename prefix of the new temporary directory
+ * @param filesOrAbsolutePathToCopyFolderFrom Directory tree or absolute path to a folder to copy. If passing an object each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @returns an absolute path to the new temporary directory
+ *
+ * @example
+ * ```ts
+ * const dir = tempDirWithFiles("my-test", {
+ *   "index.js": `import foo from "./src/foo";`,
+ *   "src": {
+ *     "foo.js": `export default "foo";`,
+ *   },
+ * });
+ * ```
+ */
+export function tempDirWithFiles(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTree(base, files);
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string>) {
+export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
+  const base = tmpdirSync();
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
+  return base;
+}
+
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -300,137 +403,200 @@ const binaryTypes = {
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
-
-expect.extend({
-  toHaveTestTimedOutAfter(actual: any, expected: number) {
-    if (typeof actual !== "string") {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a string`,
-      };
-    }
-
-    const preStartI = actual.indexOf("timed out after ");
-    if (preStartI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "timed out after "`,
-      };
-    }
-    const startI = preStartI + "timed out after ".length;
-    const endI = actual.indexOf("ms", startI);
-    if (endI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
-      };
-    }
-    const int = parseInt(actual.slice(startI, endI));
-    if (!Number.isSafeInteger(int)) {
-      return {
-        pass: false,
-        message: () => `Expected ${int} to be a safe integer`,
-      };
-    }
-
-    return {
-      pass: int >= expected,
-      message: () => `Expected ${int} to be >= ${expected}`,
-    };
-  },
-  toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
-    switch (expected) {
-      case "buffer":
+if (expect.extend)
+  expect.extend({
+    toHaveTestTimedOutAfter(actual: any, expected: number) {
+      if (typeof actual !== "string") {
         return {
-          pass: Buffer.isBuffer(actual),
-          message: () => `Expected ${actual} to be buffer`,
+          pass: false,
+          message: () => `Expected ${actual} to be a string`,
         };
-      case "arraybuffer":
+      }
+
+      const preStartI = actual.indexOf("timed out after ");
+      if (preStartI === -1) {
         return {
-          pass: actual instanceof ArrayBuffer,
-          message: () => `Expected ${actual} to be ArrayBuffer`,
+          pass: false,
+          message: () => `Expected ${actual} to contain "timed out after "`,
         };
-      default: {
-        const ctor = binaryTypes[expected];
-        if (!ctor) {
+      }
+      const startI = preStartI + "timed out after ".length;
+      const endI = actual.indexOf("ms", startI);
+      if (endI === -1) {
+        return {
+          pass: false,
+          message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+        };
+      }
+      const int = parseInt(actual.slice(startI, endI));
+      if (!Number.isSafeInteger(int)) {
+        return {
+          pass: false,
+          message: () => `Expected ${int} to be a safe integer`,
+        };
+      }
+
+      return {
+        pass: int >= expected,
+        message: () => `Expected ${int} to be >= ${expected}`,
+      };
+    },
+    toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
+      switch (expected) {
+        case "buffer":
           return {
-            pass: false,
-            message: () => `Expected ${expected} to be a binary type`,
+            pass: Buffer.isBuffer(actual),
+            message: () => `Expected ${actual} to be buffer`,
+          };
+        case "arraybuffer":
+          return {
+            pass: actual instanceof ArrayBuffer,
+            message: () => `Expected ${actual} to be ArrayBuffer`,
+          };
+        default: {
+          const ctor = binaryTypes[expected];
+          if (!ctor) {
+            return {
+              pass: false,
+              message: () => `Expected ${expected} to be a binary type`,
+            };
+          }
+
+          return {
+            pass: actual instanceof ctor,
+            message: () => `Expected ${actual} to be ${expected}`,
           };
         }
-
-        return {
-          pass: actual instanceof ctor,
-          message: () => `Expected ${actual} to be ${expected}`,
-        };
       }
-    }
-  },
-  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), ...cmds],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
+    },
+    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...cmds],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
 
-    if (result.exitCode !== expectedCode) {
-      return {
-        pass: false,
-        message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
-      };
-    }
-
-    if (optionalStdout != null) {
-      return {
-        pass: result.stdout.toString("utf-8") === optionalStdout,
-        message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
-      };
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected ${cmds.join(" ")} to fail`,
-    };
-  },
-  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
-    try {
-      fn();
-      return {
-        pass: false,
-        message: () => `Received function did not throw`,
-      };
-    } catch (e) {
-      // expect(e).toBeInstanceOf(cls);
-      if (!(e instanceof cls)) {
+      if (result.exitCode !== expectedCode) {
         return {
           pass: false,
-          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
         };
       }
 
-      // expect(e).toHaveProperty("code");
-      if (!("code" in e)) {
+      if (optionalStdout != null) {
         return {
-          pass: false,
-          message: () => `Expected error to have property 'code'; got ${e}`,
-        };
-      }
-
-      // expect(e.code).toEqual(code);
-      if (e.code !== code) {
-        return {
-          pass: false,
-          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          pass: result.stdout.toString("utf-8") === optionalStdout,
+          message: () =>
+            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
         };
       }
 
       return {
         pass: true,
+        message: () => `Expected ${cmds.join(" ")} to fail`,
       };
-    }
-  },
-});
+    },
+    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        await fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
+        return {
+          pass: true,
+        };
+      }
+    },
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
+
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    },
+  });
 
 export function ospath(path: string) {
   if (isWindows) {
@@ -446,6 +612,9 @@ export function ospath(path: string) {
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
   function shouldSkip(pkg: any, dep: any): boolean {
+    // Band-aid as toMatchNodeModulesAt will sometimes ask this function
+    // if a package depends on itself
+    if (pkg?.name === dep?.name) return true;
     return (
       !pkg ||
       !pkg.resolution ||
@@ -487,6 +656,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -526,6 +699,10 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.literal === "*") {
+                      // allow any version, just needs to be resolvable
+                      continue;
+                    }
                     // workspaces don't need a version
                     if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
@@ -756,6 +933,7 @@ export function osSlashes(path: string) {
 }
 
 import * as child_process from "node:child_process";
+import { basename } from "node:path";
 
 class WriteBlockedError extends Error {
   constructor(time) {
@@ -942,8 +1120,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+export function tmpdirSync(pattern: string = "bun.test."): string {
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
 export async function runBunInstall(
@@ -955,10 +1133,29 @@ export async function runBunInstall(
     expectedExitCode?: number;
     savesLockfile?: boolean;
     production?: boolean;
+    frozenLockfile?: boolean;
+    saveTextLockfile?: boolean;
+    packages?: string[];
+    verbose?: boolean;
   },
 ) {
   const production = options?.production ?? false;
   const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  if (options?.packages) {
+    args.push(...options.packages);
+  }
+  if (production) {
+    args.push("--production");
+  }
+  if (options?.frozenLockfile) {
+    args.push("--frozen-lockfile");
+  }
+  if (options?.saveTextLockfile) {
+    args.push("--save-text-lockfile");
+  }
+  if (options?.verbose) {
+    args.push("--verbose");
+  }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
     cwd,
@@ -969,7 +1166,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem.*/g, "");
+  let err = stderrForInstall(await new Response(stderr).text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -977,12 +1174,17 @@ export async function runBunInstall(
   if (!options?.allowWarnings) {
     expect(err).not.toContain("warn:");
   }
-  if ((options?.savesLockfile ?? true) && !production) {
+  if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
   let out = await new Response(stdout).text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
+}
+
+// stderr with `slow filesystem` warning removed
+export function stderrForInstall(err: string) {
+  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1011,6 +1213,30 @@ export async function runBunUpdate(
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
+export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warning:");
+  expect(err).not.toContain("failed");
+  expect(err).not.toContain("panic:");
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  const exitCode = await exited;
+  expect(exitCode).toBe(0);
+
+  return { out, err };
+}
+
 // If you need to modify, clone it
 export const expiredTls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
@@ -1023,6 +1249,11 @@ export const expiredTls = Object.freeze({
 export const tls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
   key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
+});
+
+export const invalidTls = Object.freeze({
+  cert: "-----BEGIN CERTIFICATE-----\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yNTAyMDQwNDUyNTdaFw0yNzAyMDQwNDUyNTdaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC1rZqCnASs\nHPzPjs/mls+z3qTl6OsCNI+kTsA23/+ZkvtBe7EI+9LfV1Sy4MF66ZovR0UgeJUB\nlL7ExadXkfZJS0N6LEAIyEMQI0cpILv3i6sJCcRwHV7X7N55lkUdsJtQ3fSKsyn9\nPDWJGVdwtRjdod3XyevYcx5NLGZOF/4KJmR4eNkX8ycG8zvW/srPHHE95/+k/5Wo\n/RrS+OLl+bgVznxmXtnFMdbYvJ1RLyipCED2P569NWXAgCzYESX2tqLr20R8ca8Q\niTcXXijY1Wq+pVR5NhIckt+zyZlUQ5IT3DvAQn4aW30wA514k1AKDKQjtxdRzVmV\nGDOTOzAlpmeZAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUkgeZUw9BZc/9mxAym4BjaVYhHoow\nDQYJKoZIhvcNAQELBQADggEBAJGQomt68rO1wuhHaG355kGaIsTsoUJgs7VAKNI2\n0/vtMKODX2Zo2BHhiI1wSH751IySqWbGYCvXl6QrsV5tD/jdIYKvyXLFmV0KgQSY\nkZ91sde4jIiiqL5h03GJSUydCl4SE1A1H8Ht41NYoyVaWVPzv5lprt654vpRPbPq\nYBQTWSFcYkmGnza/tRALUftM5U3yKOTQ8sKH/eKGC9KU0DI5pZ2XAxrIyvrJZMm1\n0WwWTrO0KlXN8N9v8tVCVm7g6mYug4HEADQ4kymyfwM6mPY1EmsGy36KOqCRUtUR\n+jmAZr9m+l+27GxR9zjxoLWHkARuWZM/hL//u90cNfNDRgQ=\n-----END CERTIFICATE-----\n",
+  key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC1rZqCnASsHPzP\njs/mls+z3qTl6OsCNI+kTsA23/+ZkvtBe7EI+9LfV1Sy4MF66ZovR0UgeJUBlL7E\nxadXkfZJS0N6LEAIyEMQI0cpILv3i6sJCcRwHV7X7N55lkUdsJtQ3fSKsyn9PDWJ\nGVdwtRjdod3XyevYcx5NLGZOF/4KJmR4eNkX8ycG8zvW/srPHHE95/+k/5Wo/RrS\n+OLl+bgVznxmXtnFMdbYvJ1RLyipCED2P569NWXAgCzYESX2tqLr20R8ca8QiTcX\nXijY1Wq+pVR5NhIckt+zyZlUQ5IT3DvAQn4aW30wA514k1AKDKQjtxdRzVmVGDOT\nOzAlpmeZAgMBAAECggEANW6F2zTckOwDlF2pmmUvV/S6pZ1/hIoF1uqMUHdHmpim\nSaeBtSUu6x2pnORKMwaCILaCx55/IFRpWMDSywf0GbFHeqaJ/Ks9QgFGG/vzHEZY\n+pMDUX/p1XJmKfc+g5Fd1IY6thIkXsR28EfiNhUk54YEE0NhGCsfNc5BlmUrAzuw\nSevCkbChsZzLoasskt5hgWOb1wT757xDrOOss3LXvwaFkMXANQHiaGWxSpmyXTVf\nmtIX4wpN2K5BQxRBV6xmRaBBp7fWJlbqvV67wwh2cxIAyvQ68VVVHTbfv44TUw62\nyCKle6hSLi/OnMr1FJv16Ez+K3lUIkYE0nTYIvQkYwKBgQD34Nwy0U8WcHcOSbU1\nMIREfvPNYfl/hH94wmLyKZWhpqOfqgrUg+19+n9TXw4DGdO7lwAzz+ud7TImbGDI\n+1cb9/FxTK5cRwICTLC+Pse6pVkKUvPdil/TfHZBJP1jeIMGMDVi0fcGv97LxrHV\nJGQwA5x1nHGHl0JrENRqm3M2NwKBgQC7oXkWb0s2C8ANI14gz+q/2EmTSJxxrzXR\nz5EQk87PmPfkY4I1T8vKFcaiJynyReLwpYTip2WYGqc7qAO9oLwmA+d/NMOBI2sg\noEn154Q9zvr3jqIgu9/AapEgEDlA+v18veoIz3bae6wu57lpGvGtCoQLBS6q2UZg\n3zFI3BJorwKBgDz4WjFFuqZSU3Z4OtIydNZEQ8Oo7a2n8ZLKfXwDLoLsciK7uJ49\nNRVfoCHpp5CrsaDaq3oTEmluBn/c+JF3AR4oBoNP0TNxY9Uc9/xThN0r/pLDhKhh\neOCUJKIxbwIgilnjUb5U1uYaG7sTzHoY0Wvd94YWTPaFBhk/sn/mbJhRAoGAA+/E\nWZsmKdEfS2dFj0ytcS75hDSOy7fQWkGPmphvS127Pbh0v+eXr/q6+yX1NFcRBtmC\nKzs133YXsiG5Sl439Fg6oCmcPHZgxgN26cjctmtESrNcZXFrpV7XAqQ0f0+Ex/w4\nD81Cghz8JNPJyRG+plHFKXIHY6BBYMDuCMhNPpMCgYEA1BVG5scNtmBE3SaRns2G\npKgWiwmzPDTqwf3R0rgkHQroZUIz616jLgKXIVMBPaq/771uq+hzJZro9sNcNL8p\n9PkLRr4V4KtUSqkjvitU68vMM1qxtO9NVwCI5u3wicVC5mMqcH8FN+sO/5/jIPBl\nO/qEOVDlCuYtURcnh/Oz1cE=\n-----END PRIVATE KEY-----\n",
 });
 
 export function disableAggressiveGCScope() {
@@ -1042,35 +1273,6 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
-expect.extend({
-  toBeLatin1String(actual: unknown) {
-    if ((actual as string).isLatin1()) {
-      return {
-        pass: true,
-        message: () => `Expected ${actual} to be a Latin1 string`,
-      };
-    }
-
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a Latin1 string`,
-    };
-  },
-  toBeUTF16String(actual: unknown) {
-    if ((actual as string).isUTF16()) {
-      return {
-        pass: true,
-        message: () => `Expected ${actual} to be a UTF16 string`,
-      };
-    }
-
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a UTF16 string`,
-    };
-  },
-});
-
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
   toBeUTF16String(): void;
@@ -1078,6 +1280,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
 
 declare module "bun:test" {
@@ -1239,6 +1442,7 @@ export function getSecret(name: string): string | undefined {
     const { exitCode, stdout } = spawnSync({
       cmd: ["buildkite-agent", "secret", "get", name],
       stdout: "pipe",
+      env: ciEnv,
       stderr: "inherit",
     });
     if (exitCode === 0) {
@@ -1285,8 +1489,227 @@ Object.defineProperty(globalThis, "gc", {
   configurable: true,
 });
 
-export function waitForFileToExist(path: string, interval: number) {
+export function waitForFileToExist(path: string, interval_ms: number) {
   while (!fs.existsSync(path)) {
-    sleepSync(interval);
+    sleepSync(interval_ms);
   }
+}
+
+export function libcPathForDlopen() {
+  switch (process.platform) {
+    case "linux":
+      switch (libcFamily) {
+        case "glibc":
+          return "libc.so.6";
+        case "musl":
+          return "/usr/lib/libc.so";
+      }
+    case "darwin":
+      return "libc.dylib";
+    default:
+      throw new Error("TODO");
+  }
+}
+
+export function cwdScope(cwd: string) {
+  const original = process.cwd();
+  process.chdir(cwd);
+  return {
+    [Symbol.dispose]() {
+      process.chdir(original);
+    },
+  };
+}
+
+export function rmScope(path: string) {
+  return {
+    [Symbol.dispose]() {
+      fs.rmSync(path, { recursive: true, force: true });
+    },
+  };
+}
+
+export function textLockfile(version: number, pkgs: any): string {
+  return JSON.stringify({
+    lockfileVersion: version,
+    ...pkgs,
+  });
+}
+
+export class VerdaccioRegistry {
+  port: number;
+  process: ChildProcess | undefined;
+  configPath: string;
+  packagesPath: string;
+  users: Record<string, string> = {};
+
+  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
+    this.port = randomPort();
+    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
+    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
+  }
+
+  async start(silent: boolean = true) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+      silent,
+      // Prefer using a release build of Bun since it's faster
+      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+    });
+
+    this.process.stderr?.on("data", data => {
+      console.error(`[verdaccio] stderr: ${data}`);
+    });
+
+    const started = Promise.withResolvers();
+
+    this.process.on("error", error => {
+      console.error(`Failed to start verdaccio: ${error}`);
+      started.reject(error);
+    });
+
+    this.process.on("exit", (code, signal) => {
+      if (code !== 0) {
+        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
+      } else {
+        console.log("Verdaccio exited successfully");
+      }
+    });
+
+    this.process.on("message", (message: { verdaccio_started: boolean }) => {
+      if (message.verdaccio_started) {
+        started.resolve();
+      }
+    });
+
+    await started.promise;
+  }
+
+  registryUrl() {
+    return `http://localhost:${this.port}/`;
+  }
+
+  stop() {
+    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.process?.kill(0);
+  }
+
+  /**
+   * returns auth token
+   */
+  async generateUser(username: string, password: string): Promise<string> {
+    if (this.users[username]) {
+      throw new Error(`User ${username} already exists`);
+    } else this.users[username] = password;
+
+    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
+    const user = {
+      name: username,
+      password: password,
+      email: `${username}@example.com`,
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(user),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.token;
+    }
+
+    throw new Error("Failed to create user:", response.statusText);
+  }
+
+  async authBunfig(user: string) {
+    const authToken = await this.generateUser(user, user);
+    return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        `;
+  }
+
+  async createTestDir(bunfigOpts: BunfigOpts = {}) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
+    const packageDir = tmpdirSync();
+    const packageJson = join(packageDir, "package.json");
+    await this.writeBunfig(packageDir, bunfigOpts);
+    this.users = {};
+    return { packageDir, packageJson };
+  }
+
+  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
+    let bunfig = `
+    [install]
+    cache = "${join(dir, ".bun-cache")}"
+    `;
+    if ("saveTextLockfile" in opts) {
+      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
+      `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
+    }
+    await write(join(dir, "bunfig.toml"), bunfig);
+  }
+}
+
+type BunfigOpts = {
+  saveTextLockfile?: boolean;
+  npm?: boolean;
+};
+
+export async function readdirSorted(path: string): Promise<string[]> {
+  const results = await readdir(path);
+  results.sort();
+  return results;
+}
+
+/**
+ * Helper function for making automatically lazily-executed promises.
+ *
+ * The difference is that the promise has not already started to be evaluated when it is created,
+ * only when you await it does it execute the function.
+ *
+ * @example
+ * ```ts
+ * function createMyFixture() {
+ *   return {
+ *     start: lazyPromiseLike(() => fetch("https://example.com")),
+ *     stop: lazyPromiseLike(() => fetch("https://example.com")),
+ *   }
+ * }
+ *
+ * const { start, stop } = createMyFixture();
+ *
+ * await start; // Calls only the start function
+ * ```
+ *
+ * @param fn A function to make lazily evaluated.
+ * @returns A promise-like object that will evaluate the function when `then` is called.
+ */
+export function lazyPromiseLike<T>(fn: () => Promise<T>): PromiseLike<T> {
+  let p: Promise<T>;
+
+  return {
+    then(onfulfilled, onrejected) {
+      if (!p) {
+        p = fn();
+      }
+      return p.then(onfulfilled, onrejected);
+    },
+  };
+}
+
+export async function gunzipJsonRequest(req: Request) {
+  const buf = await req.arrayBuffer();
+  const inflated = Bun.gunzipSync(buf);
+  const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
+  return body;
 }

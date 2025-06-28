@@ -59,9 +59,9 @@ public:
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
 
     ExceptionOr<void> append(const String& name, const String& value);
-    ExceptionOr<void> remove(const String&);
-    ExceptionOr<String> get(const String&) const;
-    ExceptionOr<bool> has(const String&) const;
+    ExceptionOr<void> remove(const StringView);
+    ExceptionOr<String> get(const StringView) const;
+    ExceptionOr<bool> has(const StringView) const;
     ExceptionOr<void> set(const String& name, const String& value);
     ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
 
@@ -71,12 +71,12 @@ public:
 
     size_t memoryCost() const;
 
-    inline uint32_t size()
+    inline uint32_t size() const
     {
         return m_headers.size();
     }
 
-    inline uint32_t sizeAfterJoiningSetCookieHeader()
+    inline uint32_t sizeAfterJoiningSetCookieHeader() const
     {
         return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
     }

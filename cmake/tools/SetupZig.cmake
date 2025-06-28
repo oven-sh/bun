@@ -11,15 +11,24 @@ if(APPLE)
 elseif(WIN32)
   set(DEFAULT_ZIG_TARGET ${DEFAULT_ZIG_ARCH}-windows-msvc)
 elseif(LINUX)
-  set(DEFAULT_ZIG_TARGET ${DEFAULT_ZIG_ARCH}-linux-gnu)
+  if(ABI STREQUAL "musl")
+    set(DEFAULT_ZIG_TARGET ${DEFAULT_ZIG_ARCH}-linux-musl)
+  else()
+    set(DEFAULT_ZIG_TARGET ${DEFAULT_ZIG_ARCH}-linux-gnu)
+  endif()
 else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
+set(ZIG_COMMIT "0a0120fa92cd7f6ab244865688b351df634f0707")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  if(ENABLE_ASAN)
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+  else()
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -43,101 +52,48 @@ optionx(ZIG_OPTIMIZE "ReleaseFast|ReleaseSafe|ReleaseSmall|Debug" "The Zig optim
 # Change to "bc" to experiment, "Invalid record" means it is not valid output.
 optionx(ZIG_OBJECT_FORMAT "obj|bc" "Output file format for Zig object files" DEFAULT obj)
 
-optionx(ZIG_VERSION STRING "The version of zig to use" DEFAULT "0.13.0")
 optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory" DEFAULT ${CACHE_PATH}/zig/local)
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
-setx(ZIG_REPOSITORY_PATH ${VENDOR_PATH}/zig)
-setx(ZIG_PATH ${CACHE_PATH}/zig/bin)
+if(CI)
+  set(ZIG_COMPILER_SAFE_DEFAULT ON)
+else()
+  set(ZIG_COMPILER_SAFE_DEFAULT OFF)
+endif()
 
-register_repository(
-  NAME
-    zig
-  REPOSITORY
-    oven-sh/zig
-  COMMIT
-    131a009ba2eb127a3447d05b9e12f710429aa5ee
-  PATH
-    ${ZIG_REPOSITORY_PATH}
-)
+optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})
 
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})
 
+setx(ZIG_PATH ${VENDOR_PATH}/zig)
+
+if(WIN32)
+  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig.exe)
+else()
+  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig)
+endif()
+
 set(CMAKE_ZIG_FLAGS
   --cache-dir ${ZIG_LOCAL_CACHE_DIR}
   --global-cache-dir ${ZIG_GLOBAL_CACHE_DIR}
-  --zig-lib-dir ${ZIG_REPOSITORY_PATH}/lib
+  --zig-lib-dir ${ZIG_PATH}/lib
 )
 
-find_command(
-  VARIABLE
-    CMAKE_ZIG_COMPILER
-  COMMAND
-    zig
-    zig.exe
-  PATHS
-    ${ZIG_PATH}
-  VERSION
-    ${ZIG_VERSION}
-  REQUIRED
-    OFF
-)
-
-if(CMAKE_ZIG_COMPILER)
-  return()
-endif()
-
-if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-  set(ZIG_HOST_ARCH "aarch64")
-elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
-  set(ZIG_HOST_ARCH "x86_64")
-else()
-  unsupported(CMAKE_HOST_SYSTEM_PROCESSOR)
-endif()
-
-if(CMAKE_HOST_APPLE)
-  set(ZIG_HOST_OS "macos")
-elseif(CMAKE_HOST_WIN32)
-  set(ZIG_HOST_OS "windows")
-elseif(CMAKE_HOST_UNIX)
-  set(ZIG_HOST_OS "linux")
-else()
-  unsupported(CMAKE_HOST_SYSTEM_NAME)
-endif()
-
-set(ZIG_NAME zig-${ZIG_HOST_OS}-${ZIG_HOST_ARCH}-${ZIG_VERSION})
-
-if(CMAKE_HOST_WIN32)
-  set(ZIG_EXE "zig.exe")
-  set(ZIG_FILENAME ${ZIG_NAME}.zip)
-else()
-  set(ZIG_EXE "zig")
-  set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
-endif()
-
-setx(ZIG_DOWNLOAD_URL https://ziglang.org/download/${ZIG_VERSION}/${ZIG_FILENAME})
-file(DOWNLOAD ${ZIG_DOWNLOAD_URL} ${TMP_PATH}/${ZIG_FILENAME} SHOW_PROGRESS)
-file(ARCHIVE_EXTRACT INPUT ${TMP_PATH}/${ZIG_FILENAME} DESTINATION ${TMP_PATH} TOUCH)
-file(REMOVE ${TMP_PATH}/${ZIG_FILENAME})
-file(COPY ${TMP_PATH}/${ZIG_NAME}/${ZIG_EXE} DESTINATION ${ZIG_PATH})
-file(CHMOD ${ZIG_PATH}/${ZIG_EXE} PERMISSIONS OWNER_EXECUTE OWNER_READ OWNER_WRITE)
-setx(CMAKE_ZIG_COMPILER ${ZIG_PATH}/${ZIG_EXE})
-
-if(NOT WIN32)
-  file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
-endif()
-
-# Some zig commands need the executable to be in the same directory as the zig repository
 register_command(
-  COMMENT
-    "Creating symlink for zig"
-  COMMAND
-    ${CMAKE_COMMAND} -E copy ${ZIG_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
-    && ${CMAKE_COMMAND} -E create_symlink ${ZIG_REPOSITORY_PATH}/${ZIG_EXE} ${ZIG_REPOSITORY_PATH}/zig.exe
-  OUTPUTS
-    ${ZIG_REPOSITORY_PATH}/${ZIG_EXE}
-    ${ZIG_REPOSITORY_PATH}/zig.exe
-  TARGETS
+  TARGET
     clone-zig
+  COMMENT
+    "Downloading zig"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DZIG_PATH=${ZIG_PATH}
+      -DZIG_COMMIT=${ZIG_COMMIT}
+      -DENABLE_ASAN=${ENABLE_ASAN}
+      -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
+      -P ${CWD}/cmake/scripts/DownloadZig.cmake
+  SOURCES
+    ${CWD}/cmake/scripts/DownloadZig.cmake
+  OUTPUTS
+    ${ZIG_EXECUTABLE}
 )

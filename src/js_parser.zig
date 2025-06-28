@@ -1211,7 +1211,6 @@ pub const options = @import("./options.zig");
 pub const renamer = @import("./renamer.zig");
 const Define = @import("./defines.zig").Define;
 pub const KnownGlobal = @import("ast/KnownGlobal.zig").KnownGlobal;
-const NewParser = @import("ast/P.zig").NewParser;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 pub const Parser = @import("ast/Parser.zig").Parser;
 pub const SideEffects = @import("ast/SideEffects.zig").SideEffects;
@@ -1229,6 +1228,9 @@ const ImportRecord = importRecord.ImportRecord;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeNames = _runtime.Runtime.Names;
+
+const NewParser = @import("ast/P.zig").NewParser;
+pub const NewParser_ = @import("ast/P.zig").NewParser_;
 
 const bun = @import("bun");
 const Output = bun.Output;

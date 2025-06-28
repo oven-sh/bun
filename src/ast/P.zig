@@ -14,7 +14,7 @@ pub fn NewParser(
         parser_features.scan_only,
     );
 }
-fn NewParser_(
+pub fn NewParser_(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,
     comptime parser_feature__scan_only: bool,
@@ -43,7 +43,7 @@ fn NewParser_(
         pub const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
 
-        const skipTypescript_zig = @import("skipTypescript.zig").SkipTypescript(P);
+        const skipTypescript_zig = @import("skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const skipTypescriptReturnType = skipTypescript_zig.skipTypescriptReturnType;
         pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_zig.skipTypescriptReturnTypeWithMetadata;
         pub const skipTypeScriptType = skipTypescript_zig.skipTypeScriptType;
@@ -63,7 +63,7 @@ fn NewParser_(
         pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowArgsWithBacktracking;
         pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
 
-        const parse_zig = @import("parse.zig").Parse(P);
+        const parse_zig = @import("parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const parsePrefix = parse_zig.parsePrefix;
         pub const parseSuffix = parse_zig.parseSuffix;
         pub const parseStmt = parse_zig.parseStmt;
@@ -103,7 +103,7 @@ fn NewParser_(
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
 
-        const astVisit = @import("visit.zig").Visit(P);
+        const astVisit = @import("visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const visitStmtsAndPrependTempRefs = astVisit.visitStmtsAndPrependTempRefs;
         pub const recordDeclaredSymbol = astVisit.recordDeclaredSymbol;
         pub const visitExpr = astVisit.visitExpr;

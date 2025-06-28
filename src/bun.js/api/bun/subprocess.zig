@@ -317,49 +317,39 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
         },
         inline .stdout, .stderr => |tag| {
             const out: *Readable = &@field(this, @tagName(tag));
-            const globalThis = this.globalThis;
-            
-            // Get the cached promise from the correct property (stdout/stderr)
-            const get_cached_fn = if (tag == .stdout) JSC.Codegen.JSSubprocess.stdoutGetCached else JSC.Codegen.JSSubprocess.stderrGetCached;
-            const maybe_promise = if (this.this_jsvalue != .zero) get_cached_fn(this.this_jsvalue) else null;
             
             switch (out.*) {
                 .pipe => |pipe| {
                     if (pipe.state == .done) {
                         out.* = .{ .buffer = CowString.initOwned(pipe.state.done, bun.default_allocator) };
                         pipe.state = .{ .done = &.{} };
-                    } else {
-                        out.* = .{ .ignore = {} };
+                        pipe.deref();
                     }
-                    pipe.deref();
                 },
                 .buffer_promise => |pipe| {
-                    const bytes = pipe.toOwnedSlice();
-                    if (maybe_promise) |js_promise| {
-                        if (js_promise.asAnyPromise()) |promise_obj| {
-                            const buffer_val = JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
-                            promise_obj.resolve(globalThis, buffer_val);
-                        }
-                    }
-                    // Replace the readable with the final buffered value
-                    out.* = .{ .buffer = CowString.initOwned(bytes, bun.default_allocator) };
+                    // The pipe already has the data in state.done, we need to take ownership
+                    var bytes = if (pipe.state == .done) brk: {
+                        const data = pipe.state.done;
+                        pipe.state = .{ .done = &.{} }; // Clear to prevent double free
+                        break :brk @constCast(data);
+                    } else @constCast(&.{});
+                    log("buffer_promise onCloseIO: bytes.len={d}, first few bytes={any}", .{bytes.len, bytes[0..@min(10, bytes.len)]});
+                    // Don't resolve the promise here - it will be resolved when accessed
+                    // Convert to buffer_promise_done variant to indicate data is ready but should still return a promise
+                    out.* = .{ .buffer_promise_done = CowString.initOwned(bytes, bun.default_allocator) };
                     pipe.deref();
                 },
                 .text_promise => |pipe| {
-                    const bytes = pipe.toOwnedSlice();
-                    if (maybe_promise) |js_promise| {
-                       if (js_promise.asAnyPromise()) |promise_obj| {
-                            const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8) catch |err| {
-                                _ = err; // autofix
-                                promise_obj.reject(globalThis, globalThis.bunVM().exception);
-                                out.* = .{ .buffer = CowString.initOwned(&.{}, bun.default_allocator) };
-                                pipe.deref();
-                                return;
-                            };
-                            promise_obj.resolve(globalThis, str.toJS(globalThis));
-                       }
-                    }
-                    out.* = .{ .buffer = CowString.initOwned(bytes, bun.default_allocator) };
+                    // The pipe already has the data in state.done, we need to take ownership
+                    var bytes = if (pipe.state == .done) brk: {
+                        const data = pipe.state.done;
+                        pipe.state = .{ .done = &.{} }; // Clear to prevent double free
+                        break :brk @constCast(data);
+                    } else @constCast(&.{});
+                    log("text_promise onCloseIO: bytes.len={d}, first few bytes={any}", .{bytes.len, bytes[0..@min(10, bytes.len)]});
+                    // Don't resolve the promise here - it will be resolved when accessed
+                    // Convert to text_promise_done variant to indicate data is ready but should still return a promise
+                    out.* = .{ .text_promise_done = CowString.initOwned(bytes, bun.default_allocator) };
                     pipe.deref();
                 },
                 else => {},
@@ -429,12 +419,16 @@ const Readable = union(enum) {
     /// the owning `Readable` will be convered into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     buffer: CowString,
+    /// Completed buffer data that should be returned as a resolved promise
+    buffer_promise_done: CowString,
+    /// Completed text data that should be returned as a resolved promise
+    text_promise_done: CowString,
 
     pub fn memoryCost(this: *const Readable) usize {
         return switch (this.*) {
             .pipe => @sizeOf(PipeReader) + this.pipe.memoryCost(),
             .buffer_promise, .text_promise => |p| @sizeOf(PipeReader) + p.memoryCost(),
-            .buffer => this.buffer.length(),
+            .buffer, .buffer_promise_done, .text_promise_done => |buf| buf.length(),
             else => 0,
         };
     }
@@ -540,7 +534,7 @@ const Readable = union(enum) {
                 defer p.detach();
                 this.* = .{ .closed = {} };
             },
-            .buffer => |*buf| {
+            .buffer, .buffer_promise_done, .text_promise_done => |*buf| {
                 buf.deinit(bun.default_allocator);
             },
             else => {},
@@ -549,6 +543,7 @@ const Readable = union(enum) {
 
     pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
         _ = exited; // autofix
+        log("Readable.toJS called, variant = {s}", .{@tagName(this.*)});
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
             .memfd => return this.toBufferedValue(globalThis) catch .zero,
@@ -562,34 +557,38 @@ const Readable = union(enum) {
                 return pipe.toJS(globalThis);
             },
             .buffer_promise => |pipe| {
+                log("toJS buffer_promise: pipe state = {s}", .{@tagName(pipe.state)});
                 // Check if the PipeReader has already finished reading
                 if (pipe.state == .done) {
+                    log("toJS buffer_promise: state is done, creating resolved promise", .{});
                     const bytes = pipe.toOwnedSlice();
+                    defer pipe.detach();
                     defer this.* = .{ .closed = {} };
                     const buffer = JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
                     return JSC.JSPromise.resolvedPromiseValue(globalThis, buffer);
                 }
 
+                log("toJS buffer_promise: state is pending, creating new promise", .{});
                 // Create a new pending promise
                 const promise = JSC.JSPromise.create(globalThis).toJS();
                 // The getter in JS will cache this value
+                // DON'T detach the pipe or convert to a stream - we need it to resolve the promise later
                 return promise;
             },
             .text_promise => |pipe| {
                 // Check if the PipeReader has already finished reading
                 if (pipe.state == .done) {
                     const bytes = pipe.toOwnedSlice();
+                    defer pipe.detach();
                     defer this.* = .{ .closed = {} };
-                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8) catch {
-                        // On failure, return a rejected promise with the error
-                        const exception = globalThis.bunVM().exception;
-                        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, exception);
-                    };
+                    var str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8);
+                    defer str.deinit();
                     return JSC.JSPromise.resolvedPromiseValue(globalThis, str.toJS(globalThis));
                 }
 
                 // Create a new pending promise
                 const promise = JSC.JSPromise.create(globalThis).toJS();
+                // DON'T detach the pipe or convert to a stream - we need it to resolve the promise later
                 return promise;
             },
             .buffer => |*buffer| {
@@ -603,6 +602,25 @@ const Readable = union(enum) {
                     globalThis.throwOutOfMemory() catch return .zero;
                 };
                 return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
+            },
+            .buffer_promise_done => |*buf| {
+                defer this.* = .{ .closed = {} };
+                log("buffer_promise_done toJS: buf.len={d}, first few bytes={any}", .{buf.length(), buf.slice()[0..@min(10, buf.length())]});
+                const bytes = buf.takeSlice(bun.default_allocator) catch {
+                    globalThis.throwOutOfMemory() catch return .zero;
+                };
+                log("buffer_promise_done toJS: after takeSlice bytes.len={d}, first few bytes={any}", .{bytes.len, bytes[0..@min(10, bytes.len)]});
+                const buffer = JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+                return JSC.JSPromise.resolvedPromiseValue(globalThis, buffer);
+            },
+            .text_promise_done => |*buf| {
+                defer this.* = .{ .closed = {} };
+                const bytes = buf.takeSlice(bun.default_allocator) catch {
+                    globalThis.throwOutOfMemory() catch return .zero;
+                };
+                var str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(bytes, .utf8);
+                defer str.deinit();
+                return JSC.JSPromise.resolvedPromiseValue(globalThis, str.toJS(globalThis));
             },
             else => {
                 return .js_undefined;
@@ -640,6 +658,23 @@ const Readable = union(enum) {
 
                 return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
             },
+            .buffer_promise_done => |*buf| {
+                defer this.* = .{ .closed = {} };
+                const own = buf.takeSlice(bun.default_allocator) catch {
+                    return globalThis.throwOutOfMemory();
+                };
+                return JSC.MarkedArrayBuffer.fromBytes(own, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
+            },
+            .text_promise_done => |*buf| {
+                defer this.* = .{ .closed = {} };
+                const own = buf.takeSlice(bun.default_allocator) catch {
+                    return globalThis.throwOutOfMemory();
+                };
+                // For sync mode, return as a string not a buffer
+                const str = bun.String.createUTF8(own);
+                bun.default_allocator.free(own);
+                return str.toJS(globalThis);
+            },
             else => {
                 return .js_undefined;
             },
@@ -652,6 +687,37 @@ pub fn getStderr(
     globalThis: *JSGlobalObject,
 ) JSValue {
     this.observable_getters.insert(.stderr);
+    
+    // For buffer_promise and text_promise modes, we need to handle the race condition
+    // where the process might have already exited before the getter is called
+    switch (this.stderr) {
+        .buffer_promise, .text_promise => {
+            // Check if there's already a cached promise
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stderrGetCached(this.this_jsvalue)) |cached| {
+                    return cached;
+                }
+            }
+            // If not, create and cache the promise
+            const promise_value = this.stderr.toJS(globalThis, this.hasExited());
+            // The generated getter should cache this value
+            return promise_value;
+        },
+        .buffer_promise_done, .text_promise_done => {
+            // Data is ready but we need to return a promise
+            // Check if there's already a cached promise
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stderrGetCached(this.this_jsvalue)) |cached| {
+                    return cached;
+                }
+            }
+            // Create and return a resolved promise
+            const promise_value = this.stderr.toJS(globalThis, this.hasExited());
+            return promise_value;
+        },
+        else => {},
+    }
+    
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
@@ -668,6 +734,43 @@ pub fn getStdout(
     globalThis: *JSGlobalObject,
 ) JSValue {
     this.observable_getters.insert(.stdout);
+    
+    log("getStdout called, stdout variant = {s}", .{@tagName(this.stdout)});
+    
+    // For buffer_promise and text_promise modes, we need to handle the race condition
+    // where the process might have already exited before the getter is called
+    switch (this.stdout) {
+        .buffer_promise, .text_promise => {
+            // Check if there's already a cached promise
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stdoutGetCached(this.this_jsvalue)) |cached| {
+                    log("getStdout returning cached promise", .{});
+                    return cached;
+                }
+            }
+            // If not, create and cache the promise
+            const promise_value = this.stdout.toJS(globalThis, this.hasExited());
+            log("getStdout created new promise", .{});
+            // The generated getter should cache this value
+            return promise_value;
+        },
+        .buffer_promise_done, .text_promise_done => {
+            // Data is ready but we need to return a promise
+            // Check if there's already a cached promise
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stdoutGetCached(this.this_jsvalue)) |cached| {
+                    log("getStdout returning cached promise (done variant)", .{});
+                    return cached;
+                }
+            }
+            // Create and return a resolved promise
+            const promise_value = this.stdout.toJS(globalThis, this.hasExited());
+            log("getStdout created resolved promise (done variant)", .{});
+            return promise_value;
+        },
+        else => {},
+    }
+    
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
     // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
@@ -1161,11 +1264,15 @@ pub const PipeReader = struct {
     }
 
     pub fn kind(reader: *const PipeReader, process: *const Subprocess) StdioKind {
-        if (process.stdout == .pipe and process.stdout.pipe == reader) {
+        if ((process.stdout == .pipe and process.stdout.pipe == reader) or
+            (process.stdout == .buffer_promise and process.stdout.buffer_promise == reader) or
+            (process.stdout == .text_promise and process.stdout.text_promise == reader)) {
             return .stdout;
         }
 
-        if (process.stderr == .pipe and process.stderr.pipe == reader) {
+        if ((process.stderr == .pipe and process.stderr.pipe == reader) or
+            (process.stderr == .buffer_promise and process.stderr.buffer_promise == reader) or
+            (process.stderr == .text_promise and process.stderr.text_promise == reader)) {
             return .stderr;
         }
 
@@ -1451,6 +1558,10 @@ const Writable = union(enum) {
                 return Writable{
                     .pipe = pipe,
                 };
+            },
+            .buffer, .text => {
+                // stdin cannot be in buffer or text mode
+                return Writable{ .ignore = {} };
             },
 
             .blob => |blob| {
@@ -2596,11 +2707,27 @@ pub fn spawnMaybeSync(
         }
     }
 
+    if (subprocess.stdout == .buffer_promise or subprocess.stdout == .text_promise) {
+        const pipe = if (subprocess.stdout == .buffer_promise) subprocess.stdout.buffer_promise else subprocess.stdout.text_promise;
+        pipe.start(subprocess, loop).assert();
+        if ((is_sync or !lazy)) {
+            pipe.readAll();
+        }
+    }
+
     if (subprocess.stderr == .pipe) {
         subprocess.stderr.pipe.start(subprocess, loop).assert();
 
         if ((is_sync or !lazy) and subprocess.stderr == .pipe) {
             subprocess.stderr.pipe.readAll();
+        }
+    }
+
+    if (subprocess.stderr == .buffer_promise or subprocess.stderr == .text_promise) {
+        const pipe = if (subprocess.stderr == .buffer_promise) subprocess.stderr.buffer_promise else subprocess.stderr.text_promise;
+        pipe.start(subprocess, loop).assert();
+        if ((is_sync or !lazy)) {
+            pipe.readAll();
         }
     }
 
@@ -2670,6 +2797,16 @@ pub fn spawnMaybeSync(
 
             if (subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.watch();
+            }
+
+            if (subprocess.stderr == .buffer_promise or subprocess.stderr == .text_promise) {
+                const pipe = if (subprocess.stderr == .buffer_promise) subprocess.stderr.buffer_promise else subprocess.stderr.text_promise;
+                pipe.watch();
+            }
+
+            if (subprocess.stdout == .buffer_promise or subprocess.stdout == .text_promise) {
+                const pipe = if (subprocess.stdout == .buffer_promise) subprocess.stdout.buffer_promise else subprocess.stdout.text_promise;
+                pipe.watch();
             }
 
             jsc_vm.tick();

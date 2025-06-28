@@ -17,23 +17,23 @@ pub fn Parse(
         const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
         const isSimpleParameterList = P.isSimpleParameterList;
 
-        pub const parsePrefix = @import("parsePrefix.zig").ParsePrefix(P).parsePrefix;
-        pub const parseSuffix = @import("parseSuffix.zig").ParseSuffix(P).parseSuffix;
-        pub const parseStmt = @import("parseStmt.zig").ParseStmt(P).parseStmt;
-        pub const parseProperty = @import("parseProperty.zig").ParseProperty(P).parseProperty;
-        pub const parseFn = @import("parseFn.zig").ParseFn(P).parseFn;
-        pub const parseFnStmt = @import("parseFn.zig").ParseFn(P).parseFnStmt;
-        pub const parseFnExpr = @import("parseFn.zig").ParseFn(P).parseFnExpr;
-        pub const parseFnBody = @import("parseFn.zig").ParseFn(P).parseFnBody;
-        pub const parseArrowBody = @import("parseFn.zig").ParseFn(P).parseArrowBody;
-        pub const parseJSXElement = @import("parseJSXElement.zig").ParseJSXElement(P).parseJSXElement;
-        pub const parseImportExpr = @import("parseImportExport.zig").ParseImportExport(P).parseImportExpr;
-        pub const parseImportClause = @import("parseImportExport.zig").ParseImportExport(P).parseImportClause;
-        pub const parseExportClause = @import("parseImportExport.zig").ParseImportExport(P).parseExportClause;
-        pub const parseTypeScriptDecorators = @import("parseTypescript.zig").ParseTypescript(P).parseTypeScriptDecorators;
-        pub const parseTypeScriptNamespaceStmt = @import("parseTypescript.zig").ParseTypescript(P).parseTypeScriptNamespaceStmt;
-        pub const parseTypeScriptImportEqualsStmt = @import("parseTypescript.zig").ParseTypescript(P).parseTypeScriptImportEqualsStmt;
-        pub const parseTypescriptEnumStmt = @import("parseTypescript.zig").ParseTypescript(P).parseTypescriptEnumStmt;
+        pub const parsePrefix = @import("parsePrefix.zig").ParsePrefix(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parsePrefix;
+        pub const parseSuffix = @import("parseSuffix.zig").ParseSuffix(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseSuffix;
+        pub const parseStmt = @import("parseStmt.zig").ParseStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseStmt;
+        pub const parseProperty = @import("parseProperty.zig").ParseProperty(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseProperty;
+        pub const parseFn = @import("parseFn.zig").ParseFn(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseFn;
+        pub const parseFnStmt = @import("parseFn.zig").ParseFn(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseFnStmt;
+        pub const parseFnExpr = @import("parseFn.zig").ParseFn(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseFnExpr;
+        pub const parseFnBody = @import("parseFn.zig").ParseFn(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseFnBody;
+        pub const parseArrowBody = @import("parseFn.zig").ParseFn(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseArrowBody;
+        pub const parseJSXElement = @import("parseJSXElement.zig").ParseJSXElement(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseJSXElement;
+        pub const parseImportExpr = @import("parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseImportExpr;
+        pub const parseImportClause = @import("parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseImportClause;
+        pub const parseExportClause = @import("parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseExportClause;
+        pub const parseTypeScriptDecorators = @import("parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptDecorators;
+        pub const parseTypeScriptNamespaceStmt = @import("parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptNamespaceStmt;
+        pub const parseTypeScriptImportEqualsStmt = @import("parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptImportEqualsStmt;
+        pub const parseTypescriptEnumStmt = @import("parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypescriptEnumStmt;
 
         pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
             return try p.parseExprCommon(level, errors, Expr.EFlags.none);

@@ -17,9 +17,9 @@ pub fn Visit(
         const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
         const isSimpleParameterList = P.isSimpleParameterList;
 
-        pub const visitExpr = @import("visitExpr.zig").VisitExpr(P).visitExpr;
-        pub const visitExprInOut = @import("visitExpr.zig").VisitExpr(P).visitExprInOut;
-        pub const visitAndAppendStmt = @import("visitStmt.zig").VisitStmt(P).visitAndAppendStmt;
+        pub const visitExpr = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
+        pub const visitExprInOut = @import("visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
+        pub const visitAndAppendStmt = @import("visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
 
         pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {

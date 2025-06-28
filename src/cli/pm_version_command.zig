@@ -51,9 +51,6 @@ pub const PmVersionCommand = struct {
         var path_buf: bun.PathBuffer = undefined;
         const package_json_path = bun.path.joinAbsStringBufZ(package_json_dir, &path_buf, &.{"package.json"}, .auto);
 
-        @memcpy(path_buf[0..package_json_path.len], package_json_path);
-        path_buf[package_json_path.len] = 0;
-
         const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, ctx.allocator).unwrap() catch |err| {
             Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
             Global.exit(1);
@@ -111,7 +108,7 @@ pub const PmVersionCommand = struct {
         const updated_contents = try updateVersionString(ctx.allocator, package_json_contents, current_version, new_version_str);
         defer ctx.allocator.free(updated_contents);
 
-        bun.sys.File.writeFile(bun.FD.cwd(), path_buf[0..package_json_path.len :0], updated_contents).unwrap() catch |err| {
+        bun.sys.File.writeFile(bun.FD.cwd(), @as(bun.OSPathSliceZ, package_json_path), updated_contents).unwrap() catch |err| {
             Output.errGeneric("Failed to write to package.json: {s}", .{@errorName(err)});
             Global.exit(1);
         };

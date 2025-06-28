@@ -4,7 +4,7 @@ It's about 20x faster than `node-semver`.
 
 ![Benchmark](https://github.com/oven-sh/bun/assets/709451/94746adc-8aba-4baf-a143-3c355f8e0f78)
 
-Currently, this API is two functions.
+Currently, this API provides two functions :
 
 #### `Bun.semver.satisfies(version: string, range: string): boolean`
 

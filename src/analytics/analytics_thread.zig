@@ -1,26 +1,10 @@
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
 
-const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = bun.http;
 
-const URL = @import("../url.zig").URL;
-const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
-const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = bun.http.Headers;
-const Futex = @import("../futex.zig");
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 
 /// Enables analytics. This is used by:
 /// - crash_handler.zig's `report` function to anonymously report crashes
@@ -79,40 +63,64 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    /// Set right before JSC::initialize is called
-    pub var jsc: usize = 0;
+    pub var builtin_modules = std.enums.EnumSet(bun.jsc.ModuleLoader.HardcodedModule).initEmpty();
+
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
     pub var @"Bun.stdout": usize = 0;
+    pub var WebSocket: usize = 0;
     pub var abort_signal: usize = 0;
+    pub var binlinks: usize = 0;
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
-    /// Incremented for each call to `fetch`
     pub var fetch: usize = 0;
-    pub var filesystem_router: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var html_rewriter: usize = 0;
+    /// TCP server from `Bun.listen`
+    pub var tcp_server: usize = 0;
+    /// TLS server from `Bun.listen`
+    pub var tls_server: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    /// Set right before JSC::initialize is called
+    pub var jsc: usize = 0;
+    /// Set when bake.DevServer is initialized
+    pub var dev_server: usize = 0;
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
+    pub var text_lockfile: usize = 0;
     pub var macros: usize = 0;
+    pub var no_avx2: usize = 0;
+    pub var no_avx: usize = 0;
     pub var shell: usize = 0;
     pub var spawn: usize = 0;
+    pub var standalone_executable: usize = 0;
     pub var standalone_shell: usize = 0;
+    /// Set when invoking a todo panic
+    pub var todo_panic: usize = 0;
     pub var transpiler_cache: usize = 0;
-    pub var tsconfig_paths: usize = 0;
     pub var tsconfig: usize = 0;
+    pub var tsconfig_paths: usize = 0;
     pub var virtual_modules: usize = 0;
-    pub var WebSocket: usize = 0;
-    pub var no_avx: usize = 0;
-    pub var no_avx2: usize = 0;
-    pub var binlinks: usize = 0;
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+    pub var workers_spawned: usize = 0;
+    pub var workers_terminated: usize = 0;
+    pub var napi_module_register: usize = 0;
+    pub var process_dlopen: usize = 0;
+    pub var postgres_connections: usize = 0;
+    pub var s3: usize = 0;
+    pub var valkey: usize = 0;
+    pub var csrf_verify: usize = 0;
+    pub var csrf_generate: usize = 0;
+    pub var unsupported_uv_function: usize = 0;
+
+    comptime {
+        @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
+        @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+    }
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -122,14 +130,14 @@ pub const Features = struct {
         pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const fields = comptime brk: {
                 const info: std.builtin.Type = @typeInfo(Features);
-                var buffer: [info.Struct.decls.len][]const u8 = .{""} ** info.Struct.decls.len;
+                var buffer: [info.@"struct".decls.len][]const u8 = .{""} ** info.@"struct".decls.len;
                 var count: usize = 0;
-                for (info.Struct.decls) |decl| {
+                for (info.@"struct".decls) |decl| {
                     var f = &@field(Features, decl.name);
                     _ = &f;
                     const Field = @TypeOf(f);
                     const FieldT: std.builtin.Type = @typeInfo(Field);
-                    if (FieldT.Pointer.child != usize) continue;
+                    if (FieldT.pointer.child != usize) continue;
                     buffer[count] = decl.name;
                     count += 1;
                 }
@@ -200,7 +208,7 @@ pub const packed_features_list = brk: {
 };
 
 pub const PackedFeatures = @Type(.{
-    .Struct = .{
+    .@"struct" = .{
         .layout = .@"packed",
         .backing_integer = u64,
         .fields = brk: {
@@ -210,7 +218,7 @@ pub const PackedFeatures = @Type(.{
                 fields[i] = .{
                     .name = name,
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = 0,
                 };
@@ -220,7 +228,7 @@ pub const PackedFeatures = @Type(.{
                 fields[i] = .{
                     .name = std.fmt.comptimePrint("_{d}", .{i}),
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = 0,
                 };
@@ -251,7 +259,6 @@ pub const EventName = enum(u8) {
 };
 
 var random: std.rand.DefaultPrng = undefined;
-const DotEnv = @import("../env_loader.zig");
 
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 
@@ -328,6 +335,25 @@ pub const GenerateHeader = struct {
             _ = forOS();
 
             return linux_kernel_version;
+        }
+
+        export fn Bun__isEpollPwait2SupportedOnLinuxKernel() i32 {
+            if (comptime !Environment.isLinux) {
+                return 0;
+            }
+
+            // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
+            const min_epoll_pwait2 = Semver.Version{
+                .major = 5,
+                .minor = 11,
+                .patch = 0,
+            };
+
+            return switch (kernelVersion().order(min_epoll_pwait2, "", "")) {
+                .gt => 1,
+                .eq => 1,
+                .lt => 0,
+            };
         }
 
         fn forLinux() Analytics.Platform {

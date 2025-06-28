@@ -27,7 +27,8 @@ The following Web APIs are partially or completely supported.
   [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage)
   [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
   [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
-  [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel), [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
+  [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
+  [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
 
 ---
 
@@ -70,7 +71,8 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Intervals
-- [`setInterval`](https://developer.mozilla.org/en-US/docs/Web/API/setInterval)[`clearInterval`](https://developer.mozilla.org/en-US/docs/Web/API/clearInterval)
+- [`setInterval`](https://developer.mozilla.org/en-US/docs/Web/API/setInterval)
+  [`clearInterval`](https://developer.mozilla.org/en-US/docs/Web/API/clearInterval)
 
 ---
 

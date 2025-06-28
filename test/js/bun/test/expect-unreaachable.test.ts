@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("expect.unreachable()", () => {
   expect(expect.unreachable).toBeTypeOf("function");

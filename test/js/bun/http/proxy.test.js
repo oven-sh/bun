@@ -1,12 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { afterAll, beforeAll, expect, it } from "bun:test";
 import fs from "fs";
+import { bunExe, gc } from "harness";
 import { tmpdir } from "os";
 import path from "path";
-import { bunExe } from "harness";
 
 let proxy, auth_proxy, server;
-
 beforeAll(() => {
   proxy = Bun.serve({
     port: 0,
@@ -73,9 +71,9 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  server.stop();
-  proxy.stop();
-  auth_proxy.stop();
+  server.stop(true);
+  proxy.stop(true);
+  auth_proxy.stop(true);
 });
 
 const test = process.env.PROXY_URL ? it : it.skip;
@@ -180,13 +178,13 @@ it.each([
   const path = `${tmpdir()}/bun-test-http-proxy-env-${Date.now()}.ts`;
   fs.writeFileSync(path, 'await fetch("https://example.com");');
 
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
+  const { stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "run", path],
     env: {
       http_proxy: http_proxy,
       https_proxy: https_proxy,
     },
-    stdout: "pipe",
+    stdout: "inherit",
     stderr: "pipe",
   });
 

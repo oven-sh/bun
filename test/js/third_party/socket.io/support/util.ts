@@ -2,7 +2,7 @@
 import type { Server } from "socket.io";
 import request from "supertest";
 
-import { io as ioc, ManagerOptions, Socket as ClientSocket, SocketOptions } from "socket.io-client";
+import { Socket as ClientSocket, io as ioc, ManagerOptions, SocketOptions } from "socket.io-client";
 
 export function createClient(
   io: Server,

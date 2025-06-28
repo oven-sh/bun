@@ -1,10 +1,17 @@
-import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
+import { Socket as _BunSocket, TCPSocketListener } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { join } from "path";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { randomUUID } from "node:crypto";
+import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import { join } from "node:path";
 
 const socket_domain = tmpdirSync();
+
+it("Stream should be aliased to Socket", () => {
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
+  expect(Socket).toBe(Stream);
+});
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -409,6 +416,7 @@ describe("net.Socket write", () => {
     for (let i = 0; i < 10; i++) {
       await run();
     }
+    server.close();
   });
 });
 
@@ -416,7 +424,7 @@ it("should handle connection error", done => {
   let errored = false;
 
   // @ts-ignore
-  const socket = connect(55555, () => {
+  const socket = connect(55555, "127.0.0.1", () => {
     done(new Error("Should not have connected"));
   });
 
@@ -426,8 +434,11 @@ it("should handle connection error", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ECONNREFUSED 127.0.0.1:55555");
     expect((error as any).code).toBe("ECONNREFUSED");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("127.0.0.1");
+    expect((error as any).port).toBe(55555);
   });
 
   socket.on("connect", () => {
@@ -454,8 +465,10 @@ it("should handle connection error (unix)", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ENOENT loser");
     expect((error as any).code).toBe("ENOENT");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("loser");
   });
 
   socket.on("connect", () => {
@@ -490,3 +503,156 @@ it("socket should keep process alive if unref is not called", async () => {
   });
   expect(await process.exited).toBe(1);
 });
+
+it("should not hang after FIN", async () => {
+  const net = require("node:net");
+  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
+  const server = net.createServer(c => {
+    c.write("Hello client");
+    c.end();
+  });
+  try {
+    server.on("error", reject);
+    server.listen(0, () => {
+      resolveListening(server.address().port);
+    });
+    const process = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-fin-fixture.js")],
+      stderr: "inherit",
+      stdin: "ignore",
+      stdout: "inherit",
+      env: {
+        ...bunEnv,
+        PORT: ((await listening) as number).toString(),
+      },
+    });
+    const timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error("Timeout"));
+    }, 2000);
+    expect(await process.exited).toBe(0);
+    clearTimeout(timeout);
+  } finally {
+    server.close();
+  }
+});
+
+it("should not hang after destroy", async () => {
+  const net = require("node:net");
+  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
+  const server = net.createServer(c => {
+    c.write("Hello client");
+  });
+  try {
+    server.on("error", reject);
+    server.listen(0, () => {
+      resolveListening(server.address().port);
+    });
+    const process = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-destroy-fixture.js")],
+      stderr: "inherit",
+      stdin: "ignore",
+      stdout: "inherit",
+      env: {
+        ...bunEnv,
+        PORT: ((await listening) as number).toString(),
+      },
+    });
+    const timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error("Timeout"));
+    }, 2000);
+    expect(await process.exited).toBe(0);
+    clearTimeout(timeout);
+  } finally {
+    server.close();
+  }
+});
+
+it("should trigger error when aborted even if connection failed #13126", async () => {
+  const signal = AbortSignal.timeout(100);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  socket.on("connect", reject);
+  socket.on("error", resolve);
+
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
+});
+
+it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
+  const signal = AbortSignal.timeout(1);
+  await Bun.sleep(10);
+  const socket = createConnection({
+    host: "example.com",
+    port: 999,
+    signal: signal,
+  });
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  socket.on("connect", reject);
+  socket.on("error", resolve);
+
+  const err = (await promise) as Error;
+  expect(err.name).toBe("TimeoutError");
+});
+
+it.if(isWindows)(
+  "should work with named pipes",
+  async () => {
+    async function test(pipe_name: string) {
+      const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
+      const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
+      let client: ReturnType<typeof connect> | null = null;
+      let server: ReturnType<typeof createServer> | null = null;
+      try {
+        server = createServer(socket => {
+          socket.on("data", data => {
+            const message = data.toString();
+            socket.end("Goodbye World!");
+            resolveMessageReceived(message);
+          });
+        });
+
+        server.listen(pipe_name);
+        client = connect(pipe_name).on("data", data => {
+          const message = data.toString();
+          resolveClientReceived(message);
+        });
+
+        client?.write("Hello World!");
+        const message = await messageReceived;
+        expect(message).toBe("Hello World!");
+        const client_message = await clientReceived;
+        expect(client_message).toBe("Goodbye World!");
+      } finally {
+        client?.destroy();
+        server?.close();
+      }
+    }
+
+    const batch = [];
+    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    for (let i = 0; i < 100; i++) {
+      batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
+      batch.push(test(`//?/pipe/test/${randomUUID()}`));
+      batch.push(test(`//./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe/test/${randomUUID()}`));
+      batch.push(test(`/\\./pipe\\test/${randomUUID()}`));
+      batch.push(test(`\\/.\\pipe/test\\${randomUUID()}`));
+      if (i % 50 === 0) {
+        await Promise.all(batch);
+        batch.length = 0;
+      }
+    }
+    await Promise.all(batch);
+    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+  },
+  20_000,
+);

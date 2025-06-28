@@ -30,7 +30,6 @@
 
 #include "DOMJITCheckDOM.h"
 
-
 namespace WebCore {
 using namespace JSC;
 

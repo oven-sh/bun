@@ -22,7 +22,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
 {
     JSC::JSValue target = callFrame->uncheckedArgument(0);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(target.isInt32(), "In call to $lazy: expected Int32, got %s", target.toWTFString(lexicalGlobalObject).utf8().data());
 #endif
 
@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
         "In call to $lazy, got invalid id '%d'. This is a bug in Bun's JS2Native code generator.",
         id);
     Zig::GlobalObject* ptr = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSValue::encode(JS2NativeGenerated::js2nativePointers[id](ptr));
+    return JSValue::encode(JS2NativeGenerated::callJS2Native(id, ptr));
 }
 
 } // namespace JS2Native

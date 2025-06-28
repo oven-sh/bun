@@ -36,4 +36,4 @@ const arr = new Uint8Array(buffer, 0, 16); // view first 16 bytes
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils) for more useful utilities.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils) for more useful utilities.

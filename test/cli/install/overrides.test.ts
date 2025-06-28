@@ -1,7 +1,8 @@
-import { join } from "path";
+import { write } from "bun";
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+import { join } from "path";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -45,10 +46,10 @@ function versionOf(cwd: string, path: string) {
 
 function ensureLockfileDoesntChangeOnBunI(cwd: string) {
   install(cwd, ["install"]);
-  const lockb1 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb1 = readFileSync(join(cwd, "bun.lock"));
   install(cwd, ["install", "--frozen-lockfile"]);
   install(cwd, ["install", "--force"]);
-  const lockb2 = readFileSync(join(cwd, "bun.lockb"));
+  const lockb2 = readFileSync(join(cwd, "bun.lock"));
 
   expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
 }
@@ -185,4 +186,64 @@ test("overrides reset when removed", async () => {
   expect(versionOf(tmp, "node_modules/bytes/package.json")).not.toBe("1.0.0");
 
   ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("overrides do not apply to workspaces", async () => {
+  const tmp = tmpdirSync();
+  await Promise.all([
+    write(
+      join(tmp, "package.json"),
+      JSON.stringify({ name: "monorepo-root", workspaces: ["packages/*"], overrides: { "pkg1": "file:pkg2" } }),
+    ),
+    write(
+      join(tmp, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.1.1",
+      }),
+    ),
+    write(
+      join(tmp, "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        version: "2.2.2",
+      }),
+    ),
+  ]);
+
+  let { exited, stderr } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: tmp,
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+  expect(await Bun.readableStreamToText(stderr)).toContain("Saved lockfile");
+
+  // --frozen-lockfile works
+  ({ exited, stderr } = Bun.spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: tmp,
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await Bun.readableStreamToText(stderr)).not.toContain("Frozen lockfile");
+
+  // lockfile is not changed
+
+  ({ exited, stderr } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: tmp,
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await Bun.readableStreamToText(stderr)).not.toContain("Saved lockfile");
 });

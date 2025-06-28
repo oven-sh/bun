@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it, describe } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync } from "harness";
-import { mkdir, stat, exists } from "fs/promises";
 import { join } from "path";
 
 let x_dir: string;
@@ -13,13 +13,14 @@ beforeEach(async () => {
 
 describe("should not crash", async () => {
   const args = [
+    [bunExe(), "create"],
     [bunExe(), "create", ""],
     [bunExe(), "create", "--"],
     [bunExe(), "create", "--", ""],
     [bunExe(), "create", "--help"],
   ];
   for (let cmd of args) {
-    it(JSON.stringify(cmd.slice(1).join(" ")), () => {
+    it(JSON.stringify(cmd.slice(1)), () => {
       const { exitCode } = spawnSync({
         cmd,
         cwd: x_dir,
@@ -28,7 +29,7 @@ describe("should not crash", async () => {
         stderr: "inherit",
         env,
       });
-      expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
+      expect(exitCode).toBe(cmd.length === 2 ? 1 : 0);
     });
   }
 });

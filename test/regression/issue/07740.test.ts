@@ -1,6 +1,4 @@
-import { bunEnv } from "harness";
-import { bunExe } from "harness";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 it("duplicate dependencies should warn instead of error", () => {
   const package_json = JSON.stringify({

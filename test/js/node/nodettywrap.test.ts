@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { isatty } from "node:tty";
 
 test("process.binding('tty_wrap')", () => {

@@ -1,5 +1,5 @@
-import { it, expect } from "bun:test";
 import { sleepSync } from "bun";
+import { expect, it } from "bun:test";
 
 it("sleepSync uses milliseconds", async () => {
   const start = performance.now();

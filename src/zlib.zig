@@ -1,13 +1,14 @@
 // @link "deps/zlib/libz.a"
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const mimalloc = @import("./allocators/mimalloc.zig");
 
+pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;
 
-pub extern fn zlibVersion() [*c]const u8;
+pub extern fn zlibVersion() [*:0]const u8;
 
 pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
 pub extern fn compress2(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong, level: c_int) c_int;
@@ -25,21 +26,16 @@ const Byte = u8;
 const uInt = u32;
 const uLong = u64;
 const Bytef = Byte;
-const charf = u8;
-const intf = c_int;
-const uIntf = uInt;
 const uLongf = uLong;
-const voidpc = ?*const anyopaque;
 const voidpf = ?*anyopaque;
-const voidp = ?*anyopaque;
-const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
+const internal = @import("zlib-internal");
 const zStream_struct = @import("zlib-internal").zStream_struct;
-const z_stream = @import("zlib-internal").z_stream;
-const z_streamp = @import("zlib-internal").z_streamp;
+pub const z_stream = @import("zlib-internal").z_stream;
+pub const z_streamp = @import("zlib-internal").z_streamp;
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -64,7 +60,7 @@ const z_streamp = @import("zlib-internal").z_streamp;
 // } z_stream;
 
 const DataType = @import("zlib-internal").DataType;
-const FlushValue = @import("zlib-internal").FlushValue;
+pub const FlushValue = @import("zlib-internal").FlushValue;
 pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
@@ -74,6 +70,24 @@ pub const ReturnCode = @import("zlib-internal").ReturnCode;
 /// inflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough memory, Z_VERSION_ERROR if the zlib library version is incompatible with the version assumed by the caller, or Z_STREAM_ERROR if the parameters are invalid, such as a null pointer to the structure. msg is set to null if there is no error message. inflateInit does not perform any decompression. Actual decompression will be done by inflate(). So next_in, and avail_in, next_out, and avail_out are unused and unchanged. The current implementation of inflateInit() does not process any header information—that is deferred until inflate() is called.
 pub extern fn inflateInit_(strm: z_streamp, version: [*c]const u8, stream_size: c_int) ReturnCode;
 pub extern fn inflateInit2_(strm: z_streamp, window_size: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
+
+/// Initializes the compression dictionary from the given byte sequence without producing any compressed output. This function must be called immediately after deflateInit, deflateInit2 or deflateReset, before any call of deflate. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary). without producing any compressed output. When using the zlib format, this function must be called immediately after deflateInit, deflateInit2 or deflateReset, and before any call of deflate. When doing raw deflate, this function must be called either before any call of deflate, or immediately after the completion of a deflate block, i.e. after all input has been consumed and all output has been delivered when using any of the flush options Z_BLOCK, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, or Z_FULL_FLUSH. The compressor and decompressor must use exactly the same dictionary (see inflateSetDictionary).
+/// The dictionary should consist of strings (byte sequences) that are likely to be encountered later in the data to be compressed, with the most commonly used strings preferably put towards the end of the dictionary. Using a dictionary is most useful when the data to be compressed is short and can be predicted with good accuracy; the data can then be compressed better than with the default empty dictionary.
+///
+/// Depending on the size of the compression data structures selected by deflateInit or deflateInit2, a part of the dictionary may in effect be discarded, for example if the dictionary is larger than the window size in deflateInit or deflateInit2. Thus the strings most likely to be useful should be put at the end of the dictionary, not at the front. In addition, the current implementation of deflate will use at most the window size minus 262 bytes of the provided dictionary.
+///
+/// Upon return of this function, strm->adler is set to the Adler-32 value of the dictionary; the decompressor may later use this value to determine which dictionary has been used by the compressor. (The Adler-32 value applies to the whole dictionary even if only a subset of the dictionary is actually used by the compressor.) If a raw deflate was requested, then the Adler-32 value is not computed and strm->adler is not set.
+///
+/// deflateSetDictionary returns Z_OK if success, or Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent (for example if deflate has already been called for this stream or if not at a block boundary for raw deflate). deflateSetDictionary does not perform any compression: this will be done by deflate().
+pub extern fn deflateSetDictionary(strm: z_streamp, dictionary: ?[*]const u8, length: c_uint) ReturnCode;
+
+/// Dynamically update the compression level and compression strategy. The interpretation of level and strategy is as in deflateInit2(). This can be used to switch between compression and straight copy of the input data, or to switch to a different kind of input data requiring a different strategy. If the compression approach (which is a function of the level) or the strategy is changed, and if there have been any deflate() calls since the state was initialized or reset, then the input available so far is compressed with the old level and strategy using deflate(strm, Z_BLOCK). There are three approaches for the compression levels 0, 1..3, and 4..9 respectively. The new level and strategy will take effect at the next call of deflate().
+/// If a deflate(strm, Z_BLOCK) is performed by deflateParams(), and it does not have enough output space to complete, then the parameter change will not take effect. In this case, deflateParams() can be called again with the same parameters and more output space to try again.
+///
+/// In order to assure a change in the parameters on the first try, the deflate stream should be flushed using deflate() with Z_BLOCK or other flush request until strm.avail_out is not zero, before calling deflateParams(). Then no more input data should be provided before the deflateParams() call. If this is done, the old level and strategy will be applied to the data compressed before deflateParams(), and the new level and strategy will be applied to the data compressed after deflateParams().
+///
+/// deflateParams returns Z_OK on success, Z_STREAM_ERROR if the source stream state was inconsistent or if a parameter was invalid, or Z_BUF_ERROR if there was not enough output space to complete the compression of the available input data before a change in the strategy or approach. Note that in the case of a Z_BUF_ERROR, the parameters are not changed. A return value of Z_BUF_ERROR is not fatal, in which case deflateParams() can be retried with more output space.
+pub extern fn deflateParams(strm: z_streamp, level: c_int, strategy: c_int) ReturnCode;
 
 /// inflate decompresses as much data as possible, and stops when the input buffer becomes empty or the output buffer becomes full. It may introduce some output latency (reading input without producing any output) except when forced to flush.
 /// The detailed semantics are as follows. inflate performs one or both of the following actions:
@@ -98,16 +112,15 @@ pub extern fn inflateInit2_(strm: z_streamp, window_size: c_int, version: [*c]co
 /// inflate() will decompress and check either zlib-wrapped or gzip-wrapped deflate data. The header type is detected automatically, if requested when initializing with inflateInit2(). Any information contained in the gzip header is not retained unless inflateGetHeader() is used. When processing gzip-wrapped deflate data, strm->adler32 is set to the CRC-32 of the output produced so far. The CRC-32 is checked against the gzip trailer, as is the uncompressed length, modulo 2^32.
 ///
 /// inflate() returns Z_OK if some progress has been made (more input processed or more output produced), Z_STREAM_END if the end of the compressed data has been reached and all uncompressed output has been produced, Z_NEED_DICT if a preset dictionary is needed at this point, Z_DATA_ERROR if the input data was corrupted (input stream not conforming to the zlib format or incorrect check value, in which case strm->msg points to a string with a more specific error), Z_STREAM_ERROR if the stream structure was inconsistent (for example next_in or next_out was Z_NULL, or the state was inadvertently written over by the application), Z_MEM_ERROR if there was not enough memory, Z_BUF_ERROR if no progress was possible or if there was not enough room in the output buffer when Z_FINISH is used. Note that Z_BUF_ERROR is not fatal, and inflate() can be called again with more input and more output space to continue decompressing. If Z_DATA_ERROR is returned, the application may then call inflateSync() to look for a good compression block if a partial recovery of the data is to be attempted.
-extern fn inflate(stream: [*c]zStream_struct, flush: FlushValue) ReturnCode;
+pub extern fn inflate(stream: *zStream_struct, flush: FlushValue) ReturnCode;
 
 /// inflateEnd returns Z_OK if success, or Z_STREAM_ERROR if the stream state was inconsistent.
-const InflateEndResult = enum(c_int) {
-    Ok = 0,
-    StreamEnd = 1,
-};
-
 /// All dynamically allocated data structures for this stream are freed. This function discards any unprocessed input and does not flush any pending output.
-extern fn inflateEnd(stream: [*c]zStream_struct) InflateEndResult;
+pub extern fn inflateEnd(stream: *zStream_struct) ReturnCode;
+
+pub extern fn inflateReset(stream: *zStream_struct) ReturnCode;
+
+pub extern fn crc32(crc: uLong, buf: [*]const Bytef, len: uInt) uLong;
 
 pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
     return struct {
@@ -520,7 +533,7 @@ pub const Options = struct {
 ///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
 ///   if there is no error message.  deflateInit does not perform any compression:
 ///   this will be done by deflate().
-extern fn deflateInit_(strm: z_stream, level: c_int, stream_size: c_int) c_int;
+pub extern fn deflateInit_(strm: z_streamp, level: c_int, version: [*:0]const u8, stream_size: c_int) ReturnCode;
 
 ///
 ///    deflate compresses as much data as possible, and stops when the input
@@ -626,7 +639,7 @@ extern fn deflateInit_(strm: z_stream, level: c_int, stream_size: c_int) c_int;
 ///  fatal, and deflate() can be called again with more input and more output
 ///  space to continue compressing.
 ///
-extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
+pub extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 
 ///
 ///     All dynamically allocated data structures for this stream are freed.
@@ -638,7 +651,9 @@ extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 ///   prematurely (some input or output was discarded).  In the error case, msg
 ///   may be set but then points to a static string (which must not be
 ///   deallocated).
-extern fn deflateEnd(stream: z_streamp) ReturnCode;
+pub extern fn deflateEnd(stream: z_streamp) ReturnCode;
+
+pub extern fn deflateReset(stream: z_streamp) ReturnCode;
 
 //   deflateBound() returns an upper bound on the compressed size after
 //  deflation of sourceLen bytes.  It must be called after deflateInit() or
@@ -650,7 +665,7 @@ extern fn deflateEnd(stream: z_streamp) ReturnCode;
 //  to return Z_STREAM_END.  Note that it is possible for the compressed size to
 //  be larger than the value returned by deflateBound() if flush options other
 //  than Z_FINISH or Z_NO_FLUSH are used.
-extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
+pub extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 
 ///
 ///     This is another version of deflateInit with more compression options.  The
@@ -704,7 +719,27 @@ extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 ///   incompatible with the version assumed by the caller (ZLIB_VERSION).  msg is
 ///   set to null if there is no error message.  deflateInit2 does not perform any
 ///   compression: this will be done by deflate().
-extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
+pub extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
+
+/// Initializes the decompression dictionary from the given uncompressed byte sequence. This function must be called immediately after a call of inflate, if that call returned Z_NEED_DICT. The dictionary chosen by the compressor can be determined from the Adler-32 value returned by that call of inflate. The compressor and decompressor must use exactly the same dictionary (see deflateSetDictionary). For raw inflate, this function can be called at any time to set the dictionary. If the provided dictionary is smaller than the window and there is already data in the window, then the provided dictionary will amend what's there. The application must insure that the dictionary that was used for compression is provided.
+///
+/// inflateSetDictionary returns Z_OK if success, Z_STREAM_ERROR if a parameter is invalid (such as NULL dictionary) or the stream state is inconsistent, Z_DATA_ERROR if the given dictionary doesn't match the expected one (incorrect Adler-32 value). inflateSetDictionary does not perform any decompression: this will be done by subsequent calls of inflate().
+pub extern fn inflateSetDictionary(strm: z_streamp, dictionary: ?[*]const u8, length: c_uint) ReturnCode;
+
+pub const NodeMode = enum(u8) {
+    NONE = 0,
+    DEFLATE = 1,
+    INFLATE = 2,
+    GZIP = 3,
+    GUNZIP = 4,
+    DEFLATERAW = 5,
+    INFLATERAW = 6,
+    UNZIP = 7,
+    BROTLI_DECODE = 8,
+    BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
+};
 
 /// Not for streaming!
 pub const ZlibCompressorArrayList = struct {

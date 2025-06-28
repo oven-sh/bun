@@ -1,4 +1,4 @@
-import { openSync, closeSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { open } from "fs/promises";
 
 test('Bun.file("/dev/null") works on windows', async () => {

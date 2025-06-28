@@ -37,7 +37,7 @@ using namespace JSC;
 JSValue JSReadableStreamSource::start(JSGlobalObject& lexicalGlobalObject, CallFrame& callFrame, Ref<DeferredPromise>&& promise)
 {
     VM& vm = lexicalGlobalObject.vm();
-    
+
     // FIXME: Why is it ok to ASSERT the argument count here?
     ASSERT(callFrame.argumentCount());
     JSReadableStreamDefaultController* controller = jsDynamicCast<JSReadableStreamDefaultController*>(callFrame.uncheckedArgument(0));

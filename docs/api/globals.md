@@ -34,7 +34,7 @@ Bun implements the following globals.
 
 - [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 - Node.js
-- See [Node.js > `Buffer`](/docs/runtime/nodejs-apis#node-buffer)
+- See [Node.js > `Buffer`](https://bun.sh/docs/runtime/nodejs-apis#node-buffer)
 
 ---
 
@@ -172,7 +172,7 @@ Bun implements the following globals.
 
 - [`global`](https://nodejs.org/api/globals.html#global)
 - Node.js
-- See [Node.js > `global`](/docs/runtime/nodejs-apis#global).
+- See [Node.js > `global`](https://bun.sh/docs/runtime/nodejs-apis#global).
 
 ---
 
@@ -188,7 +188,7 @@ Bun implements the following globals.
 
 ---
 
-- [`HTMLRewriter`](/docs/api/html-rewriter)
+- [`HTMLRewriter`](https://bun.sh/docs/api/html-rewriter)
 - Cloudflare
 - &nbsp;
 
@@ -220,7 +220,7 @@ Bun implements the following globals.
 
 - [`process`](https://nodejs.org/api/process.html)
 - Node.js
-- See [Node.js > `process`](/docs/runtime/nodejs-apis#node-process)
+- See [Node.js > `process`](https://bun.sh/docs/runtime/nodejs-apis#node-process)
 
 ---
 

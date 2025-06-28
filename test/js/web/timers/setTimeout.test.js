@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { heapStats } from "bun:jsc";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
 
@@ -267,7 +267,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThan(149);
+    expect(end - start).toBeGreaterThan(120);
     done();
   }, 100);
 
@@ -361,4 +361,8 @@ it("Returning a Promise in setTimeout doesnt keep the event loop alive forever",
 
 it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
   expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+});
+
+it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
+  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });

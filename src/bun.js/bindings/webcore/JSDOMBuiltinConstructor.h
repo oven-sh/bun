@@ -38,10 +38,11 @@ public:
     static JSC::JSValue prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 private:
     JSDOMBuiltinConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, construct)
+        : Base(vm, structure, construct, call)
     {
     }
 
@@ -79,7 +80,7 @@ template<typename JSClass> inline JSC::Structure* JSDOMBuiltinConstructor<JSClas
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
-    if (LIKELY(newTarget == this))
+    if (newTarget == this) [[likely]]
         return getDOMStructure<JSClass>(vm, *globalObject());
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -89,12 +90,31 @@ template<typename JSClass> inline JSC::Structure* JSDOMBuiltinConstructor<JSClas
     RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
 }
 
+template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMBuiltinConstructor<JSClass>::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    ASSERT(callFrame);
+    auto* castedThis = JSC::jsCast<JSDOMBuiltinConstructor*>(callFrame->jsCallee());
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->thisValue() != castedThis) {
+        throwTypeError(lexicalGlobalObject, scope, "Constructor called as a function"_s);
+        return {};
+    }
+    auto* structure = castedThis->getDOMStructureForJSObject(lexicalGlobalObject, asObject(callFrame->thisValue()));
+    if (!structure) [[unlikely]]
+        return {};
+
+    auto* jsObject = JSClass::create(structure, castedThis->globalObject());
+    JSC::call(lexicalGlobalObject, castedThis->initializeFunction(), jsObject, JSC::ArgList(callFrame), "This error should never occur: initialize function is guaranteed to be callable."_s);
+    return JSC::JSValue::encode(jsObject);
+}
+
 template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMBuiltinConstructor<JSClass>::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     ASSERT(callFrame);
     auto* castedThis = JSC::jsCast<JSDOMBuiltinConstructor*>(callFrame->jsCallee());
     auto* structure = castedThis->getDOMStructureForJSObject(lexicalGlobalObject, asObject(callFrame->newTarget()));
-    if (UNLIKELY(!structure))
+    if (!structure) [[unlikely]]
         return {};
 
     auto* jsObject = JSClass::create(structure, castedThis->globalObject());

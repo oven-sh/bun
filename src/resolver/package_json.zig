@@ -1,14 +1,11 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
@@ -28,12 +25,11 @@ pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
 const ScriptsMap = bun.StringArrayHashMap(string);
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const Dependency = @import("../install/dependency.zig");
-const String = @import("../install/semver.zig").String;
+const String = Semver.String;
 const Version = Semver.Version;
 const Install = @import("../install/install.zig");
-const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
@@ -56,22 +52,7 @@ pub const PackageJSON = struct {
         production,
     };
 
-    pub usingnamespace bun.New(@This());
-
-    pub fn generateHash(package_json: *PackageJSON) void {
-        var hashy: [1024]u8 = undefined;
-        @memset(&hashy, 0);
-        var used: usize = 0;
-        bun.copy(u8, &hashy, package_json.name);
-        used = package_json.name.len;
-
-        hashy[used] = '@';
-        used += 1;
-        bun.copy(u8, hashy[used..], package_json.version);
-        used += package_json.version.len;
-
-        package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
-    }
+    pub const new = bun.TrivialNew(@This());
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
@@ -103,9 +84,9 @@ pub const PackageJSON = struct {
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
     version: string = "",
-    hash: u32 = 0xDEADBEEF,
 
     scripts: ?*ScriptsMap = null,
+    config: ?*bun.StringArrayHashMap(string) = null,
 
     arch: Architecture = Architecture.all,
     os: OperatingSystem = OperatingSystem.all,
@@ -115,7 +96,7 @@ pub const PackageJSON = struct {
 
     side_effects: SideEffects = .unspecified,
 
-    // Present if the "browser" field is present. This field is intended to be
+    // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
     // functionality. That way you don't have to rewrite the code for those 3rd-
@@ -148,9 +129,9 @@ pub const PackageJSON = struct {
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
-        unspecified: void,
+        unspecified,
         /// "sideEffects": false
-        false: void,
+        false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
         // /// "sideEffects": ["side_effects/*.js"]
@@ -171,10 +152,6 @@ pub const PackageJSON = struct {
             };
         }
     };
-
-    pub inline fn isAppPackage(this: *const PackageJSON) bool {
-        return this.hash == 0xDEADBEEF;
-    }
 
     fn loadDefineDefaults(
         env: *options.Env,
@@ -600,11 +577,9 @@ pub const PackageJSON = struct {
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
         package_id: ?Install.PackageID,
-        comptime include_scripts_: @Type(.EnumLiteral),
-        comptime include_dependencies: @Type(.EnumLiteral),
-        comptime generate_hash_: @Type(.EnumLiteral),
+        comptime include_scripts_: enum { ignore_scripts, include_scripts },
+        comptime include_dependencies: enum { main, local, none },
     ) ?PackageJSON {
-        const generate_hash = generate_hash_ == .generate_hash;
         const include_scripts = include_scripts_ == .include_scripts;
 
         // TODO: remove this extra copy
@@ -625,7 +600,7 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
             }
 
             return null;
@@ -639,9 +614,9 @@ pub const PackageJSON = struct {
         const key_path = fs.Path.init(package_json_path);
 
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
-        json_source.path.pretty = r.prettyPath(json_source.path);
+        json_source.path.pretty = json_source.path.text;
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, &json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -658,7 +633,6 @@ pub const PackageJSON = struct {
         var package_json = PackageJSON{
             .name = "",
             .version = "",
-            .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
             .browser_map = BrowserMap.init(allocator, false),
@@ -678,163 +652,164 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(allocator)) |version_str| {
-                if (version_str.len > 0) {
-                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
+        if (json.asProperty("name")) |name_json| {
+            if (name_json.expr.asString(allocator)) |name_str| {
+                if (name_str.len > 0) {
+                    package_json.name = allocator.dupe(u8, name_str) catch unreachable;
                 }
             }
         }
 
-        // If we're coming from `bun run`
-        // We do not need to parse all this stuff.
-        if (comptime !include_scripts) {
-            if (json.asProperty("type")) |type_json| {
-                if (type_json.expr.asString(allocator)) |type_str| {
-                    switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
-                        .cjs => {
-                            package_json.module_type = .cjs;
-                        },
-                        .esm => {
-                            package_json.module_type = .esm;
-                        },
-                        .unknown => {
-                            r.log.addRangeWarningFmt(
-                                &json_source,
-                                json_source.rangeOfString(type_json.loc),
-                                allocator,
-                                "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
-                                .{type_str},
-                            ) catch unreachable;
-                        },
-                    }
-                } else {
-                    r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
+        if (json.asProperty("type")) |type_json| {
+            if (type_json.expr.asString(allocator)) |type_str| {
+                switch (options.ModuleType.List.get(type_str) orelse options.ModuleType.unknown) {
+                    .cjs => {
+                        package_json.module_type = .cjs;
+                    },
+                    .esm => {
+                        package_json.module_type = .esm;
+                    },
+                    .unknown => {
+                        r.log.addRangeWarningFmt(
+                            &json_source,
+                            json_source.rangeOfString(type_json.loc),
+                            allocator,
+                            "\"{s}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
+                            .{type_str},
+                        ) catch unreachable;
+                    },
                 }
+            } else {
+                r.log.addWarning(&json_source, type_json.loc, "The value for \"type\" must be a string") catch unreachable;
             }
+        }
 
-            // Read the "main" fields
-            for (r.opts.main_fields) |main| {
-                if (json.asProperty(main)) |main_json| {
-                    const expr: js_ast.Expr = main_json.expr;
+        // Read the "main" fields
+        for (r.opts.main_fields) |main| {
+            if (json.asProperty(main)) |main_json| {
+                const expr: js_ast.Expr = main_json.expr;
 
-                    if ((expr.asString(allocator))) |str| {
-                        if (str.len > 0) {
-                            package_json.main_fields.put(main, str) catch unreachable;
-                        }
+                if ((expr.asString(allocator))) |str| {
+                    if (str.len > 0) {
+                        package_json.main_fields.put(main, str) catch unreachable;
                     }
                 }
             }
+        }
 
-            // Read the "browser" property, but only when targeting the browser
-            if (r.opts.target.supportsBrowserField()) {
-                // We both want the ability to have the option of CJS vs. ESM and the
-                // option of having node vs. browser. The way to do this is to use the
-                // object literal form of the "browser" field like this:
-                //
-                //   "main": "dist/index.node.cjs.js",
-                //   "module": "dist/index.node.esm.js",
-                //   "browser": {
-                //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
-                //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
-                //   },
-                //
-                if (json.asProperty("browser")) |browser_prop| {
-                    switch (browser_prop.expr.data) {
-                        .e_object => |obj| {
-                            // The value is an object
+        // Read the "browser" property
+        // Since we cache parsed package.json in-memory, we have to read the "browser" field
+        // including when `target` is not `browser` since the developer may later
+        // run a build for the browser in the same process (like the DevServer).
+        {
+            // We both want the ability to have the option of CJS vs. ESM and the
+            // option of having node vs. browser. The way to do this is to use the
+            // object literal form of the "browser" field like this:
+            //
+            //   "main": "dist/index.node.cjs.js",
+            //   "module": "dist/index.node.esm.js",
+            //   "browser": {
+            //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
+            //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
+            //   },
+            //
+            if (json.asProperty("browser")) |browser_prop| {
+                switch (browser_prop.expr.data) {
+                    .e_object => |obj| {
+                        // The value is an object
 
-                            // Remap all files in the browser field
-                            for (obj.properties.slice()) |*prop| {
-                                const _key_str = (prop.key orelse continue).asString(allocator) orelse continue;
-                                const value: js_ast.Expr = prop.value orelse continue;
+                        // Remap all files in the browser field
+                        for (obj.properties.slice()) |*prop| {
+                            const _key_str = (prop.key orelse continue).asString(allocator) orelse continue;
+                            const value: js_ast.Expr = prop.value orelse continue;
 
-                                // Normalize the path so we can compare against it without getting
-                                // confused by "./". There is no distinction between package paths and
-                                // relative paths for these values because some tools (i.e. Browserify)
-                                // don't make such a distinction.
-                                //
-                                // This leads to weird things like a mapping for "./foo" matching an
-                                // import of "foo", but that's actually not a bug. Or arguably it's a
-                                // bug in Browserify but we have to replicate this bug because packages
-                                // do this in the wild.
-                                const key = allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
+                            // Normalize the path so we can compare against it without getting
+                            // confused by "./". There is no distinction between package paths and
+                            // relative paths for these values because some tools (i.e. Browserify)
+                            // don't make such a distinction.
+                            //
+                            // This leads to weird things like a mapping for "./foo" matching an
+                            // import of "foo", but that's actually not a bug. Or arguably it's a
+                            // bug in Browserify but we have to replicate this bug because packages
+                            // do this in the wild.
+                            const key = allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
-                                switch (value.data) {
-                                    .e_string => |str| {
-                                        // If this is a string, it's a replacement package
-                                        package_json.browser_map.put(key, str.string(allocator) catch unreachable) catch unreachable;
-                                    },
-                                    .e_boolean => |boolean| {
-                                        if (!boolean.value) {
-                                            package_json.browser_map.put(key, "") catch unreachable;
-                                        }
-                                    },
-                                    else => {
+                            switch (value.data) {
+                                .e_string => |str| {
+                                    // If this is a string, it's a replacement package
+                                    package_json.browser_map.put(key, str.string(allocator) catch unreachable) catch unreachable;
+                                },
+                                .e_boolean => |boolean| {
+                                    if (!boolean.value) {
+                                        package_json.browser_map.put(key, "") catch unreachable;
+                                    }
+                                },
+                                else => {
+                                    // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
+                                    if (!json_source.path.isNodeModule())
                                         r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
-                                    },
-                                }
+                                },
                             }
-                        },
-                        else => {},
-                    }
-                }
-            }
-
-            if (json.asProperty("exports")) |exports_prop| {
-                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
-                    package_json.exports = exports_map;
-                }
-            }
-
-            if (json.asProperty("imports")) |imports_prop| {
-                if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
-                    package_json.imports = imports_map;
-                }
-            }
-
-            if (json.get("sideEffects")) |side_effects_field| outer: {
-                if (side_effects_field.asBool()) |boolean| {
-                    if (!boolean)
-                        package_json.side_effects = .{ .false = {} };
-                } else if (side_effects_field.asArray()) |array_| {
-                    var array = array_;
-                    // TODO: switch to only storing hashes
-                    var map = SideEffects.Map{};
-                    map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
-                    while (array.next()) |item| {
-                        if (item.asString(allocator)) |name| {
-                            // TODO: support RegExp using JavaScriptCore <> C++ bindings
-                            if (strings.containsChar(name, '*')) {
-                                // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
-                                // a lot of these seem to be css files which we don't care about for now anyway
-                                // so we can just skip them in here
-                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
-                                    continue;
-
-                                r.log.addWarning(
-                                    &json_source,
-                                    item.loc,
-                                    "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
-                                ) catch unreachable;
-                                map.deinit(allocator);
-
-                                package_json.side_effects = .{ .unspecified = {} };
-                                break :outer;
-                            }
-
-                            var joined = [_]string{
-                                json_source.path.name.dirWithTrailingSlash(),
-                                name,
-                            };
-
-                            _ = map.getOrPutAssumeCapacity(
-                                bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
-                            );
                         }
-                    }
-                    package_json.side_effects = .{ .map = map };
+                    },
+                    else => {},
                 }
+            }
+        }
+
+        if (json.asProperty("exports")) |exports_prop| {
+            if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
+                package_json.exports = exports_map;
+            }
+        }
+
+        if (json.asProperty("imports")) |imports_prop| {
+            if (ExportsMap.parse(bun.default_allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
+                package_json.imports = imports_map;
+            }
+        }
+
+        if (json.get("sideEffects")) |side_effects_field| outer: {
+            if (side_effects_field.asBool()) |boolean| {
+                if (!boolean)
+                    package_json.side_effects = .{ .false = {} };
+            } else if (side_effects_field.asArray()) |array_| {
+                var array = array_;
+                // TODO: switch to only storing hashes
+                var map = SideEffects.Map{};
+                map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
+                while (array.next()) |item| {
+                    if (item.asString(allocator)) |name| {
+                        // TODO: support RegExp using JavaScriptCore <> C++ bindings
+                        if (strings.containsChar(name, '*')) {
+                            // https://sourcegraph.com/search?q=context:global+file:package.json+sideEffects%22:+%5B&patternType=standard&sm=1&groupBy=repo
+                            // a lot of these seem to be css files which we don't care about for now anyway
+                            // so we can just skip them in here
+                            if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                continue;
+
+                            r.log.addWarning(
+                                &json_source,
+                                item.loc,
+                                "wildcard sideEffects are not supported yet, which means this package will be deoptimized",
+                            ) catch unreachable;
+                            map.deinit(allocator);
+
+                            package_json.side_effects = .{ .unspecified = {} };
+                            break :outer;
+                        }
+
+                        var joined = [_]string{
+                            json_source.path.name.dirWithTrailingSlash(),
+                            name,
+                        };
+
+                        _ = map.getOrPutAssumeCapacity(
+                            bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                        );
+                    }
+                }
+                package_json.side_effects = .{ .map = map };
             }
         }
 
@@ -860,9 +835,10 @@ pub const PackageJSON = struct {
                                 .npm,
                                 &sliced,
                                 r.log,
+                                pm,
                             )) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
-                                    if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
+                                    if (pm.lockfile.resolvePackageFromNameAndVersion(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
                                         if (resolved > 0) {
                                             break :update_dependencies;
@@ -874,34 +850,30 @@ pub const PackageJSON = struct {
                     }
                 }
                 if (json.get("cpu")) |os_field| {
-                    var first = true;
                     if (os_field.asArray()) |array_const| {
                         var array = array_const;
+                        var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
-                                if (first) {
-                                    package_json.arch = Architecture.none;
-                                    first = false;
-                                }
-                                package_json.arch = package_json.arch.apply(str);
+                                arch.apply(str);
                             }
                         }
+
+                        package_json.arch = arch.combine();
                     }
                 }
 
                 if (json.get("os")) |os_field| {
-                    var first = true;
                     var tmp = os_field.asArray();
                     if (tmp) |*array| {
+                        var os = OperatingSystem.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
-                                if (first) {
-                                    package_json.os = OperatingSystem.none;
-                                    first = false;
-                                }
-                                package_json.os = package_json.os.apply(str);
+                                os.apply(str);
                             }
                         }
+
+                        package_json.os = os.combine();
                     }
                 }
 
@@ -956,8 +928,8 @@ pub const PackageJSON = struct {
                     package_json.dependencies.map = DependencyMap.HashMap{};
                     package_json.dependencies.source_buf = json_source.contents;
                     const ctx = String.ArrayHashContext{
-                        .a_buf = json_source.contents,
-                        .b_buf = json_source.contents,
+                        .arg_buf = json_source.contents,
+                        .existing_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
                         allocator,
@@ -985,6 +957,7 @@ pub const PackageJSON = struct {
                                         version_str,
                                         &sliced_str,
                                         r.log,
+                                        r.package_manager,
                                     )) |dependency_version| {
                                         const dependency = Dependency{
                                             .name = name,
@@ -1008,42 +981,11 @@ pub const PackageJSON = struct {
 
         // used by `bun run`
         if (include_scripts) {
-            read_scripts: {
-                if (json.asProperty("scripts")) |scripts_prop| {
-                    if (scripts_prop.expr.data == .e_object) {
-                        const scripts_obj = scripts_prop.expr.data.e_object;
-
-                        var count: usize = 0;
-                        for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(allocator) orelse continue;
-                            const value = prop.value.?.asString(allocator) orelse continue;
-
-                            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
-                        }
-
-                        if (count == 0) break :read_scripts;
-                        var scripts = ScriptsMap.init(allocator);
-                        scripts.ensureUnusedCapacity(count) catch break :read_scripts;
-
-                        for (scripts_obj.properties.slice()) |prop| {
-                            const key = prop.key.?.asString(allocator) orelse continue;
-                            const value = prop.value.?.asString(allocator) orelse continue;
-
-                            if (!(key.len > 0 and value.len > 0)) continue;
-
-                            scripts.putAssumeCapacity(key, value);
-                        }
-
-                        package_json.scripts = allocator.create(ScriptsMap) catch unreachable;
-                        package_json.scripts.?.* = scripts;
-                    }
-                }
+            if (json.asPropertyStringMap("scripts", allocator)) |scripts| {
+                package_json.scripts = scripts;
             }
-        }
-
-        if (generate_hash) {
-            if (package_json.name.len > 0 and package_json.version.len > 0) {
-                package_json.generateHash();
+            if (json.asPropertyStringMap("config", allocator)) |config| {
+                package_json.config = config;
             }
         }
 

@@ -317,17 +317,17 @@ test("no assertion failures", () => {
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "} {\n" +
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "}",
   );
@@ -338,9 +338,9 @@ test("no assertion failures", () => {
       "  foo: 'bar',\n" +
       "  foobar: 1,\n" +
       "  func: <ref *1> [Function: func] {\n" +
-      "    [prototype]: { [constructor]: [Circular *1] },\n" +
+      "    [length]: 0,\n" +
       "    [name]: 'func',\n" +
-      "    [length]: 0\n" +
+      "    [prototype]: { [constructor]: [Circular *1] }\n" +
       "  }\n" +
       "} %o",
   );
@@ -430,6 +430,9 @@ test("no assertion failures", () => {
     }
   }
   const customError = new CustomError("bar");
+  customError.stack;
+  delete customError.originalLine;
+  delete customError.originalColumn;
   assert.strictEqual(util.format(customError), customError.stack.replace(/^Error/, "Custom$&")); //! temp bug workaround
   // Doesn't capture stack trace
   function BadCustomError(msg) {

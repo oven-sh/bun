@@ -8,16 +8,15 @@
 #include <openssl/ec.h>
 #include <openssl/ssl.h>
 #include <zlib.h>
+#include <brotli/encode.h>
+#include <brotli/decode.h>
+#include <zstd.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <cerrno>
 #include <csignal>
 #include <limits>
-
-#ifndef OPENSSL_NO_ENGINE
-#include <openssl/engine.h>
-#endif
 
 #if !defined(_MSC_VER)
 #include <unistd.h>
@@ -45,11 +44,11 @@ using namespace JSC;
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto osObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto dlopenObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto errnoObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto signalsObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto priorityObj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    auto osObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto dlopenObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto errnoObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto signalsObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto priorityObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     osObj->putDirect(vm, Identifier::fromString(vm, "UV_UDP_REUSEADDR"_s), jsNumber(4));
     osObj->putDirect(vm, Identifier::fromString(vm, "dlopen"_s), dlopenObj);
     osObj->putDirect(vm, Identifier::fromString(vm, "errno"_s), errnoObj);
@@ -604,7 +603,7 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 26);
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_BEGIN"_s)), jsNumber(66));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_END"_s)), jsNumber(69));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_COMPLETE"_s)), jsNumber(88));
@@ -637,7 +636,7 @@ static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 26);
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_DIR"_s)), jsNumber(1));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_JUNCTION"_s)), jsNumber(2));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_RDONLY"_s)), jsNumber(O_RDONLY));
@@ -767,13 +766,17 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE"_s)), jsNumber(2));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_WASM"_s)), jsNumber(1));
+
     return object;
 }
 
 static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
 #ifdef OPENSSL_VERSION_NUMBER
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "OPENSSL_VERSION_NUMBER"_s)), jsNumber(OPENSSL_VERSION_NUMBER));
 #endif
@@ -782,6 +785,8 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(SSL_OP_ALLOW_NO_DHE_KEX));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s)), jsNumber(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION));
@@ -791,12 +796,18 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_CISCO_ANYCONNECT
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(SSL_OP_CISCO_ANYCONNECT));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(SSL_OP_COOKIE_EXCHANGE));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s)), jsNumber(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS));
@@ -809,6 +820,8 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(SSL_OP_NO_ENCRYPT_THEN_MAC));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_QUERY_MTU"_s)), jsNumber(SSL_OP_NO_QUERY_MTU));
@@ -842,45 +855,42 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_PRIORITIZE_CHACHA
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(SSL_OP_PRIORITIZE_CHACHA));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_ROLLBACK_BUG"_s)), jsNumber(SSL_OP_TLS_ROLLBACK_BUG));
 #endif
-#ifndef OPENSSL_NO_ENGINE
-#ifdef ENGINE_METHOD_RSA
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s)), jsNumber(ENGINE_METHOD_RSA));
-#endif
-#ifdef ENGINE_METHOD_DSA
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s)), jsNumber(ENGINE_METHOD_DSA));
-#endif
-#ifdef ENGINE_METHOD_DH
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s)), jsNumber(ENGINE_METHOD_DH));
-#endif
-#ifdef ENGINE_METHOD_RAND
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s)), jsNumber(ENGINE_METHOD_RAND));
-#endif
-#ifdef ENGINE_METHOD_EC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s)), jsNumber(ENGINE_METHOD_EC));
-#endif
-#ifdef ENGINE_METHOD_CIPHERS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s)), jsNumber(ENGINE_METHOD_CIPHERS));
-#endif
-#ifdef ENGINE_METHOD_DIGESTS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s)), jsNumber(ENGINE_METHOD_DIGESTS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_METHS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s)), jsNumber(ENGINE_METHOD_PKEY_METHS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_ASN1_METHS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s)), jsNumber(ENGINE_METHOD_PKEY_ASN1_METHS));
-#endif
-#ifdef ENGINE_METHOD_ALL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s)), jsNumber(ENGINE_METHOD_ALL));
-#endif
-#ifdef ENGINE_METHOD_NONE
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s)), jsNumber(ENGINE_METHOD_NONE));
-#endif
-#endif // !OPENSSL_NO_ENGINE
+    // OBSOLETE OPTIONS retained for compatibility
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_SESS_ID_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_D5_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_BLOCK_PADDING_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_ECDH_USE"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_DH_USE"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_EPHEMERAL_RSA"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SSLv2"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_1"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_2"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CA_DN_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
+    // BoringSSL does not define engine constants in openssl/engine.h
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s)), jsNumber(0x0001));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s)), jsNumber(0x0002));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s)), jsNumber(0x0004));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s)), jsNumber(0x0008));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s)), jsNumber(0x0040));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s)), jsNumber(0x0080));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s)), jsNumber(0x0200));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s)), jsNumber(0x0400));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s)), jsNumber(0x0800));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s)), jsNumber(0xFFFF));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s)), jsNumber(0x0000));
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_CHECK_P_NOT_SAFE_PRIME"_s)), jsNumber(DH_CHECK_P_NOT_SAFE_PRIME));
 #endif
@@ -956,18 +966,10 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
         jsString(vm, cipherList));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "defaultCipherList"_s)),
         jsString(vm, cipherList));
-#ifdef TLS1_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_VERSION"_s)), jsNumber(TLS1_VERSION));
-#endif
-#ifdef TLS1_1_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_1_VERSION"_s)), jsNumber(TLS1_1_VERSION));
-#endif
-#ifdef TLS1_2_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_2_VERSION"_s)), jsNumber(TLS1_2_VERSION));
-#endif
-#ifdef TLS1_3_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_3_VERSION"_s)), jsNumber(TLS1_3_VERSION));
-#endif
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_COMPRESSED"_s)), jsNumber(POINT_CONVERSION_COMPRESSED));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_UNCOMPRESSED"_s)), jsNumber(POINT_CONVERSION_UNCOMPRESSED));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s)), jsNumber(POINT_CONVERSION_HYBRID));
@@ -977,7 +979,7 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_NO_FLUSH"_s)), jsNumber(Z_NO_FLUSH));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_PARTIAL_FLUSH"_s)), jsNumber(Z_PARTIAL_FLUSH));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_SYNC_FLUSH"_s)), jsNumber(Z_SYNC_FLUSH));
@@ -1015,81 +1017,146 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UNZIP"_s)), jsNumber(7));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODE"_s)), jsNumber(8));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_ENCODE"_s)), jsNumber(9));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_COMPRESS"_s)), jsNumber(10));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_DECOMPRESS"_s)), jsNumber(11));
 
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_WINDOWBITS"_s)), jsNumber(8));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_WINDOWBITS"_s)), jsNumber(15));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_WINDOWBITS"_s)), jsNumber(15));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_CHUNK"_s)), jsNumber(64));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_CHUNK"_s)), jsNumber(INFINITY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_CHUNK"_s)), jsNumber(16384));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_CHUNK"_s)), jsNumber(std::numeric_limits<double>::infinity()));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_CHUNK"_s)), jsNumber(16 * 1024));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_MEMLEVEL"_s)), jsNumber(1));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_MEMLEVEL"_s)), jsNumber(9));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_MEMLEVEL"_s)), jsNumber(8));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_LEVEL"_s)), jsNumber(-1));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_LEVEL"_s)), jsNumber(9));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_LEVEL"_s)), jsNumber(-1));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_LEVEL"_s)), jsNumber(Z_DEFAULT_COMPRESSION));
 
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_PROCESS"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FLUSH"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FINISH"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_EMIT_METADATA"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_MODE"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_GENERIC"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_TEXT"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_FONT"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_MODE"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_QUALITY"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_QUALITY"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_QUALITY"_s)), jsNumber(11));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_QUALITY"_s)), jsNumber(11));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGWIN"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_WINDOW_BITS"_s)), jsNumber(10));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_WINDOW_BITS"_s)), jsNumber(24));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_LARGE_MAX_WINDOW_BITS"_s)), jsNumber(30));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_WINDOW"_s)), jsNumber(22));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGBLOCK"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_INPUT_BLOCK_BITS"_s)), jsNumber(16));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_INPUT_BLOCK_BITS"_s)), jsNumber(24));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING"_s)), jsNumber(4));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_SIZE_HINT"_s)), jsNumber(5));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LARGE_WINDOW"_s)), jsNumber(6));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NPOSTFIX"_s)), jsNumber(7));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NDIRECT"_s)), jsNumber(8));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_ERROR"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_SUCCESS"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_LARGE_WINDOW"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NO_ERROR"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_SUCCESS"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_INPUT"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_OUTPUT"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE"_s)), jsNumber(-1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_RESERVED"_s)), jsNumber(-2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE"_s)), jsNumber(-3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET"_s)), jsNumber(-4));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME"_s)), jsNumber(-5));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE"_s)), jsNumber(-6));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE"_s)), jsNumber(-7));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT"_s)), jsNumber(-8));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1"_s)), jsNumber(-9));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2"_s)), jsNumber(-10));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM"_s)), jsNumber(-11));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY"_s)), jsNumber(-12));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS"_s)), jsNumber(-13));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_1"_s)), jsNumber(-14));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_2"_s)), jsNumber(-15));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DISTANCE"_s)), jsNumber(-16));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET"_s)), jsNumber(-19));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS"_s)), jsNumber(-20));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES"_s)), jsNumber(-21));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS"_s)), jsNumber(-22));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP"_s)), jsNumber(-25));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1"_s)), jsNumber(-26));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2"_s)), jsNumber(-27));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES"_s)), jsNumber(-30));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_UNREACHABLE"_s)), jsNumber(-31));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_PROCESS"_s)), jsNumber(BROTLI_OPERATION_PROCESS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FLUSH"_s)), jsNumber(BROTLI_OPERATION_FLUSH));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FINISH"_s)), jsNumber(BROTLI_OPERATION_FINISH));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_EMIT_METADATA"_s)), jsNumber(BROTLI_OPERATION_EMIT_METADATA));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_MODE"_s)), jsNumber(BROTLI_PARAM_MODE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_GENERIC"_s)), jsNumber(BROTLI_MODE_GENERIC));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_TEXT"_s)), jsNumber(BROTLI_MODE_TEXT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_FONT"_s)), jsNumber(BROTLI_MODE_FONT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_MODE"_s)), jsNumber(BROTLI_DEFAULT_MODE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_QUALITY"_s)), jsNumber(BROTLI_PARAM_QUALITY));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_QUALITY"_s)), jsNumber(BROTLI_MIN_QUALITY));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_QUALITY"_s)), jsNumber(BROTLI_MAX_QUALITY));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_QUALITY"_s)), jsNumber(BROTLI_DEFAULT_QUALITY));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGWIN"_s)), jsNumber(BROTLI_PARAM_LGWIN));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_WINDOW_BITS"_s)), jsNumber(BROTLI_MIN_WINDOW_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_WINDOW_BITS"_s)), jsNumber(BROTLI_MAX_WINDOW_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_LARGE_MAX_WINDOW_BITS"_s)), jsNumber(BROTLI_LARGE_MAX_WINDOW_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_WINDOW"_s)), jsNumber(BROTLI_DEFAULT_WINDOW));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGBLOCK"_s)), jsNumber(BROTLI_PARAM_LGBLOCK));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_INPUT_BLOCK_BITS"_s)), jsNumber(BROTLI_MIN_INPUT_BLOCK_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_INPUT_BLOCK_BITS"_s)), jsNumber(BROTLI_MAX_INPUT_BLOCK_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING"_s)), jsNumber(BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_SIZE_HINT"_s)), jsNumber(BROTLI_PARAM_SIZE_HINT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LARGE_WINDOW"_s)), jsNumber(BROTLI_PARAM_LARGE_WINDOW));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NPOSTFIX"_s)), jsNumber(BROTLI_PARAM_NPOSTFIX));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NDIRECT"_s)), jsNumber(BROTLI_PARAM_NDIRECT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_ERROR"_s)), jsNumber(BROTLI_DECODER_RESULT_ERROR));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_SUCCESS"_s)), jsNumber(BROTLI_DECODER_RESULT_SUCCESS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT"_s)), jsNumber(BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT"_s)), jsNumber(BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION"_s)), jsNumber(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_LARGE_WINDOW"_s)), jsNumber(BROTLI_DECODER_PARAM_LARGE_WINDOW));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NO_ERROR"_s)), jsNumber(BROTLI_DECODER_NO_ERROR));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_SUCCESS"_s)), jsNumber(BROTLI_DECODER_SUCCESS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_INPUT"_s)), jsNumber(BROTLI_DECODER_NEEDS_MORE_INPUT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_OUTPUT"_s)), jsNumber(BROTLI_DECODER_NEEDS_MORE_OUTPUT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_RESERVED"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_RESERVED));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_CL_SPACE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_TRANSFORM));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_DICTIONARY));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_1"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_PADDING_1));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_2"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_PADDING_2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DISTANCE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_DISTANCE));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET"_s)), jsNumber(BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS"_s)), jsNumber(BROTLI_DECODER_ERROR_INVALID_ARGUMENTS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_UNREACHABLE"_s)), jsNumber(BROTLI_DECODER_ERROR_UNREACHABLE));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_continue"_s)), jsNumber(ZSTD_e_continue));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_flush"_s)), jsNumber(ZSTD_e_flush));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_end"_s)), jsNumber(ZSTD_e_end));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_fast"_s)), jsNumber(ZSTD_fast));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_dfast"_s)), jsNumber(ZSTD_dfast));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_greedy"_s)), jsNumber(ZSTD_greedy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy"_s)), jsNumber(ZSTD_lazy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy2"_s)), jsNumber(ZSTD_lazy2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btlazy2"_s)), jsNumber(ZSTD_btlazy2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btopt"_s)), jsNumber(ZSTD_btopt));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra"_s)), jsNumber(ZSTD_btultra));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra2"_s)), jsNumber(ZSTD_btultra2));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_compressionLevel"_s)), jsNumber(ZSTD_c_compressionLevel));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_windowLog"_s)), jsNumber(ZSTD_c_windowLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_hashLog"_s)), jsNumber(ZSTD_c_hashLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_chainLog"_s)), jsNumber(ZSTD_c_chainLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_searchLog"_s)), jsNumber(ZSTD_c_searchLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_minMatch"_s)), jsNumber(ZSTD_c_minMatch));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_targetLength"_s)), jsNumber(ZSTD_c_targetLength));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_strategy"_s)), jsNumber(ZSTD_c_strategy));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_enableLongDistanceMatching"_s)), jsNumber(ZSTD_c_enableLongDistanceMatching));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashLog"_s)), jsNumber(ZSTD_c_ldmHashLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmMinMatch"_s)), jsNumber(ZSTD_c_ldmMinMatch));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmBucketSizeLog"_s)), jsNumber(ZSTD_c_ldmBucketSizeLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashRateLog"_s)), jsNumber(ZSTD_c_ldmHashRateLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_contentSizeFlag"_s)), jsNumber(ZSTD_c_contentSizeFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_checksumFlag"_s)), jsNumber(ZSTD_c_checksumFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_dictIDFlag"_s)), jsNumber(ZSTD_c_dictIDFlag));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_nbWorkers"_s)), jsNumber(ZSTD_c_nbWorkers));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_jobSize"_s)), jsNumber(ZSTD_c_jobSize));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_overlapLog"_s)), jsNumber(ZSTD_c_overlapLog));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_d_windowLogMax"_s)), jsNumber(ZSTD_d_windowLogMax));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_CLEVEL_DEFAULT"_s)), jsNumber(ZSTD_CLEVEL_DEFAULT));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_no_error"_s)), jsNumber(ZSTD_error_no_error));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_GENERIC"_s)), jsNumber(ZSTD_error_GENERIC));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_prefix_unknown"_s)), jsNumber(ZSTD_error_prefix_unknown));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_version_unsupported"_s)), jsNumber(ZSTD_error_version_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_unsupported"_s)), jsNumber(ZSTD_error_frameParameter_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_windowTooLarge"_s)), jsNumber(ZSTD_error_frameParameter_windowTooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_corruption_detected"_s)), jsNumber(ZSTD_error_corruption_detected));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_checksum_wrong"_s)), jsNumber(ZSTD_error_checksum_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_literals_headerWrong"_s)), jsNumber(ZSTD_error_literals_headerWrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_corrupted"_s)), jsNumber(ZSTD_error_dictionary_corrupted));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_wrong"_s)), jsNumber(ZSTD_error_dictionary_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionaryCreation_failed"_s)), jsNumber(ZSTD_error_dictionaryCreation_failed));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_unsupported"_s)), jsNumber(ZSTD_error_parameter_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_combination_unsupported"_s)), jsNumber(ZSTD_error_parameter_combination_unsupported));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_outOfBound"_s)), jsNumber(ZSTD_error_parameter_outOfBound));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_tableLog_tooLarge"_s)), jsNumber(ZSTD_error_tableLog_tooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooLarge"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooLarge));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooSmall"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stabilityCondition_notRespected"_s)), jsNumber(ZSTD_error_stabilityCondition_notRespected));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stage_wrong"_s)), jsNumber(ZSTD_error_stage_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_init_missing"_s)), jsNumber(ZSTD_error_init_missing));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_memory_allocation"_s)), jsNumber(ZSTD_error_memory_allocation));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_workSpace_tooSmall"_s)), jsNumber(ZSTD_error_workSpace_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstSize_tooSmall"_s)), jsNumber(ZSTD_error_dstSize_tooSmall));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_srcSize_wrong"_s)), jsNumber(ZSTD_error_srcSize_wrong));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstBuffer_null"_s)), jsNumber(ZSTD_error_dstBuffer_null));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_destFull"_s)), jsNumber(ZSTD_error_noForwardProgress_destFull));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_inputEmpty"_s)), jsNumber(ZSTD_error_noForwardProgress_inputEmpty));
 
     return object;
 }

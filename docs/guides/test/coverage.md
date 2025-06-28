@@ -41,4 +41,4 @@ coverage = true # always enable coverage
 
 ---
 
-Refer to [Docs > Test runner > Coverage](/docs/test/coverage) for complete documentation on code coverage reporting in Bun.
+Refer to [Docs > Test runner > Coverage](https://bun.sh/docs/test/coverage) for complete documentation on code coverage reporting in Bun.

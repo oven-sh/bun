@@ -6,12 +6,12 @@ namespace Bun {
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto arg0 = callFrame->argument(0);
@@ -21,7 +21,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
         return JSC::JSValue::encode(jsNull());
     if (!arg0.isString()) {
         throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto domain = arg0.toWTFString(globalObject);
@@ -59,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     constexpr static size_t hostnameBufferLength = 2048;
 
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    UChar hostnameBuffer[hostnameBufferLength];
+    char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
     const auto span = domain.span16();
@@ -69,17 +69,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     throwTypeError(globalObject, scope, "domainToASCII failed"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto arg0 = callFrame->argument(0);
@@ -89,7 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
         return JSC::JSValue::encode(jsNull());
     if (!arg0.isString()) {
         throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto domain = arg0.toWTFString(globalObject);
@@ -128,7 +128,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     constexpr static int hostnameBufferLength = 2048;
 
     auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
-    UChar hostnameBuffer[hostnameBufferLength];
+    char16_t hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
 
@@ -140,22 +140,29 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     throwTypeError(globalObject, scope, "domainToUnicode failed"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(binding);
+    auto domainToAsciiFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public);
+    ASSERT(domainToAsciiFunction);
+    auto domainToUnicodeFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public);
+    ASSERT(domainToUnicodeFunction);
     binding->putByIndexInline(
         globalObject,
         (unsigned)0,
-        JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public),
+        domainToAsciiFunction,
         false);
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
-        JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public),
+        domainToUnicodeFunction,
         false);
     return binding;
 }

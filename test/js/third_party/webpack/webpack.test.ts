@@ -1,7 +1,7 @@
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
 import { existsSync, promises } from "fs";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
-import { test, expect } from "bun:test";
 
 // This test is failing because of stdout/stderr being empty by the time the main thread exits
 // it's a legit bug in Bun.

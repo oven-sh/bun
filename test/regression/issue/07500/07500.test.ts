@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -10,7 +10,8 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
     .split(" ")
     .join("\n");
   await Bun.write(filename, text);
-  const cat = isWindows ? "Get-Content" : "cat";
+  // -Raw on windows makes it output a single string instead of an array of lines
+  const cat = isWindows ? "Get-Content -Raw" : "cat";
   const bunCommand = `${bunExe()} ${join(import.meta.dir, "07500.fixture.js")}`;
   const shellCommand = `${cat} ${filename} | ${bunCommand}`.replace(/\\/g, "\\\\");
 
@@ -27,7 +28,7 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
     throw new Error(proc.stdout.toString());
   }
 
-  const output = proc.stdout.toString().replaceAll("\r\n", "\n");
+  const output = proc.stdout.toString();
   if (output !== text) {
     expect(output).toHaveLength(text.length);
     throw new Error("Output didn't match!\n");

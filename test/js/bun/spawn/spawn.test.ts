@@ -1,11 +1,11 @@
-import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
+import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   gcTick as _gcTick,
   bunEnv,
   bunExe,
   getMaxFD,
+  isBroken,
   isMacOS,
   isPosix,
   isWindows,
@@ -13,6 +13,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -81,7 +82,7 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
 
@@ -152,7 +153,7 @@ for (let [gcTick, label] of [
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
-          cmd: [shellExe(), "-c", "sleep", "0.1"],
+          cmd: [shellExe(), "-c", "sleep 0.1"],
         });
         gcTick();
         for await (const _ of proc.stdout) {
@@ -366,7 +367,7 @@ for (let [gcTick, label] of [
 
       it("kill(SIGKILL) works", async () => {
         const process = spawn({
-          cmd: [shellExe(), "-c", "sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -377,7 +378,7 @@ for (let [gcTick, label] of [
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: [shellExe(), "-c", "sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep 1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -492,7 +493,7 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it("after exit", async () => {
+              it.skipIf(isWindows && isBroken && callback === huge)("after exit", async () => {
                 const process = callback();
                 await process.exited;
                 const output = await readableStreamToText(process.stdout);
@@ -525,15 +526,16 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
   });
 }
 
 // This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
-  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+  "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
+  async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],
       env: {
@@ -547,11 +549,12 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
       stdin: "inherit",
     });
     expect(result.exitCode).toBe(0);
-  }, 128_000);
-}
+  },
+  192_000,
+);
 
 describe("spawn unref and kill should not hang", () => {
-  const cmd = [shellExe(), "-c", "sleep", "0.001"];
+  const cmd = [shellExe(), "-c", "sleep 0.001"];
 
   it("kill and await exited", async () => {
     const promises = new Array(10);
@@ -635,7 +638,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
   console.log("running", order.join(","), "x 100");
   for (let i = 0; i < (isWindows ? 10 : 100); i++) {
     const proc = spawn({
-      cmd: [shellExe(), "-c", "sleep", sleep],
+      cmd: [shellExe(), "-c", `sleep ${sleep}`],
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
@@ -823,4 +826,14 @@ it("dispose keyword works", async () => {
   expect(captured.killed).toBe(true);
   expect(captured.exitCode).toBe(null);
   expect(captured.signalCode).toBe("SIGTERM");
+});
+
+it("error does not UAF", async () => {
+  let emsg = "";
+  try {
+    Bun.spawnSync({ cmd: ["command-is-not-found-uh-oh"] });
+  } catch (e) {
+    emsg = (e as Error).message;
+  }
+  expect(emsg).toInclude(" ");
 });

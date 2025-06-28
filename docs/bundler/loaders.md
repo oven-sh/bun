@@ -1,8 +1,14 @@
 The Bun bundler implements a set of default loaders out of the box. As a rule of thumb, the bundler and the runtime both support the same set of file types out of the box.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.txt` `.wasm` `.node`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.txt` `.wasm` `.node` `.html`
 
-Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](/docs/bundler/plugins) that extend Bun with custom loaders.
+Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.sh/docs/bundler/plugins) that extend Bun with custom loaders.
+
+You can explicitly specify which loader to use using the 'loader' import attribute.
+
+```ts
+import my_toml from "./my_file" with { loader: "toml" };
+```
 
 ## Built-in loaders
 
@@ -152,19 +158,6 @@ export default "Hello, world!";
 
 {% /codetabs %}
 
-### `wasm`
-
-**WebAssembly loader**. Default for `.wasm`.
-
-In the runtime, WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
-
-```ts
-import wasm from "./module.wasm";
-console.log(wasm); // => WebAssembly.Module
-```
-
-In the bundler, `.wasm` files are handled using the [`file`](#file) loader.
-
 ### `napi`
 
 **Native addon loader**. Default for `.node`.
@@ -182,7 +175,7 @@ In the bundler, `.node` files are handled using the [`file`](#file) loader.
 
 **SQLite loader**. `with { "type": "sqlite" }` import attribute
 
-In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/docs/api/sqlite).
+In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](https://bun.sh/docs/api/sqlite).
 
 ```ts
 import db from "./my.db" with { type: "sqlite" };
@@ -199,15 +192,95 @@ You can change this behavior with the `"embed"` attribute:
 import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
-When using a [standalone executable](/docs/bundler/executables), the database is embedded into the single-file executable.
+When using a [standalone executable](https://bun.sh/docs/bundler/executables), the database is embedded into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
+
+### `html`
+
+The html loader processes HTML files and bundles any referenced assets. It will:
+
+- Bundle and hash referenced JavaScript files (`<script src="...">`)
+- Bundle and hash referenced CSS files (`<link rel="stylesheet" href="...">`)
+- Hash referenced images (`<img src="...">`)
+- Preserve external URLs (by default, anything starting with `http://` or `https://`)
+
+For example, given this HTML file:
+
+{% codetabs %}
+
+```html#src/index.html
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image.jpg" alt="Local image">
+    <img src="https://example.com/image.jpg" alt="External image">
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>
+```
+
+{% /codetabs %}
+
+It will output a new HTML file with the bundled assets:
+
+{% codetabs %}
+
+```html#dist/output.html
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image-HASHED.jpg" alt="Local image">
+    <img src="https://example.com/image.jpg" alt="External image">
+    <script type="module" src="./output-ALSO-HASHED.js"></script>
+  </body>
+</html>
+```
+
+{% /codetabs %}
+
+Under the hood, it uses [`lol-html`](https://github.com/cloudflare/lol-html) to extract script and link tags as entrypoints, and other assets as external.
+
+Currently, the list of selectors is:
+
+- `audio[src]`
+- `iframe[src]`
+- `img[src]`
+- `img[srcset]`
+- `link:not([rel~='stylesheet']):not([rel~='modulepreload']):not([rel~='manifest']):not([rel~='icon']):not([rel~='apple-touch-icon'])[href]`
+- `link[as='font'][href], link[type^='font/'][href]`
+- `link[as='image'][href]`
+- `link[as='style'][href]`
+- `link[as='video'][href], link[as='audio'][href]`
+- `link[as='worker'][href]`
+- `link[rel='icon'][href], link[rel='apple-touch-icon'][href]`
+- `link[rel='manifest'][href]`
+- `link[rel='stylesheet'][href]`
+- `script[src]`
+- `source[src]`
+- `source[srcset]`
+- `video[poster]`
+- `video[src]`
+
+{% callout %}
+
+**HTML Loader Behavior in Different Contexts**
+
+The `html` loader behaves differently depending on how it's used:
+
+1. **Static Build:** When you run `bun build ./index.html`, Bun produces a static site with all assets bundled and hashed.
+
+2. **Runtime:** When you run `bun run server.ts` (where `server.ts` imports an HTML file), Bun bundles assets on-the-fly during development, enabling features like hot module replacement.
+
+3. **Full-stack Build:** When you run `bun build --target=bun server.ts` (where `server.ts` imports an HTML file), the import resolves to a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets in production.
+
+{% /callout %}
 
 ### `sh` loader
 
 **Bun Shell loader**. Default for `.sh` files
 
-This loader is used to parse [Bun Shell](/docs/runtime/shell) scripts. It's only supported when starting Bun itself, so it's not available in the bundler or in the runtime.
+This loader is used to parse [Bun Shell](https://bun.sh/docs/runtime/shell) scripts. It's only supported when starting Bun itself, so it's not available in the bundler or in the runtime.
 
 ```sh
 $ bun run ./script.sh
@@ -263,7 +336,7 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 {% /table %}
 
 {% callout %}
-The location and file name of the copied file is determined by the value of [`naming.asset`](/docs/bundler#naming).
+The location and file name of the copied file is determined by the value of [`naming.asset`](https://bun.sh/docs/bundler#naming).
 {% /callout %}
 This loader is copied into the `outdir` as-is. The name of the copied file is determined using the value of `naming.asset`.
 

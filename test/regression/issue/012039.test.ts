@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Previously, this would crash due to the invalid property name
 test("#12039 ZWJ", async () => {

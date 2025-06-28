@@ -37,8 +37,8 @@ public:
     }
 
 protected:
-    JSDOMBuiltinConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct)
-        : Base(vm, structure, functionForConstruct)
+    JSDOMBuiltinConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct, JSC::NativeFunction functionForCall = nullptr)
+        : Base(vm, structure, functionForConstruct, functionForCall)
     {
     }
 

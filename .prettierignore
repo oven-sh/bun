@@ -1,7 +1,10 @@
 src/bun.js/WebKit
-src/deps
+vendor
 test/snapshots
 test/js/deno
 test/node.js
 src/react-refresh.js
 *.min.js
+test/snippets
+test/js/node/test
+bun.lock

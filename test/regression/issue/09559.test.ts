@@ -1,7 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { readdirSync } from "node:fs";
+import { bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("bun build --target bun should support non-ascii source", async () => {
@@ -13,7 +12,6 @@ test("bun build --target bun should support non-ascii source", async () => {
     console.log(JSON.stringify({\u{6211}}));
   `,
   };
-  const filenames = Object.keys(files);
   const source = tempDirWithFiles("source", files);
 
   $.throws(true);

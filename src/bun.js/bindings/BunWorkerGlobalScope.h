@@ -16,7 +16,7 @@ class MessagePortChannelProvider;
 class MessagePortChannelProviderImpl;
 
 class WorkerGlobalScope : public RefCounted<WorkerGlobalScope>, public EventTargetWithInlineData {
-    WTF_MAKE_ISO_ALLOCATED(WorkerGlobalScope);
+    WTF_MAKE_TZONE_ALLOCATED(WorkerGlobalScope);
 
     uint32_t m_messageEventCount { 0 };
 
@@ -49,8 +49,5 @@ public:
     MessagePortChannelProvider& messagePortChannelProvider();
 
     ScriptExecutionContext* m_context;
-
-private:
-    MessagePortChannelProviderImpl* m_messagePortChannelProvider;
 };
 }

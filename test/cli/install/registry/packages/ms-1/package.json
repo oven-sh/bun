@@ -1,0 +1,38 @@
+{
+	"name": "ms-1",
+	"versions": {
+		"2.1.3": {
+			"name": "ms-1",
+			"version": "2.1.3",
+			"_id": "ms-1@2.1.3",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-FIsPf9tsd67+QNd/FEx9iRLMrolyU63pjh5U1Ny2OklxhY9bzbq3szkPjebiNltG52ydKGv6c5TaVrV10T2TRA==",
+				"shasum": "d180fbfb72939b2f53e401dd5329cd264288fb33",
+				"tarball": "http://localhost:4873/ms-1/-/ms-1-2.1.3.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-02-01T02:35:38.436Z",
+		"created": "2025-02-01T02:35:38.436Z",
+		"2.1.3": "2025-02-01T02:35:38.436Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.1.3"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"ms-1-2.1.3.tgz": {
+			"shasum": "d180fbfb72939b2f53e401dd5329cd264288fb33",
+			"version": "2.1.3"
+		}
+	},
+	"_rev": "",
+	"_id": "ms-1",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,10 +1,10 @@
-import { test, describe, expect, mock } from "bun:test";
 import { sleep } from "bun";
+import { describe, expect, mock, test } from "bun:test";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
+import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {
@@ -565,7 +565,7 @@ describe("EventEmitter.on", () => {
             2,
             {
               code: "ABORT_ERR",
-              message: "The operation was aborted",
+              message: "The operation was aborted.",
             },
           ],
         ]);
@@ -853,6 +853,23 @@ test("getMaxListeners", () => {
   expect(emitter.getMaxListeners()).toBe(20);
 });
 
+test("setMaxListeners", () => {
+  const emitter = new EventEmitter();
+  expect(emitter.getMaxListeners()).toBe(10);
+  emitter.setMaxListeners(20);
+  expect(emitter.getMaxListeners()).toBe(20);
+
+  setMaxListeners(30, emitter);
+  expect(emitter.getMaxListeners()).toBe(30);
+
+  const eventTarget = new EventTarget();
+  setMaxListeners(1, eventTarget);
+  expect(getMaxListeners(eventTarget)).toBe(1);
+
+  setMaxListeners(99, eventTarget);
+  expect(getMaxListeners(eventTarget)).toBe(99);
+});
+
 test("getEventListeners", () => {
   const target = new EventTarget();
   expect(getEventListeners(target, "hey").length).toBe(0);
@@ -860,4 +877,8 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(1);
   target.dispatchEvent(new Event("hey"));
   expect(getEventListeners(target, "hey").length).toBe(0);
+});
+
+test("EventEmitter.name", () => {
+  expect(EventEmitter.name).toBe("EventEmitter");
 });

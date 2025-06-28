@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
+import { afterEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, forceGuardMalloc } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -84,6 +84,73 @@ afterEach(() => {
   for (const client of clients) {
     client.kill();
   }
+});
+
+// publish on a closed websocket
+// connecct 2 websocket clients to one server
+// wait for one to call close callback
+// publish to the other client
+// the other client should not receive the message
+// the server should not crash
+// https://github.com/oven-sh/bun/issues/4443
+it("websocket/4443", async () => {
+  var serverSockets: ServerWebSocket<unknown>[] = [];
+  var onFirstConnected = Promise.withResolvers();
+  var onSecondMessageEchoedBack = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    websocket: {
+      open(ws) {
+        serverSockets.push(ws);
+        ws.subscribe("test");
+        if (serverSockets.length === 2) {
+          onFirstConnected.resolve();
+        }
+      },
+      message(ws, message) {
+        onSecondMessageEchoedBack.resolve();
+        ws.close();
+      },
+      close(ws) {
+        ws.publish("test", "close");
+      },
+    },
+    fetch(req, server) {
+      server.upgrade(req);
+      return new Response();
+    },
+  });
+
+  var clients = [];
+  var closedCount = 0;
+  var onClientsOpened = Promise.withResolvers();
+
+  var { promise, resolve } = Promise.withResolvers();
+  for (let i = 0; i < 2; i++) {
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    ws.binaryType = "arraybuffer";
+
+    const clientSocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    clientSocket.binaryType = "arraybuffer";
+    clientSocket.onopen = () => {
+      clients.push(clientSocket);
+      if (clients.length === 2) {
+        onClientsOpened.resolve();
+      }
+    };
+    clientSocket.onmessage = e => {
+      clientSocket.send(e.data);
+    };
+    clientSocket.onclose = () => {
+      if (closedCount++ === 1) {
+        resolve();
+      }
+    };
+  }
+
+  await Promise.all([onFirstConnected.promise, onClientsOpened.promise]);
+  clients[0].close();
+  await promise;
 });
 
 describe("Server", () => {
@@ -492,9 +559,11 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, (done, connect) => ({
+      test(label, (done, connect, options) => ({
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           if (ws.data.id === 0) {
             await connect();
           } else if (ws.data.id === 1) {
@@ -525,10 +594,12 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, done => ({
+      test(label, (done, _, options) => ({
         publishToSelf: true,
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           send(ws);
         },
         drain(ws) {
@@ -593,6 +664,15 @@ describe("ServerWebSocket", () => {
     let count = 0;
     return {
       open(ws) {
+        expect(() => ws.cork()).toThrow();
+        expect(() => ws.cork(undefined)).toThrow();
+        expect(() => ws.cork({})).toThrow();
+        expect(() =>
+          ws.cork(() => {
+            throw new Error("boom");
+          }),
+        ).toThrow();
+
         setTimeout(() => {
           ws.cork(() => {
             ws.send("1");
@@ -681,7 +761,11 @@ describe("ServerWebSocket", () => {
 
 function test(
   label: string,
-  fn: (done: (err?: unknown) => void, connect: () => Promise<void>) => Partial<WebSocketHandler<{ id: number }>>,
+  fn: (
+    done: (err?: unknown) => void,
+    connect: () => Promise<void>,
+    options: { server: Server },
+  ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
   it(
@@ -696,6 +780,9 @@ function test(
         }
       };
       let id = 0;
+      var options = {
+        server: undefined,
+      };
       const server: Server = serve({
         port: 0,
         fetch(request, server) {
@@ -708,9 +795,11 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server)),
+          ...fn(done, () => connect(server), options as any),
         },
       });
+      options.server = server;
+      expect(server.subscriberCount("empty topic")).toBe(0);
       await connect(server);
     },
     { timeout: timeout ?? 1000 },
@@ -736,3 +825,13 @@ async function connect(server: Server): Promise<void> {
   clients.push(client);
   await promise;
 }
+
+it("you can call server.subscriberCount() when its not a websocket server", async () => {
+  using server = serve({
+    port: 0,
+    fetch(request, server) {
+      return new Response();
+    },
+  });
+  expect(server.subscriberCount("boop")).toBe(0);
+});

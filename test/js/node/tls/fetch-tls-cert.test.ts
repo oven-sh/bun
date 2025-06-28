@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { join } from "path";
 import { readFileSync } from "fs";
+import { join } from "path";
 
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),

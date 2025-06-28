@@ -1,12 +1,12 @@
 // This test ensures that when a TLS connection is established, the server
 // selects the most recently added SecureContext that matches the servername.
 
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
-import tls from "node:tls";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { AddressInfo } from "node:net";
+import { join } from "node:path";
+import tls from "node:tls";
 
 function loadPEM(filename: string) {
   return readFileSync(join(import.meta.dir, "fixtures", filename)).toString();

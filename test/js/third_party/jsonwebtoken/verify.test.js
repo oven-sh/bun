@@ -1,9 +1,9 @@
-import jwt from "jsonwebtoken";
-import { expect, describe, it, afterEach } from "bun:test";
-import jws from "jws";
-import sinon from "sinon";
+import { afterEach, describe, expect, it } from "bun:test";
 import fs from "fs";
+import jwt from "jsonwebtoken";
+import jws from "jws";
 import path from "path";
+import sinon from "sinon";
 
 describe("verify", function () {
   const pub = fs.readFileSync(path.join(__dirname, "pub.pem"));

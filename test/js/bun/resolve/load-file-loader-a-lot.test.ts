@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test } from "bun:test";
 
 test("a file: loader file can be imported 10,000 times", async () => {
   const prev = Bun.unsafe.gcAggressionLevel();

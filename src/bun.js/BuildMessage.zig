@@ -1,44 +1,38 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
-const Fs = bun.fs;
 const string = bun.string;
 const Resolver = @import("../resolver//resolver.zig").Resolver;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 
 pub const BuildMessage = struct {
+    pub const js = JSC.Codegen.JSBuildMessage;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     msg: logger.Msg,
     // resolve_result: Resolver.Result,
     allocator: std.mem.Allocator,
     logged: bool = false,
 
-    pub usingnamespace JSC.Codegen.JSBuildMessage;
-
-    pub fn constructor(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*BuildMessage {
-        globalThis.throw("BuildMessage is not constructable", .{});
-        return null;
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*BuildMessage {
+        return globalThis.throw("BuildMessage is not constructable", .{});
     }
 
-    pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const notes: []const logger.Data = this.msg.notes orelse &[_]logger.Data{};
-        const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
+    pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        const notes = this.msg.notes;
+        const array = try JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
-            const cloned = note.clone(bun.default_allocator) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
+            const cloned = try note.clone(bun.default_allocator);
             array.putIndex(
                 globalThis,
                 @intCast(i),
-                BuildMessage.create(globalThis, bun.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),
+                try BuildMessage.create(globalThis, bun.default_allocator, logger.Msg{ .data = cloned, .kind = .note }),
             );
         }
 
@@ -47,8 +41,7 @@ pub const BuildMessage = struct {
 
     pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();
@@ -66,10 +59,10 @@ pub const BuildMessage = struct {
         allocator: std.mem.Allocator,
         msg: logger.Msg,
         // resolve_result: *const Resolver.Result,
-    ) JSC.JSValue {
-        var build_error = allocator.create(BuildMessage) catch unreachable;
+    ) bun.OOM!JSC.JSValue {
+        var build_error = try allocator.create(BuildMessage);
         build_error.* = BuildMessage{
-            .msg = msg.clone(allocator) catch unreachable,
+            .msg = try msg.clone(allocator),
             // .resolve_result = resolve_result.*,
             .allocator = allocator,
         };
@@ -81,7 +74,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -89,15 +82,15 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSC.JSValue {
-        const args_ = callframe.arguments(1);
+    ) bun.JSError!JSC.JSValue {
+        const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
             if (!args[0].isString()) {
                 return JSC.JSValue.jsNull();
             }
 
-            const str = args[0].getZigString(globalThis);
+            const str = try args[0].getZigString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -110,9 +103,9 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("BuildMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));

@@ -23,4 +23,4 @@ for await (const chunk of stream) {
 
 ---
 
-Refer to the [Streams](/docs/api/streams) documentation for more information on working with streams in Bun.
+Refer to the [Streams](https://bun.sh/docs/api/streams) documentation for more information on working with streams in Bun.

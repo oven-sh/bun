@@ -1,9 +1,9 @@
+import { expect, test } from "bun:test";
 import perf from "perf_hooks";
-import { test, expect } from "bun:test";
 
 test("stubs", () => {
+  expect(!!perf.monitorEventLoopDelay).toBeFalse();
   expect(() => perf.monitorEventLoopDelay()).toThrow();
-  expect(() => perf.createHistogram()).toThrow();
   expect(perf.performance.nodeTiming).toBeObject();
 
   expect(perf.performance.now()).toBeNumber();
@@ -21,4 +21,5 @@ test("doesn't throw", () => {
   expect(() => performance.getEntriesByType("measure")).not.toThrow();
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
+  expect(() => performance.markResourceTiming()).not.toThrow();
 });

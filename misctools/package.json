@@ -5,7 +5,10 @@
   "license": "MIT",
   "devDependencies": {
     "@unicode/unicode-13.0.0": "^1.2.1",
-    "@unicode/unicode-3.0.0": "^1.2.1",
+    "@unicode/unicode-3.0.0": "^1.6.5",
     "semver": "^7.3.7"
+  },
+  "dependencies": {
+    "@unicode/unicode-15.1.0": "^1.6.5"
   }
 }

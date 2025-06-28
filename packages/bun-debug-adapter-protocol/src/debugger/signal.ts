@@ -1,8 +1,8 @@
+import { EventEmitter } from "node:events";
+import type { Server, Socket } from "node:net";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Server } from "node:net";
-import { createServer } from "node:net";
-import { EventEmitter } from "node:events";
 
 const isDebug = process.env.NODE_ENV === "development";
 
@@ -11,6 +11,8 @@ export type UnixSignalEventMap = {
   "Signal.error": [Error];
   "Signal.received": [string];
   "Signal.closed": [];
+  "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
 };
 
 /**
@@ -21,7 +23,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
   #server: Server;
   #ready: Promise<void>;
 
-  constructor(path?: string | URL) {
+  constructor(path?: string | URL | undefined) {
     super();
     this.#path = path ? parseUnixPath(path) : randomUnixPath();
     this.#server = createServer();
@@ -29,8 +31,12 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
     this.#server.on("error", error => this.emit("Signal.error", error));
     this.#server.on("close", () => this.emit("Signal.closed"));
     this.#server.on("connection", socket => {
+      this.emit("Signal.Socket.connect", socket);
       socket.on("data", data => {
         this.emit("Signal.received", data.toString());
+      });
+      socket.on("close", () => {
+        this.emit("Signal.Socket.closed", socket);
       });
     });
     this.#ready = new Promise((resolve, reject) => {
@@ -45,7 +51,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
       console.log(event, ...args);
     }
 
-    return super.emit(event, ...args);
+    return super.emit(event, ...(args as never));
   }
 
   /**
@@ -83,5 +89,85 @@ function parseUnixPath(path: string | URL): string {
     return pathname;
   } catch {
     throw new Error(`Invalid UNIX path: ${path}`);
+  }
+}
+
+export type TCPSocketSignalEventMap = {
+  "Signal.listening": [];
+  "Signal.error": [Error];
+  "Signal.closed": [];
+  "Signal.received": [string];
+  "Signal.Socket.closed": [socket: Socket];
+  "Signal.Socket.connect": [socket: Socket];
+};
+
+export class TCPSocketSignal extends EventEmitter {
+  #port: number;
+  #server: ReturnType<typeof createServer>;
+  #ready: Promise<void>;
+
+  constructor(port: number) {
+    super();
+    this.#port = port;
+
+    this.#server = createServer((socket: Socket) => {
+      this.emit("Signal.Socket.connect", socket);
+
+      socket.on("data", data => {
+        this.emit("Signal.received", data.toString());
+      });
+
+      socket.on("error", error => {
+        this.emit("Signal.error", error);
+      });
+
+      socket.on("close", () => {
+        this.emit("Signal.Socket.closed", socket);
+      });
+    });
+
+    this.#server.on("close", () => {
+      this.emit("Signal.closed");
+    });
+
+    this.#ready = new Promise((resolve, reject) => {
+      this.#server.listen(this.#port, () => {
+        this.emit("Signal.listening");
+        resolve();
+      });
+      this.#server.on("error", reject);
+    });
+  }
+
+  emit<E extends keyof TCPSocketSignalEventMap>(event: E, ...args: TCPSocketSignalEventMap[E]): boolean {
+    if (isDebug) {
+      console.log(event, ...args);
+    }
+    return super.emit(event, ...args);
+  }
+
+  /**
+   * The TCP port.
+   */
+  get port(): number {
+    return this.#port;
+  }
+
+  get url(): string {
+    return `tcp://127.0.0.1:${this.#port}`;
+  }
+
+  /**
+   * Resolves when the server is listening or rejects if an error occurs.
+   */
+  get ready(): Promise<void> {
+    return this.#ready;
+  }
+
+  /**
+   * Closes the server.
+   */
+  close(): void {
+    this.#server.close();
   }
 }

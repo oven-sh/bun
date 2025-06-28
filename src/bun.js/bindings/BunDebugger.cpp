@@ -7,10 +7,14 @@
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
 #include "ScriptExecutionContext.h"
-#include "Strong.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+
+#include "InspectorLifecycleAgent.h"
+#include "InspectorTestReporterAgent.h"
+#include "InspectorBunFrontendDevServerAgent.h"
+#include "InspectorHTTPServerAgent.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
@@ -23,7 +27,7 @@ class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
-static WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
+static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -41,10 +45,15 @@ public:
     {
     }
 
+    static Ref<BunJSGlobalObjectDebuggable> create(JSGlobalObject& globalObject)
+    {
+        return adoptRef(*new BunJSGlobalObjectDebuggable(globalObject));
+    }
+
     void pauseWaitingForAutomaticInspection() override
     {
     }
-    void unpauseForInitializedInspector() override
+    void unpauseForResolvedAutomaticInspection() override
     {
         if (waitingForConnection) {
             waitingForConnection = false;
@@ -95,6 +104,22 @@ public:
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
+
+        static bool hasConnected = false;
+
+        if (!hasConnected) {
+            hasConnected = true;
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
+        }
+
+        this->hasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -154,7 +179,12 @@ public:
                 return;
 
             connection->status = ConnectionStatus::Disconnected;
-            connection->inspector().disconnect(*connection);
+
+            // Do not call .disconnect() if we never actually connected.
+            if (connection->hasEverConnected) {
+                connection->inspector().disconnect(*connection);
+            }
+
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
                 Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
@@ -280,7 +310,7 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction->m_cell.get());
+        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
         auto& vm = debuggerGlobalObject->vm();
@@ -304,6 +334,22 @@ public:
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+            });
+        }
+    }
+
+    void sendMessageToInspectorFromDebuggerThread(Vector<WTF::String, 12>&& inputMessages)
+    {
+        {
+            Locker<Lock> locker(jsThreadMessagesLock);
+            jsThreadMessages.appendVector(inputMessages);
+        }
+
+        if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
+            this->jsWaitForMessageFromInspectorLock.unlock();
+        } else if (this->jsThreadMessageScheduledCount++ == 0) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -334,12 +380,14 @@ public:
 
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
-    Bun::StrongRef* jsBunDebuggerOnMessageFunction = nullptr;
+    JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
     WTF::Lock jsWaitForMessageFromInspectorLock;
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
+
+    bool hasEverConnected = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
@@ -349,7 +397,7 @@ class JSBunInspectorConnection final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSBunInspectorConnection* create(JSC::VM& vm, JSC::Structure* structure, BunInspectorConnection* connection)
     {
@@ -399,12 +447,22 @@ private:
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
-    auto message = callFrame->uncheckedArgument(0).toWTFString(globalObject).isolatedCopy();
+    auto message = callFrame->uncheckedArgument(0);
 
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
-    jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message);
+    if (message.isString()) {
+        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message.toWTFString(globalObject).isolatedCopy());
+    } else if (message.isCell()) {
+        auto* array = jsCast<JSArray*>(message.asCell());
+        Vector<WTF::String, 12> messages;
+        JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue value) -> bool {
+            messages.append(value.toWTFString(globalObject).isolatedCopy());
+            return true;
+        });
+        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(WTFMove(messages));
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -434,7 +492,7 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (inspectorConnections == nullptr) {
-            inspectorConnections = new WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
+            inspectorConnections = new WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
         }
 
         inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<BunInspectorConnection*, 8>());
@@ -449,7 +507,8 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 
     auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-    globalObject->m_inspectorDebuggable = makeUnique<BunJSGlobalObjectDebuggable>(*globalObject);
+    globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
+    globalObject->m_inspectorDebuggable->init();
 
     globalObject->setInspectable(true);
 
@@ -496,7 +555,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto connection = BunInspectorConnection::create(
         *targetContext,
         targetContext->jsGlobalObject(), shouldRef);
@@ -507,18 +566,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         connections.append(connection);
         inspectorConnections->set(targetContext->identifier(), connections);
     }
-    connection->jsBunDebuggerOnMessageFunction = new Bun::StrongRef(vm, onMessageFn);
+    connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
     connection->connect();
 
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString)
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
+
     JSC::VM& vm = debuggerGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
+    scope.assertNoException();
     JSFunction* debuggerDefaultFn = jsCast<JSFunction*>(defaultValue.asCell());
 
     MarkedArgumentBuffer arguments;
@@ -528,8 +590,11 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
+    arguments.append(jsBoolean(isAutomatic));
+    arguments.append(jsBoolean(isUrlServer));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
+    scope.assertNoException();
 }
 
 enum class AsyncCallTypeUint8 : uint8_t {

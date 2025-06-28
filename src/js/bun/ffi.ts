@@ -55,6 +55,9 @@ const FFIType = {
   function: 17,
   callback: 17,
   fn: 17,
+  napi_env: 18,
+  napi_value: 19,
+  buffer: 20,
 };
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
@@ -118,7 +121,7 @@ class CString extends String {
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
           ? BunCString(ptr, byteOffset || 0, byteLength)
-          : BunCString(ptr)
+          : BunCString(ptr, byteOffset || 0)
         : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;
@@ -153,7 +156,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(18);
+const ffiWrappers = new Array(21);
 
 var char = "val|0";
 ffiWrappers.fill(char);
@@ -255,15 +258,15 @@ ffiWrappers[FFIType.uint16_t] = `{
 ffiWrappers[FFIType.double] = `{
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
+      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
     }
   }
 
   if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
+    return 0 + (0.00 - 0.00);
   }
 
-  return val + 0.00000000000001 - 0.00000000000001;
+  return val + (0.00 - 0.00);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
@@ -279,6 +282,13 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   enumerable: false,
   configurable: true,
 });
+Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
+  value: function isTypedArrayView(val) {
+    return $isTypedArrayView(val);
+  },
+  enumerable: false,
+  configurable: true,
+});
 
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
   if (typeof val === "number") return val;
@@ -286,7 +296,11 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return null;
   }
 
-  if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {
+  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    return val;
+  }
+
+  if (val instanceof ArrayBuffer) {
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
@@ -295,6 +309,14 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
   }
 
   throw new TypeError(\`Unable to convert \${ val } to a pointer\`);
+}`;
+
+ffiWrappers[FFIType.buffer] = `{
+  if (!__GlobalBunFFIPtrArrayBufferViewFn(val)) {
+    throw new TypeError("Expected a TypedArray");
+  }
+
+  return val;
 }`;
 
 ffiWrappers[FFIType.function] = `{
@@ -399,7 +421,9 @@ const native = {
   },
 };
 
-function dlopen(path, options) {
+const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+
+function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
     // https://github.com/oven-sh/bun/issues/10304
@@ -409,15 +433,69 @@ function dlopen(path, options) {
       // This is mostly for import.meta.resolve()
       // https://github.com/oven-sh/bun/issues/10304
       path = Bun.fileURLToPath(path as URL);
-    } else if (path instanceof Blob) {
+    } else if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
       path = path.name;
     }
   }
 
+  return path;
+}
+
+function dlopen(path, options) {
+  path = normalizePath(path);
+
   const result = nativeDLOpen(path, options);
-  if (result instanceof Error) throw result;
+  if (Error.isError(result)) throw result;
+
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+      result.symbols[key] = FFIBuilder(
+        options[key].args ?? [],
+        options[key].returns ?? FFIType.void,
+        symbol,
+        // in stacktraces:
+        // instead of
+        //    "/usr/lib/sqlite3.so"
+        // we want
+        //    "sqlite3_get_version() - sqlit3.so"
+        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+      );
+    } else {
+      // consistentcy
+      result.symbols[key].native = result.symbols[key];
+    }
+  }
+
+  // Bind it because it's a breaking change to not do so
+  // Previously, it didn't need to be bound
+  result.close = result.close.bind(result);
+
+  return result;
+}
+
+function cc(options) {
+  if (!$isObject(options)) {
+    throw new Error("Expected options to be an object");
+  }
+
+  let path = options?.source;
+  if (!path) {
+    throw new Error("Expected source to be a string to a file path");
+  }
+  if ($isJSArray(path)) {
+    for (let i = 0; i < path.length; i++) {
+      path[i] = normalizePath(path[i]);
+    }
+  } else {
+    path = normalizePath(path);
+  }
+  options.source = path;
+
+  const result = ccFn(options);
+  if (Error.isError(result)) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
@@ -503,4 +581,5 @@ export default {
   toArrayBuffer,
   toBuffer,
   viewSource,
+  cc,
 };

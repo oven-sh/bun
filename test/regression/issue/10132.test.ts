@@ -1,8 +1,8 @@
-import { test, expect, beforeAll } from "bun:test";
-import { join } from "path";
 import { $ } from "bun";
-import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { beforeAll, expect, test } from "bun:test";
 import { chmodSync } from "fs";
+import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 let dir = "";
 beforeAll(() => {
@@ -50,14 +50,14 @@ echo My name is bun-hello2
   }
 });
 
-test("issue #10132, bun run sets cwd", async () => {
+test("bun run sets cwd for script, matching npm", async () => {
   $.cwd(dir);
   const currentPwd = (await $`${bunExe()} run get-pwd`.text()).trim();
   expect(currentPwd).toBe(dir);
 
   const currentPwd2 = join(currentPwd, "subdir", "one");
   $.cwd(currentPwd2);
-  expect((await $`${bunExe()} run get-pwd`.text()).trim()).toBe(currentPwd2);
+  expect((await $`${bunExe()} run get-pwd`.text()).trim()).toBe(dir);
 
   $.cwd(process.cwd());
 });

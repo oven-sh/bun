@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 
 it("shadow realm works", () => {
   const red = new ShadowRealm();

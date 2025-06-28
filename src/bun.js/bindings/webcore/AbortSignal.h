@@ -58,7 +58,7 @@ enum class CommonAbortReason : uint8_t {
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
+    WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
@@ -102,6 +102,14 @@ public:
     const AbortSignalSet& sourceSignals() const { return m_sourceSignals; }
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
+    // https://github.com/oven-sh/bun/issues/4517
+    void incrementPendingActivityCount() { ++pendingActivityCount; }
+    void decrementPendingActivityCount() { --pendingActivityCount; }
+    bool hasPendingActivity() const { return pendingActivityCount > 0; }
+    bool isDependent() const { return m_isDependent; }
+
+    size_t memoryCost() const;
+
 private:
     enum class Aborted : bool {
         No,
@@ -111,7 +119,6 @@ private:
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
 
-    bool isDependent() const { return m_isDependent; }
     void markAsDependent() { m_isDependent = true; }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
@@ -130,11 +137,12 @@ private:
     JSValueInWrappedObject m_reason;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
+    std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
-    bool m_aborted { false };
-    bool m_hasActiveTimeoutTimer { false };
-    bool m_hasAbortEventListener { false };
-    bool m_isDependent { false };
+    bool m_aborted : 1 = false;
+    bool m_hasActiveTimeoutTimer : 1 = false;
+    bool m_hasAbortEventListener : 1 = false;
+    bool m_isDependent : 1 = false;
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

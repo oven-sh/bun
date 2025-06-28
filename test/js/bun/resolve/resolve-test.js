@@ -1,5 +1,4 @@
-import { it, expect } from "bun:test";
-import { ospath } from "harness";
+import { expect, it } from "bun:test";
 import { join, resolve } from "path";
 
 function resolveFrom(from) {
@@ -114,6 +113,14 @@ it("Bun.resolve", async () => {
 // synchronous
 it("Bun.resolveSync", () => {
   expect(Bun.resolveSync("./resolve-test.js", import.meta.dir)).toBe(import.meta.path);
+});
+
+it("dynamic import of file: URL with 4 slashes doesn't trigger ASAN", async () => {
+  expect(await import(`file://` + `//a.js`).catch(e => e)).toBeInstanceOf(BuildMessage);
+});
+
+it("require of file: URL with 4 slashes doesn't trigger ASAN", async () => {
+  expect(() => import.meta.require(`file://` + `//a.js`)).toBeInstanceOf(BuildMessage);
 });
 
 it("self-referencing imports works", async () => {

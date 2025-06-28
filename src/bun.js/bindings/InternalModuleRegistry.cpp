@@ -6,12 +6,13 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
-
+#include <JavaScriptCore/Debugger.h>
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
+#include "NativeModuleImpl.h"
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
@@ -32,45 +33,73 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName, urlString) \
-    auto throwScope = DECLARE_THROW_SCOPE(vm);                                              \
-    auto&& origin = SourceOrigin(WTF::URL(urlString));                                      \
-    SourceCode source = JSC::makeSource(SOURCE, origin,                                     \
-        JSC::SourceTaintedOrigin::Untainted,                                                \
-        moduleName);                                                                        \
-    maybeAddCodeCoverage(vm, source);                                                       \
-    JSFunction* func                                                                        \
-        = JSFunction::create(                                                               \
-            vm, globalObject,                                                               \
-            createBuiltinExecutable(                                                        \
-                vm, source,                                                                 \
-                Identifier(),                                                               \
-                ImplementationVisibility::Public,                                           \
-                ConstructorKind::None,                                                      \
-                ConstructAbility::CannotConstruct,                                          \
-                InlineAttribute::None)                                                      \
-                ->link(vm, nullptr, source),                                                \
-            static_cast<JSC::JSGlobalObject*>(globalObject));                               \
-                                                                                            \
-    RETURN_IF_EXCEPTION(throwScope, {});                                                    \
-                                                                                            \
-    JSC::MarkedArgumentBuffer argList;                                                      \
-    JSValue result = JSC::profiledCall(                                                     \
-        globalObject,                                                                       \
-        ProfilingReason::Other,                                                             \
-        func,                                                                               \
-        JSC::getCallData(func),                                                             \
-        globalObject, JSC::MarkedArgumentBuffer());                                         \
-                                                                                            \
-    RETURN_IF_EXCEPTION(throwScope, {});                                                    \
-    ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
-    return result;
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto&& origin = SourceOrigin(WTF::URL(urlString));
+    SourceCode source = JSC::makeSource(SOURCE, origin,
+        JSC::SourceTaintedOrigin::Untainted,
+        moduleName);
+    maybeAddCodeCoverage(vm, source);
+    JSFunction* func
+        = JSFunction::create(
+            vm, globalObject,
+            createBuiltinExecutable(
+                vm, source,
+                Identifier::fromString(vm, moduleName),
+                ImplementationVisibility::Public,
+                ConstructorKind::None,
+                ConstructAbility::CannotConstruct,
+                InlineAttribute::None)
+                ->link(vm, nullptr, source),
+            static_cast<JSC::JSGlobalObject*>(globalObject));
 
-#if BUN_DEBUG
-#define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
-    if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
-        printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
+        globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
+
+    JSC::MarkedArgumentBuffer argList;
+    JSValue result = JSC::profiledCall(
+        globalObject,
+        ProfilingReason::Other,
+        func,
+        JSC::getCallData(func),
+        globalObject, JSC::MarkedArgumentBuffer());
+
+    RETURN_IF_EXCEPTION(throwScope, {});
+    ASSERT(
+        result && result.isCell() && jsDynamicCast<JSObject*>(result),
+        "Expected \"%s\" to export a JSObject. Bun is going to crash.",
+        moduleName.utf8().span().data());
+    return result;
+}
+
+ALWAYS_INLINE JSC::JSValue generateNativeModule(
+    JSC::JSGlobalObject* globalObject,
+    JSC::VM& vm,
+    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+{
+    Vector<JSC::Identifier, 4> propertyNames;
+    JSC::MarkedArgumentBuffer arguments;
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    generator(
+        globalObject,
+        JSC::Identifier::EmptyIdentifier, // Our generators do not do anything with the key
+        propertyNames,
+        arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
+    // assigns the `default` export first.
+    ASSERT_WITH_MESSAGE(
+        propertyNames.at(0) == vm.propertyNames->defaultKeyword,
+        "The native module must export a default value first.");
+    JSValue defaultValue = arguments.at(0);
+    ASSERT(defaultValue);
+    return defaultValue;
+}
+
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
@@ -81,11 +110,11 @@ JSValue initializeInternalModuleFromDisk(
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);
+        return generateModule(globalObject, vm, string, moduleName, urlString);
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().data(), file.utf8().data());
+            moduleName.utf8().span().data(), file.utf8().span().data());
         CRASH();
     }
 }
@@ -93,11 +122,8 @@ JSValue initializeInternalModuleFromDisk(
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
-#define ASSERT_INTERNAL_MODULE(result, moduleName) \
-    {                                              \
-    }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId, urlString)
+    return generateModule(globalObject, vm, SOURCE, moduleId, urlString)
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
@@ -141,9 +167,12 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
     }
     return value;
@@ -155,7 +184,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 // so we want to write it to the internal field when loaded.
 JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
@@ -168,5 +197,4 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 
 } // namespace Bun
 
-#undef INTERNAL_MODULE_REGISTRY_GENERATE_
 #undef INTERNAL_MODULE_REGISTRY_GENERATE

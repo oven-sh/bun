@@ -1,4 +1,4 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
@@ -185,6 +185,7 @@ describe("TextDecoder", () => {
       Int8Array,
       Int16Array,
       Int32Array,
+      Float16Array,
       Float32Array,
       Float64Array,
       DataView,
@@ -226,6 +227,31 @@ describe("TextDecoder", () => {
     gcTrace(true);
     expect(decoder.decode(bytes.subarray(0, amount.written))).toBe(text);
     gcTrace(true);
+  });
+
+  it("coerces the fatal flag to boolean : 1 -> true", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: 1 });
+    expect(decoder.fatal).toBe(true);
+  });
+
+  it("coerces the fatal flag to boolean : 0 -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: 0 });
+    expect(decoder.fatal).toBe(false);
+  });
+
+  it("coerces the fatal flag to boolean : string -> true", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: "string" });
+    expect(decoder.fatal).toBe(true);
+  });
+
+  it("coerces the fatal flag to boolean : null -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: null });
+    expect(decoder.fatal).toBe(false);
+  });
+
+  it("coerces the fatal flag to boolean : empty-string -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: "" });
+    expect(decoder.fatal).toBe(false);
   });
 
   it("should respect fatal when encountering invalid data", () => {
@@ -271,6 +297,12 @@ describe("TextDecoder", () => {
   it("should support undifined", () => {
     const decoder = new TextDecoder(undefined);
     expect(decoder.encoding).toBe("utf-8");
+  });
+
+  it("should support undefined options", () => {
+    expect(() => {
+      const decoder = new TextDecoder("utf-8", undefined);
+    }).not.toThrow();
   });
 });
 
@@ -536,4 +568,14 @@ describe("stream", () => {
       });
     });
   }
+});
+
+it("should not crash with a getter that throws", () => {
+  expect(() =>
+    new TextDecoder().decode(new Uint8Array(32), {
+      get stream() {
+        throw new Error("stream get error");
+      },
+    }),
+  ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
 });

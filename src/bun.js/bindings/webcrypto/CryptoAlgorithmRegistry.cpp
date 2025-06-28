@@ -69,7 +69,7 @@ String CryptoAlgorithmRegistry::name(CryptoAlgorithmIdentifier identifier)
 
     auto contructor = m_constructors.find(static_cast<unsigned>(identifier));
     if (contructor == m_constructors.end())
-        return { };
+        return {};
 
     return contructor->value.first.isolatedCopy();
 }
@@ -96,7 +96,6 @@ void CryptoAlgorithmRegistry::registerAlgorithm(const String& name, CryptoAlgori
     m_identifiers.add(name, identifier);
     m_constructors.add(static_cast<unsigned>(identifier), std::make_pair(name, constructor));
 }
-
 
 } // namespace WebCore
 

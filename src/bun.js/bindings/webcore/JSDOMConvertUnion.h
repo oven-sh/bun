@@ -165,7 +165,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         // 1. If the union type includes a nullable type and V is null or undefined, then return the IDL value null.

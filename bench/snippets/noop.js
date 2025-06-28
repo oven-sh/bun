@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var noop = globalThis[Symbol.for("Bun.lazy")]("noop");
 var { function: noopFn, callback } = noop;

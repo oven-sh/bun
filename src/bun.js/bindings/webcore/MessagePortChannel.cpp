@@ -39,14 +39,13 @@ Ref<MessagePortChannel> MessagePortChannel::create(MessagePortChannelRegistry& r
 }
 
 MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
-    : m_registry(registry)
+    : m_ports { port1, port2 }
+    , m_registry(registry)
 {
     relaxAdoptionRequirement();
 
-    m_ports[0] = port1;
     m_processes[0] = port1.processIdentifier;
     m_entangledToProcessProtectors[0] = this;
-    m_ports[1] = port2;
     m_processes[1] = port2.processIdentifier;
     m_entangledToProcessProtectors[1] = this;
 
@@ -171,7 +170,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
         return std::nullopt;
 
     auto message = m_pendingMessages[i].first();
-    m_pendingMessages[i].remove(0);
+    m_pendingMessages[i].removeAt(0);
     return WTFMove(message);
 }
 

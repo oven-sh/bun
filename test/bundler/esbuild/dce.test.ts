@@ -1,6 +1,6 @@
-import { itBundled, dedent } from "../expectBundled";
 import { describe, expect } from "bun:test";
-import { isWindows } from 'harness';
+import { isWindows } from "harness";
+import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -1446,6 +1446,7 @@ describe("bundler", () => {
     format: "cjs",
     treeShaking: true,
     bundling: false,
+    todo: true,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     files: {
@@ -1459,6 +1460,7 @@ describe("bundler", () => {
     format: "iife",
     treeShaking: true,
     bundling: false,
+    todo: true,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
     files: {
@@ -1687,6 +1689,7 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    todo: true,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {

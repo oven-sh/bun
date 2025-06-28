@@ -1,38 +1,26 @@
-const bun = @import("root").bun;
-const Async = bun.Async;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
-const uws = bun.uws;
-const JSC = bun.JSC;
-const WaiterThread = JSC.Subprocess.WaiterThread;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
+const std = @import("std");
+const JSC = bun.JSC;
+const OOM = bun.OOM;
+
 const clap = bun.clap;
 const CLI = bun.CLI;
 const Arguments = CLI.Arguments;
 const Command = CLI.Command;
 
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
@@ -45,15 +33,9 @@ const NpmArgs = struct {
     pub const package_version: string = "npm_package_version";
 };
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands: []const u64 = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const PosixSpawn = bun.posix.spawn;
-
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
-
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const windows = std.os.windows;
 
@@ -139,7 +121,7 @@ pub const RunCommand = struct {
     pub inline fn replacePackageManagerRun(
         copy_script: *std.ArrayList(u8),
         script: string,
-    ) !void {
+    ) OOM!void {
         var entry_i: usize = 0;
         var delimiter: u8 = ' ';
 
@@ -178,7 +160,7 @@ pub const RunCommand = struct {
                                 }
 
                                 // implicit yarn commands
-                                if (std.mem.indexOfScalar(u64, yarn_commands, bun.hash(yarn_cmd)) == null) {
+                                if (!yarn_commands.has(yarn_cmd)) {
                                     try copy_script.appendSlice(BUN_RUN);
                                     try copy_script.append(' ');
                                     try copy_script.appendSlice(yarn_cmd);
@@ -193,7 +175,6 @@ pub const RunCommand = struct {
                     delimiter = 0;
                 },
 
-                // do we need to escape?
                 ' ' => {
                     delimiter = ' ';
                 },
@@ -231,27 +212,21 @@ pub const RunCommand = struct {
                             delimiter = 0;
                             continue;
                         }
-                    }
-
-                    delimiter = 0;
-                },
-                // TODO: handle escape sequences properly
-                // https://github.com/oven-sh/bun/issues/53
-                '\\' => {
-                    delimiter = 0;
-
-                    if (entry_i + 1 < script.len) {
-                        switch (script[entry_i + 1]) {
-                            '"', '\'' => {
-                                entry_i += 1;
-                                continue;
-                            },
-                            '\\' => {
-                                entry_i += 1;
-                            },
-                            else => {},
+                        if (strings.hasPrefixComptime(script[start..], "pnpm dlx ")) {
+                            try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
+                            entry_i += "pnpm dlx ".len;
+                            delimiter = 0;
+                            continue;
+                        }
+                        if (strings.hasPrefixComptime(script[start..], "pnpx ")) {
+                            try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
+                            entry_i += "pnpx ".len;
+                            delimiter = 0;
+                            continue;
                         }
                     }
+
+                    delimiter = 0;
                 },
                 else => {
                     delimiter = 0;
@@ -265,7 +240,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    fn runPackageScriptForeground(
+    pub fn runPackageScriptForeground(
         ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
@@ -275,46 +250,39 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
         use_system_shell: bool,
-    ) !bool {
+    ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        env.map.put("npm_lifecycle_event", name) catch unreachable;
+        env.map.put("npm_lifecycle_script", original_script) catch unreachable;
 
-        const script = original_script;
-        var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
+        var copy_script_capacity: usize = original_script.len;
+        for (passthrough) |part| copy_script_capacity += 1 + part.len;
+        var copy_script = try std.ArrayList(u8).initCapacity(allocator, copy_script_capacity);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
 
-        try replacePackageManagerRun(&copy_script, script);
+        try replacePackageManagerRun(&copy_script, original_script);
 
-        var combined_script: []u8 = copy_script.items;
-
-        log("Script: \"{s}\"", .{combined_script});
-
-        if (passthrough.len > 0) {
-            var combined_script_len = script.len;
-            for (passthrough) |p| {
-                combined_script_len += p.len + 1;
+        for (passthrough) |part| {
+            try copy_script.append(' ');
+            if (bun.shell.needsEscapeUtf8AsciiLatin1(part)) {
+                try bun.shell.escape8Bit(part, &copy_script, true);
+            } else {
+                try copy_script.appendSlice(part);
             }
-            var combined_script_buf = try allocator.alloc(u8, combined_script_len);
-            bun.copy(u8, combined_script_buf, script);
-            var remaining_script_buf = combined_script_buf[script.len..];
-            for (passthrough) |part| {
-                const p = part;
-                remaining_script_buf[0] = ' ';
-                bun.copy(u8, remaining_script_buf[1..], p);
-                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
-            }
-            combined_script = combined_script_buf;
+        }
+
+        log("Script: \"{s}\"", .{copy_script.items});
+
+        if (!silent) {
+            Output.command(copy_script.items);
+            Output.flush();
         }
 
         if (!use_system_shell) {
-            if (!silent) {
-                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-                Output.flush();
-            }
-
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -331,19 +299,20 @@ pub const RunCommand = struct {
                 Global.exit(code);
             }
 
-            return true;
+            return;
         }
 
         const argv = [_]string{
             shell_bin,
             if (Environment.isWindows) "/c" else "-c",
-            combined_script,
+            copy_script.items,
         };
 
-        if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-            Output.flush();
-        }
+        const ipc_fd: ?bun.FD = if (!Environment.isWindows) blk: {
+            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const fd = std.fmt.parseInt(u31, node_ipc_fd, 10) catch break :blk null;
+            break :blk bun.FD.fromNative(fd);
+        } else null; // TODO: implement on Windows
 
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = &argv,
@@ -357,17 +326,18 @@ pub const RunCommand = struct {
             .stderr = .inherit,
             .stdout = .inherit,
             .stdin = .inherit,
+            .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
-            } else {},
+            },
         }) catch |err| {
             if (!silent) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             }
 
             Output.flush();
-            return true;
+            return;
         })) {
             .err => |err| {
                 if (!silent) {
@@ -375,7 +345,7 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return;
             },
             .result => |result| result,
         };
@@ -403,9 +373,8 @@ pub const RunCommand = struct {
                 if (signal.valid() and signal != .SIGINT and !silent) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
-
-                    Global.raiseIgnoringPanicHandler(signal);
                 }
+                Global.raiseIgnoringPanicHandler(signal);
             },
 
             .err => |err| {
@@ -414,13 +383,13 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return;
             },
 
             else => {},
         }
 
-        return true;
+        return;
     }
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
@@ -525,7 +494,7 @@ pub const RunCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
-            } else {},
+            },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -571,7 +540,7 @@ pub const RunCommand = struct {
                     },
 
                     .signaled => |signal| {
-                        if (!silent) {
+                        if (signal.valid() and signal != .SIGINT and !silent) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
@@ -600,11 +569,11 @@ pub const RunCommand = struct {
                                 const is_probably_trying_to_run_a_pkg_script =
                                     original_script_for_bun_run != null and
                                     ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                                    "install",
-                                    "kill",
-                                    "link",
-                                }) and ctx.positionals.len == 1));
+                                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                            "install",
+                                            "kill",
+                                            "link",
+                                        }) and ctx.positionals.len == 1));
 
                                 if (is_probably_trying_to_run_a_pkg_script) {
                                     // if you run something like `bun run test`, you get a confusing message because
@@ -639,13 +608,13 @@ pub const RunCommand = struct {
     pub fn ls(ctx: Command.Context) !void {
         const args = ctx.args;
 
-        var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.options.env.prefix = "";
+        var this_transpiler = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null);
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.prefix = "";
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.configureLinker();
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.configureLinker();
     }
 
     pub const bun_node_dir = switch (Environment.os) {
@@ -769,7 +738,7 @@ pub const RunCommand = struct {
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             if (Environment.isDebug) {
-                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                const dir_slice_u8 = std.unicode.utf16LeToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
                 defer bun.default_allocator.free(dir_slice_u8);
                 std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
                 std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
@@ -816,67 +785,59 @@ pub const RunCommand = struct {
     const DirInfo = @import("../resolver/dir_info.zig");
     pub fn configureEnvForRun(
         ctx: Command.Context,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         env: ?*DotEnv.Loader,
         log_errors: bool,
         store_root_fd: bool,
     ) !*DirInfo {
         const args = ctx.args;
-        this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.env.quiet = true;
-        this_bundler.options.env.prefix = "";
+        this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.env.quiet = true;
+        this_transpiler.options.env.prefix = "";
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = store_root_fd;
 
-        this_bundler.resolver.opts.load_tsconfig_json = false;
-        this_bundler.options.load_tsconfig_json = false;
+        this_transpiler.resolver.opts.load_tsconfig_json = true;
+        this_transpiler.options.load_tsconfig_json = true;
 
-        this_bundler.configureLinker();
+        this_transpiler.configureLinker();
 
-        const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+        const root_dir_info = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
+            ctx.log.print(Output.errorWriter()) catch {};
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("error loading current directory", .{});
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };
 
-        this_bundler.resolver.store_fd = false;
+        this_transpiler.resolver.store_fd = false;
 
         if (env == null) {
-            this_bundler.env.loadProcess();
+            this_transpiler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
+            if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
+                    this_transpiler.options.production = true;
                 }
             }
 
-            this_bundler.runEnvLoader(true) catch {};
+            this_transpiler.runEnvLoader(true) catch {};
         }
 
-        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
+        this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS
-        this_bundler.env.map.putDefault(
+        this_transpiler.env.map.putDefault(
             "npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
@@ -884,25 +845,33 @@ pub const RunCommand = struct {
             "bun/" ++ Global.package_json_version ++ " npm/? node/v" ++ Environment.reported_nodejs_version ++ " " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
-        if (this_bundler.env.get("npm_execpath") == null) {
+        if (this_transpiler.env.get("npm_execpath") == null) {
             // we don't care if this fails
             if (bun.selfExePath()) |self_exe_path| {
-                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
+                this_transpiler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
             } else |_| {}
         }
 
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.name.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_name) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
+                if (this_transpiler.env.map.get(NpmArgs.package_name) == null) {
+                    this_transpiler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
                 }
             }
 
-            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
+            this_transpiler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
 
             if (package_json.version.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                if (this_transpiler.env.map.get(NpmArgs.package_version) == null) {
+                    this_transpiler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                }
+            }
+
+            if (package_json.config) |config| {
+                try this_transpiler.env.map.ensureUnusedCapacity(config.count());
+                for (config.keys(), config.values()) |k, v| {
+                    const key = try bun.strings.concat(bun.default_allocator, &.{ "npm_package_config_", k });
+                    this_transpiler.env.map.putAssumeCapacity(key, v);
                 }
             }
         }
@@ -913,20 +882,20 @@ pub const RunCommand = struct {
     pub fn configurePathForRunWithPackageJsonDir(
         ctx: Command.Context,
         package_json_dir: string,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
     ) ![]u8 {
-        const PATH = this_bundler.env.get("PATH") orelse "";
+        const PATH = this_transpiler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
 
         const bun_node_exe = try bunNodeFileUtf8(ctx.allocator);
         const bun_node_dir_win = bun.Dirname.dirname(u8, bun_node_exe) orelse return error.FailedToGetTempPath;
-        const found_node = this_bundler.env.loadNodeJSConfig(
-            this_bundler.fs,
+        const found_node = this_transpiler.env.loadNodeJSConfig(
+            this_transpiler.fs,
             if (force_using_bun) bun_node_exe else "",
         ) catch false;
 
@@ -958,9 +927,9 @@ pub const RunCommand = struct {
         if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
             if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
-                this_bundler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
+                this_transpiler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
+                this_transpiler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
+                this_transpiler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
             }
 
             needs_to_force_bun = false;
@@ -993,7 +962,7 @@ pub const RunCommand = struct {
     pub fn configurePathForRun(
         ctx: Command.Context,
         root_dir_info: *DirInfo,
-        this_bundler: *bundler.Bundler,
+        this_transpiler: *transpiler.Transpiler,
         ORIGINAL_PATH: ?*string,
         cwd: string,
         force_using_bun: bool,
@@ -1008,8 +977,8 @@ pub const RunCommand = struct {
             }
         }
 
-        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_bundler, ORIGINAL_PATH, cwd, force_using_bun);
-        this_bundler.env.map.put("PATH", new_path) catch bun.outOfMemory();
+        const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_transpiler, ORIGINAL_PATH, cwd, force_using_bun);
+        this_transpiler.env.map.put("PATH", new_path) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1022,35 +991,35 @@ pub const RunCommand = struct {
 
         const args = ctx.args;
 
-        var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.options.env.prefix = "";
-        this_bundler.env.quiet = true;
+        var this_transpiler = transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
+        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.prefix = "";
+        this_transpiler.env.quiet = true;
 
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        this_bundler.resolver.store_fd = true;
+        this_transpiler.resolver.care_about_bin_folder = true;
+        this_transpiler.resolver.care_about_scripts = true;
+        this_transpiler.resolver.store_fd = true;
         defer {
-            this_bundler.resolver.care_about_bin_folder = false;
-            this_bundler.resolver.care_about_scripts = false;
+            this_transpiler.resolver.care_about_bin_folder = false;
+            this_transpiler.resolver.care_about_scripts = false;
         }
-        this_bundler.configureLinker();
+        this_transpiler.configureLinker();
 
-        const root_dir_info = (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) orelse return shell_out;
+        const root_dir_info = (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
-            this_bundler.env.loadProcess();
+            this_transpiler.env.loadProcess();
 
-            if (this_bundler.env.get("NODE_ENV")) |node_env| {
+            if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
+                    this_transpiler.options.production = true;
                 }
             }
         }
 
         const ResultList = bun.StringArrayHashMap(void);
 
-        if (this_bundler.env.get("SHELL")) |shell| {
+        if (this_transpiler.env.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
@@ -1067,15 +1036,15 @@ pub const RunCommand = struct {
         }
 
         if (filter == Filter.bin or filter == Filter.all or filter == Filter.all_plus_bun_js) {
-            for (this_bundler.resolver.binDirs()) |bin_path| {
-                if (this_bundler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
+            for (this_transpiler.resolver.binDirs()) |bin_path| {
+                if (this_transpiler.resolver.readDirInfo(bin_path) catch null) |bin_dir| {
                     if (bin_dir.getEntriesConst()) |entries| {
                         var iter = entries.data.iterator();
                         var has_copied = false;
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
                             const value = entry.value_ptr.*;
-                            if (value.kind(&this_bundler.fs.fs, true) == .file) {
+                            if (value.kind(&this_transpiler.fs.fs, true) == .file) {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
@@ -1094,7 +1063,7 @@ pub const RunCommand = struct {
                                 }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
-                                _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(base), base) catch continue);
+                                _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(base), base) catch continue);
                             }
                         }
                     }
@@ -1103,21 +1072,21 @@ pub const RunCommand = struct {
         }
 
         if (filter == Filter.all_plus_bun_js or filter == Filter.bun_js) {
-            if (this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch null) |dir_info| {
+            if (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) |dir_info| {
                 if (dir_info.getEntriesConst()) |entries| {
                     var iter = entries.data.iterator();
 
                     while (iter.next()) |entry| {
                         const value = entry.value_ptr.*;
                         const name = value.base();
-                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
+                        if (name[0] != '.' and this_transpiler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
                             !strings.contains(name, ".d.cts") and
-                            value.kind(&this_bundler.fs.fs, true) == .file)
+                            value.kind(&this_transpiler.fs.fs, true) == .file)
                         {
-                            _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);
+                            _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(name), name) catch continue);
                         }
                     }
                 }
@@ -1133,7 +1102,7 @@ pub const RunCommand = struct {
                     }
 
                     var max_description_len: usize = 20;
-                    if (this_bundler.env.get("MAX_DESCRIPTION_LEN")) |max| {
+                    if (this_transpiler.env.get("MAX_DESCRIPTION_LEN")) |max| {
                         if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
@@ -1274,153 +1243,155 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        Global.configureAllocator(.{ .long_running = true });
+        Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
+
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                std.fs.path.basename(path),
+                @errorName(err),
+            });
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Global.exit(1);
+        };
+        return true;
+    }
+    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
+        if (ctx.args.entry_points.len == 0)
+            return false;
+        var script_name_buf: bun.PathBuffer = undefined;
+
+        const script_name_to_search = ctx.args.entry_points[0];
+
+        var absolute_script_path: ?string = null;
+
+        // TODO: optimize this pass for Windows. we can make better use of system apis available
+        var file_path = script_name_to_search;
+        {
+            const file = bun.FD.fromStdFile((brk: {
+                if (std.fs.path.isAbsolute(script_name_to_search)) {
+                    var win_resolver = resolve_path.PosixToWinNormalizer{};
+                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                    if (comptime Environment.isWindows) {
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
+                    }
+                    break :brk bun.openFile(
+                        resolved,
+                        .{ .mode = .read_only },
+                    );
+                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                    const file_pathZ = brk2: {
+                        @memcpy(script_name_buf[0..file_path.len], file_path);
+                        script_name_buf[file_path.len] = 0;
+                        break :brk2 script_name_buf[0..file_path.len :0];
+                    };
+
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                } else {
+                    var path_buf_2: bun.PathBuffer = undefined;
+                    const cwd = bun.getcwd(&path_buf_2) catch return false;
+                    path_buf_2[cwd.len] = std.fs.path.sep;
+                    var parts = [_]string{script_name_to_search};
+                    file_path = resolve_path.joinAbsStringBuf(
+                        path_buf_2[0 .. cwd.len + 1],
+                        &script_name_buf,
+                        &parts,
+                        .auto,
+                    );
+                    if (file_path.len == 0) return false;
+                    script_name_buf[file_path.len] = 0;
+                    const file_pathZ = script_name_buf[0..file_path.len :0];
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                }
+            }) catch return false).makeLibUVOwnedForSyscall(.open, .close_on_fail).unwrap() catch return false;
+            defer file.close();
+
+            switch (bun.sys.fstat(file)) {
+                .result => |stat| {
+                    // directories cannot be run. if only there was a faster way to check this
+                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
+                },
+                .err => return false,
+            }
+
+            Global.configureAllocator(.{ .long_running = true });
+
+            absolute_script_path = brk: {
+                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
+
+                var fd_path_buf: bun.PathBuffer = undefined;
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
+            };
+        }
+
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
+        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
+        return true;
+    }
     pub fn exec(
         ctx: Command.Context,
-        comptime bin_dirs_only: bool,
-        comptime log_errors: bool,
-        comptime did_try_open_with_bun_js: bool,
+        cfg: struct {
+            bin_dirs_only: bool,
+            log_errors: bool,
+            allow_fast_run_for_extensions: bool,
+        },
     ) !bool {
-        // Step 1. Figure out what we're trying to run
+        const bin_dirs_only = cfg.bin_dirs_only;
+        const log_errors = cfg.log_errors;
+
+        // find what to run
+
         var positionals = ctx.positionals;
-        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
+        if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run")) {
             positionals = positionals[1..];
         }
 
-        var script_name_to_search: string = "";
-
+        var target_name: string = "";
         if (positionals.len > 0) {
-            script_name_to_search = positionals[0];
+            target_name = positionals[0];
+            positionals = positionals[1..];
         }
+        const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
 
-        const passthrough = ctx.passthrough;
-        const force_using_bun = ctx.debug.run_in_bun;
-
-        // This doesn't cover every case
-        if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
-            (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
-        {
-            Run.boot(ctx, ".") catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    script_name_to_search,
-                    @errorName(err),
-                });
-                Global.exit(1);
-            };
-            return true;
-        }
-
-        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
-            if (script_name_to_search.len > 0) {
-                possibly_open_with_bun_js: {
-                    const ext = std.fs.path.extension(script_name_to_search);
-                    var has_loader = false;
-                    if (!force_using_bun) {
-                        if (options.defaultLoaders.get(ext)) |load| {
-                            has_loader = true;
-                            if (!load.canBeRunByBun())
-                                break :possibly_open_with_bun_js;
-                            // if there are preloads, allow weirdo file extensions
-                        } else {
-                            // you can have package.json scripts with file extensions in the name
-                            // eg "foo.zip"
-                            // in those cases, we don't know
-                            if (ext.len == 0 or strings.containsChar(script_name_to_search, ':'))
-                                break :possibly_open_with_bun_js;
-                        }
-                    }
-
-                    var file_path = script_name_to_search;
-                    const file_: anyerror!std.fs.File = brk: {
-                        if (std.fs.path.isAbsolute(script_name_to_search)) {
-                            var resolver = resolve_path.PosixToWinNormalizer{};
-                            break :brk bun.openFile(try resolver.resolveCWD(script_name_to_search), .{ .mode = .read_only });
-                        } else {
-                            const cwd = bun.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                            path_buf[cwd.len] = std.fs.path.sep_posix;
-                            var parts = [_]string{script_name_to_search};
-                            file_path = resolve_path.joinAbsStringBuf(
-                                path_buf[0 .. cwd.len + 1],
-                                &path_buf2,
-                                &parts,
-                                .auto,
-                            );
-                            if (file_path.len == 0) break :possibly_open_with_bun_js;
-                            path_buf2[file_path.len] = 0;
-                            const file_pathZ = path_buf2[0..file_path.len :0];
-                            break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-                        }
-                    };
-
-                    const file = file_ catch break :possibly_open_with_bun_js;
-
-                    if (!force_using_bun) {
-                        // Due to preload, we don't know if they intend to run
-                        // this as a script or as a regular file
-                        // once we know it's a file, check if they have any preloads
-                        if (ext.len > 0 and !has_loader) {
-                            if (!ctx.debug.loaded_bunfig) {
-                                try CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
-                            }
-
-                            if (ctx.preloads.len == 0)
-                                break :possibly_open_with_bun_js;
-                        }
-
-                        // ignore the shebang if they explicitly passed `--bun`
-                        // "White space after #! is optional."
-                        var shebang_buf: [64]u8 = undefined;
-                        const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
-                            if (!ctx.debug.silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                            Global.exit(1);
-                        };
-
-                        var shebang: string = shebang_buf[0..shebang_size];
-
-                        shebang = std.mem.trim(u8, shebang, " \r\n\t");
-                        if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv.len > 0) bun.argv[0] else "";
-                            const filename = std.fs.path.basename(first_arg);
-                            // are we attempting to run the script with bun?
-                            if (!strings.contains(shebang, filename)) {
-                                break :possibly_open_with_bun_js;
-                            }
-                        }
-                    }
-
-                    Global.configureAllocator(.{ .long_running = true });
-                    const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    Run.boot(ctx, out_path) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
-
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                            std.fs.path.basename(file_path),
-                            @errorName(err),
-                        });
-                        Global.exit(1);
-                    };
-
-                    return true;
-                }
+        var try_fast_run = false;
+        var skip_script_check = false;
+        if (target_name.len > 0 and target_name[0] == '.') {
+            try_fast_run = true;
+            skip_script_check = true;
+        } else if (std.fs.path.isAbsolute(target_name)) {
+            try_fast_run = true;
+            skip_script_check = true;
+        } else if (cfg.allow_fast_run_for_extensions) {
+            const ext = std.fs.path.extension(target_name);
+            const default_loader = options.defaultLoaders.get(ext);
+            if (default_loader != null and default_loader.?.canBeRunByBun()) {
+                try_fast_run = true;
             }
         }
 
-        Global.configureAllocator(.{ .long_running = false });
+        // try fast run (check if the file exists and is not a folder, then run it)
+        if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
 
+        // setup
+
+        const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
-        var this_bundler: bundler.Bundler = undefined;
-        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
-        try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
-        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        var this_transpiler: transpiler.Transpiler = undefined;
+        const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
+        try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
+        this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
-        if (script_name_to_search.len == 0) {
-            // naked "bun run"
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
+        // check for empty command
+
+        if (target_name.len == 0) {
             if (root_dir_info.enclosing_package_json) |package_json| {
                 RunCommand.printHelp(package_json);
             } else {
@@ -1432,83 +1403,11 @@ pub const RunCommand = struct {
             return true;
         }
 
-        // Run package.json script
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (package_json.scripts) |scripts| {
-                if (scripts.get(script_name_to_search)) |script_content| {
-                    // allocate enough to hold "post${scriptname}"
-                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
-                    defer ctx.allocator.free(temp_script_buffer);
+        // check for stdin
 
-                    if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                        if (!try runPackageScriptForeground(
-                            ctx,
-                            ctx.allocator,
-                            prescript,
-                            temp_script_buffer[1..],
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
-                            &.{},
-                            ctx.debug.silent,
-                            ctx.debug.use_system_shell,
-                        )) {
-                            return false;
-                        }
-                    }
+        if (target_name.len == 1 and target_name[0] == '-') {
+            log("Executing from stdin", .{});
 
-                    if (!try runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_content,
-                        script_name_to_search,
-                        this_bundler.fs.top_level_dir,
-                        this_bundler.env,
-                        passthrough,
-                        ctx.debug.silent,
-                        ctx.debug.use_system_shell,
-                    )) return false;
-
-                    temp_script_buffer[0.."post".len].* = "post".*;
-
-                    if (scripts.get(temp_script_buffer)) |postscript| {
-                        if (!try runPackageScriptForeground(
-                            ctx,
-                            ctx.allocator,
-                            postscript,
-                            temp_script_buffer,
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
-                            &.{},
-                            ctx.debug.silent,
-                            ctx.debug.use_system_shell,
-                        )) {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }
-            }
-        }
-
-        // Run absolute/relative path
-        if (std.fs.path.isAbsolute(script_name_to_search) or
-            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
-        {
-            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
-
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(script_name_to_search),
-                    @errorName(err),
-                });
-                Global.exit(1);
-            };
-        }
-
-        if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
             // read from stdin
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
             var list = std.ArrayList(u8).init(stack_fallback.get());
@@ -1523,11 +1422,16 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            passthrough_list.appendAssumeCapacity("-");
+            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+            ctx.passthrough = passthrough_list.items;
+
+            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                    std.fs.path.basename(script_name_to_search),
+                    std.fs.path.basename(target_name),
                     @errorName(err),
                 });
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -1535,6 +1439,114 @@ pub const RunCommand = struct {
             };
             return true;
         }
+
+        // run script with matching name
+
+        if (!skip_script_check) if (root_dir_info.enclosing_package_json) |package_json| {
+            if (package_json.scripts) |scripts| {
+                if (scripts.get(target_name)) |script_content| {
+                    log("Found matching script `{s}`", .{script_content});
+                    Global.configureAllocator(.{ .long_running = false });
+                    this_transpiler.env.map.put("npm_lifecycle_event", target_name) catch unreachable;
+
+                    // allocate enough to hold "post${scriptname}"
+                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "\x00pre{s}", .{target_name});
+                    defer ctx.allocator.free(temp_script_buffer);
+
+                    const package_json_path = root_dir_info.enclosing_package_json.?.source.path.text;
+                    const package_json_dir = strings.withoutTrailingSlash(strings.withoutSuffixComptime(package_json_path, "package.json"));
+                    log("Running in dir `{s}`", .{package_json_dir});
+
+                    if (scripts.get(temp_script_buffer[1..])) |prescript| {
+                        try runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            prescript,
+                            temp_script_buffer[1..],
+                            package_json_dir,
+                            this_transpiler.env,
+                            &.{},
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
+
+                    try runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_content,
+                        target_name,
+                        package_json_dir,
+                        this_transpiler.env,
+                        passthrough,
+                        ctx.debug.silent,
+                        ctx.debug.use_system_shell,
+                    );
+
+                    temp_script_buffer[0.."post".len].* = "post".*;
+
+                    if (scripts.get(temp_script_buffer)) |postscript| {
+                        try runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            postscript,
+                            temp_script_buffer,
+                            package_json_dir,
+                            this_transpiler.env,
+                            &.{},
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
+
+                    return true;
+                }
+            }
+        };
+
+        // load module and run that module
+        // TODO: run module resolution here - try the next condition if the module can't be found
+
+        log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
+        const resolution = brk: {
+            const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
+            defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
+            this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
+                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
+                    bun.strings.eqlComptime(env, "1")
+                else
+                    false;
+            break :brk this_transpiler.resolver.resolve(
+                this_transpiler.fs.top_level_dir,
+                target_name,
+                .entry_point_run,
+            ) catch
+                this_transpiler.resolver.resolve(
+                    this_transpiler.fs.top_level_dir,
+                    try std.mem.join(ctx.allocator, "", &.{ "./", target_name }),
+                    .entry_point_run,
+                );
+        };
+        if (resolution) |resolved| {
+            var resolved_mutable = resolved;
+            const path = resolved_mutable.path().?;
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
+            if (loader.canBeRunByBun() or loader == .html) {
+                log("Resolved to: `{s}`", .{path.text});
+                return _bootAndHandleError(ctx, path.text, loader);
+            } else {
+                log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
+            }
+        } else |_| {
+            // Support globs for HTML entry points.
+            if (strings.hasSuffixComptime(target_name, ".html")) {
+                if (strings.containsChar(target_name, '*')) {
+                    return _bootAndHandleError(ctx, target_name, .html);
+                }
+            }
+        }
+
+        // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'
 
         if (Environment.isWindows and bun.FeatureFlags.windows_bunx_fast_path) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
@@ -1554,20 +1566,20 @@ pub const RunCommand = struct {
             const prefix = comptime bun.strings.w("\\node_modules\\.bin\\");
             @memcpy(ptr[0..prefix.len], prefix);
             ptr = ptr[prefix.len..];
-            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], script_name_to_search);
+            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], target_name);
             ptr = ptr[encoded.len..];
             const ext = comptime bun.strings.w(".bunx");
             @memcpy(ptr[0..ext.len], ext);
             ptr[ext.len] = 0;
 
-            const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
+            const l = root.len + cwd_len + prefix.len + target_name.len + ext.len;
             const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
-            BunXFastPath.tryLaunch(ctx, path_to_use, this_bundler.env, ctx.passthrough);
+            BunXFastPath.tryLaunch(ctx, path_to_use, this_transpiler.env, ctx.passthrough);
         }
 
-        const PATH = this_bundler.env.get("PATH") orelse "";
+        const PATH = this_transpiler.env.get("PATH") orelse "";
         var path_for_which = PATH;
-        if (comptime bin_dirs_only) {
+        if (bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
             } else {
@@ -1576,26 +1588,37 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
+            if (which(&path_buf, path_for_which, this_transpiler.fs.top_level_dir, target_name)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(
                     ctx,
-                    try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                    try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
                     destination,
-                    this_bundler.fs.top_level_dir,
-                    this_bundler.env,
+                    this_transpiler.fs.top_level_dir,
+                    this_transpiler.env,
                     passthrough,
-                    script_name_to_search,
+                    target_name,
                 );
             }
         }
+
+        // failure
 
         if (ctx.runtime_options.if_present) {
             return true;
         }
 
-        if (comptime log_errors) {
-            Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
+        if (log_errors) {
+            const ext = std.fs.path.extension(target_name);
+            const default_loader = options.defaultLoaders.get(ext);
+            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
+            } else if (ext.len > 0) {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+            } else {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+            }
+
             Global.exit(1);
         }
 
@@ -1610,7 +1633,7 @@ pub const RunCommand = struct {
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
             const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
             return;
         }
 
@@ -1619,13 +1642,13 @@ pub const RunCommand = struct {
             Global.exit(1);
         }
 
-        // TODO(@paperdave): merge windows branch
+        // TODO(@paperclover): merge windows branch
         // var win_resolver = resolve_path.PosixToWinNormalizer{};
 
         const filename = ctx.positionals[0];
 
         const normalized_filename = if (std.fs.path.isAbsolute(filename))
-            // TODO(@paperdave): merge windows branch
+            // TODO(@paperclover): merge windows branch
             // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
             filename
         else brk: {
@@ -1640,8 +1663,8 @@ pub const RunCommand = struct {
             );
         };
 
-        Run.boot(ctx, normalized_filename) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+        Run.boot(ctx, normalized_filename, null) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
@@ -1670,9 +1693,11 @@ pub const BunXFastPath = struct {
         const handle = (bun.sys.openFileAtWindows(
             bun.invalid_fd, // absolute path is given
             path_to_use,
-            windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
-            windows.FILE_OPEN,
-            windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            .{
+                .access_mask = windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
+                .disposition = windows.FILE_OPEN,
+                .options = windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+            },
         ).unwrap() catch |err| {
             debug("Failed to open bunx file: '{}'", .{err});
             return;
@@ -1697,7 +1722,7 @@ pub const BunXFastPath = struct {
         };
 
         if (Environment.isDebug) {
-            debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+            debug("run_ctx.handle: '{}'", .{bun.FD.fromSystem(handle)});
             debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
             debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
             debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
@@ -1713,8 +1738,8 @@ pub const BunXFastPath = struct {
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx, utf8) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+        Run.boot(ctx, utf8, null) catch |err| {
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };

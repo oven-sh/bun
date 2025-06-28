@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
 import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("http response does not include an extraneous terminating 0\\r\\n\\r\\n", () => {
   const scenarios = [

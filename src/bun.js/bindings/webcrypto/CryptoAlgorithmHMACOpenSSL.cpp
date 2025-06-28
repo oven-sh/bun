@@ -42,7 +42,7 @@ static std::optional<Vector<uint8_t>> calculateSignature(const EVP_MD* algorithm
     if (!(ctx = HMACCtxPtr(HMAC_CTX_new())))
         return std::nullopt;
 
-    if (1 != HMAC_Init_ex(ctx.get(), key.data(), key.size(), algorithm, nullptr))
+    if (1 != HMAC_Init_ex(ctx.get(), key.begin(), key.size(), algorithm, nullptr))
         return std::nullopt;
 
     // Call update with the message
@@ -52,20 +52,21 @@ static std::optional<Vector<uint8_t>> calculateSignature(const EVP_MD* algorithm
     // Finalize the DigestSign operation
     Vector<uint8_t> cipherText(EVP_MAX_MD_SIZE);
     unsigned len = 0;
-    if (1 != HMAC_Final(ctx.get(), cipherText.data(), &len))
+    if (1 != HMAC_Final(ctx.get(), cipherText.begin(), &len))
         return std::nullopt;
 
     cipherText.shrink(len);
     return cipherText;
 }
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHMAC::platformSignWithAlgorithm(const CryptoKeyHMAC& key,  CryptoAlgorithmIdentifier algorithmIdentifier, const Vector<uint8_t>& data) {
-    
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHMAC::platformSignWithAlgorithm(const CryptoKeyHMAC& key, CryptoAlgorithmIdentifier algorithmIdentifier, const Vector<uint8_t>& data)
+{
+
     auto algorithm = digestAlgorithm(algorithmIdentifier);
     if (!algorithm)
         return Exception { OperationError };
 
-    auto result = calculateSignature(algorithm, key.key(), data.data(), data.size());
+    auto result = calculateSignature(algorithm, key.key(), data.begin(), data.size());
     if (!result)
         return Exception { OperationError };
     return WTFMove(*result);
@@ -77,35 +78,37 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHMAC::platformSign(const CryptoKeyHM
     if (!algorithm)
         return Exception { OperationError };
 
-    auto result = calculateSignature(algorithm, key.key(), data.data(), data.size());
+    auto result = calculateSignature(algorithm, key.key(), data.begin(), data.size());
     if (!result)
         return Exception { OperationError };
     return WTFMove(*result);
 }
 
-ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(const CryptoKeyHMAC& key, CryptoAlgorithmIdentifier algorithmIdentifier, const Vector<uint8_t>& signature, const Vector<uint8_t>& data) {
+ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerifyWithAlgorithm(const CryptoKeyHMAC& key, CryptoAlgorithmIdentifier algorithmIdentifier, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
+{
 
     auto algorithm = digestAlgorithm(algorithmIdentifier);
     if (!algorithm)
         return Exception { OperationError };
 
-    auto expectedSignature = calculateSignature(algorithm, key.key(), data.data(), data.size());
+    auto expectedSignature = calculateSignature(algorithm, key.key(), data.begin(), data.size());
     if (!expectedSignature)
         return Exception { OperationError };
     // Using a constant time comparison to prevent timing attacks.
-    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->data(), signature.data(), expectedSignature->size());
+    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->span(), signature.span());
 }
+
 ExceptionOr<bool> CryptoAlgorithmHMAC::platformVerify(const CryptoKeyHMAC& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
     auto algorithm = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!algorithm)
         return Exception { OperationError };
 
-    auto expectedSignature = calculateSignature(algorithm, key.key(), data.data(), data.size());
+    auto expectedSignature = calculateSignature(algorithm, key.key(), data.begin(), data.size());
     if (!expectedSignature)
         return Exception { OperationError };
     // Using a constant time comparison to prevent timing attacks.
-    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->data(), signature.data(), expectedSignature->size());
+    return signature.size() == expectedSignature->size() && !constantTimeMemcmp(expectedSignature->span(), signature.span());
 }
 
 } // namespace WebCore

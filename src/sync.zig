@@ -1,6 +1,6 @@
 const std = @import("std");
 const system = if (bun.Environment.isWindows) std.os.windows else std.posix.system;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -371,23 +371,23 @@ pub fn Channel(
         const Self = @This();
         const Buffer = std.fifo.LinearFifo(T, buffer_type);
 
-        pub usingnamespace switch (buffer_type) {
-            .Static => struct {
-                pub inline fn init() Self {
-                    return Self.withBuffer(Buffer.init());
-                }
-            },
-            .Slice => struct {
-                pub inline fn init(buf: []T) Self {
-                    return Self.withBuffer(Buffer.init(buf));
-                }
-            },
-            .Dynamic => struct {
-                pub inline fn init(allocator: std.mem.Allocator) Self {
-                    return Self.withBuffer(Buffer.init(allocator));
-                }
-            },
+        pub const init = switch (buffer_type) {
+            .Static => initStatic,
+            .Slice => initSlice,
+            .Dynamic => initDynamic,
         };
+
+        pub inline fn initStatic() Self {
+            return .withBuffer(Buffer.init());
+        }
+
+        pub inline fn initSlice(buf: []T) Self {
+            return .withBuffer(Buffer.init(buf));
+        }
+
+        pub inline fn initDynamic(allocator: std.mem.Allocator) Self {
+            return .withBuffer(Buffer.init(allocator));
+        }
 
         fn withBuffer(buffer: Buffer) Self {
             return Self{
@@ -535,7 +535,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
         pub fn deinit(self: *RwLock) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
@@ -634,7 +634,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                 writer_count: i32 = 0,
                 waiters: [2]?*anyopaque = [_]?*anyopaque{ null, null },
             },
-            .kfreebsd, .freebsd, .openbsd => extern struct {
+            .freebsd, .openbsd => extern struct {
                 ptr: ?*anyopaque = null,
             },
             .hermit => extern struct {
@@ -884,7 +884,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Mutex) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
@@ -946,7 +946,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn lockSlow(self: *Mutex, current_state: State) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             var new_state = current_state;
             while (true) {
@@ -992,7 +992,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn unlockSlow(self: *Mutex) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             Futex.wake(@as(*const i32, @ptrCast(&self.state)));
         }
@@ -1078,7 +1078,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Condvar) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);

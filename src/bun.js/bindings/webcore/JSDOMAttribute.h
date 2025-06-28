@@ -44,7 +44,7 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
 
         auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));
-        if (UNLIKELY(!thisObject)) {
+        if (!thisObject) [[unlikely]] {
             if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
                 return JSC::throwVMDOMAttributeSetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
             else
@@ -61,7 +61,7 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
 
         auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));
-        if (UNLIKELY(!thisObject)) {
+        if (!thisObject) [[unlikely]] {
             if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
                 return JSC::throwVMDOMAttributeSetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
             else
@@ -76,7 +76,7 @@ public:
     {
         return setter(lexicalGlobalObject, JSC::JSValue::decode(encodedValue));
     }
-    
+
     template<Getter getter, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::Throw>
     static JSC::EncodedJSValue get(JSC::JSGlobalObject& lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName)
     {
@@ -88,7 +88,7 @@ public:
             RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject))));
         } else {
             auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));
-            if (UNLIKELY(!thisObject)) {
+            if (!thisObject) [[unlikely]] {
                 if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
                     return JSC::throwVMDOMAttributeGetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
                 else if constexpr (shouldThrow == CastedThisErrorBehavior::RejectPromise)
@@ -98,31 +98,6 @@ public:
             }
 
             RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject))));
-        }
-    }
-
-    // FIXME: This can be merged with `get` if we replace the explicit setter function template parameter with a generic lambda.
-    template<GetterPassingPropertyName getter, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::Throw>
-    static JSC::EncodedJSValue getPassingPropertyName(JSC::JSGlobalObject& lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName)
-    {
-        auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
-
-        if constexpr (shouldThrow == CastedThisErrorBehavior::Assert) {
-            ASSERT(castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue)));
-            auto* thisObject = JSC::jsCast<JSClass*>(JSC::JSValue::decode(thisValue));
-            RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject, attributeName))));
-        } else {
-            auto* thisObject = castThisValue<JSClass>(lexicalGlobalObject, JSC::JSValue::decode(thisValue));
-            if (UNLIKELY(!thisObject)) {
-                if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
-                    return JSC::throwVMDOMAttributeGetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
-                else if constexpr (shouldThrow == CastedThisErrorBehavior::RejectPromise)
-                    RELEASE_AND_RETURN(throwScope, rejectPromiseWithGetterTypeError(lexicalGlobalObject, JSClass::info(), attributeName));
-                else
-                    return JSC::JSValue::encode(JSC::jsUndefined());
-            }
-
-            RELEASE_AND_RETURN(throwScope, (JSC::JSValue::encode(getter(lexicalGlobalObject, *thisObject, attributeName))));
         }
     }
 

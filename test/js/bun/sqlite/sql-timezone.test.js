@@ -1,5 +1,5 @@
-import { expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { expect, it } from "bun:test";
 
 const dbPath = import.meta.dir + "/northwind.testdb";
 

@@ -1,6 +1,44 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
+
+it("ERR_INVALID_THIS", () => {
+  try {
+    Request.prototype.formData.call(undefined);
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request");
+  }
+
+  try {
+    Request.prototype.formData.call(null);
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received null");
+  }
+
+  try {
+    Request.prototype.formData.call(new (class Boop {})());
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received an instance of Boop");
+  }
+
+  try {
+    Request.prototype.formData.call("hellooo");
+    expect.unreachable();
+  } catch (e) {
+    expect(e.code).toBe("ERR_INVALID_THIS");
+    expect(e.name).toBe("TypeError");
+    expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ('hellooo')`);
+  }
+});
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
@@ -62,6 +100,13 @@ describe("File", () => {
     expect(file.type).toBe("text/plain;charset=utf-8");
     expect(file.size).toBe(3);
     expect(file.lastModified).toBeGreaterThan(0);
+  });
+
+  it("constructor with empty array", () => {
+    const file = new File([], "empty.txt", { type: "text/plain;charset=utf-8" });
+    expect(file.name).toBe("empty.txt");
+    expect(file.size).toBe(0);
+    expect(file.type).toBe("text/plain;charset=utf-8");
   });
 
   it("constructor with lastModified", () => {
@@ -157,4 +202,58 @@ it("self is a getter", () => {
 it("errors thrown by native code should be TypeError", async () => {
   expect(() => Bun.dns.prefetch()).toThrowError(TypeError);
   expect(async () => await fetch("http://localhost", { body: "123" })).toThrowError(TypeError);
+});
+
+describe("globalThis.gc", () => {
+  /**
+   * @param {string} expr
+   * @param {string[]} args
+   * @returns {string}
+   */
+  const runAndPrint = (expr, ...args) => {
+    const result = Bun.spawnSync([bunExe(), ...args, "--print", expr], {
+      env: bunEnv,
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    return result.stdout.toString("utf8").trim();
+  };
+
+  describe("when --expose-gc is not passed", () => {
+    it("globalThis.gc === undefined", () => {
+      expect(runAndPrint("typeof globalThis.gc")).toEqual("undefined");
+    });
+    it(".gc does not take up a property slot", () => {
+      expect(runAndPrint("'gc' in globalThis")).toEqual("false");
+    });
+  });
+
+  describe("when --expose-gc is passed", () => {
+    it("is a function", () => {
+      expect(runAndPrint("typeof globalThis.gc", "--expose-gc")).toEqual("function");
+    });
+
+    it("gc is the same as globalThis.gc", () => {
+      expect(runAndPrint("gc === globalThis.gc", "--expose-gc")).toEqual("true");
+    });
+
+    it("cleans up memory", () => {
+      const src = /* js */ `
+      let arr = []
+      for (let i = 0; i < 100; i++) {
+        arr.push(new Array(100_000));
+      }
+      arr.length = 0;
+
+      const before = process.memoryUsage().heapUsed;
+      globalThis.gc();
+      const after = process.memoryUsage().heapUsed;
+      return before - after;
+      `;
+      const expr = /* js */ `(function() { ${src} })()`;
+
+      const delta = Number.parseInt(runAndPrint(expr, "--expose-gc"));
+      expect(delta).not.toBeNaN();
+      expect(delta).toBeGreaterThanOrEqual(0);
+    });
+  });
 });

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   // 8 MB is the threshold for copy-on-write without --smol.

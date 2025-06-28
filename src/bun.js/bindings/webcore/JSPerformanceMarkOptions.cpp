@@ -25,19 +25,18 @@
 #include "JSDOMConvertNumbers.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (UNLIKELY(!isNullOrUndefined && !object)) {
+    if (!isNullOrUndefined && !object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     PerformanceMarkOptions result;
     JSValue detailValue;
@@ -45,11 +44,11 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         detailValue = jsUndefined();
     else {
         detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!detailValue.isUndefined()) {
         result.detail = convert<IDLAny>(lexicalGlobalObject, detailValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.detail = jsUndefined();
     JSValue startTimeValue;
@@ -57,11 +56,11 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         startTimeValue = jsUndefined();
     else {
         startTimeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "startTime"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!startTimeValue.isUndefined()) {
         result.startTime = convert<IDLDouble>(lexicalGlobalObject, startTimeValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }

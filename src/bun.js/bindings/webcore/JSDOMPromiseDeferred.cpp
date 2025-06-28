@@ -38,6 +38,8 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/Strong.h>
+#include "ErrorCode.h"
+#include "JavaScriptCore/ErrorInstance.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -163,13 +165,13 @@ void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandle
     }
 
     auto error = createDOMException(lexicalGlobalObject, WTFMove(exception));
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         handleUncaughtException(scope, lexicalGlobalObject);
         return;
     }
 
     reject(lexicalGlobalObject, error, rejectAsHandled);
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         handleUncaughtException(scope, lexicalGlobalObject);
 }
 
@@ -198,13 +200,13 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
     }
 
     auto error = createDOMException(&lexicalGlobalObject, ec, message);
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         handleUncaughtException(scope, lexicalGlobalObject);
         return;
     }
 
     reject(lexicalGlobalObject, error, rejectAsHandled);
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         handleUncaughtException(scope, lexicalGlobalObject);
 }
 
@@ -223,7 +225,7 @@ void DeferredPromise::reject(const JSC::PrivateName& privateName, RejectAsHandle
 void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSPromise& promise, JSC::CatchScope& catchScope)
 {
     UNUSED_PARAM(lexicalGlobalObject);
-    if (LIKELY(!catchScope.exception()))
+    if (!catchScope.exception()) [[likely]]
         return;
 
     JSValue error = catchScope.exception()->value();
@@ -241,7 +243,7 @@ JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexi
     auto promiseConstructor = globalObject.promiseConstructor();
     auto rejectFunction = promiseConstructor->get(&lexicalGlobalObject, vm.propertyNames->builtinNames().rejectPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
-    auto* rejectionValue = static_cast<ErrorInstance*>(createTypeError(&lexicalGlobalObject, errorMessage));
+    ErrorInstance* rejectionValue = static_cast<ErrorInstance*>(cause == RejectedPromiseWithTypeErrorCause::InvalidThis ? Bun::createInvalidThisError(&lexicalGlobalObject, errorMessage) : createTypeError(&lexicalGlobalObject, errorMessage));
     if (cause == RejectedPromiseWithTypeErrorCause::NativeGetter)
         rejectionValue->setNativeGetterTypeError();
 

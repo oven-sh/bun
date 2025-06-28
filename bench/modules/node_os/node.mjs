@@ -1,24 +1,24 @@
-import { bench, run } from "mitata";
 import {
+  arch,
   cpus,
   endianness,
-  arch,
-  uptime,
-  networkInterfaces,
-  getPriority,
-  totalmem,
   freemem,
+  getPriority,
   homedir,
   hostname,
   loadavg,
+  networkInterfaces,
   platform,
   release,
   setPriority,
   tmpdir,
+  totalmem,
   type,
+  uptime,
   userInfo,
   version,
 } from "node:os";
+import { bench, run } from "../../runner.mjs";
 
 bench("cpus()", () => cpus());
 bench("networkInterfaces()", () => networkInterfaces());

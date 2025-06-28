@@ -31,7 +31,6 @@
 #include <wtf/CompactUniquePtrTuple.h>
 #include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
-// #include <wtf/IsoMalloc.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/MainThread.h>
 #include <wtf/OptionSet.h>
@@ -44,7 +43,7 @@ namespace WebCore {
 // The full Node type is way too much stuff
 // this ones just a baby
 class Node : public RefPtr<Node>, CanMakeWeakPtr<Node>, public EventTarget {
-    WTF_MAKE_ISO_ALLOCATED(Node);
+    WTF_MAKE_TZONE_ALLOCATED(Node);
 
     static constexpr uint32_t s_refCountIncrement = 2;
     static constexpr uint32_t s_refCountMask = ~static_cast<uint32_t>(1);

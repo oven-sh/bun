@@ -1,22 +1,17 @@
 const std = @import("std");
 const logger = bun.logger;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const CodePoint = bun.CodePoint;
-const C = bun.C;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
+const s3 = bun.S3;
 
 const DotEnvFileSuffix = enum {
     development,
@@ -37,13 +32,15 @@ pub const Loader = struct {
     @".env.test.local": ?logger.Source = null,
     @".env": ?logger.Source = null,
 
-    // only populated with files specified explicitely (e.g. --env-file arg)
+    // only populated with files specified explicitly (e.g. --env-file arg)
     custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
+
+    aws_credentials: ?s3.S3Credentials = null,
 
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
@@ -89,29 +86,64 @@ pub const Loader = struct {
     }
 
     pub fn loadTracy(this: *const Loader) void {
-        tracy: {
-            if (this.get("BUN_TRACY") != null) {
-                if (!bun.tracy.init()) {
-                    Output.prettyErrorln("Failed to load Tracy. Is it installed in your include path?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
-
-                bun.tracy.start();
-
-                if (!bun.tracy.isConnected()) {
-                    std.time.sleep(std.time.ns_per_ms * 10);
-                }
-
-                if (!bun.tracy.isConnected()) {
-                    Output.prettyErrorln("Tracy is not connected. Is Tracy running on your computer?", .{});
-                    Output.flush();
-                    break :tracy;
-                }
-            }
-        }
+        _ = this; // autofix
     }
 
+    pub fn getS3Credentials(this: *Loader) s3.S3Credentials {
+        if (this.aws_credentials) |credentials| {
+            return credentials;
+        }
+
+        var accessKeyId: []const u8 = "";
+        var secretAccessKey: []const u8 = "";
+        var region: []const u8 = "";
+        var endpoint: []const u8 = "";
+        var bucket: []const u8 = "";
+        var session_token: []const u8 = "";
+
+        if (this.get("S3_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        } else if (this.get("AWS_ACCESS_KEY_ID")) |access_key| {
+            accessKeyId = access_key;
+        }
+        if (this.get("S3_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        } else if (this.get("AWS_SECRET_ACCESS_KEY")) |access_key| {
+            secretAccessKey = access_key;
+        }
+
+        if (this.get("S3_REGION")) |region_| {
+            region = region_;
+        } else if (this.get("AWS_REGION")) |region_| {
+            region = region_;
+        }
+        if (this.get("S3_ENDPOINT")) |endpoint_| {
+            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+        } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
+            endpoint = bun.URL.parse(endpoint_).hostWithPath();
+        }
+        if (this.get("S3_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        } else if (this.get("AWS_BUCKET")) |bucket_| {
+            bucket = bucket_;
+        }
+        if (this.get("S3_SESSION_TOKEN")) |token| {
+            session_token = token;
+        } else if (this.get("AWS_SESSION_TOKEN")) |token| {
+            session_token = token;
+        }
+        this.aws_credentials = .{
+            .ref_count = .init(),
+            .accessKeyId = accessKeyId,
+            .secretAccessKey = secretAccessKey,
+            .region = region,
+            .endpoint = endpoint,
+            .bucket = bucket,
+            .sessionToken = session_token,
+        };
+
+        return this.aws_credentials.?;
+    }
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
@@ -134,11 +166,19 @@ pub const Loader = struct {
         return true;
     }
 
-    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+    pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
+        return this.getHttpProxy(url.isHTTP(), url.hostname);
+    }
+
+    pub fn hasHTTPProxy(this: *const Loader) bool {
+        return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
+    }
+
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
-        if (url.isHTTP()) {
+        if (is_http) {
             if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
                 if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
                     http_proxy = URL.parse(proxy);
@@ -154,13 +194,13 @@ pub const Loader = struct {
 
         // NO_PROXY filter
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
-        if (http_proxy != null) {
+        if (http_proxy != null and hostname != null) {
             if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
                     return http_proxy;
                 }
 
-                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
+                var no_proxy_list = std.mem.splitScalar(u8, no_proxy_text, ',');
                 var next = no_proxy_list.next();
                 while (next != null) {
                     var host = strings.trim(next.?, &strings.whitespace_chars);
@@ -172,7 +212,7 @@ pub const Loader = struct {
                         host = host[1..];
                     }
                     //hostname ends with suffix
-                    if (strings.endsWith(url.hostname, host)) {
+                    if (strings.endsWith(hostname.?, host)) {
                         return null;
                     }
                     next = no_proxy_list.next();
@@ -291,7 +331,7 @@ pub const Loader = struct {
     /// **lower priority** so that users may override defaults. Unlike regular
     /// defines, environment variables are loaded as JavaScript string literals.
     ///
-    /// Empty enivronment variables become empty strings.
+    /// Empty environment variables become empty strings.
     pub fn copyForDefine(
         this: *Loader,
         comptime JSONStore: type,
@@ -477,9 +517,9 @@ pub const Loader = struct {
     }
 
     // mostly for tests
-    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool) void {
-        var source = logger.Source.initPathString("test", str);
-        Parser.parse(&source, this.allocator, this.map, overwrite, false);
+    pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) void {
+        const source = &logger.Source.initPathString("test", str);
+        Parser.parse(source, this.allocator, this.map, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -734,17 +774,18 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(base, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
             false,
+            true,
         );
 
-        @field(this, base) = source;
+        @field(this, base) = source.*;
     }
 
     pub fn loadEnvFileDynamic(
@@ -804,17 +845,18 @@ pub const Loader = struct {
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
-        const source = logger.Source.initPathString(file_path, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
         Parser.parse(
-            &source,
+            source,
             this.allocator,
             this.map,
             override,
             false,
+            true,
         );
 
-        try this.custom_files_loaded.put(file_path, source);
+        try this.custom_files_loaded.put(file_path, source.*);
     }
 };
 
@@ -1036,6 +1078,7 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
+        comptime expand: bool,
     ) void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
@@ -1059,7 +1102,7 @@ const Parser = struct {
                 .conditional = false,
             };
         }
-        if (comptime !is_process) {
+        if (comptime !is_process and expand) {
             var it = map.iterator();
             while (it.next()) |entry| {
                 if (count > 0) {
@@ -1081,9 +1124,10 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
+        comptime expand: bool,
     ) void {
         var parser = Parser{ .src = source.contents };
-        parser._parse(allocator, map, override, is_process);
+        parser._parse(allocator, map, override, is_process, expand);
     }
 };
 
@@ -1102,11 +1146,11 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
+    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]const u8 {
         var env_map = &this.map;
 
         const envp_count = env_map.count();
-        const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+        const envp_buf = try arena.allocSentinel(?[*:0]const u8, envp_count, null);
         {
             var it = env_map.iterator();
             var i: usize = 0;
@@ -1189,6 +1233,20 @@ pub const Map = struct {
             bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
         }
         try this.map.put(key, .{
+            .value = value,
+            .conditional = false,
+        });
+    }
+
+    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) !void {
+        return this.map.ensureUnusedCapacity(additional_count);
+    }
+
+    pub fn putAssumeCapacity(this: *Map, key: string, value: string) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
+        this.map.putAssumeCapacity(key, .{
             .value = value,
             .conditional = false,
         });
@@ -1279,8 +1337,5 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
-
-const expectString = std.testing.expectEqualStrings;
-const expect = std.testing.expect;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";

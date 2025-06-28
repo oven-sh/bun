@@ -33,7 +33,6 @@ namespace WebCore {
 // Specialized by generated code for IDL dictionary conversion.
 template<typename T> T convertDictionary(JSC::JSGlobalObject&, JSC::JSValue);
 
-
 template<typename T> struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDictionary<T>> {
     using ReturnType = T;
 

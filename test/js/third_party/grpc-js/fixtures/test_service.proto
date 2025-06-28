@@ -21,6 +21,7 @@ message Request {
   bool error = 1;
   string message = 2;
   int32 errorAfter = 3;
+  int32 responseLength = 4;
 }
 
 message Response {

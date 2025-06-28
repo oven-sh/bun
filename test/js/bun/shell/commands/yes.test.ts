@@ -1,5 +1,5 @@
-import { $, ShellOutput } from "bun";
-import { describe, test, expect, beforeEach } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
 
 $.throws(false);
 

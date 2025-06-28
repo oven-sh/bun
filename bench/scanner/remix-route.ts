@@ -1,5 +1,5 @@
+import type { ActionFunction, LoaderFunction } from "remix";
 import { useParams } from "remix";
-import type { LoaderFunction, ActionFunction } from "remix";
 
 export const loader: LoaderFunction = async ({ params }) => {
   console.log(params.postId);

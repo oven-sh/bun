@@ -1,7 +1,7 @@
 const PS_SUPPORTED = true;
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { generateKeyPairSync } from "crypto";
+import jwt from "jsonwebtoken";
 
 describe("public key start with BEGIN RSA PUBLIC KEY", function () {
   it("should work for RS family of algorithms", function (done) {

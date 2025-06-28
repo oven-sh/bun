@@ -1,5 +1,4 @@
-import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { Glob, GlobScanOptions } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("leaks", () => {
   const bun = process.argv[0];

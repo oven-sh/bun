@@ -1,0 +1,13 @@
+---
+description: How to build Bun
+globs:
+alwaysApply: false
+---
+
+# How to build Bun
+
+Run:
+
+```bash
+bun bd
+```

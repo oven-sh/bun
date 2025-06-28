@@ -4,10 +4,6 @@ name: Update snapshots in `bun test`
 
 Bun's test runner supports Jest-style snapshot testing via `.toMatchSnapshot()`.
 
-{% callout %}
-The `.toMatchInlineSnapshot()` method is not yet supported.
-{% /callout %}
-
 ```ts#snap.test.ts
 import { test, expect } from "bun:test";
 
@@ -33,7 +29,7 @@ To regenerate snapshots, use the `--update-snapshots` flag.
 
 ```sh
 $ bun test --update-snapshots
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test/snap.test.ts:
 ✓ snapshot [0.86ms]
@@ -47,4 +43,4 @@ Ran 1 tests across 1 files. [102.00ms]
 
 ---
 
-See [Docs > Test Runner > Snapshots](/docs/test/mocks) for complete documentation on mocking with the Bun test runner.
+See [Docs > Test Runner > Snapshots](https://bun.sh/docs/test/snapshots) for complete documentation on snapshots with the Bun test runner.

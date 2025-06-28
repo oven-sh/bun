@@ -1,8 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
-import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, tmpdirSync } from "harness";
-import { access, mkdir, readlink, rm, writeFile, copyFile, appendFile, readFile } from "fs/promises";
-import { join, relative } from "path";
+import { access, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -10,7 +10,6 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  readdirSorted,
   requested,
   root_url,
   setHandler,
@@ -63,6 +62,7 @@ it("retries on 500", async () => {
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
     "",
     "installed BaR@0.0.2",
     "",

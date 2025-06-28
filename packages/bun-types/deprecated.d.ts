@@ -1,4 +1,19 @@
 declare module "bun" {
+  interface BunMessageEvent<T> {
+    /**
+     * @deprecated
+     */
+    initMessageEvent(
+      type: string,
+      bubbles?: boolean,
+      cancelable?: boolean,
+      data?: any,
+      origin?: string,
+      lastEventId?: string,
+      source?: null,
+    ): void;
+  }
+
   /**
    * @deprecated Renamed to `ErrorLike`
    */
@@ -35,21 +50,6 @@ declare namespace NodeJS {
      * @deprecated This is deprecated; use the "node:assert" module instead.
      */
     assert(value: unknown, message?: string | Error): asserts value;
-  }
-}
-
-declare namespace Bun {
-  interface MessageEvent {
-    /** @deprecated */
-    initMessageEvent(
-      type: string,
-      bubbles?: boolean,
-      cancelable?: boolean,
-      data?: any,
-      origin?: string,
-      lastEventId?: string,
-      source?: null,
-    ): void;
   }
 }
 

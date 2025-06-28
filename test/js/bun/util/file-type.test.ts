@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 describe("util file tests", () => {
   test("custom set mime-type respected (#6507)", () => {
     const file = Bun.file("test", {

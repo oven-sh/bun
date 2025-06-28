@@ -19,7 +19,6 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <time.h>
-
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
 void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
@@ -110,9 +109,12 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 }
 
 
-#if defined(LIBUS_USE_EPOLL) 
+#if defined(LIBUS_USE_EPOLL)
 
 #include <sys/syscall.h>
+#include <signal.h>
+#include <errno.h>
+
 static int has_epoll_pwait2 = -1;
 
 #ifndef SYS_epoll_pwait2
@@ -122,35 +124,40 @@ static int has_epoll_pwait2 = -1;
 #define SYS_epoll_pwait2 441
 #endif
 
-static ssize_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
-    return syscall(SYS_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
-}
+extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
+                              const struct timespec* timeout, const sigset_t* sigmask);
+
 
 static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
     int ret;
+    sigset_t mask;
+    sigemptyset(&mask);
+
     if (has_epoll_pwait2 != 0) {
         do {
-            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, NULL, 0);
-        } while (IS_EINTR(ret));
+            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
+        } while (ret == -EINTR);
 
-        if (LIKELY(ret != -1 || errno != ENOSYS)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
             return ret;
         }
 
         has_epoll_pwait2 = 0;
     }
 
-    int timeoutMs = -1; 
+    int timeoutMs = -1;
     if (timeout) {
         timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
     }
 
     do {
-        ret = epoll_wait(epfd, events, maxevents, timeoutMs);
+        ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
     } while (IS_EINTR(ret));
 
     return ret;
 }
+
+extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
 
 #endif
 
@@ -166,6 +173,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+
+    if (has_epoll_pwait2 == -1) {
+        if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
+            has_epoll_pwait2 = 0;
+        }
+    }
+
 #else
     loop->fd = kqueue();
 #endif
@@ -202,7 +216,8 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 #ifdef LIBUS_USE_EPOLL
                 int events = loop->ready_polls[loop->current_ready_poll].events;
-                const int error = events & (EPOLLERR | EPOLLHUP);
+                const int error = events & EPOLLERR;
+                const int eof = events & EPOLLHUP;
 #else
                 const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
                 const int16_t filter = current_kevent->filter;
@@ -215,12 +230,13 @@ void us_loop_run(struct us_loop_t *loop) {
                 int events = 0
                     | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
                     | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-                const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+                const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+                const int eof = (flags & (EV_EOF));
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
-                if (events || error) {
-                    us_internal_dispatch_ready_poll(poll, error, events);
+                if (events || error || eof) {
+                    us_internal_dispatch_ready_poll(poll, error, eof, events);
                 }
             }
         }
@@ -230,6 +246,8 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
+extern void Bun__JSC_onBeforeWait(void*);
+extern void Bun__JSC_onAfterWait(void*);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
@@ -246,15 +264,19 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
+    /* Safe if jsc_vm is NULL */
+    Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
     do {
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    Bun__JSC_onAfterWait(loop->data.jsc_vm);
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -267,7 +289,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             }
 #ifdef LIBUS_USE_EPOLL
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & (EPOLLERR | EPOLLHUP);
+            const int error = events & EPOLLERR;
+            const int eof = events & EPOLLHUP;
 #else
             const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
             const int16_t filter = current_kevent->filter;
@@ -281,12 +304,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
                 | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-            const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
+            const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+            const int eof = (flags & (EV_EOF));
+
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
             events &= us_poll_events(poll);
-            if (events || error) {
-                us_internal_dispatch_ready_poll(poll, error, events);
+            if (events || error || eof) {
+                us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
     }
@@ -312,7 +337,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
             SET_READY_POLL(loop, i, new_poll);
-
+            
             num_entries_possibly_remaining--;
         }
     }
@@ -327,15 +352,21 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     int change_length = 0;
 
     /* Do they differ in readable? */
+    int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
+    int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
 
-    /* Do they differ in writable? */
-    if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+    if(!is_readable && !is_writable) {
+        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
+            // if we are not reading or writing, we need to add writable to receive FIN
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
+    } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+        /* Do they differ in writable? */
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
-
     int ret;
     do {
         ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
@@ -349,39 +380,47 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
     int events = us_poll_events(p);
+    
 
     struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
-    if (p != new_p && events) {
+    if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */
         new_p->state.poll_type = us_internal_poll_type(new_p);
         us_poll_change(new_p, loop, events);
 #else
         /* Forcefully update poll by resetting them with new_p as user data */
-        kqueue_change(loop->fd, new_p->state.fd, 0, events, new_p);
-#endif
-
-        /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
+        kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+#endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
         us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
     }
 
     return new_p;
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
+    if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
+        events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+    }
     event.events = events;
     event.data.ptr = p;
     int ret;
     do {
         ret = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
     } while (IS_EINTR(ret));
+    return ret;
 #else
-    kqueue_change(loop->fd, p->state.fd, 0, events, p);
+    return kqueue_change(loop->fd, p->state.fd, 0, events, p);
 #endif
+}
+
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    us_poll_start_rc(p, loop, events);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
@@ -392,6 +431,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
+        if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+             // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
+            events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+        }
         event.events = events;
         event.data.ptr = p;
         int rc;
@@ -402,7 +445,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
-        //us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
+        // us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
 }
 
@@ -628,7 +671,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     // using it for notifications and not for any other purpose.
     mach_port_limits_t limits = { .mpl_qlimit = 1 };
     kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
-    
+
     if (UNLIKELY(kr != KERN_SUCCESS)) {
         return NULL;
     }
@@ -643,7 +686,7 @@ void us_internal_async_close(struct us_internal_async *a) {
     struct kevent64_s event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
     EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
-    
+
     int ret;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
@@ -675,7 +718,7 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     event.ext[1] = MACHPORT_BUF_LEN;
     event.udata = (uint64_t)(void*)internal_cb;
 
-    int ret; 
+    int ret;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -705,12 +748,12 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
         0, // Fail instantly if the port is full
         MACH_PORT_NULL
     );
-    
+
     switch (kr) {
         case KERN_SUCCESS: {
             break;
         }
-        
+
         // This means that the send would've blocked because the
         // queue is full. We assume success because the port is full.
         case MACH_SEND_TIMED_OUT: {

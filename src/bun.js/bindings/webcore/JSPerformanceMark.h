@@ -63,6 +63,7 @@ public:
     {
         return static_cast<PerformanceMark&>(Base::wrapped());
     }
+
 protected:
     JSPerformanceMark(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceMark>&&);
 

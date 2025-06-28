@@ -2,7 +2,7 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 
@@ -132,7 +132,7 @@ pub const Batch = struct {
 };
 
 pub const WaitGroup = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
     counter: u32 = 0,
     event: std.Thread.ResetEvent = .{},
 
@@ -376,6 +376,24 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
     forceSpawn(self);
 }
 
+pub fn scheduleInsideThreadPool(self: *ThreadPool, batch: Batch) void {
+    // Sanity check
+    if (batch.len == 0) {
+        return;
+    }
+
+    // Extract out the Node's from the Tasks
+    const list = Node.List{
+        .head = &batch.head.?.node,
+        .tail = &batch.tail.?.node,
+    };
+
+    // Push the task Nodes to the most appropriate queue
+    self.run_queue.push(list);
+
+    forceSpawn(self);
+}
+
 pub fn forceSpawn(self: *ThreadPool) void {
     // Try to notify a thread
     const is_waking = false;
@@ -401,11 +419,11 @@ pub const default_thread_stack_size = brk: {
 
     if (!Environment.isMac) break :brk default;
 
-    const size = default - (default % std.mem.page_size);
+    const size = default - (default % std.heap.page_size_max);
 
     // stack size must be a multiple of page_size
     // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-    if (size % std.mem.page_size != 0)
+    if (size % std.heap.page_size_max != 0)
         @compileError("Thread stack size is not a multiple of page size");
 
     break :brk size;
@@ -646,6 +664,7 @@ pub const Thread = struct {
         self.idle_queue.push(list);
     }
     var counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
         {
@@ -766,7 +785,6 @@ const Event = struct {
             // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
             // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
             if (state == SHUTDOWN) {
-                @fence(.acquire);
                 return;
             }
 
@@ -801,57 +819,6 @@ const Event = struct {
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
             Futex.wait(&self.state, WAITING, null) catch unreachable;
-            state = self.state.load(.monotonic);
-            acquire_with = WAITING;
-        }
-    }
-
-    /// Wait for and consume a notification
-    /// or wait for the event to be shutdown entirely
-    noinline fn waitFor(self: *Event, timeout: usize) void {
-        var acquire_with: u32 = EMPTY;
-        var state = self.state.load(.monotonic);
-
-        while (true) {
-            // If we're shutdown then exit early.
-            // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
-            // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
-            if (state == SHUTDOWN) {
-                @fence(.acquire);
-                return;
-            }
-
-            // Consume a notification when it pops up.
-            // Acquire barrier to ensure operations before the notify() appear after the wait().
-            if (state == NOTIFIED) {
-                state = self.state.cmpxchgWeak(
-                    state,
-                    acquire_with,
-                    .acquire,
-                    .monotonic,
-                ) orelse return;
-                continue;
-            }
-
-            // There is no notification to consume, we should wait on the event by ensuring its WAITING.
-            if (state != WAITING) blk: {
-                state = self.state.cmpxchgWeak(
-                    state,
-                    WAITING,
-                    .monotonic,
-                    .monotonic,
-                ) orelse break :blk;
-                continue;
-            }
-
-            // Wait on the event until a notify() or shutdown().
-            // If we wake up to a notification, we must acquire it with WAITING instead of EMPTY
-            // since there may be other threads sleeping on the Futex who haven't been woken up yet.
-            //
-            // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
-            // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
-            // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            Futex.wait(&self.state, WAITING, timeout) catch {};
             state = self.state.load(.monotonic);
             acquire_with = WAITING;
         }

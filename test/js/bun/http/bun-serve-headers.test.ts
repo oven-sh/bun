@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {

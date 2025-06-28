@@ -1,5 +1,9 @@
+
+
 #include "root.h"
 
+#include "ZigGlobalObject.h"
+#include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
@@ -50,6 +54,8 @@
 #include <JavaScriptCore/BuiltinNames.h>
 
 #include "JSBufferEncodingType.h"
+#include "ErrorCode.h"
+#include "NodeValidator.h"
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
@@ -59,7 +65,6 @@
 #endif
 
 #if OS(WINDOWS)
-#include "musl-memmem.h"
 #include <windows.h>
 #endif
 
@@ -73,73 +78,170 @@
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
+extern "C" bool Bun__Node__ZeroFillBuffers;
+
+// export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
+extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+
 using namespace JSC;
 using namespace WebCore;
 
+static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "all Buffer BigInt functions assume bigint digits are 64 bits");
+
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
+JSC_DECLARE_HOST_FUNCTION(callJSBuffer);
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_from);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
+JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
 
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_equals);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_fill);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_includes);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
-#pragma clang diagnostic pop
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_equals);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_fill);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_includes);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
+
+extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
+{
+    // clang-format off
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    switch (encoding) {
+    case WebCore::BufferEncodingType::utf8:      return JSC::JSValue::encode(globalObject->commonStrings().utf8String(globalObject));
+    case WebCore::BufferEncodingType::ucs2:      return JSC::JSValue::encode(globalObject->commonStrings().ucs2String(globalObject));
+    case WebCore::BufferEncodingType::utf16le:   return JSC::JSValue::encode(globalObject->commonStrings().utf16leString(globalObject));
+    case WebCore::BufferEncodingType::latin1:    return JSC::JSValue::encode(globalObject->commonStrings().latin1String(globalObject));
+    case WebCore::BufferEncodingType::ascii:     return JSC::JSValue::encode(globalObject->commonStrings().asciiString(globalObject));
+    case WebCore::BufferEncodingType::base64:    return JSC::JSValue::encode(globalObject->commonStrings().base64String(globalObject));
+    case WebCore::BufferEncodingType::base64url: return JSC::JSValue::encode(globalObject->commonStrings().base64urlString(globalObject));
+    case WebCore::BufferEncodingType::hex:       return JSC::JSValue::encode(globalObject->commonStrings().hexString(globalObject));
+    case WebCore::BufferEncodingType::buffer:    return JSC::JSValue::encode(globalObject->commonStrings().bufferString(globalObject));
+    }
+    // clang-format on
+}
+
+namespace Bun {
+
+// Use a JSString* here to avoid unnecessarily joining the rope string.
+// If we're only getting the length property, it won't join the rope string.
+std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
+{
+    if (str->length() == 0)
+        return 0;
+
+    switch (encoding) {
+
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
+        return str->length() * 2;
+    }
+
+    case WebCore::BufferEncodingType::latin1:
+    case WebCore::BufferEncodingType::ascii: {
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
+        return str->length();
+    }
+
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url: {
+        int64_t length = str->length();
+        const auto view = str->view(lexicalGlobalObject);
+        if (view->isNull()) [[unlikely]] {
+            return std::nullopt;
+        }
+
+        if (view->is8Bit()) {
+            const auto span = view->span8();
+            if (span.data()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && span.data()[length - 1] == '=')
+                    length--;
+            }
+        } else {
+            const auto span = view->span16();
+            if (span.data()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && span.data()[length - 1] == '=')
+                    length--;
+            }
+        }
+
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
+        return static_cast<double>((length * 3) >> 2);
+    }
+
+    case WebCore::BufferEncodingType::hex: {
+        return str->length() >> 1;
+    }
+
+    case WebCore::BufferEncodingType::utf8: {
+        const auto view = str->view(lexicalGlobalObject);
+        if (view->isNull()) [[unlikely]] {
+            return std::nullopt;
+        }
+
+        if (view->is8Bit()) {
+            const auto span = view->span8();
+            return Bun__encoding__byteLengthLatin1AsUTF8(span.data(), span.size());
+        } else {
+            const auto span = view->span16();
+            return Bun__encoding__byteLengthUTF16AsUTF8(span.data(), span.size());
+        }
+    }
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+
+    return std::nullopt;
+}
+}
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
-#if ASSERT_ENABLED
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
-#if ASSERT_ENABLED
-    if (UNLIKELY(!uint8Array)) {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !uint8Array);
 
     return uint8Array;
 }
+
 static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
 
-#if ASSERT_ENABLED
-    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#endif
 
     auto* result = createUninitializedBuffer(lexicalGlobalObject, byteLength);
 
-#if ASSERT_ENABLED
-    if (UNLIKELY(!result)) {
-        // it should have thrown an exception already
-        ASSERT(throwScope.exception());
-    }
-#endif
+    // it should have thrown an exception already
+    ASSERT(!!throwScope.exception() == !result);
 
     return result;
 }
@@ -162,33 +264,48 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
-static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
+static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
-    if (auto num = arg.tryGetAsUint32Index())
-        return num.value();
+    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto& view = arg_->view(lexicalGlobalObject);
 
-    if (arg.isNumber())
-        throwNodeRangeError(lexicalGlobalObject, scope, "Invalid array length"_s);
-    else
-        throwTypeError(lexicalGlobalObject, scope, "Expected number"_s);
-
-    return 0;
-}
-
-static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
-{
-    if (UNLIKELY(!arg.isString())) {
-        throwTypeError(lexicalGlobalObject, scope, "Expected string"_s);
-        return WebCore::BufferEncodingType::utf8;
-    }
-
-    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg);
-    if (UNLIKELY(!encoded)) {
-        throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+    std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view);
+    if (!encoded) [[unlikely]] {
+        if (validateUnknown) {
+            Bun::V::validateString(scope, lexicalGlobalObject, arg, "encoding"_s);
+            RETURN_IF_EXCEPTION(scope, WebCore::BufferEncodingType::utf8);
+        }
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
         return WebCore::BufferEncodingType::utf8;
     }
 
     return encoded.value();
+}
+
+uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, uint32_t min, uint32_t max)
+{
+    if (!value.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    auto value_num = value.asNumber();
+    if (std::fmod(value_num, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (value_num < min || value_num > max) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    uint32_t result = JSC::toInt32(value_num);
+    return result;
+}
+uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, uint32_t min, uint32_t max)
+{
+    if (!value.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    auto value_num = value.asNumber();
+    if (std::fmod(value_num, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (value_num < min || value_num > max) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    uint32_t result = JSC::toInt32(value_num);
+    return result;
 }
 
 namespace WebCore {
@@ -200,7 +317,7 @@ public:
     using Operation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, ClassParameter);
 
     template<Operation operation, CastedThisErrorBehavior = CastedThisErrorBehavior::Throw>
-    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
+    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -208,12 +325,12 @@ public:
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
         if (thisValue.isUndefinedOrNull()) {
             throwTypeError(&lexicalGlobalObject, throwScope, "Cannot convert undefined or null to object"_s);
-            return JSC::JSValue::encode(JSC::jsUndefined());
+            return {};
         }
 
         auto thisObject = JSC::jsDynamicCast<JSC::JSUint8Array*>(thisValue);
-        if (UNLIKELY(!thisObject))
-            return throwThisTypeError(lexicalGlobalObject, throwScope, "Buffer", operationName);
+        if (!thisObject) [[unlikely]]
+            return throwThisTypeError(lexicalGlobalObject, throwScope, "Buffer"_s, operationName);
 
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }
@@ -226,10 +343,11 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
     JSC::JSUint8Array* uint8Array = nullptr;
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
-    if (LIKELY(length > 0)) {
+    if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
             if (bytesDeallocator)
                 bytesDeallocator(p, ctx);
@@ -240,18 +358,26 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
+    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
+    scope.assertNoException();
+    ASSERT(uint8Array);
+
     return JSC::JSValue::encode(uint8Array);
 }
 
 namespace WebCore {
 using namespace JSC;
 
-static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, uint32_t offset, uint32_t length, BufferEncodingType encoding)
+static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, uint32_t offset, uint32_t length, BufferEncodingType encoding)
 {
-    if (UNLIKELY(str->length() == 0))
+    if (str->length() == 0) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
-    const auto& view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->view(lexicalGlobalObject);
+    if (view->isNull()) {
+        return {};
+    }
+
     size_t written = 0;
 
     switch (encoding) {
@@ -281,11 +407,17 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     return JSC::JSValue::encode(JSC::jsNumber(written));
 }
 
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
+{
+    size_t length = backingStore->byteLength();
+    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(backingStore), 0, length);
+}
+
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)
 {
     auto* buffer = createUninitializedBuffer(lexicalGlobalObject, length);
 
-    if (LIKELY(ptr && length > 0 && buffer))
+    if (ptr && length > 0 && buffer) [[likely]]
         memcpy(buffer->typedVector(), ptr, length);
 
     return buffer;
@@ -303,7 +435,7 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
-    return createBuffer(lexicalGlobalObject, data.data(), data.size());
+    return createBuffer(lexicalGlobalObject, data.begin(), data.size());
 }
 
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)
@@ -313,22 +445,26 @@ JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject)
 
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length)
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     return JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, length);
 }
 
-static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
+static JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
-    if (UNLIKELY(length < 0)) {
+    if (length < 0) [[unlikely]] {
         throwNodeRangeError(lexicalGlobalObject, throwScope, "Invalid array length"_s);
         return nullptr;
     }
+    if (length > MAX_ARRAY_BUFFER_SIZE) {
+        Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, MAX_ARRAY_BUFFER_SIZE, jsNumber(length));
+        return nullptr;
+    }
 
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, static_cast<size_t>(length));
 
@@ -340,50 +476,42 @@ extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* l
     return JSC::JSValue::encode(JSBuffer__bufferFromLengthAsArray(lexicalGlobalObject, length));
 }
 
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L404
+static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-
-    VM& vm = lexicalGlobalObject->vm();
-
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1)
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-
-    JSValue lengthValue = callFrame->uncheckedArgument(0);
-    if (UNLIKELY(!lengthValue.isNumber())) {
-        throwTypeError(lexicalGlobalObject, throwScope, "size argument must be a number"_s);
-        return {};
-    }
-
-    double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
-
-    if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
-        throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...4294967295"_s);
-        return {};
-    }
-
-    size_t length = static_cast<size_t>(lengthDouble);
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBufferUnsafe(lexicalGlobalObject, length)));
+    JSValue lengthValue = callFrame->argument(0);
+    Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    size_t length = lengthValue.toLength(lexicalGlobalObject);
+    auto result = allocBufferUnsafe(lexicalGlobalObject, length);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (Bun__Node__ZeroFillBuffers) memset(result->typedVector(), 0, length);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
 // new Buffer()
-static inline JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
+static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> bytes, WebCore::BufferEncodingType encoding)
+{
+    WTF::StringView view(bytes);
+    return constructFromEncoding(lexicalGlobalObject, view, encoding);
+}
+
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const auto& view = str->tryGetValue(lexicalGlobalObject);
     JSC::EncodedJSValue result;
 
-    if (view->is8Bit()) {
-        const auto span = view->span8();
+    if (view.is8Bit()) {
+        const auto span = view.span8();
 
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
@@ -407,7 +535,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         }
         }
     } else {
-        const auto span = view->span16();
+        const auto span = view.span16();
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
@@ -431,70 +559,71 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         }
         }
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue decoded = JSC::JSValue::decode(result);
-    if (UNLIKELY(!result)) {
+    if (!result) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (decoded.isCell() && decoded.getObject()->isErrorInstance()) {
         scope.throwException(lexicalGlobalObject, decoded);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
     return result;
 }
 
-static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg0, JSValue arg1)
+static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg0, JSValue arg1)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
-
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* str = arg0.toString(lexicalGlobalObject);
+    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    auto* str = arg0.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto view = str->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
-            throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-            return JSC::JSValue::encode(jsUndefined());
+            auto* encodingString = arg1.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto& view = encodingString->view(lexicalGlobalObject);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
         }
 
         encoding = encoded.value();
     }
 
     if (str->length() == 0)
-        return constructBufferEmpty(lexicalGlobalObject);
+        RELEASE_AND_RETURN(scope, constructBufferEmpty(lexicalGlobalObject));
 
-    JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, str, encoding);
+    JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, view, encoding);
 
     RELEASE_AND_RETURN(scope, result);
 }
 
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L391
+static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue lengthValue = callFrame->uncheckedArgument(0);
-    if (UNLIKELY(!lengthValue.isNumber())) {
-        throwTypeError(lexicalGlobalObject, scope, "size argument must be a number"_s);
-        return {};
+
+    JSValue lengthValue = callFrame->argument(0);
+    Bun::V::validateNumber(scope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+    RETURN_IF_EXCEPTION(scope, {});
+    size_t length = lengthValue.toLength(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (length == 0) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
     }
-
-    double lengthDouble = lengthValue.toIntegerWithTruncation(lexicalGlobalObject);
-
-    if (UNLIKELY(lengthDouble < 0 || lengthDouble > UINT_MAX)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be 0...4294967295"_s);
-        return {};
-    }
-
-    size_t length = static_cast<size_t>(lengthDouble);
-
     // fill argument
-    if (UNLIKELY(callFrame->argumentCount() > 1)) {
+    if (callFrame->argumentCount() > 1) [[unlikely]] {
         auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, length);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -508,28 +637,33 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
                 if (!arg2.value().isUndefined()) {
-                    encoding = parseEncoding(lexicalGlobalObject, scope, arg2.value());
-                    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+                    encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
             auto startPtr = uint8Array->typedVector() + start;
-            auto str_ = value.toWTFString(lexicalGlobalObject);
-            ZigString str = Zig::toZigString(str_);
+            auto str_ = value.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto& view = str_->view(lexicalGlobalObject);
+            if (view->isEmpty()) {
+                memset(startPtr, 0, length);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
+            }
 
-            if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-                throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
-                return JSC::JSValue::encode(jsUndefined());
+            ZigString str = Zig::toZigString(view);
+
+            if (!Bun__Buffer_fill(&str, startPtr, end - start, encoding)) [[unlikely]] {
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
         } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
-            if (UNLIKELY(view->isDetached())) {
+            if (view->isDetached()) [[unlikely]] {
                 throwVMTypeError(lexicalGlobalObject, scope, "Uint8Array is detached"_s);
-                return JSValue::encode(jsUndefined());
+                return {};
             }
 
             size_t length = view->byteLength();
-            if (UNLIKELY(length == 0)) {
-                throwTypeError(lexicalGlobalObject, scope, "Buffer cannot be empty"_s);
-                return JSC::JSValue::encode(jsUndefined());
+            if (length == 0) [[unlikely]] {
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
 
             auto* start = uint8Array->typedVector();
@@ -553,7 +687,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
             auto value_uint8 = static_cast<uint8_t>(value_);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+            RETURN_IF_EXCEPTION(scope, {});
 
             auto length = uint8Array->byteLength();
             auto start = 0;
@@ -570,7 +704,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
     }
 }
 
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
 }
@@ -581,98 +715,36 @@ JSC_DEFINE_HOST_FUNCTION(constructSlowBuffer, (JSGlobalObject * lexicalGlobalObj
     return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
 }
 
-static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
-{
-    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    if (!str) {
-        throwTypeError(lexicalGlobalObject, scope, "byteLength() expects a string"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
-    if (str->length() == 0)
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
-
-    int64_t written = 0;
-
-    switch (encoding) {
-
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length() * 2)));
-    }
-
-    case WebCore::BufferEncodingType::latin1:
-    case WebCore::BufferEncodingType::ascii: {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length())));
-    }
-
-    case WebCore::BufferEncodingType::base64:
-    case WebCore::BufferEncodingType::base64url: {
-        int64_t length = str->length();
-        const auto& view = str->tryGetValue(lexicalGlobalObject);
-
-        if (view->is8Bit()) {
-            const auto span = view->span8();
-            if (span.data()[length - 1] == 0x3D) {
-                length--;
-
-                if (length > 1 && span.data()[length - 1] == '=')
-                    length--;
-            }
-        } else {
-            const auto span = view->span16();
-            if (span.data()[length - 1] == 0x3D) {
-                length--;
-
-                if (length > 1 && span.data()[length - 1] == '=')
-                    length--;
-            }
-        }
-
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
-        return JSValue::encode(jsNumber(static_cast<double>((length * 3) >> 2)));
-    }
-
-    case WebCore::BufferEncodingType::hex: {
-        return JSValue::encode(jsNumber(str->length() >> 1));
-    }
-
-    case WebCore::BufferEncodingType::utf8: {
-        const auto& view = str->tryGetValue(lexicalGlobalObject);
-        if (view->is8Bit()) {
-            const auto span = view->span8();
-            written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
-        } else {
-            const auto span = view->span16();
-            written = Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
-        }
-        break;
-    }
-    default: {
-        break;
-    }
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
-}
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!str) {
+        throwTypeError(lexicalGlobalObject, scope, "byteLength() expects a string"_s);
+        return {};
+    }
+
+    if (auto length = Bun::byteLength(str, lexicalGlobalObject, encoding)) {
+        return JSValue::encode(jsNumber(*length));
+    }
+    if (!scope.exception()) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+    }
+
+    return {};
+}
+
+static JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (UNLIKELY(callFrame->argumentCount() == 0)) {
-        throwTypeError(lexicalGlobalObject, scope, "Not enough arguments"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
     EnsureStillAliveScope arg0 = callFrame->argument(0);
-
     EnsureStillAliveScope arg1 = callFrame->argument(1);
+
     if (callFrame->argumentCount() > 1) {
 
         if (arg1.value().isString()) {
@@ -685,8 +757,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
         }
     }
 
-    if (LIKELY(arg0.value().isString()))
-        return jsBufferByteLengthFromStringAndEncoding(lexicalGlobalObject, asString(arg0.value()), encoding);
+    if (arg0.value().isString()) [[likely]]
+        RELEASE_AND_RETURN(scope, jsBufferByteLengthFromStringAndEncoding(lexicalGlobalObject, asString(arg0.value()), encoding));
 
     if (auto* arrayBufferView = jsDynamicCast<JSC::JSArrayBufferView*>(arg0.value())) {
         return JSValue::encode(jsNumber(arrayBufferView->byteLength()));
@@ -696,39 +768,32 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
         return JSValue::encode(jsNumber(arrayBuffer->impl()->byteLength()));
     }
 
-    throwTypeError(lexicalGlobalObject, scope, "Invalid input, must be a string, Buffer, or ArrayBuffer"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "string"_s, "string or an instance of Buffer or ArrayBuffer"_s, callFrame->argument(0));
 }
 
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 2) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
-    }
 
-    auto castedThisValue = callFrame->uncheckedArgument(0);
+    auto castedThisValue = callFrame->argument(0);
     JSC::JSArrayBufferView* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(castedThisValue);
-    if (UNLIKELY(!castedThis)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (first argument)"_s);
-        return JSValue::encode(jsUndefined());
+    if (!castedThis) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue);
     }
-    if (UNLIKELY(castedThis->isDetached())) {
+    if (castedThis->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (first argument) is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
-    auto buffer = callFrame->uncheckedArgument(1);
+    auto buffer = callFrame->argument(1);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (2nd argument)"_s);
-        return JSValue::encode(jsUndefined());
+    if (!view) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer);
     }
-    if (UNLIKELY(view->isDetached())) {
+    if (view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (second argument) is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t targetStart = 0;
@@ -738,29 +803,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
     size_t sourceStart = 0;
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
-
-    switch (callFrame->argumentCount()) {
-    default:
-        sourceEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(5));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-        FALLTHROUGH;
-    case 5:
-        sourceStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(4));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-        FALLTHROUGH;
-    case 4:
-        targetEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(3));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-        FALLTHROUGH;
-    case 3:
-        targetStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(2));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-        break;
-    case 2:
-    case 1:
-    case 0:
-        break;
-    }
 
     targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
     sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
@@ -776,22 +818,21 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(normalizeCompareVal(result, sourceLength, targetLength))));
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+
+static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     if (callFrame->argumentCount() < 1) {
         return constructBufferEmpty(lexicalGlobalObject);
     }
+    auto listValue = callFrame->argument(0);
 
-    auto arrayValue = callFrame->uncheckedArgument(0);
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-    if (!array) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-        return JSValue::encode(jsUndefined());
-    }
+    Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, "list"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
+    auto array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
     size_t arrayLength = array->length();
     if (arrayLength < 1) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
@@ -805,27 +846,24 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     // This is a small optimization
     MarkedArgumentBuffer args;
     args.ensureCapacity(arrayLength);
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     for (unsigned i = 0; i < arrayLength; i++) {
-        auto element = array->getIndex(lexicalGlobalObject, i);
+        JSValue element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);
         if (!typedArray) {
-            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
-            return JSValue::encode(jsUndefined());
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, makeString("list["_s, i, "]"_s), "Buffer or Uint8Array"_s, element);
+        }
+        if (typedArray->isDetached()) [[unlikely]] {
+            return throwVMTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
         }
 
-        if (UNLIKELY(typedArray->isDetached())) {
-            throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-            return JSValue::encode(jsUndefined());
-        }
-
-        auto length = typedArray->length();
+        auto length = typedArray->byteLength();
 
         if (length > 0)
             args.append(element);
@@ -835,9 +873,9 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
     size_t availableLength = byteLength;
     if (!totalLengthValue.isUndefined()) {
-        if (UNLIKELY(!totalLengthValue.isNumber())) {
+        if (!totalLengthValue.isNumber()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, throwScope, "totalLength must be a valid number"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         auto totalLength = totalLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s);
@@ -857,22 +895,18 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         // there will be some data that needs to be zeroed out
         // let's let the operating system do that for us
         allocBuffer(lexicalGlobalObject, byteLength);
-
-    if (!outBuffer) {
-        ASSERT(throwScope.exception());
-        return JSValue::encode({});
-    }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     size_t remain = byteLength;
     auto* head = outBuffer->typedVector();
-    const int arrayLengthI = arrayLength;
+    const int arrayLengthI = args.size();
     for (int i = 0; i < arrayLengthI && remain > 0; i++) {
-        auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(args.at(i));
-        size_t length = std::min(remain, typedArray->length());
+        auto* bufferView = JSC::jsCast<JSC::JSArrayBufferView*>(args.at(i));
+        size_t length = std::min(remain, bufferView->byteLength());
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        auto* source = typedArray->typedVector();
+        auto* source = bufferView->vector();
         ASSERT(source);
         memcpy(head, source, length);
 
@@ -880,16 +914,77 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
         head += length;
     }
 
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::JSValue(outBuffer)));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));
 }
 
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L337
+static JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto* encoding_ = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
-    if (!encoding_)
-        return JSValue::encode(jsBoolean(false));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+    auto viewValue = callFrame->argument(0);
+    auto offsetValue = callFrame->argument(1);
+    auto lengthValue = callFrame->argument(2);
+
+    auto view = jsDynamicCast<JSArrayBufferView*>(viewValue);
+    if (!view) {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
+    }
+
+    auto ty = JSC::typedArrayType(view->type());
+
+    auto viewLength = view->length();
+    if (viewLength == 0) {
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
+    }
+
+    size_t offset;
+    size_t length;
+
+    if (!offsetValue.isUndefined() || !lengthValue.isUndefined()) {
+        if (!offsetValue.isUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsUndefined(), &offset);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (offset >= viewLength) RELEASE_AND_RETURN(throwScope, JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
+        } else {
+            offset = 0;
+        }
+
+        double end = 0;
+        if (!lengthValue.isUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, lengthValue, "length"_s, jsNumber(0), jsUndefined(), &length);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            end = offset + length;
+        } else {
+            end = viewLength;
+        }
+        end = std::min(end, (double)viewLength);
+
+        auto elemSize = JSC::elementSize(ty);
+        auto offset_r = offset * elemSize;
+        auto end_r = end * elemSize;
+        auto span = view->span().subspan(offset_r, end_r - offset_r);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
+    }
+
+    auto boffset = view->byteOffset();
+    auto blength = view->byteLength();
+    auto span = view->span().subspan(boffset, blength - boffset);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size())));
+}
+
+static JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto encodingValue = callFrame->argument(0);
+    if (!encodingValue.isString()) {
+        return JSValue::encode(jsBoolean(false));
+    }
+    auto* encoding = encodingValue.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding);
     return JSValue::encode(jsBoolean(!!encoded));
 }
 
@@ -925,25 +1020,21 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferPrototype, JSBufferPrototype::Base);
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+
+    auto arg0 = callFrame->argument(0);
+    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(arg0);
+
+    if (!view) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, arg0);
     }
 
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(callFrame->uncheckedArgument(0));
-
-    if (UNLIKELY(!view)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    if (UNLIKELY(view->isDetached())) {
+    if (view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t targetStart = 0;
@@ -962,39 +1053,52 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     switch (callFrame->argumentCount()) {
     default:
         sourceEndValue = callFrame->uncheckedArgument(4);
-        FALLTHROUGH;
+        if (sourceEndValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceEnd);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+        [[fallthrough]];
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
-        FALLTHROUGH;
+        if (sourceStartValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceStart);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+        [[fallthrough]];
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
-        FALLTHROUGH;
+        if (targetEndValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetEnd);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+        [[fallthrough]];
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
+        if (targetStartValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetStart);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
         break;
     case 1:
     case 0:
         break;
     }
 
-    if (!targetStartValue.isUndefined()) {
-        targetStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(1));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (targetStart > targetEndInit && targetStart <= targetEnd) {
+        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue);
     }
-
-    if (!targetEndValue.isUndefined()) {
-        targetEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(2));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (targetEnd > targetEndInit && targetEnd >= targetStart) {
+        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue);
     }
-
-    if (!sourceStartValue.isUndefined()) {
-        sourceStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(3));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (sourceStart > sourceEndInit && sourceStart <= sourceEnd) {
+        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
     }
-
-    if (!sourceEndValue.isUndefined()) {
-        sourceEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(4));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (sourceEnd > sourceEndInit && sourceEnd >= sourceStart) {
+        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue);
     }
 
     targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
@@ -1011,106 +1115,104 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(normalizeCompareVal(result, sourceLength, targetLength))));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static double toInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, double defaultVal)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto buffer = callFrame->uncheckedArgument(0);
-
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    size_t targetStart = 0;
-    size_t targetEnd = view->byteLength();
-
-    size_t sourceStart = 0;
-    size_t sourceEndInit = castedThis->byteLength();
-    size_t sourceEnd = sourceEndInit;
-
-    JSValue targetStartValue = jsUndefined();
-    JSValue sourceStartValue = jsUndefined();
-    JSValue sourceEndValue = jsUndefined();
-
-    switch (callFrame->argumentCount()) {
-    default:
-        sourceEndValue = callFrame->uncheckedArgument(3);
-        FALLTHROUGH;
-    case 3:
-        sourceStartValue = callFrame->uncheckedArgument(2);
-        FALLTHROUGH;
-    case 2:
-        targetStartValue = callFrame->uncheckedArgument(1);
-        break;
-    case 1:
-    case 0:
-        break;
-    }
-
-    if (!targetStartValue.isUndefined()) {
-        targetStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(1));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    }
-
-    if (!sourceStartValue.isUndefined()) {
-        sourceStart = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(2));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    }
-
-    if (!sourceEndValue.isUndefined()) {
-        sourceEnd = parseIndex(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(3));
-        RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    }
-
-    targetStart = std::min(targetStart, targetEnd);
-    sourceEnd = std::min(sourceEnd, sourceEndInit);
-    sourceStart = std::min(sourceStart, sourceEnd);
-
-    auto sourceLength = sourceEnd - sourceStart;
-    auto targetLength = targetEnd - targetStart;
-    auto actualLength = std::min(sourceLength, targetLength);
-
-    auto sourceStartPtr = castedThis->typedVector() + sourceStart;
-    auto targetStartPtr = reinterpret_cast<unsigned char*>(view->vector()) + targetStart;
-
-    if (actualLength > 0)
-        memmove(targetStartPtr, sourceStartPtr, actualLength);
-
-    return JSValue::encode(jsNumber(actualLength));
+    auto n = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (std::isnan(n)) return defaultVal;
+    if (n < JSC::minSafeInteger()) return defaultVal;
+    if (n > JSC::maxSafeInteger()) return defaultVal;
+    return std::trunc(n);
 }
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L825
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L205
+static JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto targetValue = callFrame->argument(0);
+    auto targetStartValue = callFrame->argument(1);
+    auto sourceStartValue = callFrame->argument(2);
+    auto sourceEndValue = callFrame->argument(3);
+
+    auto source = castedThis;
+    auto target = jsDynamicCast<JSArrayBufferView*>(targetValue);
+    if (!target) {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, targetValue);
+    }
+
+    auto sourceLength = source->byteLength();
+    auto targetLength = target->byteLength();
+
+    size_t targetStart = 0;
+    if (targetStartValue.isUndefined()) {
+    } else {
+        double targetStartD = targetStartValue.isAnyInt() ? targetStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, targetStartValue, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (targetStartD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetLength, targetStartValue);
+        targetStart = static_cast<size_t>(targetStartD);
+    }
+
+    size_t sourceStart = 0;
+    if (sourceStartValue.isUndefined()) {
+    } else {
+        double sourceStartD = sourceStartValue.isAnyInt() ? sourceStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceStartValue, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (sourceStartD < 0 || sourceStartD > sourceLength) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceLength, sourceStartValue);
+        sourceStart = static_cast<size_t>(sourceStartD);
+    }
+
+    size_t sourceEnd = sourceLength;
+    if (sourceEndValue.isUndefined()) {
+    } else {
+        double sourceEndD = sourceEndValue.isAnyInt() ? sourceEndValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceEndValue, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (sourceEndD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceLength, sourceEndValue);
+        sourceEnd = static_cast<size_t>(sourceEndD);
+    }
+
+    if (targetStart >= targetLength || sourceStart >= sourceEnd) {
+        return JSValue::encode(jsNumber(0));
+    }
+
+    if (sourceEnd - sourceStart > targetLength - targetStart)
+        sourceEnd = sourceStart + targetLength - targetStart;
+
+    ssize_t nb = sourceEnd - sourceStart;
+    auto sourceLen = sourceLength - sourceStart;
+    if (nb > sourceLen) nb = sourceLen;
+
+    if (nb <= 0) return JSValue::encode(jsNumber(0));
+
+    auto sourceStartPtr = reinterpret_cast<unsigned char*>(source->vector()) + sourceStart;
+    auto targetStartPtr = reinterpret_cast<unsigned char*>(target->vector()) + targetStart;
+    memmove(targetStartPtr, sourceStartPtr, nb);
+
+    return JSValue::encode(jsNumber(nb));
+}
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     if (callFrame->argumentCount() < 1) {
         throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view)) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer"_s);
-        return JSValue::encode(jsUndefined());
+    if (!view) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "otherBuffer"_s, "Buffer or Uint8Array"_s, buffer);
     }
 
-    if (UNLIKELY(view->isDetached())) {
+    if (view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     size_t a_length = castedThis->byteLength();
@@ -1127,7 +1229,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGl
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsBoolean(normalizeCompareVal(result, a_length, b_length) == 0)));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1138,23 +1241,23 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
 
     auto value = callFrame->uncheckedArgument(0);
     const size_t limit = castedThis->byteLength();
-    size_t start = 0;
+    size_t offset = 0;
     size_t end = limit;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
     JSValue encodingValue = jsUndefined();
     JSValue offsetValue = jsUndefined();
-    JSValue lengthValue = jsUndefined();
+    JSValue endValue = jsUndefined();
 
     switch (callFrame->argumentCount()) {
     case 4:
         encodingValue = callFrame->uncheckedArgument(3);
-        FALLTHROUGH;
+        [[fallthrough]];
     case 3:
-        lengthValue = callFrame->uncheckedArgument(2);
-        FALLTHROUGH;
+        endValue = callFrame->uncheckedArgument(2);
+        [[fallthrough]];
     case 2:
         offsetValue = callFrame->uncheckedArgument(1);
-        FALLTHROUGH;
+        [[fallthrough]];
     default:
         break;
     }
@@ -1162,60 +1265,57 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     if (offsetValue.isUndefined() || offsetValue.isString()) {
         encodingValue = offsetValue;
         offsetValue = jsUndefined();
-    } else if (lengthValue.isString()) {
-        encodingValue = lengthValue;
-        lengthValue = jsUndefined();
+    } else if (endValue.isString()) {
+        encodingValue = endValue;
+        endValue = jsUndefined();
     }
 
-    if (!encodingValue.isUndefined()) {
-        encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    if (!encodingValue.isUndefined() && value.isString()) {
+        encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
+    // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L1066-L1079
+    // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L122
     if (!offsetValue.isUndefined()) {
-        start = parseIndex(lexicalGlobalObject, scope, offsetValue);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        Bun::V::validateNumber(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+        RETURN_IF_EXCEPTION(scope, {});
+        offset = offsetValue.toLength(lexicalGlobalObject);
     }
-
-    if (!lengthValue.isUndefined()) {
-        end = parseIndex(lexicalGlobalObject, scope, lengthValue);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+    if (!endValue.isUndefined()) {
+        Bun::V::validateNumber(scope, lexicalGlobalObject, endValue, "end"_s, jsNumber(0), jsNumber(limit));
+        RETURN_IF_EXCEPTION(scope, {});
+        end = endValue.toLength(lexicalGlobalObject);
     }
-
-    if (start >= end) {
+    if (offset >= end) {
         RELEASE_AND_RETURN(scope, JSValue::encode(castedThis));
     }
 
-    if (UNLIKELY(end > limit)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "end out of range"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
     if (value.isString()) {
-        auto startPtr = castedThis->typedVector() + start;
+        auto startPtr = castedThis->typedVector() + offset;
         auto str_ = value.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         ZigString str = Zig::toZigString(str_);
 
         if (str.len == 0) {
-            memset(startPtr, 0, end - start);
-        } else if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-            throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
-            return JSC::JSValue::encode(jsUndefined());
+            memset(startPtr, 0, end - offset);
+        } else if (!Bun__Buffer_fill(&str, startPtr, end - offset, encoding)) [[unlikely]] {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
         }
     } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
-        auto* startPtr = castedThis->typedVector() + start;
+        auto* startPtr = castedThis->typedVector() + offset;
         auto* head = startPtr;
-        size_t remain = end - start;
+        size_t remain = end - offset;
 
-        if (UNLIKELY(view->isDetached())) {
+        if (view->isDetached()) [[unlikely]] {
             throwVMTypeError(lexicalGlobalObject, scope, "Uint8Array is detached"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         size_t length = view->byteLength();
-        if (UNLIKELY(length == 0)) {
-            throwTypeError(lexicalGlobalObject, scope, "Buffer cannot be empty"_s);
-            return JSC::JSValue::encode(jsUndefined());
+        if (length == 0) [[unlikely]] {
+            scope.throwException(lexicalGlobalObject, createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, "Buffer cannot be empty"_s));
+            return {};
         }
 
         length = std::min(length, remain);
@@ -1234,11 +1334,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         }
     } else {
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto value_uint8 = static_cast<uint8_t>(value_);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, {});
 
-        auto startPtr = castedThis->typedVector() + start;
+        auto startPtr = castedThis->typedVector() + offset;
         auto endPtr = castedThis->typedVector() + end;
         memset(startPtr, value_uint8, endPtr - startPtr);
     }
@@ -1246,16 +1347,59 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     RELEASE_AND_RETURN(scope, JSValue::encode(castedThis));
 }
 
+static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_length, bool is_forward)
+{
+    auto length_i64 = static_cast<ssize_t>(length);
+    if (offset_i64 < 0) {
+        if (offset_i64 + length_i64 >= 0) {
+            // Negative offsets count backwards from the end of the buffer.
+            return length_i64 + offset_i64;
+        } else if (is_forward || needle_length == 0) {
+            // indexOf from before the start of the buffer: search the whole buffer.
+            return 0;
+        } else {
+            // lastIndexOf from before the start of the buffer: no match.
+            return -1;
+        }
+    } else {
+        if (offset_i64 + needle_length <= length_i64) {
+            // Valid positive offset.
+            return offset_i64;
+        } else if (needle_length == 0) {
+            // Out of buffer bounds, but empty needle: point to end of buffer.
+            return length_i64;
+        } else if (is_forward) {
+            // indexOf from past the end of the buffer: no match.
+            return -1;
+        } else {
+            // lastIndexOf from past the end of the buffer: search the whole buffer.
+            return length_i64 - 1;
+        }
+    }
+}
+
 static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    if (thisLength < valueLength + byteOffset)
-        return -1;
-    auto start = thisPtr + byteOffset;
-    auto it = static_cast<uint8_t*>(memmem(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength)));
-    if (it != NULL) {
-        return it - thisPtr;
-    }
-    return -1;
+    auto haystack = std::span<const uint8_t>(thisPtr, thisLength).subspan(byteOffset);
+    auto needle = std::span<const uint8_t>(valuePtr, valueLength);
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
+    if (it == haystack.end()) return -1;
+    return byteOffset + std::distance(haystack.begin(), it);
+}
+
+static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
+{
+    if (thisLength == 1) return -1;
+    if (valueLength == 1) return -1;
+    thisLength /= 2;
+    valueLength /= 2;
+    byteOffset /= 2;
+    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
+    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
+    if (it == haystack.end()) return -1;
+    auto idx = byteOffset + std::distance(haystack.begin(), it);
+    return idx * 2;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
@@ -1269,127 +1413,226 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
     return -1;
 }
 
-static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis, bool last)
+static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, uint8_t byteValue)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, !last);
+    if (byteOffset == -1) return -1;
+    auto span = std::span<const uint8_t>(typedVector, byteLength);
+    if (last) {
+        span = span.subspan(0, byteOffset + 1);
+        return WTF::reverseFind(span, byteValue);
+    }
+    span = span.subspan(byteOffset);
+    auto result = WTF::find<uint8_t>(span, byteValue);
+    if (result == WTF::notFound) return -1;
+    return result + byteOffset;
+}
+
+static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSString* str, BufferEncodingType encoding)
+{
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, str->length(), !last);
+    if (byteOffset == -1) return -1;
+    if (str->length() == 0) return byteOffset;
+
+    VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(lexicalGlobalObject, scope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(jsUndefined());
+
+    auto view = str->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, -1);
+    JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, view, encoding);
+    RETURN_IF_EXCEPTION(scope, -1);
+
+    auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
+    auto lengthValue = static_cast<int64_t>(arrayValue->byteLength());
+    if (lengthValue == 0) return byteOffset;
+
+    const uint8_t* typedVectorValue = arrayValue->typedVector();
+    if (last) {
+        return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+    if (encoding == BufferEncodingType::ucs2) {
+        return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
     }
 
-    auto value = callFrame->uncheckedArgument(0);
-    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
+    return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+}
 
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
-    const uint8_t* typedVector = castedThis->typedVector();
-
-    int64_t byteOffset = last ? length - 1 : 0;
-
-    if (callFrame->argumentCount() > 1) {
-        EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(1);
-        if (arg1.value().isString()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg1.value());
-            RETURN_IF_EXCEPTION(scope, -1);
-        } else {
-            auto byteOffset_ = arg1.value().toNumber(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, -1);
-
-            if (std::isnan(byteOffset_) || std::isinf(byteOffset_)) {
-                byteOffset = last ? length - 1 : 0;
-            } else if (byteOffset_ < 0) {
-                byteOffset = length + static_cast<int64_t>(byteOffset_);
-            } else {
-                byteOffset = static_cast<int64_t>(byteOffset_);
-            }
-
-            if (last) {
-                if (byteOffset < 0) {
-                    return -1;
-                } else if (byteOffset > length - 1) {
-                    byteOffset = length - 1;
-                }
-            } else {
-                if (byteOffset <= 0) {
-                    byteOffset = 0;
-                } else if (byteOffset > length - 1) {
-                    return -1;
-                }
-            }
-
-            if (callFrame->argumentCount() > 2) {
-                EnsureStillAliveScope encodingValue = callFrame->uncheckedArgument(2);
-                if (!encodingValue.value().isUndefined()) {
-                    encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue.value());
-                    RETURN_IF_EXCEPTION(scope, -1);
-                }
-            }
-        }
+static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
+{
+    size_t lengthValue = array->byteLength();
+    ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, lengthValue, !last);
+    if (byteOffset == -1) return -1;
+    if (lengthValue == 0) return byteOffset;
+    const uint8_t* typedVectorValue = array->typedVector();
+    if (last) {
+        return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
     }
+    if (encoding == BufferEncodingType::ucs2) {
+        return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+    return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+}
 
-    if (value.isString()) {
-        auto* str = value.toStringOrNull(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, -1);
+static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
+{
+    bool dir = !last;
+    const uint8_t* typedVector = buffer->typedVector();
+    size_t byteLength = buffer->byteLength();
+    std::optional<BufferEncodingType> encoding = std::nullopt;
+    double byteOffsetD = 0;
 
-        JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
-        auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
-        int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
-        const uint8_t* typedVectorValue = arrayValue->typedVector();
-        if (last) {
-            return lastIndexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
-        } else {
-            return indexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
-        }
-    } else if (value.isNumber()) {
-        uint8_t byteValue = static_cast<uint8_t>((value.toInt32(lexicalGlobalObject)) % 256);
-        RETURN_IF_EXCEPTION(scope, -1);
+    if (byteLength == 0) return -1;
 
-        if (last) {
-            for (int64_t i = byteOffset; i >= 0; --i) {
-                if (byteValue == typedVector[i]) {
-                    return i;
-                }
-            }
-        } else {
-            const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, length - byteOffset);
-            if (offset != NULL) {
-                return static_cast<int64_t>(static_cast<const uint8_t*>(offset) - typedVector);
-            }
-        }
+    auto valueValue = callFrame->argument(0);
+    auto byteOffsetValue = callFrame->argument(1);
+    auto encodingValue = callFrame->argument(2);
 
-        return -1;
-    } else if (auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(value)) {
-        size_t lengthValue = arrayValue->byteLength();
-        const uint8_t* typedVectorValue = arrayValue->typedVector();
-        if (last) {
-            return lastIndexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
-        } else {
-            return indexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
-        }
+    if (byteOffsetValue.isString()) {
+        encodingValue = byteOffsetValue;
+        byteOffsetValue = jsUndefined();
+        byteOffsetD = 0;
     } else {
-        throwTypeError(lexicalGlobalObject, scope, "Invalid value type"_s);
-        return -1;
+        byteOffsetD = byteOffsetValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, -1);
+        if (byteOffsetD > 0x7fffffffp0f) byteOffsetD = 0x7fffffffp0f;
+        if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
     }
 
+    if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
+
+    if (valueValue.isNumber()) {
+        auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
+        RETURN_IF_EXCEPTION(scope, -1);
+        return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
+    }
+
+    WTF::String encodingString;
+    if (!encodingValue.isUndefined()) {
+        encodingString = encodingValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        encoding = parseEnumerationFromString<BufferEncodingType>(encodingString);
+    } else {
+        encoding = BufferEncodingType::utf8;
+    }
+
+    if (valueValue.isString()) {
+        if (!encoding.has_value()) {
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingString);
+        }
+        auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, -1);
+        return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, str, encoding.value());
+    }
+
+    if (auto* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(valueValue)) {
+        if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
+        return indexOfBuffer(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, array, encoding.value());
+    }
+
+    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "number, string, Buffer, or Uint8Array"_s, valueValue);
     return -1;
 }
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, false);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsBoolean(index != -1));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, false);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsNumber(index));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, true);
+    auto globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto recurseTimes = callFrame->argument(0);
+    UNUSED_PARAM(recurseTimes);
+    auto ctx = callFrame->argument(1);
+
+    WTF::StringBuilder result;
+    auto data = castedThis->span();
+    auto alphabet = "0123456789abcdef"_s;
+    auto any = false;
+
+    result.append("<Buffer"_s);
+    auto max = globalObject->INSPECT_MAX_BYTES;
+    auto actualMaxD = std::min<double>(max, data.size());
+    size_t actualMax = actualMaxD;
+
+    for (auto item : data.first(actualMax)) {
+        any = true;
+        result.append(' ');
+        result.append(alphabet[item / 16]);
+        result.append(alphabet[item % 16]);
+    }
+    if (data.size() > max) {
+        auto remaining = data.size() - max;
+        result.append(makeString(" ... "_s, remaining, " more byte"_s));
+        if (remaining > 1) result.append('s');
+    }
+
+    // Inspect special properties as well, if possible.
+    if (ctx.toBoolean(globalObject)) {
+        auto showHidden = ctx.get(globalObject, Identifier::fromString(vm, "showHidden"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+
+        auto filter = showHidden.toBoolean(globalObject) ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
+
+        if (castedThis->hasNonReifiedStaticProperties()) [[unlikely]] {
+            castedThis->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        castedThis->getOwnNonIndexPropertyNames(globalObject, array, filter);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (array.size() > 0) {
+            any = true;
+            if (data.size() > 0) {
+                result.append(',');
+            }
+            result.append(' ');
+            size_t i = 0;
+            for (auto ident : array) {
+                if (i > 0) result.append(", "_s);
+                result.append(ident.string());
+                result.append(": "_s);
+                auto value = castedThis->get(globalObject, ident);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                RETURN_IF_EXCEPTION(scope, {});
+                result.append(inspected);
+                i++;
+            }
+        }
+    }
+    if (!any) result.append(' ');
+    result.append('>');
+    return JSValue::encode(JSC::jsString(vm, result.toString()));
+}
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, true);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsNumber(index));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1398,12 +1641,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGl
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 16-bits"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
-    if (UNLIKELY(castedThis->isDetached())) {
+    if (castedThis->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     uint8_t* typedVector = castedThis->typedVector();
@@ -1418,7 +1661,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGl
 
     return JSC::JSValue::encode(castedThis);
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1427,12 +1671,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGl
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 32-bits"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
-    if (UNLIKELY(castedThis->isDetached())) {
+    if (castedThis->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     uint8_t* typedVector = castedThis->typedVector();
@@ -1452,7 +1696,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGl
 
     return JSC::JSValue::encode(castedThis);
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1461,12 +1706,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 64-bits"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
-    if (UNLIKELY(castedThis->isDetached())) {
+    if (castedThis->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     uint8_t* typedVector = castedThis->typedVector();
@@ -1487,69 +1732,115 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
     return JSC::JSValue::encode(castedThis);
 }
 
-static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
 
-    if (UNLIKELY(length == 0)) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    if (bytes.size() == 0) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
 
-    JSC::EncodedJSValue ret = 0;
+    if (bytes.size() > WTF::String::MaxLength) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
 
     switch (encoding) {
-    case WebCore::BufferEncodingType::latin1: {
-        LChar* data = nullptr;
-        auto str = String::createUninitialized(length, data);
-        memcpy(data, reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
-        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+    case WebCore::BufferEncodingType::buffer: {
+        auto* buffer = createUninitializedBuffer(lexicalGlobalObject, bytes.size());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!buffer) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+        memcpy(buffer->vector(), bytes.data(), bytes.size());
+        return JSC::JSValue::encode(buffer);
     }
-
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        UChar* data = nullptr;
-        size_t u16length = length / 2;
-        if (u16length == 0) {
-            return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-        } else {
-            auto str = String::createUninitialized(u16length, data);
-            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
-            return JSC::JSValue::encode(JSC::jsString(vm, str));
+    case BufferEncodingType::latin1: {
+        std::span<LChar> data;
+        auto str = String::tryCreateUninitialized(bytes.size(), data);
+        if (str.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
         }
 
-        break;
+        memcpy(data.data(), bytes.data(), bytes.size());
+        return JSValue::encode(jsString(vm, WTFMove(str)));
+    }
+    case BufferEncodingType::ucs2:
+    case BufferEncodingType::utf16le: {
+        std::span<char16_t> data;
+        size_t u16length = bytes.size() / 2;
+        if (u16length == 0) {
+            return JSValue::encode(jsEmptyString(vm));
+        }
+        auto str = String::tryCreateUninitialized(u16length, data);
+        if (str.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+        memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
+        return JSValue::encode(jsString(vm, WTFMove(str)));
+    }
+    case BufferEncodingType::ascii: {
+        std::span<LChar> data;
+        auto str = String::tryCreateUninitialized(bytes.size(), data);
+        if (str.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+        Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
+        return JSValue::encode(jsString(vm, WTFMove(str)));
     }
 
-    case WebCore::BufferEncodingType::ascii: {
-        // ascii: we always know the length
-        // so we might as well allocate upfront
-        LChar* data = nullptr;
-        auto str = String::createUninitialized(length, data);
-        Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, data, length, static_cast<uint8_t>(encoding));
-        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
-    }
-
-    case WebCore::BufferEncodingType::buffer:
     case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
-        break;
+        EncodedJSValue res = Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue stringValue = JSValue::decode(res);
+        if (!stringValue.isString()) [[unlikely]] {
+            scope.throwException(lexicalGlobalObject, stringValue);
+            return {};
+        }
+
+        RELEASE_AND_RETURN(scope, JSValue::encode(stringValue));
     }
     default: {
         throwTypeError(lexicalGlobalObject, scope, "Unsupported encoding? This shouldn't happen"_s);
-        break;
+        return {};
     }
+    }
+}
+
+JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+
+    auto byteLength = castedThis->byteLength();
+
+    if (!byteLength) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
 
-    JSC::JSValue retValue = JSC::JSValue::decode(ret);
-    if (UNLIKELY(!retValue.isString())) {
-        scope.throwException(lexicalGlobalObject, retValue);
-        return JSC::JSValue::encode(jsUndefined());
+    ASSERT(offset <= byteLength);
+    ASSERT(length <= byteLength);
+    ASSERT(offset + length <= byteLength);
+
+    if (offset >= byteLength) {
+        offset = byteLength;
     }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
+    if (length > byteLength) {
+        length = byteLength;
+    }
+
+    if (offset + length > byteLength) {
+        length = byteLength - offset;
+    }
+
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L208-L233
@@ -1571,10 +1862,13 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
     return true;
 }
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
+// using byteLength and byte offsets here is intentional
+static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     uint32_t start = 0;
     uint32_t end = castedThis->byteLength();
     uint32_t byteLength = end;
@@ -1590,62 +1884,68 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     JSC::JSValue arg3 = callFrame->argument(2);
 
     if (argsCount == 0)
-        return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end, encoding);
+        return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
-        encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!arg2.isUndefined()) {
-        int32_t istart = arg2.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-
-        if (istart < 0) {
-            throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
-            return JSC::JSValue::encode(jsUndefined());
-        }
-
-        start = static_cast<uint32_t>(istart);
+    auto fstart = arg2.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (fstart < 0) {
+        fstart = 0;
+        goto lstart;
     }
+    if (fstart > byteLength) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    }
+    start = static_cast<uint32_t>(fstart);
+lstart:
 
     if (!arg3.isUndefined()) {
-        // length is end
-        end = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        auto lend = arg3.toLength(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (lend < byteLength) end = lend;
     }
 
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end > start ? end - start : 0, encoding);
+    if (end <= start)
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+
+    auto offset = start;
+    auto length = end > start ? end - start : 0;
+    return jsBufferToString(lexicalGlobalObject, scope, castedThis, offset, length, encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L544
 template<BufferEncodingType encoding>
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
     const JSValue startValue = callFrame->argument(0);
     const JSValue endValue = callFrame->argument(1);
 
-    if (UNLIKELY(!castedThis)) {
+    if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
         return {};
     }
 
     const size_t length = castedThis->byteLength();
-    if (UNLIKELY(length == 0)) {
+    if (length == 0) [[unlikely]] {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
     size_t start = 0;
     size_t end = length;
 
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, startValue, start, "start must be a positive integer"_s))) {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, startValue, start, "start must be a positive integer"_s)) [[unlikely]] {
         return {};
     }
 
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, endValue, end, "end must be a positive integer"_s))) {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, endValue, end, "end must be a positive integer"_s)) [[unlikely]] {
         return {};
     }
 
@@ -1654,10 +1954,10 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
     if (!(end <= length)) {
         throwNodeRangeError(lexicalGlobalObject, scope, "end out of range"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end - start, encoding);
+    return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
 // DOMJIT makes it slower! TODO: investigate why
@@ -1665,7 +1965,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
 // JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -1686,152 +1986,135 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L711
 template<BufferEncodingType encoding>
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
 {
-    size_t offset = 0;
-    size_t length = castedThis->byteLength();
-    size_t max = length;
+    size_t byteLength = castedThis->byteLength();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, offsetValue, offset, "offset must be > 0"_s))) {
-        return {};
+    double offset;
+    double length;
+
+    if (offsetValue.isUndefined()) {
+        offset = 0;
+    } else if (offsetValue.isNumber()) {
+        offset = offsetValue.asNumber();
+    } else {
+        offset = offsetValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (lengthValue.isUndefined()) {
+        length = byteLength - offset;
+    } else if (lengthValue.isNumber()) {
+        length = lengthValue.asNumber();
+    } else {
+        length = lengthValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (UNLIKELY(offset > max)) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "offset is out of bounds"_s);
-        return JSC::JSValue::encode(jsUndefined());
+    if (offset < 0 || offset > byteLength) {
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset");
+    }
+    if (length < 0 || length > byteLength - offset) {
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length");
     }
 
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, max, "length must be > 0"_s))) {
-        return {};
-    }
-
-    size_t max_length = std::min(max - offset, max);
-
-    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, max_length, encoding));
+    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
 template<BufferEncodingType encoding>
-static inline JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
 
-    JSString* text = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
+    auto arg0 = callFrame->argument(0);
+    JSString* text = arg0.toStringOrNull(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue offsetValue = callFrame->argument(1);
     JSValue lengthValue = callFrame->argument(2);
 
-    if (UNLIKELY(!castedThis)) {
+    if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
         return {};
     }
 
-    if (UNLIKELY(castedThis->isDetached())) {
+    if (castedThis->isDetached()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
 
-    return jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, text, offsetValue, lengthValue);
+    RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, text, offsetValue, lengthValue));
 }
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    uint32_t offset = 0;
-    uint32_t length = castedThis->byteLength();
-    uint32_t max = length;
-    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
-
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() == 0)) {
-        throwTypeError(lexicalGlobalObject, scope, "Not enough arguments"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
+    auto stringValue = callFrame->argument(0);
+    auto offsetValue = callFrame->argument(1);
+    auto lengthValue = callFrame->argument(2);
+    auto encodingValue = callFrame->argument(3);
 
-    EnsureStillAliveScope arg0 = callFrame->argument(0);
-    auto* str = arg0.value().toStringOrNull(lexicalGlobalObject);
-    if (!str) {
-        throwTypeError(lexicalGlobalObject, scope, "write() expects a string"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
-    JSValue offsetValue = jsUndefined();
-    JSValue lengthValue = jsUndefined();
-    JSValue encodingValue = jsUndefined();
-
-    switch (callFrame->argumentCount()) {
-    case 4:
-        encodingValue = callFrame->uncheckedArgument(3);
-        FALLTHROUGH;
-    case 3:
-        lengthValue = callFrame->uncheckedArgument(2);
-        FALLTHROUGH;
-    case 2:
-        offsetValue = callFrame->uncheckedArgument(1);
-        break;
-    default:
-        break;
-    }
-
-    auto setEncoding = [&]() {
-        if (!encodingValue.isUndefined()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
-        }
-    };
+    uint32_t offset;
+    uint32_t length;
 
     if (offsetValue.isUndefined()) {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L1053
-        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
+        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* str = stringValue.toString(lexicalGlobalObject);
+        offset = 0;
+        length = castedThis->byteLength();
+        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
-
     if (lengthValue.isUndefined() && offsetValue.isString()) {
-        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L1056
         encodingValue = offsetValue;
-        setEncoding();
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        offset = 0;
+        length = castedThis->byteLength();
+
+        auto* str = stringValue.toString(lexicalGlobalObject);
+        auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+        RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
-    }
-
-    if (UNLIKELY(!offsetValue.isNumber())) {
-        throwTypeError(lexicalGlobalObject, scope, "Invalid offset"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
-    int32_t userOffset = offsetValue.toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-    if (userOffset < 0 || userOffset > max) {
-        throwNodeRangeError(lexicalGlobalObject, scope, "Offset is out of bounds"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
-    offset = static_cast<uint32_t>(userOffset);
-    uint32_t remaining = max - static_cast<uint32_t>(userOffset);
-
-    // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L1062-L1077
-    if (lengthValue.isUndefined()) {
-        length = remaining;
-    } else if (lengthValue.isString()) {
-        encodingValue = lengthValue;
-        setEncoding();
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        length = remaining;
     } else {
-        setEncoding();
+        length = castedThis->byteLength();
+        offset = validateOffset(scope, lexicalGlobalObject, offsetValue, "offset"_s, 0, length);
+        RETURN_IF_EXCEPTION(scope, {});
+        uint32_t remaining = castedThis->byteLength() - offset;
 
-        int32_t userLength = lengthValue.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        length = std::min(static_cast<uint32_t>(userLength), remaining);
+        if (lengthValue.isUndefined()) {
+            length = remaining;
+        } else if (lengthValue.isString()) {
+            encodingValue = lengthValue;
+            length = remaining;
+        } else {
+            length = validateOffset(scope, lexicalGlobalObject, lengthValue, "length"_s, 0, length);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (length > remaining) {
+                length = remaining;
+            }
+        }
     }
+
+    Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* str = stringValue.toString(lexicalGlobalObject);
+
+    if (!encodingValue.toBoolean(lexicalGlobalObject)) {
+        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
+    }
+
+    auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObject, void* ptr, size_t length)
 {
-
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1847,9 +2130,9 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
 
-    if (UNLIKELY(!view)) {
+    if (!view) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     return JSC::JSValue::encode(view);
@@ -1859,14 +2142,17 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * le
 {
     return jsBufferConstructorFunction_allocBody(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_byteLengthBody(lexicalGlobalObject, callFrame);
@@ -1901,7 +2187,7 @@ public:
 
 private:
     JSBufferConstructor(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure, constructJSBuffer, constructJSBuffer)
+        : Base(vm, structure, callJSBuffer, constructJSBuffer)
 
     {
     }
@@ -1925,13 +2211,18 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_concat, (JSGlobalObject * l
     return jsBufferConstructorFunction_concatBody(lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return jsBufferConstructorFunction_copyBytesFromBody(lexicalGlobalObject, callFrame);
+}
+
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -1941,7 +2232,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -1951,7 +2242,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -1970,7 +2261,7 @@ class JSBuffer : public JSC::JSNonFinalObject {
 
 const ClassInfo JSBuffer::s_info = {
     "Buffer"_s,
-    JSC::getUint8ArrayClassInfo(),
+    &JSC::JSUint8Array::s_info,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(JSBuffer)
@@ -1980,46 +2271,62 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_compare, (JSGlobalObject * le
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_compareBody>(*lexicalGlobalObject, *callFrame, "compare");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_copy, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_copyBody>(*lexicalGlobalObject, *callFrame, "copy");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_equals, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_equalsBody>(*lexicalGlobalObject, *callFrame, "equals");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_fill, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_fillBody>(*lexicalGlobalObject, *callFrame, "fill");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_includes, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_includesBody>(*lexicalGlobalObject, *callFrame, "includes");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_indexOfBody>(*lexicalGlobalObject, *callFrame, "indexOf");
 }
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_inspectBody>(*lexicalGlobalObject, *callFrame, "inspect");
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_lastIndexOfBody>(*lexicalGlobalObject, *callFrame, "lastIndexOf");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_swap16Body>(*lexicalGlobalObject, *callFrame, "swap16");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_swap32Body>(*lexicalGlobalObject, *callFrame, "swap32");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_swap64Body>(*lexicalGlobalObject, *callFrame, "swap64");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_writeBody>(*lexicalGlobalObject, *callFrame, "write");
@@ -2064,29 +2371,221 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf8Slice, (JSGlobalObject * 
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::utf8>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf16leSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::utf16le>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_latin1Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::latin1>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_asciiSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::ascii>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::base64>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64urlSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::base64url>(lexicalGlobalObject, callFrame);
 }
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
+}
+
+template<typename I> void write_int64_le(uint8_t* buffer, I value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    auto val = reinterpret_cast<uint8_t*>(&value);
+    buffer[0] = val[0];
+    buffer[1] = val[1];
+    buffer[2] = val[2];
+    buffer[3] = val[3];
+    buffer[4] = val[4];
+    buffer[5] = val[5];
+    buffer[6] = val[6];
+    buffer[7] = val[7];
+}
+
+template<typename I> void write_int64_be(uint8_t* buffer, I value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    auto val = reinterpret_cast<uint8_t*>(&value);
+    buffer[0] = val[7];
+    buffer[1] = val[6];
+    buffer[2] = val[5];
+    buffer[3] = val[4];
+    buffer[4] = val[3];
+    buffer[5] = val[2];
+    buffer[6] = val[1];
+    buffer[7] = val[0];
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (!valueVal.isBigInt()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (bigint->length() > 1) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    int64_t value = static_cast<int64_t>(limb);
+
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
+    if (!offsetVal.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (offset < 0) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset + 8));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (!valueVal.isBigInt()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (bigint->length() > 1) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    int64_t value = static_cast<int64_t>(limb);
+
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
+    if (!offsetVal.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (offset < 0) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset + 8));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (!valueVal.isBigInt()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (bigint->sign()) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    if (bigint->length() > 1) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
+    if (!offsetVal.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (offset < 0) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset + 8));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (!castedThis) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (!valueVal.isBigInt()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (bigint->sign()) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    if (bigint->length() > 1) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
+    if (!offsetVal.isNumber()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (offset < 0) [[unlikely]]
+        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (offset > byteLength - 8) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 /* */
@@ -2109,7 +2608,7 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "hexWrite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_hexWrite, 3 } },
           { "includes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_includes, 3 } },
           { "indexOf"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_indexOf, 3 } },
-          { "inspect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeInspectCodeGenerator, 2 } },
+          { "inspect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_inspect, 2 } },
           { "lastIndexOf"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_lastIndexOf, 3 } },
           { "latin1Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_latin1Slice, 2 } },
           { "latin1Write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_latin1Write, 3 } },
@@ -2143,16 +2642,6 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "readUInt8"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt8CodeGenerator, 1 } },
           { "readUIntBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntBECodeGenerator, 1 } },
           { "readUIntLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntLECodeGenerator, 1 } },
-          // name alias
-          { "readUintBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntBECodeGenerator, 1 } },
-          { "readUintLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntLECodeGenerator, 1 } },
-          { "readUint8"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt8CodeGenerator, 1 } },
-          { "readUint16BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt16BECodeGenerator, 1 } },
-          { "readUint16LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt16LECodeGenerator, 1 } },
-          { "readUint32BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt32BECodeGenerator, 1 } },
-          { "readUint32LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUInt32LECodeGenerator, 1 } },
-          { "readBigUint64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigUInt64BECodeGenerator, 1 } },
-          { "readBigUint64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigUInt64LECodeGenerator, 1 } },
 
           { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeSliceCodeGenerator, 2 } },
           { "subarray"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeSliceCodeGenerator, 2 } },
@@ -2169,10 +2658,10 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "utf8Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_utf8Slice, 2 } },
           { "utf8Write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_utf8Write, 3 } },
           { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_write, 4 } },
-          { "writeBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigInt64BECodeGenerator, 1 } },
-          { "writeBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigInt64LECodeGenerator, 1 } },
-          { "writeBigUInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64BECodeGenerator, 1 } },
-          { "writeBigUInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64LECodeGenerator, 1 } },
+          { "writeBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigInt64BE, 3 } },
+          { "writeBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigInt64LE, 3 } },
+          { "writeBigUInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigUInt64BE, 3 } },
+          { "writeBigUInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigUInt64LE, 3 } },
           { "writeDouble"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleLECodeGenerator, 1 } },
           { "writeDoubleBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleBECodeGenerator, 1 } },
           { "writeDoubleLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleLECodeGenerator, 1 } },
@@ -2195,26 +2684,50 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "writeUInt8"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt8CodeGenerator, 1 } },
           { "writeUIntBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUIntBECodeGenerator, 1 } },
           { "writeUIntLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUIntLECodeGenerator, 1 } },
-          // name alias
-          { "writeUintBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUIntBECodeGenerator, 1 } },
-          { "writeUintLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUIntLECodeGenerator, 1 } },
-          { "writeUint8"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt8CodeGenerator, 1 } },
-          { "writeUint16"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt16LECodeGenerator, 1 } },
-          { "writeUint16BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt16BECodeGenerator, 1 } },
-          { "writeUint16LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt16LECodeGenerator, 1 } },
-          { "writeUint32"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt32LECodeGenerator, 1 } },
-          { "writeUint32BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt32BECodeGenerator, 1 } },
-          { "writeUint32LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteUInt32LECodeGenerator, 1 } },
-          { "writeBigUint64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64BECodeGenerator, 1 } },
-          { "writeBigUint64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64LECodeGenerator, 1 } },
       };
+
+// TODO: add this as a feature to the hash table generator mechanism above so that we can avoid all the unnecessary extra calls to `Identifier::fromString` and `this->getDirect`.
+#define ALIAS(to, from)                                                                          \
+    do {                                                                                         \
+        auto original_ident = Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(from)); \
+        auto original = this->getDirect(vm, original_ident);                                     \
+        auto alias_ident = Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(to));      \
+        this->putDirect(vm, alias_ident, original, PropertyAttribute::Builtin | 0);              \
+    } while (false);
 
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
+
+    ALIAS("toLocaleString", "toString");
+
+    ALIAS("readUintBE", "readUIntBE");
+    ALIAS("readUintLE", "readUIntLE");
+    ALIAS("readUint8", "readUInt8");
+    ALIAS("readUint16BE", "readUInt16BE");
+    ALIAS("readUint16LE", "readUInt16LE");
+    ALIAS("readUint32BE", "readUInt32BE");
+    ALIAS("readUint32LE", "readUInt32LE");
+    ALIAS("readBigUint64BE", "readBigUInt64BE");
+    ALIAS("readBigUint64LE", "readBigUInt64LE");
+
+    ALIAS("writeUintBE", "writeUIntBE");
+    ALIAS("writeUintLE", "writeUIntLE");
+    ALIAS("writeUint8", "writeUInt8");
+    ALIAS("writeUint16", "writeUInt16");
+    ALIAS("writeUint16BE", "writeUInt16BE");
+    ALIAS("writeUint16LE", "writeUInt16LE");
+    ALIAS("writeUint32", "writeUInt32");
+    ALIAS("writeUint32BE", "writeUInt32BE");
+    ALIAS("writeUint32LE", "writeUInt32LE");
+    ALIAS("writeBigUint64BE", "writeBigUInt64BE");
+    ALIAS("writeBigUint64LE", "writeBigUInt64LE");
+
+    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), this->getDirect(vm, Identifier::fromString(vm, "inspect"_s)), PropertyAttribute::Builtin | 0);
 }
+#undef ALIAS
 
 const ClassInfo JSBufferPrototype::s_info = {
     // In Node.js, Object.prototype.toString.call(new Buffer(0)) returns "[object Uint8Array]".
@@ -2232,6 +2745,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     byteLength      jsBufferConstructorFunction_byteLength         Function 2
     compare         jsBufferConstructorFunction_compare            Function 2
     concat          jsBufferConstructorFunction_concat             Function 2
+    copyBytesFrom   jsBufferConstructorFunction_copyBytesFrom      Function 1
     from            JSBuiltin                                      Builtin|Function 1
     isBuffer        JSBuiltin                                      Builtin|Function 1
     isEncoding      jsBufferConstructorFunction_isEncoding         Function 1
@@ -2246,6 +2760,7 @@ void JSBufferConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, J
     Base::finishCreation(vm, 3, "Buffer"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     prototype->putDirect(vm, vm.propertyNames->speciesSymbol, this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectWithoutTransition(vm, Identifier::fromString(vm, "poolSize"_s), jsNumber(8192));
 }
 
 JSC::Structure* createBufferStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -2257,6 +2772,7 @@ JSC::JSObject* createBufferPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 {
     return JSBufferPrototype::create(vm, globalObject, JSBufferPrototype::createStructure(vm, globalObject, globalObject->m_typedArrayUint8.prototype(globalObject)));
 }
+
 JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* bufferPrototype)
 {
     return JSBufferConstructor::create(
@@ -2268,24 +2784,103 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 } // namespace WebCore
 
-JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
+    MarkedArgumentBuffer argsBuffer;
+    argsBuffer.append(arrayValue);
+    JSValue target = globalObject->JSBufferConstructor();
+    // TODO: I wish we could avoid this - it adds ~30ns of overhead just using JSC::construct.
+    auto* object = JSC::construct(lexicalGlobalObject, constructor, target, argsBuffer, "Buffer failed to construct"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
+}
+
+EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlobalObject* lexicalGlobalObject, size_t argsCount, JSValue arrayBufferValue, JSValue offsetValue, JSValue lengthValue)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(arrayBufferValue.asCell());
+    RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+    if (buffer->isDetached()) {
+        return throwVMTypeError(globalObject, throwScope, "Buffer is detached"_s);
+    }
+    size_t byteLength = buffer->byteLength();
+    size_t offset = 0;
+    size_t length = byteLength;
+
+    if (!offsetValue.isUndefined()) {
+        double offsetD = offsetValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (std::isnan(offsetD)) offsetD = 0;
+        offset = offsetD;
+        if (offset > byteLength) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
+        length -= offset;
+    }
+
+    if (!lengthValue.isUndefined()) {
+        double lengthD = lengthValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (std::isnan(lengthD)) lengthD = 0;
+        length = lengthD;
+        if (length > byteLength - offset) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
+    }
+
+    auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
+    if (isResizableOrGrowableShared) {
+        auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, std::nullopt);
+        if (!uint8Array) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    }
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+    if (!uint8Array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, throwScope);
+        return {};
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+}
+
+static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSValue newTarget, ArgList args)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    size_t argsCount = callFrame->argumentCount();
+
+    size_t argsCount = args.size();
     if (argsCount == 0) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
-    JSValue distinguishingArg = callFrame->uncheckedArgument(0);
-    JSValue encodingArg = argsCount > 1 ? callFrame->uncheckedArgument(1) : JSValue();
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
+    JSValue distinguishingArg = args.at(0);
+    JSValue encodingArg = argsCount > 1 ? args.at(1) : JSValue();
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
-        return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
+        if (args.at(1).isString()) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "string"_s, "string"_s, distinguishingArg);
+        }
+        auto anyint = distinguishingArg.asAnyInt();
+        if (anyint < 0 or anyint > Bun::Buffer::kMaxLength) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, Bun::Buffer::kMaxLength, distinguishingArg);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBuffer(lexicalGlobalObject, anyint)));
+    } else if (distinguishingArg.isNumber()) {
+        JSValue lengthValue = distinguishingArg;
+        Bun::V::validateNumber(throwScope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        size_t length = lengthValue.toLength(lexicalGlobalObject);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBuffer(lexicalGlobalObject, length)));
+    } else if (distinguishingArg.isUndefinedOrNull() || distinguishingArg.isBoolean()) {
+        auto arg_string = distinguishingArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, Array or an Array-like object. Received "_s, arg_string);
+        return throwVMTypeError(globalObject, throwScope, message);
     } else if (distinguishingArg.isCell()) {
         auto type = distinguishingArg.asCell()->type();
-
         switch (type) {
         case StringType:
         case StringObjectType:
@@ -2293,112 +2888,50 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
             throwScope.release();
             return constructBufferFromStringAndEncoding(lexicalGlobalObject, distinguishingArg, encodingArg);
         }
-
         case Uint16ArrayType:
         case Uint32ArrayType:
         case Int8ArrayType:
         case Int16ArrayType:
         case Int32ArrayType:
+        case Float16ArrayType:
         case Float32ArrayType:
         case Float64ArrayType:
         case BigInt64ArrayType:
         case BigUint64ArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
             JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(distinguishingArg.asCell());
-
             void* data = view->vector();
             size_t byteLength = view->length();
-
-            if (UNLIKELY(!data)) {
+            if (!data) [[unlikely]] {
                 throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
-                return JSValue::encode({});
+                return {};
             }
-
             auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, byteLength);
-            if (UNLIKELY(!uint8Array)) {
-                ASSERT(throwScope.exception());
-                return JSValue::encode({});
-            }
-
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (byteLength) {
                 uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, byteLength, CopyType::LeftToRight);
             }
-
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
             break;
         }
-
         case DataViewType:
         case Uint8ArrayType:
         case Uint8ClampedArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
             JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(distinguishingArg.asCell());
-
             void* data = view->vector();
             size_t byteLength = view->byteLength();
-
-            if (UNLIKELY(!data)) {
+            if (!data) [[unlikely]] {
                 throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
-                return JSValue::encode({});
+                return {};
             }
-
             auto* uint8Array = createBuffer(lexicalGlobalObject, static_cast<uint8_t*>(data), byteLength);
-
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
         }
         case ArrayBufferType: {
             // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
             // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
-            size_t offset = 0;
-            std::optional<size_t> length;
-            if (argsCount > 1) {
-
-                offset = callFrame->uncheckedArgument(1).toTypedArrayIndex(globalObject, "byteOffset"_s);
-
-                // TOOD: return Node.js error
-                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
-                if (argsCount > 2) {
-                    // If the length value is present but undefined, treat it as missing.
-                    JSValue lengthValue = callFrame->uncheckedArgument(2);
-                    if (!lengthValue.isUndefined()) {
-                        length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
-
-                        // TOOD: return Node.js error
-                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-                    }
-                }
-            }
-
-            auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(distinguishingArg.asCell());
-            RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
-            if (buffer->isDetached()) {
-                // TOOD: return Node.js error
-                throwTypeError(globalObject, throwScope, "Buffer is detached"_s);
-                return JSValue::encode({});
-            }
-
-            if (!length) {
-                size_t byteLength = buffer->byteLength();
-                if (buffer->isResizableOrGrowableShared()) {
-                    if (UNLIKELY(offset > byteLength)) {
-                        // TOOD: return Node.js error
-                        throwNodeRangeError(globalObject, throwScope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
-                        return JSValue::encode({});
-                    }
-                } else {
-                    length = (byteLength - offset);
-                }
-            }
-
-            auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-            auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
-            if (UNLIKELY(!uint8Array)) {
-                throwOutOfMemoryError(globalObject, throwScope);
-                return JSC::JSValue::encode({});
-            }
-
-            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+            return constructBufferFromArrayBuffer(throwScope, lexicalGlobalObject, args.size(), distinguishingArg, args.at(1), args.at(2));
         }
         default: {
             break;
@@ -2406,29 +2939,21 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
         }
     }
 
-    JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
+    return constructBufferFromArray(throwScope, lexicalGlobalObject, distinguishingArg);
+}
+JSC_DEFINE_HOST_FUNCTION(callJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return createJSBufferFromJS(lexicalGlobalObject, callFrame->thisValue(), ArgList(callFrame));
+}
 
-    MarkedArgumentBuffer args;
-    args.append(distinguishingArg);
-    for (size_t i = 1; i < argsCount; ++i)
-        args.append(callFrame->uncheckedArgument(i));
-
-    JSValue target = callFrame->newTarget();
-    if (!target) {
-        target = globalObject->JSBufferConstructor();
-    }
-
-    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, target, args, "Buffer failed to construct"_s);
-    if (!object) {
-        return JSC::JSValue::encode({});
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
+JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    return createJSBufferFromJS(lexicalGlobalObject, callFrame->newTarget(), ArgList(callFrame));
 }
 
 bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
     if (!jsValue || !jsValue.isCell())

@@ -5,10 +5,10 @@
   },
   "scripts": {
     "build": "exit 0",
-    "bench:bun": "$BUN bun.js",
-    "bench:node": "$NODE node.mjs",
+    "bench:bun": "bun bun.js",
+    "bench:node": "node node.mjs",
     "deps": "npm install && bash src/download.sh",
-    "bench:deno": "$DENO run -A --unstable-ffi deno.js",
+    "bench:deno": "deno run -A --unstable-ffi deno.js",
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
   }
 }

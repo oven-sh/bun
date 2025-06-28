@@ -57,6 +57,7 @@ static inline String redact(const String& input)
 
 inline DOMURL::DOMURL(URL&& completeURL)
     : m_url(WTFMove(completeURL))
+    , m_initialURLCostForGC(std::min(static_cast<short>(m_url.string().impl()->costDuringGC()), std::numeric_limits<short>::max()))
 {
     ASSERT(m_url.isValid());
 }
@@ -65,7 +66,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
     URL completeURL { url };
     if (!completeURL.isValid())
-        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     return adoptRef(*new DOMURL(WTFMove(completeURL)));
 }
 
@@ -74,7 +75,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
     ASSERT(base.isValid() || base.isNull());
     URL completeURL { base, url };
     if (!completeURL.isValid())
-        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     return adoptRef(*new DOMURL(WTFMove(completeURL)));
 }
 
@@ -82,7 +83,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
     URL baseURL { base };
     if (!base.isNull() && !baseURL.isValid())
-        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL against "_s, redact(base)) };
+        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL against "_s, redact(base)) };
     return create(url, baseURL);
 }
 
@@ -114,7 +115,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     URL completeURL { URL {}, url };
     if (!completeURL.isValid()) {
 
-        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     }
     m_url = WTFMove(completeURL);
     if (m_searchParams)

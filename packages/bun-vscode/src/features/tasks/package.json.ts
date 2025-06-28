@@ -2,8 +2,8 @@
  * Automatically generates tasks from package.json scripts.
  */
 import * as vscode from "vscode";
-import { BunTask } from "./tasks";
 import { debugCommand } from "../debug";
+import { BunTask } from "./tasks";
 
 /**
  * Parses tasks defined in the package.json.

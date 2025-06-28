@@ -1,9 +1,9 @@
 import { $, spawn } from "bun";
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "./test_builder";
-const TestBuilder = createTestBuilder(import.meta.path);
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import * as path from "node:path";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.nothrow();
 describe("$ argv", async () => {

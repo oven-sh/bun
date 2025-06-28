@@ -1,0 +1,3 @@
+* {
+  background-color: red;
+}

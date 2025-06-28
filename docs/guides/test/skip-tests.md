@@ -36,4 +36,4 @@ Ran 3 tests across 1 files. [74.00ms]
 See also:
 
 - [Mark a test as a todo](/guides/test/todo-tests)
-- [Docs > Test runner > Writing tests](/docs/test/writing)
+- [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing)

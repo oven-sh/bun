@@ -1,9 +1,9 @@
 import { buildSync } from "esbuild";
-import { rmSync, mkdirSync, cpSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 
-const { pathname } = new URL("..", import.meta.url);
-process.chdir(pathname);
+process.chdir(dirname(import.meta.dirname));
 
 buildSync({
   entryPoints: ["src/extension.ts", "src/web-extension.ts"],
@@ -26,7 +26,7 @@ cpSync("LICENSE", "extension/LICENSE");
 cpSync("package.json", "extension/package.json");
 
 const cmd = process.isBun ? "bunx" : "npx";
-spawnSync(cmd, ["vsce", "package"], {
+execSync(`${cmd} vsce package --no-dependencies`, {
   cwd: "extension",
   stdio: "inherit",
 });

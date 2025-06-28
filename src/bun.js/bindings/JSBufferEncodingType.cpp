@@ -25,24 +25,23 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/NeverDestroyed.h>
-
+#include "ErrorCode.h"
 namespace WebCore {
 using namespace JSC;
-
-static const NeverDestroyed<String> values[] = {
-    MAKE_STATIC_STRING_IMPL("utf8"),
-    MAKE_STATIC_STRING_IMPL("ucs2"),
-    MAKE_STATIC_STRING_IMPL("utf16le"),
-    MAKE_STATIC_STRING_IMPL("latin1"),
-    MAKE_STATIC_STRING_IMPL("ascii"),
-    MAKE_STATIC_STRING_IMPL("base64"),
-    MAKE_STATIC_STRING_IMPL("base64url"),
-    MAKE_STATIC_STRING_IMPL("hex"),
-};
 
 String convertEnumerationToString(BufferEncodingType enumerationValue)
 {
 
+    static const std::array<NeverDestroyed<String>, 8> values = {
+        MAKE_STATIC_STRING_IMPL("utf8"),
+        MAKE_STATIC_STRING_IMPL("ucs2"),
+        MAKE_STATIC_STRING_IMPL("utf16le"),
+        MAKE_STATIC_STRING_IMPL("latin1"),
+        MAKE_STATIC_STRING_IMPL("ascii"),
+        MAKE_STATIC_STRING_IMPL("base64"),
+        MAKE_STATIC_STRING_IMPL("base64url"),
+        MAKE_STATIC_STRING_IMPL("hex"),
+    };
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
@@ -52,15 +51,58 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
     return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
-// this function is mostly copied from node
-template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<bool allowBuffer>
+static std::optional<BufferEncodingType> parseEnumerationAllowBufferInternal(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    if (!arg.isString()) [[unlikely]] {
+        return std::nullopt;
+    }
+
+    auto* str = arg.toStringOrNull(&lexicalGlobalObject);
+    if (!str) {
+        return std::nullopt;
+    }
+    const auto& view = str->view(&lexicalGlobalObject);
+    if constexpr (allowBuffer) {
+        if (WTF::equalIgnoringASCIICase(view, "buffer"_s)) {
+            return BufferEncodingType::buffer;
+        }
+    }
+
+    return parseEnumerationFromView<BufferEncodingType>(view);
+}
+
+std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    return parseEnumerationAllowBufferInternal<true>(lexicalGlobalObject, arg);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    return parseEnumerationAllowBufferInternal<false>(lexicalGlobalObject, arg);
+}
+
+template<bool allowBuffer>
+std::optional<BufferEncodingType> validateBufferEncoding(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    auto value = parseEnumerationAllowBufferInternal<allowBuffer>(lexicalGlobalObject, arg);
+    if (!value) {
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Invalid encoding"_s);
+        return std::nullopt;
+    }
+
+    return value;
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEncodingType>(const String& encoding)
+{
+    return parseEnumerationFromView<BufferEncodingType>(encoding);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEncodingType>(const StringView& encoding)
 {
     // caller must check if value is a string
-    JSC::JSString* str = asString(value);
-    if (UNLIKELY(!str))
-        return std::nullopt;
-
-    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;
@@ -119,10 +161,9 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'h':
     case 'H':
         // hex
-        if (encoding[1] == 'e')
-            if (encoding[2] == 'x' && encoding[3] == '\0')
-                return BufferEncodingType::hex;
         if (WTF::equalIgnoringASCIICase(encoding, "hex"_s))
+            return BufferEncodingType::hex;
+        if (WTF::equalIgnoringASCIICase(encoding, "hex\0"_s))
             return BufferEncodingType::hex;
         break;
     }
@@ -132,6 +173,18 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
 template<> ASCIILiteral expectedEnumerationValues<BufferEncodingType>()
 {
     return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\""_s;
+}
+
+template<>
+std::optional<BufferEncodingType> validateBufferEncoding<true>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    return parseEnumerationAllowBufferInternal<true>(lexicalGlobalObject, arg);
+}
+
+template<>
+std::optional<BufferEncodingType> validateBufferEncoding<false>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    return parseEnumerationAllowBufferInternal<false>(lexicalGlobalObject, arg);
 }
 
 } // namespace WebCore

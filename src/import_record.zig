@@ -1,37 +1,35 @@
 const fs = bun.fs;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
-const Ref = @import("ast/base.zig").Ref;
 const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
-    // An entry point provided by the user
-    entry_point,
-
-    // An ES6 import or re-export statement
-    stmt,
-
-    // A call to "require()"
-    require,
-
-    // An "import()" expression with a string argument
-    dynamic,
-
+    /// An entry point provided to `bun run` or `bun`
+    entry_point_run = 0,
+    /// An entry point provided to `bun build` or `Bun.build`
+    entry_point_build = 1,
+    /// An ES6 import or re-export statement
+    stmt = 2,
+    /// A call to "require()"
+    require = 3,
+    /// An "import()" expression with a string argument
+    dynamic = 4,
     /// A call to "require.resolve()"
-    require_resolve,
-
+    require_resolve = 5,
     /// A CSS "@import" rule
-    at,
-
+    at = 6,
     /// A CSS "@import" rule with import conditions
-    at_conditional,
-
+    at_conditional = 7,
     /// A CSS "url(...)" token
-    url,
+    url = 8,
+    /// A CSS "composes" property
+    composes = 9,
 
-    internal,
+    html_manifest = 10,
+
+    internal = 11,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -39,27 +37,33 @@ pub const ImportKind = enum(u8) {
         // - src/js/builtins/codegen/replacements.ts
         // - packages/bun-types/bun.d.ts
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry-point");
+        labels.set(ImportKind.entry_point_run, "entry-point-run");
+        labels.set(ImportKind.entry_point_build, "entry-point-build");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
         labels.set(ImportKind.dynamic, "dynamic-import");
         labels.set(ImportKind.require_resolve, "require-resolve");
         labels.set(ImportKind.at, "import-rule");
         labels.set(ImportKind.url, "url-token");
+        labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
+        labels.set(ImportKind.html_manifest, "html_manifest");
         break :brk labels;
     };
 
     pub const error_labels: Label = brk: {
         var labels = Label.initFill("");
-        labels.set(ImportKind.entry_point, "entry point");
+        labels.set(ImportKind.entry_point_run, "entry point (run)");
+        labels.set(ImportKind.entry_point_build, "entry point (build)");
         labels.set(ImportKind.stmt, "import");
         labels.set(ImportKind.require, "require()");
         labels.set(ImportKind.dynamic, "import()");
-        labels.set(ImportKind.require_resolve, "require.resolve");
+        labels.set(ImportKind.require_resolve, "require.resolve()");
         labels.set(ImportKind.at, "@import");
         labels.set(ImportKind.url, "url()");
         labels.set(ImportKind.internal, "<bun internal>");
+        labels.set(ImportKind.composes, "composes");
+        labels.set(ImportKind.html_manifest, "HTML import");
         break :brk labels;
     };
 
@@ -83,7 +87,7 @@ pub const ImportKind = enum(u8) {
     }
 
     pub fn isFromCSS(k: ImportKind) bool {
-        return k == .at_conditional or k == .at or k == .url;
+        return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
     pub fn toAPI(k: ImportKind) Api.ImportKind {
@@ -101,15 +105,15 @@ pub const ImportKind = enum(u8) {
 };
 
 pub const ImportRecord = struct {
+    pub const Index = bun.GenericIndex(u32, ImportRecord);
+
     range: logger.Range,
     path: fs.Path,
+    kind: ImportKind,
+    tag: Tag = .none,
+    loader: ?bun.options.Loader = null,
 
-    /// 0 is invalid
-    module_id: u32 = 0,
-
-    source_index: Index = Index.invalid,
-
-    print_mode: PrintMode = .normal,
+    source_index: bun.JSAst.Index = .invalid,
 
     /// True for the following cases:
     ///
@@ -124,8 +128,6 @@ pub const ImportRecord = struct {
     handles_import_errors: bool = false,
 
     is_internal: bool = false,
-
-    calls_runtime_require: bool = false,
 
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
@@ -147,9 +149,6 @@ pub const ImportRecord = struct {
     /// calling the "__reExport()" helper function
     calls_runtime_re_export_fn: bool = false,
 
-    /// Tell the printer to use runtime code to resolve this import/export
-    do_commonjs_transform_in_printer: bool = false,
-
     /// True for require calls like this: "try { require() } catch {}". In this
     /// case we shouldn't generate an error if the path could not be resolved.
     is_inside_try_body: bool = false,
@@ -165,10 +164,6 @@ pub const ImportRecord = struct {
     /// If true, this import can be removed if it's unused
     is_external_without_side_effects: bool = false,
 
-    kind: ImportKind,
-
-    tag: Tag = Tag.none,
-
     /// Tell the printer to print the record as "foo:my-path" instead of "path"
     /// where "foo" is the namespace
     ///
@@ -180,76 +175,25 @@ pub const ImportRecord = struct {
 
     pub const List = bun.BabyList(ImportRecord);
 
-    pub fn loader(this: *const ImportRecord) ?bun.options.Loader {
-        return this.tag.loader();
-    }
-
     pub const Tag = enum {
+        /// A normal import to a user's source file
         none,
-        /// JSX auto-import for React Fast Refresh
-        react_refresh,
-        /// JSX auto-import for jsxDEV or jsx
-        jsx_import,
-        /// JSX auto-import for Fragment or createElement
-        jsx_classic,
-        /// Uses the `bun` import specifier
-        ///     import {foo} from "bun";
+        /// An import to 'bun'
         bun,
-        /// Uses the `bun:test` import specifier
-        ///     import {expect} from "bun:test";
+        /// An import to 'bun:test'
         bun_test,
+        /// A builtin module, such as `node:fs` or `bun:sqlite`
+        builtin,
+        /// An import to the internal runtime
         runtime,
-        hardcoded,
-        /// A macro: import specifier OR a macro import
+        /// A 'macro:' import namespace or 'with { type: "macro" }'
         macro,
-        internal,
 
-        /// Referenced "use client"; at the start of the file
-        react_client_component,
+        /// For Bun Kit, if a module in the server graph should actually
+        /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
+        bake_resolve_to_ssr_graph,
 
-        /// A file starting with "use client"; imported a server entry point
-        /// We don't actually support this right now.
-        react_server_component,
-
-        with_type_sqlite,
-        with_type_sqlite_embedded,
-        with_type_text,
-        with_type_json,
-        with_type_toml,
-        with_type_file,
-
-        pub fn loader(this: Tag) ?bun.options.Loader {
-            return switch (this) {
-                .with_type_sqlite => .sqlite,
-                .with_type_sqlite_embedded => .sqlite_embedded,
-                .with_type_text => .text,
-                .with_type_json => .json,
-                .with_type_toml => .toml,
-                .with_type_file => .file,
-                else => null,
-            };
-        }
-
-        pub fn onlySupportsDefaultImports(this: Tag) bool {
-            return switch (this) {
-                .with_type_file, .with_type_text => true,
-                else => false,
-            };
-        }
-
-        pub fn isSQLite(this: Tag) bool {
-            return switch (this) {
-                .with_type_sqlite, .with_type_sqlite_embedded => true,
-                else => false,
-            };
-        }
-
-        pub fn isReactReference(this: Tag) bool {
-            return switch (this) {
-                .react_client_component, .react_server_component => true,
-                else => false,
-            };
-        }
+        tailwind,
 
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;
@@ -257,14 +201,6 @@ pub const ImportRecord = struct {
 
         pub inline fn isInternal(this: Tag) bool {
             return @intFromEnum(this) >= @intFromEnum(Tag.runtime);
-        }
-
-        pub fn useDirective(this: Tag) bun.JSAst.UseDirective {
-            return switch (this) {
-                .react_client_component => .@"use client",
-                .react_server_component => .@"use server",
-                else => .none,
-            };
         }
     };
 

@@ -1,7 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { Namespace, Server, Socket } from "socket.io";
 import type { SocketId } from "socket.io-adapter";
-import { Server, Namespace, Socket } from "socket.io";
-import { success, fail, createClient, createPartialDone } from "./support/util.ts";
+import { createClient, createPartialDone, fail, success } from "./support/util.ts";
 
 // Hanging tests are disabled because they cause the test suite to hang
 describe.skip("namespaces", () => {

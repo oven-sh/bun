@@ -60,6 +60,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
     Performance& wrapped() const
     {
         return static_cast<Performance&>(Base::wrapped());

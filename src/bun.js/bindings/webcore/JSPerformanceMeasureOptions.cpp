@@ -28,19 +28,18 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 
-
 namespace WebCore {
 using namespace JSC;
 
 template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (UNLIKELY(!isNullOrUndefined && !object)) {
+    if (!isNullOrUndefined && !object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     PerformanceMeasureOptions result;
     JSValue detailValue;
@@ -48,11 +47,11 @@ template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions
         detailValue = jsUndefined();
     else {
         detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!detailValue.isUndefined()) {
         result.detail = convert<IDLAny>(lexicalGlobalObject, detailValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.detail = jsUndefined();
     JSValue durationValue;
@@ -60,33 +59,33 @@ template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions
         durationValue = jsUndefined();
     else {
         durationValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "duration"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!durationValue.isUndefined()) {
         result.duration = convert<IDLDouble>(lexicalGlobalObject, durationValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue endValue;
     if (isNullOrUndefined)
         endValue = jsUndefined();
     else {
         endValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "end"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!endValue.isUndefined()) {
         result.end = convert<IDLUnion<IDLDOMString, IDLDouble>>(lexicalGlobalObject, endValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue startValue;
     if (isNullOrUndefined)
         startValue = jsUndefined();
     else {
         startValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "start"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!startValue.isUndefined()) {
         result.start = convert<IDLUnion<IDLDOMString, IDLDouble>>(lexicalGlobalObject, startValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }

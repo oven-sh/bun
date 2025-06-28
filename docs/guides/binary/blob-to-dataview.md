@@ -11,4 +11,4 @@ const arr = new DataView(await blob.arrayBuffer());
 
 ---
 
-See [Docs > API > Binary Data](/docs/api/binary-data#conversion) for complete documentation on manipulating binary data with Bun.
+See [Docs > API > Binary Data](https://bun.sh/docs/api/binary-data#conversion) for complete documentation on manipulating binary data with Bun.

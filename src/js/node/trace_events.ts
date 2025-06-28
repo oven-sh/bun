@@ -5,16 +5,10 @@ class Tracing {
   categories = "";
 }
 
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
 function createTracing(opts) {
   if (typeof opts !== "object" || opts == null) {
     // @ts-ignore
-    throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
+    throw $ERR_INVALID_ARG_TYPE("options", "object", opts);
   }
 
   // TODO: validate categories

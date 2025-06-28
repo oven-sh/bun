@@ -3,10 +3,6 @@
 set -eo pipefail
 
 function assert_main() {
-  if [ "$RELEASE" == "1" ]; then
-    echo "info: Skipping canary release because this is a release build"
-    exit 0
-  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1
@@ -162,6 +158,38 @@ function upload_s3_file() {
   run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
 }
 
+function send_discord_announcement() {
+  local value=$(buildkite-agent secret get "BUN_ANNOUNCE_CANARY_WEBHOOK_URL")
+  if [ -z "$value" ]; then
+    echo "warn: BUN_ANNOUNCE_CANARY_WEBHOOK_URL not set, skipping Discord announcement"
+    return
+  fi
+
+  local version="$1"
+  local commit="$BUILDKITE_COMMIT"
+  local short_sha="${commit:0:7}"
+  local commit_url="https://github.com/oven-sh/bun/commit/$commit"
+
+  if [ "$version" == "canary" ]; then
+    local json_payload=$(cat <<EOF
+{
+  "embeds": [{
+    "title": "New Bun Canary now available",
+    "description": "A new canary build of Bun has been automatically uploaded ([${short_sha}](${commit_url})). To upgrade, run:\n\n\`\`\`shell\nbun upgrade --canary\n\`\`\`\nCommit: \`${commit}\`",
+    "color": 16023551,
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  }]
+}
+EOF
+)
+    
+    curl -H "Content-Type: application/json" \
+         -d "$json_payload" \
+         -sf \
+         "$value" >/dev/null
+  fi
+}
+
 function create_release() {
   assert_main
   assert_buildkite_agent
@@ -181,6 +209,12 @@ function create_release() {
     bun-linux-x64-profile.zip
     bun-linux-x64-baseline.zip
     bun-linux-x64-baseline-profile.zip
+    bun-linux-aarch64-musl.zip
+    bun-linux-aarch64-musl-profile.zip
+    bun-linux-x64-musl.zip
+    bun-linux-x64-musl-profile.zip
+    bun-linux-x64-musl-baseline.zip
+    bun-linux-x64-musl-baseline-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip
@@ -206,11 +240,11 @@ function create_release() {
 
   update_github_release "$tag"
   create_sentry_release "$tag"
+  send_discord_announcement "$tag"
 }
 
 function assert_canary() {
-  local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
-  if [ -z "$canary" ] || [ "$canary" == "0" ]; then
+  if [ -z "$CANARY" ] || [ "$CANARY" == "0" ]; then
     echo "warn: Skipping release because this is not a canary build"
     exit 0
   fi

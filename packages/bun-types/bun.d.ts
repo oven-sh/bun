@@ -14,8 +14,494 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  import type { Encoding as CryptoEncoding } from "crypto";
-  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+  type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
+  type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
+  type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
+  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
+  type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
+  type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
+  type ReadableStreamDefaultReadResult<T> =
+    | ReadableStreamDefaultReadValueResult<T>
+    | ReadableStreamDefaultReadDoneResult;
+  type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
+  type Transferable = ArrayBuffer | MessagePort;
+  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
+  type Encoding = "utf-8" | "windows-1252" | "utf-16";
+  type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
+  type MultipleResolveType = "resolve" | "reject";
+  type BeforeExitListener = (code: number) => void;
+  type DisconnectListener = () => void;
+  type ExitListener = (code: number) => void;
+  type RejectionHandledListener = (promise: Promise<unknown>) => void;
+  type FormDataEntryValue = File | string;
+  type WarningListener = (warning: Error) => void;
+  type MessageListener = (message: unknown, sendHandle: unknown) => void;
+  type SignalsListener = (signal: NodeJS.Signals) => void;
+  type BlobPart = string | Blob | BufferSource;
+  type TimerHandler = (...args: any[]) => void;
+  type DOMHighResTimeStamp = number;
+  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+  type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+
+  namespace __internal {
+    type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
+
+    /**
+     * Helper type for avoiding conflicts in types.
+     *
+     * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
+     *
+     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
+     *
+     * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
+     * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
+     * to the type that lib.dom.d.ts provides.
+     */
+    type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
+      // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
+      LibDomIsLoaded extends true
+        ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
+          ? T
+          : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
+        : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+  }
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type Platform =
+    | "aix"
+    | "android"
+    | "darwin"
+    | "freebsd"
+    | "haiku"
+    | "linux"
+    | "openbsd"
+    | "sunos"
+    | "win32"
+    | "cygwin"
+    | "netbsd";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
+
+  /**
+   * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
+   * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+   *
+   * @deprecated This type is unused in Bun's types and might be removed in the near future
+   */
+  type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
+
+  interface ErrorEventInit extends EventInit {
+    colno?: number;
+    error?: any;
+    filename?: string;
+    lineno?: number;
+    message?: string;
+  }
+
+  interface CloseEventInit extends EventInit {
+    code?: number;
+    reason?: string;
+    wasClean?: boolean;
+  }
+
+  interface MessageEventInit<T = any> extends EventInit {
+    data?: T;
+    lastEventId?: string;
+    origin?: string;
+    source?: Bun.MessageEventSource | null;
+  }
+
+  interface EventInit {
+    bubbles?: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+  }
+
+  interface EventListenerOptions {
+    capture?: boolean;
+  }
+
+  interface CustomEventInit<T = any> extends Bun.EventInit {
+    detail?: T;
+  }
+
+  /** A message received by a target object. */
+  interface BunMessageEvent<T = any> extends Event {
+    /** Returns the data of the message. */
+    readonly data: T;
+    /** Returns the last event ID string, for server-sent events. */
+    readonly lastEventId: string;
+    /** Returns the origin of the message, for server-sent events and cross-document messaging. */
+    readonly origin: string;
+    /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
+    readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
+    readonly source: Bun.MessageEventSource | null;
+  }
+
+  type MessageEvent<T = any> = Bun.__internal.UseLibDomIfAvailable<"MessageEvent", BunMessageEvent<T>>;
+
+  interface ReadableStreamDefaultReadManyResult<T> {
+    done: boolean;
+    /** Number of bytes */
+    size: number;
+    value: T[];
+  }
+
+  interface EventSourceEventMap {
+    error: Event;
+    message: MessageEvent;
+    open: Event;
+  }
+
+  interface AddEventListenerOptions extends EventListenerOptions {
+    /** When `true`, the listener is automatically removed when it is first invoked. Default: `false`. */
+    once?: boolean;
+    /** When `true`, serves as a hint that the listener will not call the `Event` object's `preventDefault()` method. Default: false. */
+    passive?: boolean;
+    signal?: AbortSignal;
+  }
+
+  interface EventListener {
+    (evt: Event): void;
+  }
+
+  interface EventListenerObject {
+    handleEvent(object: Event): void;
+  }
+
+  interface FetchEvent extends Event {
+    readonly request: Request;
+    readonly url: string;
+
+    waitUntil(promise: Promise<any>): void;
+    respondWith(response: Response | Promise<Response>): void;
+  }
+
+  interface EventMap {
+    fetch: FetchEvent;
+    message: MessageEvent;
+    messageerror: MessageEvent;
+    // exit: Event;
+  }
+
+  interface StructuredSerializeOptions {
+    transfer?: Bun.Transferable[];
+  }
+
+  interface EventSource extends EventTarget {
+    new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
+
+    onerror: ((this: EventSource, ev: Event) => any) | null;
+    onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
+    onopen: ((this: EventSource, ev: Event) => any) | null;
+    /** Returns the state of this EventSource object's connection. It can have the values described below. */
+    readonly readyState: number;
+    /** Returns the URL providing the event stream. */
+    readonly url: string;
+    /** Returns true if the credentials mode for connection requests to the URL providing the event stream is set to "include", and false otherwise.
+     *
+     * Not supported in Bun
+     */
+    readonly withCredentials: boolean;
+    /** Aborts any instances of the fetch algorithm started for this EventSource object, and sets the readyState attribute to CLOSED. */
+    close(): void;
+    readonly CLOSED: 2;
+    readonly CONNECTING: 0;
+    readonly OPEN: 1;
+    addEventListener<K extends keyof EventSourceEventMap>(
+      type: K,
+      listener: (this: EventSource, ev: EventSourceEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: (this: EventSource, event: MessageEvent) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    removeEventListener<K extends keyof EventSourceEventMap>(
+      type: K,
+      listener: (this: EventSource, ev: EventSourceEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: (this: EventSource, event: MessageEvent) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+
+    /**
+     * Keep the event loop alive while connection is open or reconnecting
+     *
+     * Not available in browsers
+     */
+    ref(): void;
+
+    /**
+     * Do not keep the event loop alive while connection is open or reconnecting
+     *
+     * Not available in browsers
+     */
+    unref(): void;
+  }
+
+  interface TransformerFlushCallback<O> {
+    (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+  }
+
+  interface TransformerStartCallback<O> {
+    (controller: TransformStreamDefaultController<O>): any;
+  }
+
+  interface TransformerTransformCallback<I, O> {
+    (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSinkAbortCallback {
+    (reason?: any): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSinkCloseCallback {
+    (): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSinkStartCallback {
+    (controller: WritableStreamDefaultController): any;
+  }
+
+  interface UnderlyingSinkWriteCallback<W> {
+    (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSourceCancelCallback {
+    (reason?: any): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSink<W = any> {
+    abort?: UnderlyingSinkAbortCallback;
+    close?: UnderlyingSinkCloseCallback;
+    start?: UnderlyingSinkStartCallback;
+    type?: undefined | "default" | "bytes";
+    write?: UnderlyingSinkWriteCallback<W>;
+  }
+
+  interface UnderlyingSource<R = any> {
+    cancel?: UnderlyingSourceCancelCallback;
+    pull?: UnderlyingSourcePullCallback<R>;
+    start?: UnderlyingSourceStartCallback<R>;
+    /**
+     * Mode "bytes" is not currently supported.
+     */
+    type?: undefined;
+  }
+
+  interface DirectUnderlyingSource<R = any> {
+    cancel?: UnderlyingSourceCancelCallback;
+    pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
+    type: "direct";
+  }
+
+  interface UnderlyingSourcePullCallback<R> {
+    (controller: ReadableStreamController<R>): void | PromiseLike<void>;
+  }
+
+  interface UnderlyingSourceStartCallback<R> {
+    (controller: ReadableStreamController<R>): any;
+  }
+
+  interface GenericTransformStream {
+    readonly readable: ReadableStream;
+    readonly writable: WritableStream;
+  }
+
+  interface AbstractWorkerEventMap {
+    error: ErrorEvent;
+  }
+
+  interface WorkerEventMap extends AbstractWorkerEventMap {
+    message: MessageEvent;
+    messageerror: MessageEvent;
+    close: CloseEvent;
+    open: Event;
+  }
+
+  type WorkerType = "classic" | "module";
+
+  interface AbstractWorker {
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
+    onerror: ((this: AbstractWorker, ev: ErrorEvent) => any) | null;
+    addEventListener<K extends keyof AbstractWorkerEventMap>(
+      type: K,
+      listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    removeEventListener<K extends keyof AbstractWorkerEventMap>(
+      type: K,
+      listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+  }
+
+  /**
+   * Bun's Web Worker constructor supports some extra options on top of the API browsers have.
+   */
+  interface WorkerOptions {
+    /**
+     * A string specifying an identifying name for the DedicatedWorkerGlobalScope representing the scope of
+     * the worker, which is mainly useful for debugging purposes.
+     */
+    name?: string;
+
+    /**
+     * Use less memory, but make the worker slower.
+     *
+     * Internally, this sets the heap size configuration in JavaScriptCore to be
+     * the small heap instead of the large heap.
+     */
+    smol?: boolean;
+
+    /**
+     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
+     * When `false`, the worker will not keep the parent thread alive.
+     *
+     * By default, this is `false`.
+     */
+    ref?: boolean;
+
+    /**
+     * In Bun, this does nothing.
+     */
+    type?: Bun.WorkerType | undefined;
+
+    /**
+     * List of arguments which would be stringified and appended to
+     * `Bun.argv` / `process.argv` in the worker. This is mostly similar to the `data`
+     * but the values will be available on the global `Bun.argv` as if they
+     * were passed as CLI options to the script.
+     */
+    argv?: any[] | undefined;
+
+    /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
+    // eval?: boolean | undefined;
+
+    /**
+     * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
+     */
+    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
+
+    /**
+     * In Bun, this does nothing.
+     */
+    credentials?: import("undici-types").RequestCredentials | undefined;
+
+    /**
+     * @default true
+     */
+    // trackUnmanagedFds?: boolean;
+    // resourceLimits?: import("worker_threads").ResourceLimits;
+
+    /**
+     * An array of module specifiers to preload in the worker.
+     *
+     * These modules load before the worker's entry point is executed.
+     *
+     * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
+     */
+    preload?: string[] | string | undefined;
+  }
+
+  interface Worker extends EventTarget, AbstractWorker {
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/message_event) */
+    onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/messageerror_event) */
+    onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
+    /**
+     * Clones message and transmits it to worker's global environment. transfer can be passed as a list of objects that are to be transferred rather than cloned.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/postMessage)
+     */
+    postMessage(message: any, transfer: Transferable[]): void;
+    postMessage(message: any, options?: StructuredSerializeOptions): void;
+    /**
+     * Aborts worker's associated global environment.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/terminate)
+     */
+    terminate(): void;
+    addEventListener<K extends keyof WorkerEventMap>(
+      type: K,
+      listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    removeEventListener<K extends keyof WorkerEventMap>(
+      type: K,
+      listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+
+    /**
+     * Opposite of `unref()`, calling `ref()` on a previously `unref()`ed worker does _not_ let the program exit if it's the only active handle left (the default
+     * behavior). If the worker is `ref()`ed, calling `ref()` again has
+     * no effect.
+     * @since v10.5.0
+     */
+    ref(): void;
+
+    /**
+     * Calling `unref()` on a worker allows the thread to exit if this is the only
+     * active handle in the event system. If the worker is already `unref()`ed calling`unref()` again has no effect.
+     * @since v10.5.0
+     */
+    unref(): void;
+
+    /**
+     * An integer identifier for the referenced thread. Inside the worker thread,
+     * it is available as `require('node:worker_threads').threadId`.
+     * This value is unique for each `Worker` instance inside a single process.
+     * @since v10.5.0
+     */
+    threadId: number;
+  }
+
   interface Env {
     NODE_ENV?: string;
     /**
@@ -31,21 +517,50 @@ declare module "bun" {
    *
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    */
-  const env: NodeJS.ProcessEnv;
+  const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
+
   /**
    * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
    */
   const argv: string[];
-  const origin: string;
+
+  interface WhichOptions {
+    /**
+     * Overrides the PATH environment variable
+     */
+    PATH?: string;
+
+    /**
+     * When given a relative path, use this path to join it.
+     */
+    cwd?: string;
+  }
 
   /**
    * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
-   * @param {string} command The name of the executable or script
-   * @param {string} options.PATH Overrides the PATH environment variable
-   * @param {string} options.cwd When given a relative path, use this path to join it.
+   * @category Utilities
+   *
+   * @param command The name of the executable or script to find
+   * @param options Options for the search
    */
-  function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
+  function which(command: string, options?: WhichOptions): string | null;
+
+  interface StringWidthOptions {
+    /**
+     * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+     *
+     * @default false
+     */
+    countAnsiEscapeCodes?: boolean;
+
+    /**
+     * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
 
   /**
    * Get the column count of a string as it would be displayed in a terminal.
@@ -61,7 +576,6 @@ declare module "bun" {
    *
    * @returns The width of the string in columns
    *
-   * ## Examples
    * @example
    * ```ts
    * import { stringWidth } from "bun";
@@ -72,439 +586,35 @@ declare module "bun" {
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13
    * ```
-   *
    */
   function stringWidth(
     /**
      * The string to measure
      */
     input: string,
-    options?: {
-      /**
-       * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
-       *
-       * @default false
-       */
-      countAnsiEscapeCodes?: boolean;
-      /**
-       * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
-       *
-       * @default true
-       */
-      ambiguousIsNarrow?: boolean;
-    },
+    options?: StringWidthOptions,
   ): number;
 
-  export type ShellFunction = (input: Uint8Array) => Uint8Array;
-
-  export type ShellExpression =
-    | { toString(): string }
-    | Array<ShellExpression>
-    | string
-    | { raw: string }
-    | Subprocess
-    | SpawnOptions.Readable
-    | SpawnOptions.Writable
-    | ReadableStream;
-
-  class ShellError extends Error implements ShellOutput {
-    readonly stdout: Buffer;
-    readonly stderr: Buffer;
-    readonly exitCode: number;
-
-    /**
-     * Read from stdout as a string
-     *
-     * @param encoding - The encoding to use when decoding the output
-     * @returns Stdout as a string with the given encoding
-     * @example
-     *
-     * ## Read as UTF-8 string
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.text()); // "hello\n"
-     * ```
-     *
-     * ## Read as base64 string
-     *
-     * ```ts
-     * const output = await $`echo ${atob("hello")}`;
-     * console.log(output.text("base64")); // "hello\n"
-     * ```
-     *
-     */
-    text(encoding?: BufferEncoding): string;
-
-    /**
-     * Read from stdout as a JSON object
-     *
-     * @returns Stdout as a JSON object
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo '{"hello": 123}'`;
-     * console.log(output.json()); // { hello: 123 }
-     * ```
-     *
-     */
-    json(): any;
-
-    /**
-     * Read from stdout as an ArrayBuffer
-     *
-     * @returns Stdout as an ArrayBuffer
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-     * ```
-     */
-    arrayBuffer(): ArrayBuffer;
-
-    /**
-     * Read from stdout as a Blob
-     *
-     * @returns Stdout as a blob
-     * @example
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.blob()); // Blob { size: 6, type: "" }
-     * ```
-     */
-    blob(): Blob;
-  }
-
-  class ShellPromise extends Promise<ShellOutput> {
-    get stdin(): WritableStream;
-    /**
-     * Change the current working directory of the shell.
-     * @param newCwd - The new working directory
-     */
-    cwd(newCwd: string): this;
-    /**
-     * Set environment variables for the shell.
-     * @param newEnv - The new environment variables
-     *
-     * @example
-     * ```ts
-     * await $`echo $FOO`.env({ ...process.env, FOO: "LOL!" })
-     * expect(stdout.toString()).toBe("LOL!");
-     * ```
-     */
-    env(newEnv: Record<string, string> | undefined): this;
-    /**
-     * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
-     *
-     * This configures the shell to only buffer the output.
-     */
-    quiet(): this;
-
-    /**
-     * Read from stdout as a string, line by line
-     *
-     * Automatically calls {@link quiet} to disable echoing to stdout.
-     */
-    lines(): AsyncIterable<string>;
-
-    /**
-     * Read from stdout as a string
-     *
-     * Automatically calls {@link quiet} to disable echoing to stdout.
-     * @param encoding - The encoding to use when decoding the output
-     * @returns A promise that resolves with stdout as a string
-     * @example
-     *
-     * ## Read as UTF-8 string
-     *
-     * ```ts
-     * const output = await $`echo hello`.text();
-     * console.log(output); // "hello\n"
-     * ```
-     *
-     * ## Read as base64 string
-     *
-     * ```ts
-     * const output = await $`echo ${atob("hello")}`.text("base64");
-     * console.log(output); // "hello\n"
-     * ```
-     *
-     */
-    text(encoding?: BufferEncoding): Promise<string>;
-
-    /**
-     * Read from stdout as a JSON object
-     *
-     * Automatically calls {@link quiet}
-     *
-     * @returns A promise that resolves with stdout as a JSON object
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo '{"hello": 123}'`.json();
-     * console.log(output); // { hello: 123 }
-     * ```
-     *
-     */
-    json(): Promise<any>;
-
-    /**
-     * Read from stdout as an ArrayBuffer
-     *
-     * Automatically calls {@link quiet}
-     * @returns A promise that resolves with stdout as an ArrayBuffer
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo hello`.arrayBuffer();
-     * console.log(output); // ArrayBuffer { byteLength: 6 }
-     * ```
-     */
-    arrayBuffer(): Promise<ArrayBuffer>;
-
-    /**
-     * Read from stdout as a Blob
-     *
-     * Automatically calls {@link quiet}
-     * @returns A promise that resolves with stdout as a Blob
-     * @example
-     * ```ts
-     * const output = await $`echo hello`.blob();
-     * console.log(output); // Blob { size: 6, type: "" }
-     * ```
-     */
-    blob(): Promise<Blob>;
-
-    /**
-     * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
-     *
-     * By default, the shell with throw an exception on commands which return non-zero exit codes.
-     */
-    nothrow(): this;
-
-    /**
-     * Configure whether or not the shell should throw an exception on non-zero exit codes.
-     *
-     * By default, this is configured to `true`.
-     */
-    throws(shouldThrow: boolean): this;
-  }
-
-  interface ShellConstructor {
-    new (): Shell;
-  }
-
-  export interface Shell {
-    (strings: TemplateStringsArray, ...expressions: ShellExpression[]): ShellPromise;
-
-    /**
-     * Perform bash-like brace expansion on the given pattern.
-     * @param pattern - Brace pattern to expand
-     *
-     * @example
-     * ```js
-     * const result = braces('index.{js,jsx,ts,tsx}');
-     * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
-     * ```
-     */
-    braces(pattern: string): string[];
-
-    /**
-     * Escape strings for input into shell commands.
-     * @param input
-     */
-    escape(input: string): string;
-
-    /**
-     *
-     * Change the default environment variables for shells created by this instance.
-     *
-     * @param newEnv Default environment variables to use for shells created by this instance.
-     * @default process.env
-     *
-     * ## Example
-     *
-     * ```js
-     * import {$} from 'bun';
-     * $.env({ BUN: "bun" });
-     * await $`echo $BUN`;
-     * // "bun"
-     * ```
-     */
-    env(newEnv?: Record<string, string | undefined>): this;
-
-    /**
-     *
-     * @param newCwd Default working directory to use for shells created by this instance.
-     */
-    cwd(newCwd?: string): this;
-
-    /**
-     * Configure the shell to not throw an exception on non-zero exit codes.
-     */
-    nothrow(): this;
-
-    /**
-     * Configure whether or not the shell should throw an exception on non-zero exit codes.
-     */
-    throws(shouldThrow: boolean): this;
-
-    readonly ShellPromise: typeof ShellPromise;
-    readonly Shell: ShellConstructor;
-  }
-
-  export interface ShellOutput {
-    readonly stdout: Buffer;
-    readonly stderr: Buffer;
-    readonly exitCode: number;
-
-    /**
-     * Read from stdout as a string
-     *
-     * @param encoding - The encoding to use when decoding the output
-     * @returns Stdout as a string with the given encoding
-     * @example
-     *
-     * ## Read as UTF-8 string
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.text()); // "hello\n"
-     * ```
-     *
-     * ## Read as base64 string
-     *
-     * ```ts
-     * const output = await $`echo ${atob("hello")}`;
-     * console.log(output.text("base64")); // "hello\n"
-     * ```
-     *
-     */
-    text(encoding?: BufferEncoding): string;
-
-    /**
-     * Read from stdout as a JSON object
-     *
-     * @returns Stdout as a JSON object
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo '{"hello": 123}'`;
-     * console.log(output.json()); // { hello: 123 }
-     * ```
-     *
-     */
-    json(): any;
-
-    /**
-     * Read from stdout as an ArrayBuffer
-     *
-     * @returns Stdout as an ArrayBuffer
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-     * ```
-     */
-    arrayBuffer(): ArrayBuffer;
-
-    /**
-     * Read from stdout as an Uint8Array
-     *
-     * @returns Stdout as an Uint8Array
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
-     * ```
-     */
-    bytes(): Uint8Array;
-
-    /**
-     * Read from stdout as a Blob
-     *
-     * @returns Stdout as a blob
-     * @example
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.blob()); // Blob { size: 6, type: "" }
-     * ```
-     */
-    blob(): Blob;
-  }
-
-  export const $: Shell;
-
-  interface TOML {
+  /**
+   * TOML related APIs
+   */
+  namespace TOML {
     /**
      * Parse a TOML string into a JavaScript object.
      *
-     * @param {string} command The name of the executable or script
-     * @param {string} options.PATH Overrides the PATH environment variable
-     * @param {string} options.cwd Limits the search to a particular directory in which to searc
+     * @category Utilities
+     *
+     * @param input The TOML string to parse
+     * @returns A JavaScript object
      */
-    parse(input: string): object;
+    export function parse(input: string): object;
   }
-  const TOML: TOML;
-
-  type Serve<WebSocketDataType = undefined> =
-    | ServeOptions
-    | TLSServeOptions
-    | UnixServeOptions
-    | UnixTLSServeOptions
-    | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>
-    | UnixWebSocketServeOptions<WebSocketDataType>
-    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
-
-  /**
-   * Start a fast HTTP server.
-   *
-   * @param options Server options (port defaults to $PORT || 3000)
-   *
-   * -----
-   *
-   * @example
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response("Hello World!");
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   * -----
-   *
-   * @example
-   *
-   * Send a file
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response(Bun.file("./package.json"));
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-  function serve<T>(options: Serve<T>): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`
    */
-  // tslint:disable-next-line:unified-signatures
   function resolveSync(moduleId: string, parent: string): string;
 
   /**
@@ -514,7 +624,6 @@ declare module "bun" {
    *
    * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
    */
-  // tslint:disable-next-line:unified-signatures
   function resolve(moduleId: string, parent: string): Promise<string>;
 
   /**
@@ -522,16 +631,21 @@ declare module "bun" {
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it will be created by default.
    *
+   * @category File System
+   *
    * @param destination The file or file path to write to
    * @param input The data to copy into `destination`.
+   * @param options Options for the write
+   *
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | Bun.PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
+    destination: BunFile | S3File | PathLike,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
     options?: {
-      /** If writing to a PathLike, set the permissions of the file. */
+      /**
+       * If writing to a PathLike, set the permissions of the file.
+       */
       mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
@@ -552,6 +666,8 @@ declare module "bun" {
    * overwritten. If `input`'s size is less than `destination`'s size,
    * `destination` will be truncated.
    * @param input - `Response` object
+   * @param options Options for the write
+   *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
@@ -579,9 +695,8 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
-    destinationPath: Bun.PathLike,
+    destinationPath: PathLike,
     input: Response,
     options?: {
       /**
@@ -613,7 +728,7 @@ declare module "bun" {
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
+
   function write(
     destination: BunFile,
     input: BunFile,
@@ -647,9 +762,8 @@ declare module "bun" {
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
-    destinationPath: Bun.PathLike,
+    destinationPath: PathLike,
     input: BunFile,
     options?: {
       /**
@@ -762,8 +876,8 @@ declare module "bun" {
    * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
-   * ## Multipart form data example
-   *
+   * @example
+   * **Multipart form data example**
    * ```ts
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
@@ -772,8 +886,8 @@ declare module "bun" {
    * const formData = await Bun.readableStreamToFormData(stream, boundary);
    * formData.get("foo"); // "bar"
    * ```
-   * ## URL-encoded form data example
    *
+   * **URL-encoded form data example**
    * ```ts
    * const stream = new Response("hello=123").body;
    * const formData = await Bun.readableStreamToFormData(stream);
@@ -816,6 +930,8 @@ declare module "bun" {
   /**
    * Escape the following characters in a string:
    *
+   * @category Security
+   *
    * - `"` becomes `"&quot;"`
    * - `&` becomes `"&amp;"`
    * - `'` becomes `"&#x27;"`
@@ -836,6 +952,8 @@ declare module "bun" {
    * @param path The path to convert.
    * @returns A {@link URL} with the file:// scheme.
    *
+   * @category File System
+   *
    * @example
    * ```js
    * const url = Bun.pathToFileURL("/foo/bar.txt");
@@ -847,20 +965,23 @@ declare module "bun" {
    */
   function pathToFileURL(path: string): URL;
 
-  interface Peek {
-    <T = undefined>(promise: T | Promise<T>): Promise<T> | T;
-    status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
-  }
   /**
    * Extract the value from the Promise in the same tick of the event loop
    */
-  const peek: Peek;
+  function peek<T = undefined>(promise: T | Promise<T>): Promise<T> | T;
+  namespace peek {
+    function status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
+  }
 
   /**
    * Convert a {@link URL} to a filesystem path.
+   *
    * @param url The URL to convert.
    * @returns A filesystem path.
    * @throws If the URL is not a URL.
+   *
+   * @category File System
+   *
    * @example
    * ```js
    * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
@@ -870,11 +991,9 @@ declare module "bun" {
   function fileURLToPath(url: URL | string): string;
 
   /**
-   * Fast incremental writer that becomes an `ArrayBuffer` on end().
+   * Fast incremental writer that becomes an {@link ArrayBuffer} on end().
    */
   class ArrayBufferSink {
-    constructor();
-
     start(options?: {
       asUint8Array?: boolean;
       /**
@@ -903,7 +1022,8 @@ declare module "bun" {
     end(): ArrayBuffer | Uint8Array;
   }
 
-  const dns: {
+  /** DNS Related APIs */
+  namespace dns {
     /**
      * Lookup the IP address for a hostname
      *
@@ -912,29 +1032,27 @@ declare module "bun" {
      * @param hostname The hostname to lookup
      * @param options Options for the lookup
      *
-     * ## Example
-     *
+     * @example
+     * ## Basic usage
      * ```js
      * const [{ address }] = await Bun.dns.lookup('example.com');
      * ```
      *
-     * ### Filter results to IPv4:
-     *
+     * ## Filter results to IPv4
      * ```js
      * import { dns } from 'bun';
      * const [{ address }] = await dns.lookup('example.com', {family: 4});
      * console.log(address); // "123.122.22.126"
      * ```
      *
-     * ### Filter results to IPv6:
-     *
+     * ## Filter results to IPv6
      * ```js
      * import { dns } from 'bun';
      * const [{ address }] = await dns.lookup('example.com', {family: 6});
      * console.log(address); // "2001:db8::1"
      * ```
      *
-     * #### DNS resolver client
+     * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
      * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
@@ -948,7 +1066,7 @@ declare module "bun" {
      * console.log(address); // "19.42.52.62"
      * ```
      */
-    lookup(
+    function lookup(
       hostname: string,
       options?: {
         /**
@@ -1008,6 +1126,7 @@ declare module "bun" {
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
+     * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
      *
      * @example
      * ```js
@@ -1017,12 +1136,12 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    prefetch(hostname: string): void;
+    function prefetch(hostname: string, port?: number): void;
 
     /**
      * **Experimental API**
      */
-    getCacheStats(): {
+    function getCacheStats(): {
       /**
        * The number of times a cached DNS entry that was already resolved was used.
        */
@@ -1033,7 +1152,11 @@ declare module "bun" {
       errors: number;
       totalCount: number;
     };
-  };
+
+    const ADDRCONFIG: number;
+    const ALL: number;
+    const V4MAPPED: number;
+  }
 
   interface DNSLookup {
     /**
@@ -1055,65 +1178,6 @@ declare module "bun" {
     ttl: number;
   }
 
-  /**
-   * Fast incremental writer for files and pipes.
-   *
-   * This uses the same interface as {@link ArrayBufferSink}, but writes to a file or pipe.
-   */
-  interface FileSink {
-    /**
-     * Write a chunk of data to the file.
-     *
-     * If the file descriptor is not writable yet, the data is buffered.
-     */
-    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
-    /**
-     * Flush the internal buffer, committing the data to disk or the pipe.
-     */
-    flush(): number | Promise<number>;
-    /**
-     * Close the file descriptor. This also flushes the internal buffer.
-     */
-    end(error?: Error): number | Promise<number>;
-
-    start(options?: {
-      /**
-       * Preallocate an internal buffer of this size
-       * This can significantly improve performance when the chunk size is small
-       */
-      highWaterMark?: number;
-    }): void;
-
-    /**
-     * For FIFOs & pipes, this lets you decide whether Bun's process should
-     * remain alive until the pipe is closed.
-     *
-     * By default, it is automatically managed. While the stream is open, the
-     * process remains alive and once the other end hangs up or the stream
-     * closes, the process exits.
-     *
-     * If you previously called {@link unref}, you can call this again to re-enable automatic management.
-     *
-     * Internally, it will reference count the number of times this is called. By default, that number is 1
-     *
-     * If the file is not a FIFO or pipe, {@link ref} and {@link unref} do
-     * nothing. If the pipe is already closed, this does nothing.
-     */
-    ref(): void;
-
-    /**
-     * For FIFOs & pipes, this lets you decide whether Bun's process should
-     * remain alive until the pipe is closed.
-     *
-     * If you want to allow Bun's process to terminate while the stream is open,
-     * call this.
-     *
-     * If the file is not a FIFO or pipe, {@link ref} and {@link unref} do
-     * nothing. If the pipe is already closed, this does nothing.
-     */
-    unref(): void;
-  }
-
   interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1122,6 +1186,8 @@ declare module "bun" {
    *
    * - `size` will not be valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
+   *
+   * @category File System
    *
    * @example
    * ```js
@@ -1152,13 +1218,12 @@ declare module "bun" {
      */
     slice(begin?: number, end?: number, contentType?: string): BunFile;
 
-    /** */
     /**
      * Offset any operation on the file starting at `begin`
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     * If `begin` > 0, {@link Bun.write}() will be slower on macOS
      *
      * @param begin - start offset in bytes
      * @param contentType - MIME type for the new BunFile
@@ -1166,6 +1231,8 @@ declare module "bun" {
     slice(begin?: number, contentType?: string): BunFile;
 
     /**
+     * Slice the file from the beginning to the end, optionally with a new MIME type.
+     *
      * @param contentType - MIME type for the new BunFile
      */
     slice(contentType?: string): BunFile;
@@ -1209,6 +1276,556 @@ declare module "bun" {
      * For empty Blob, this always returns true.
      */
     exists(): Promise<boolean>;
+
+    /**
+     * Write data to the file. This is equivalent to using {@link Bun.write} with a {@link BunFile}.
+     * @param data - The data to write.
+     * @param options - The options to use for the write.
+     */
+    write(
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      options?: { highWaterMark?: number },
+    ): Promise<number>;
+
+    /**
+     * Deletes the file.
+     */
+    unlink(): Promise<void>;
+
+    /**
+     * Deletes the file (same as unlink)
+     */
+    delete(): Promise<void>;
+
+    /**
+     *  Provides useful information about the file.
+     */
+    stat(): Promise<import("node:fs").Stats>;
+  }
+
+  /**
+   * Configuration options for SQL client connection and behavior
+   *  @example
+   * const config: SQLOptions = {
+   *   host: 'localhost',
+   *   port: 5432,
+   *   user: 'dbuser',
+   *   password: 'secretpass',
+   *   database: 'myapp',
+   *   idleTimeout: 30,
+   *   max: 20,
+   *   onconnect: (client) => {
+   *     console.log('Connected to database');
+   *   }
+   * };
+   */
+
+  interface SQLOptions {
+    /** Connection URL (can be string or URL object) */
+    url?: URL | string;
+    /** Database server hostname */
+    host?: string;
+    /** Database server hostname (alias for host) */
+    hostname?: string;
+    /** Database server port number */
+    port?: number | string;
+    /** Database user for authentication */
+    username?: string;
+    /** Database user for authentication (alias for username) */
+    user?: string;
+    /** Database password for authentication */
+    password?: string | (() => Promise<string>);
+    /** Database password for authentication (alias for password) */
+    pass?: string | (() => Promise<string>);
+    /** Name of the database to connect to */
+    database?: string;
+    /** Name of the database to connect to (alias for database) */
+    db?: string;
+    /** Database adapter/driver to use */
+    adapter?: string;
+    /** Maximum time in seconds to wait for connection to become available */
+    idleTimeout?: number;
+    /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
+    idle_timeout?: number;
+    /** Maximum time in seconds to wait when establishing a connection */
+    connectionTimeout?: number;
+    /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
+    connection_timeout?: number;
+    /** Maximum lifetime in seconds of a connection */
+    maxLifetime?: number;
+    /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
+    max_lifetime?: number;
+    /** Whether to use TLS/SSL for the connection */
+    tls?: TLSOptions | boolean;
+    /** Whether to use TLS/SSL for the connection (alias for tls) */
+    ssl?: TLSOptions | boolean;
+    /** Callback function executed when a connection is established */
+    onconnect?: (client: SQL) => void;
+    /** Callback function executed when a connection is closed */
+    onclose?: (client: SQL) => void;
+    /** Maximum number of connections in the pool */
+    max?: number;
+    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+    bigint?: boolean;
+    /** Automatic creation of prepared statements, defaults to true */
+    prepare?: boolean;
+  }
+
+  /**
+   * Represents a SQL query that can be executed, with additional control methods
+   * Extends Promise to allow for async/await usage
+   */
+  interface SQLQuery<T = any> extends Promise<T> {
+    /** Indicates if the query is currently executing */
+    active: boolean;
+
+    /** Indicates if the query has been cancelled */
+    cancelled: boolean;
+
+    /** Cancels the executing query */
+    cancel(): SQLQuery<T>;
+
+    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+    simple(): SQLQuery<T>;
+
+    /** Executes the query */
+    execute(): SQLQuery<T>;
+
+    /** Returns the raw query result */
+    raw(): SQLQuery<T>;
+
+    /** Returns only the values from the query result */
+    values(): SQLQuery<T>;
+  }
+
+  /**
+   * Callback function type for transaction contexts
+   * @param sql Function to execute SQL queries within the transaction
+   */
+  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
+  /**
+   * Callback function type for savepoint contexts
+   * @param sql Function to execute SQL queries within the savepoint
+   */
+  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
+
+  /**
+   * Main SQL client interface providing connection and transaction management
+   */
+  interface SQL {
+    /**
+     * Executes a SQL query using template literals
+     * @example
+     * ```ts
+     * const [user] = await sql`select * from users where id = ${1}`;
+     * ```
+     */
+    (strings: string[] | TemplateStringsArray, ...values: any[]): SQLQuery;
+
+    /**
+     * Helper function for inserting an object into a query
+     *
+     * @example
+     * ```ts
+     * // Insert an object
+     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     *
+     * // Or pick specific columns
+     * const result = await sql`insert into users ${sql(users, "id", "name")} RETURNING *`;
+     *
+     * // Or a single object
+     * const result = await sql`insert into users ${sql(user)} RETURNING *`;
+     * ```
+     */
+    <T extends { [Key in PropertyKey]: unknown }>(obj: T | T[] | readonly T[], ...columns: (keyof T)[]): SQLQuery;
+
+    /**
+     * Helper function for inserting any serializable value into a query
+     *
+     * @example
+     * ```ts
+     * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+     * ```
+     */
+    (obj: unknown): SQLQuery;
+
+    /**
+     * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
+     * @example
+     * ```ts
+     * await sql.commitDistributed("my_distributed_transaction");
+     * ```
+     */
+    commitDistributed(name: string): Promise<void>;
+
+    /**
+     * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
+     * @example
+     * ```ts
+     * await sql.rollbackDistributed("my_distributed_transaction");
+     * ```
+     */
+    rollbackDistributed(name: string): Promise<void>;
+
+    /** Waits for the database connection to be established
+     *
+     * @example
+     * ```ts
+     * await sql.connect();
+     * ```
+     */
+    connect(): Promise<SQL>;
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     *
+     * @param options - The options for the close
+     *
+     * @example
+     * ```ts
+     * await sql.close({ timeout: 1 });
+     * ```
+     */
+    close(options?: { timeout?: number }): Promise<void>;
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * This is an alias of {@link SQL.close}
+     *
+     * @param options - The options for the close
+     *
+     * @example
+     * ```ts
+     * await sql.end({ timeout: 1 });
+     * ```
+     */
+    end(options?: { timeout?: number }): Promise<void>;
+
+    /**
+     * Flushes any pending operations
+     *
+     * @example
+     * ```ts
+     * sql.flush();
+     * ```
+     */
+    flush(): void;
+
+    /**
+     * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     * This can be used for running queries on an isolated connection.
+     * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
+     *
+     * @example
+     * ```ts
+     * const reserved = await sql.reserve();
+     * await reserved`select * from users`;
+     * await reserved.release();
+     * // with in a production scenario would be something more like
+     * const reserved = await sql.reserve();
+     * try {
+     *   // ... queries
+     * } finally {
+     *   await reserved.release();
+     * }
+     *
+     * // Bun supports Symbol.dispose and Symbol.asyncDispose
+     * {
+     *  // always release after context (safer)
+     *  using reserved = await sql.reserve()
+     *  await reserved`select * from users`
+     * }
+     * ```
+     */
+    reserve(): Promise<ReservedSQL>;
+    /** Begins a new transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(fn: SQLTransactionContextCallback): Promise<any>;
+    /** Begins a new transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @example
+     * const [user, account] = await sql.begin("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction(async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a transaction with options
+     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
+     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * @alias begin
+     * @example
+     * const [user, account] = await sql.transaction("read write", async sql => {
+     *   const [user] = await sql`
+     *     insert into users (
+     *       name
+     *     ) values (
+     *       'Murray'
+     *     )
+     *     returning *
+     *   `
+     *   const [account] = await sql`
+     *     insert into accounts (
+     *       user_id
+     *     ) values (
+     *       ${ user.user_id }
+     *     )
+     *     returning *
+     *   `
+     *   return [user, account]
+     * })
+     */
+    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Begins a distributed transaction
+     * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
+     * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
+     * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
+     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
+     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     * @example
+     * await sql.beginDistributed("numbers", async sql => {
+     *   await sql`create table if not exists numbers (a int)`;
+     *   await sql`insert into numbers values(1)`;
+     * });
+     * // later you can call
+     * await sql.commitDistributed("numbers");
+     * // or await sql.rollbackDistributed("numbers");
+     */
+    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /** Alternative method to begin a distributed transaction
+     * @alias beginDistributed
+     */
+    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
+     * Please note that this can lead to SQL injection if you're not careful.
+     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
+     * @example
+     * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     */
+    unsafe(string: string, values?: any[]): SQLQuery;
+    /**
+     * Reads a file and uses the contents as a query.
+     * Optional parameters can be used if the file includes $1, $2, etc
+     * @example
+     * const result = await sql.file("query.sql", [1, 2, 3]);
+     */
+    file(filename: string, values?: any[]): SQLQuery;
+
+    /** Current client options */
+    options: SQLOptions;
+
+    [Symbol.asyncDispose](): Promise<any>;
+  }
+  const SQL: {
+    /**
+     * Creates a new SQL client instance
+     *
+     * @param connectionString - The connection string for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     * ```
+     */
+    new (connectionString: string | URL): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param connectionString - The connection string for the SQL client
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     * ```
+     */
+    new (connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     * ```
+     */
+    new (options?: SQLOptions): SQL;
+  };
+
+  /**
+   * Represents a reserved connection from the connection pool
+   * Extends SQL with additional release functionality
+   */
+  interface ReservedSQL extends SQL {
+    /** Releases the client back to the connection pool */
+    release(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
+   * Represents a client within a transaction context
+   * Extends SQL with savepoint functionality
+   */
+  interface TransactionSQL extends SQL {
+    /** Creates a savepoint within the current transaction */
+    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
+  }
+  /**
+   * Represents a savepoint within a transaction
+   */
+  interface SavepointSQL extends SQL {}
+
+  type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+  interface CSRFGenerateOptions {
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    expiresIn?: number;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+  }
+
+  interface CSRFVerifyOptions {
+    /**
+     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     */
+    secret?: string;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    maxAge?: number;
+  }
+
+  /**
+   * SQL client
+   *
+   * @category Database
+   */
+  const sql: SQL;
+
+  /**
+   * SQL client for PostgreSQL
+   *
+   * @category Database
+   */
+  const postgres: SQL;
+
+  /**
+   * Generate and verify CSRF tokens
+   *
+   * @category Security
+   */
+  namespace CSRF {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    function generate(secret?: string, options?: CSRFGenerateOptions): string;
+
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    function verify(token: string, options?: CSRFVerifyOptions): boolean;
   }
 
   /**
@@ -1243,9 +1860,13 @@ declare module "bun" {
     crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
+    xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    rapidhash: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
   }
 
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -1490,20 +2111,49 @@ declare module "bun" {
     | "import-rule"
     | "url-token"
     | "internal"
-    | "entry-point";
+    | "entry-point-run"
+    | "entry-point-build";
 
   interface Import {
     path: string;
     kind: ImportKind;
   }
 
-  type ModuleFormat = "esm"; // later: "cjs", "iife"
-
+  /**
+   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
+    /**
+     * @default "browser"
+     */
     target?: Target; // default: "browser"
-    format?: ModuleFormat; // later: "cjs", "iife"
+    /**
+     * Output module format. Top-level await is only supported for `"esm"`.
+     *
+     * Can be:
+     * - `"esm"`
+     * - `"cjs"` (**experimental**)
+     * - `"iife"` (**experimental**)
+     *
+     * @default "esm"
+     */
+    format?: /**
+
+     * ECMAScript Module format
+     */
+    | "esm"
+      /**
+       * CommonJS format
+       * **Experimental**
+       */
+      | "cjs"
+      /**
+       * IIFE format
+       * **Experimental**
+       */
+      | "iife";
     naming?:
       | string
       | {
@@ -1521,7 +2171,26 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
+    /**
+     * Specifies if and how to generate source maps.
+     *
+     * - `"none"` - No source maps are generated
+     * - `"linked"` - A separate `*.ext.map` file is generated alongside each
+     *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
+     *   file to link the two. Requires `outdir` to be set.
+     * - `"inline"` - an inline source map is appended to the output file.
+     * - `"external"` - Generate a separate source map file for each input file.
+     *   No `//# sourceMappingURL` comment is added to the output file.
+     *
+     * `true` and `false` are aliases for `"inline"` and `"none"`, respectively.
+     *
+     * @default "none"
+     *
+     * @see {@link outdir} required for `"linked"` maps
+     * @see {@link publicPath} to customize the base url of linked source maps
+     */
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1530,6 +2199,35 @@ declare module "bun" {
      * https://nodejs.org/api/packages.html#exports
      */
     conditions?: Array<string> | string;
+
+    /**
+     * Controls how environment variables are handled during bundling.
+     *
+     * Can be one of:
+     * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
+     *   references to string literals containing the actual environment variable values
+     * - `"disable"`: Disables environment variable injection entirely
+     * - A string ending in `*`: Inlines environment variables that match the given prefix.
+     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   env: "MY_PUBLIC_*",
+     *   entrypoints: ["src/index.ts"],
+     * })
+     * ```
+     */
+    env?: "inline" | "disable" | `${string}*`;
+
+    /**
+     * Whether to enable minification.
+     *
+     * Use `true`/`false` to enable/disable all minification options. Alternatively,
+     * you can pass an object for granular control over certain minifications.
+     *
+     * @default false
+     */
     minify?:
       | boolean
       | {
@@ -1537,16 +2235,19 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+
     /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
      */
     ignoreDCEAnnotations?: boolean;
+
     /**
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
     // treeshaking?: boolean;
 
     // jsx?:
@@ -1561,13 +2262,57 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate bytecode for the output. This can dramatically improve cold
+     * start times, but will make the final output larger and slightly increase
+     * memory usage.
+     *
+     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     *
+     * Must be `target: "bun"`
+     * @default false
+     */
+    bytecode?: boolean;
+
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
+
+    /**
+     * Add a footer to the bundled code such as a comment block like
+     *
+     * `// made with bun!`
+     */
+    footer?: string;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
+
+    /**
+     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+     * This defaults to `true`.
+     */
+    throw?: boolean;
   }
 
+  /**
+   * Hash and verify passwords using argon2 or bcrypt
+   *
+   * These are fast APIs that can run in a worker thread if used asynchronously.
+   *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
+   * @category Security
+   */
   namespace Password {
-    type AlgorithmLabel = "bcrypt" | "argon2id" | "argon2d" | "argon2i";
-
     interface Argon2Algorithm {
       algorithm: "argon2id" | "argon2d" | "argon2i";
+
       /**
        * Memory cost, which defines the memory usage, given in kibibytes.
        */
@@ -1581,11 +2326,14 @@ declare module "bun" {
 
     interface BCryptAlgorithm {
       algorithm: "bcrypt";
+
       /**
        * A number between 4 and 31. The default is 10.
        */
       cost?: number;
     }
+
+    type AlgorithmLabel = (BCryptAlgorithm | Argon2Algorithm)["algorithm"];
   }
 
   /**
@@ -1593,12 +2341,14 @@ declare module "bun" {
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
    *
+   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
    * work on this.
    *
-   * ### Example with argon2
-   *
+   * @example
+   * **Example with argon2**
    * ```ts
    * import {password} from "bun";
    *
@@ -1607,7 +2357,7 @@ declare module "bun" {
    * console.log(verify); // true
    * ```
    *
-   * ### Example with bcrypt
+   * **Example with bcrypt**
    * ```ts
    * import {password} from "bun";
    *
@@ -1617,6 +2367,8 @@ declare module "bun" {
    *
    * console.log(verify); // true
    * ```
+   *
+   * @category Security
    */
   const password: {
     /**
@@ -1660,14 +2412,16 @@ declare module "bun" {
      *
      * @returns A promise that resolves to the hashed password
      *
-     * ## Example with argon2
+     * @example
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      * const hash = await password.hash("hello world");
      * console.log(hash); // $argon2id$v=1...
      * const verify = await password.verify("hello world", hash);
      * ```
-     * ## Example with bcrypt
+     *
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      * const hash = await password.hash("hello world", "bcrypt");
@@ -1684,9 +2438,9 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<string>;
@@ -1697,11 +2451,11 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
-     * ### Example with argon2
-     *
+     * @example
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      *
@@ -1710,7 +2464,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ### Example with bcrypt
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      *
@@ -1722,7 +2476,13 @@ declare module "bun" {
      * ```
      */
     verifySync(
+      /**
+       * The password to verify.
+       */
       password: Bun.StringOrBuffer,
+      /**
+       * The hash to verify against.
+       */
       hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
@@ -1736,11 +2496,11 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
      * work on this.
      *
-     * ### Example with argon2
-     *
+     * @example
+     * **Example with argon2**
      * ```ts
      * import {password} from "bun";
      *
@@ -1749,7 +2509,7 @@ declare module "bun" {
      * console.log(verify); // true
      * ```
      *
-     * ### Example with bcrypt
+     * **Example with bcrypt**
      * ```ts
      * import {password} from "bun";
      *
@@ -1768,29 +2528,286 @@ declare module "bun" {
        * mistake to hash an empty password.
        */
       password: Bun.StringOrBuffer,
+
       /**
-       * @default "argon2id"
-       *
        * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       *
+       * @default "argon2id"
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
   };
 
+  /**
+   * A build artifact represents a file that was generated by the bundler @see {@link Bun.build}
+   *
+   * @category Bundler
+   */
   interface BuildArtifact extends Blob {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
+  /**
+   * The output of a build
+   *
+   * @category Bundler
+   */
   interface BuildOutput {
     outputs: BuildArtifact[];
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
   }
 
+  /**
+   * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
+   *
+   * @param config - Build configuration options
+   * @returns Promise that resolves to build output containing generated artifacts and build status
+   * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
+   *
+   * @category Bundler
+   *
+   * @example
+   * Basic usage - Bundle a single entrypoint and check results
+   *```ts
+   * const result = await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist'
+   * });
+   *
+   * if (!result.success) {
+   *   console.error('Build failed:', result.logs);
+   *   process.exit(1);
+   * }
+   *```
+   *
+   * @example
+   * Set up multiple entrypoints with code splitting enabled
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/app.tsx', './src/admin.tsx'],
+   *   outdir: './dist',
+   *   splitting: true,
+   *   sourcemap: "external"
+   * });
+   *```
+   *
+   * @example
+   * Configure minification and optimization settings
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   minify: {
+   *     whitespace: true,
+   *     identifiers: true,
+   *     syntax: true
+   *   },
+   *   drop: ['console', 'debugger']
+   * });
+   *```
+   *
+   * @example
+   * Set up custom loaders and mark packages as external
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   loader: {
+   *     '.png': 'dataurl',
+   *     '.svg': 'file',
+   *     '.txt': 'text',
+   *     '.json': 'json'
+   *   },
+   *   external: ['react', 'react-dom']
+   * });
+   *```
+   *
+   * @example
+   * Configure environment variable handling with different modes
+   *```ts
+   * // Inline all environment variables
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   env: 'inline'
+   * });
+   *
+   * // Only include specific env vars
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   env: 'PUBLIC_*'
+   * });
+   *```
+   *
+   * @example
+   * Set up custom naming patterns for all output types
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   naming: {
+   *     entry: '[dir]/[name]-[hash].[ext]',
+   *     chunk: 'chunks/[name]-[hash].[ext]',
+   *     asset: 'assets/[name]-[hash].[ext]'
+   *   }
+   * });
+   *```
+   *
+   * @example
+   * Work with build artifacts in different formats
+   *```ts
+   * const result = await Bun.build({
+   *   entrypoints: ['./src/index.tsx']
+   * });
+   * for (const artifact of result.outputs) {
+   *   const text = await artifact.text();
+   *   const buffer = await artifact.arrayBuffer();
+   *   const bytes = await artifact.bytes();
+   *   new Response(artifact);
+   *   await Bun.write(artifact.path, artifact);
+   * }
+   *```
+   *
+   * @example
+   * Implement comprehensive error handling with position info
+   *```ts
+   * try {
+   *   const result = await Bun.build({
+   *     entrypoints: ['./src/index.tsx'],
+   *   });
+   * } catch (e) {
+   *   const error = e as AggregateError;
+   *   console.error('Build failed:');
+   *   for (const msg of error.errors) {
+   *     if ('position' in msg) {
+   *       console.error(
+   *         `${msg.message} at ${msg.position?.file}:${msg.position?.line}:${msg.position?.column}`
+   *       );
+   *     } else {
+   *       console.error(msg.message);
+   *     }
+   *   }
+   * }
+   *```
+   *
+   * @example
+   * Set up Node.js target with specific configurations
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/server.ts'],
+   *   outdir: './dist',
+   *   target: 'node',
+   *   format: 'cjs',
+   *   sourcemap: 'external',
+   *   minify: false,
+   *   packages: 'external'
+   * });
+   *```
+   *
+   * @example
+   * Configure experimental CSS bundling with multiple themes
+   *```ts
+   * await Bun.build({
+   *   entrypoints: [
+   *     './src/styles.css',
+   *     './src/themes/dark.css',
+   *     './src/themes/light.css'
+   *   ],
+   *   outdir: './dist/css',
+   * });
+   *```
+   *
+   * @example
+   * Define compile-time constants and version information
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   define: {
+   *     'process.env.NODE_ENV': JSON.stringify('production'),
+   *     'CONSTANTS.VERSION': JSON.stringify('1.0.0'),
+   *     'CONSTANTS.BUILD_TIME': JSON.stringify(new Date().toISOString())
+   *   }
+   * });
+   *```
+   *
+   * @example
+   * Create a custom plugin for handling special file types
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   plugins: [
+   *     {
+   *       name: 'my-plugin',
+   *       setup(build) {
+   *         build.onLoad({ filter: /\.custom$/ }, async (args) => {
+   *           const content = await Bun.file(args.path).text();
+   *           return {
+   *             contents: `export default ${JSON.stringify(content)}`,
+   *             loader: 'js'
+   *           };
+   *         });
+   *       }
+   *     }
+   *   ]
+   * });
+   *```
+   *
+   * @example
+   * Enable bytecode generation for faster startup
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/server.ts'],
+   *   outdir: './dist',
+   *   target: 'bun',
+   *   format: 'cjs',
+   *   bytecode: true
+   * });
+   *```
+   *
+   * @example
+   * Add custom banner and footer to output files
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   banner: '"use client";\n// Built with Bun',
+   *   footer: '// Generated on ' + new Date().toISOString()
+   * });
+   *```
+   *
+   * @example
+   * Configure CDN public path for asset loading
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   publicPath: 'https://cdn.example.com/assets/',
+   *   loader: {
+   *     '.png': 'file',
+   *     '.svg': 'file'
+   *   }
+   * });
+   *```
+   *
+   * @example
+   * Set up package export conditions for different environments
+   *```ts
+   * await Bun.build({
+   *   entrypoints: ['./src/index.tsx'],
+   *   outdir: './dist',
+   *   conditions: ['production', 'browser', 'module'],
+   *   packages: 'external'
+   * });
+   *```
+   */
   function build(config: BuildConfig): Promise<BuildOutput>;
 
   /**
@@ -1840,9 +2857,8 @@ declare module "bun" {
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
    *
    * @example
-   * import { serve } from "bun";
-   *
-   * serve({
+   * ```ts
+   * Bun.serve({
    *   websocket: {
    *     open(ws) {
    *       console.log("Connected", ws.remoteAddress);
@@ -1856,6 +2872,9 @@ declare module "bun" {
    *     },
    *   }
    * });
+   * ```
+   *
+   * @category HTTP & Networking
    */
   interface ServerWebSocket<T = undefined> {
     /**
@@ -1868,7 +2887,7 @@ declare module "bun" {
      * ws.send("Compress this.", true);
      * ws.send(new Uint8Array([1, 2, 3, 4]));
      */
-    send(data: string | Bun.BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to the client.
@@ -1890,7 +2909,7 @@ declare module "bun" {
      * ws.send(new TextEncoder().encode("Hello!"));
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      */
-    sendBinary(data: Bun.BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Closes the connection.
@@ -1922,14 +2941,14 @@ declare module "bun" {
      *
      * @param data The data to send
      */
-    ping(data?: string | Bun.BufferSource): ServerWebSocketSendStatus;
+    ping(data?: string | BufferSource): ServerWebSocketSendStatus;
 
     /**
      * Sends a pong.
      *
      * @param data The data to send
      */
-    pong(data?: string | Bun.BufferSource): ServerWebSocketSendStatus;
+    pong(data?: string | BufferSource): ServerWebSocketSendStatus;
 
     /**
      * Sends a message to subscribers of the topic.
@@ -1942,7 +2961,7 @@ declare module "bun" {
      * ws.publish("chat", "Compress this.", true);
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
      */
-    publish(topic: string, data: string | Bun.BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to subscribers of the topic.
@@ -1966,7 +2985,7 @@ declare module "bun" {
      * ws.publish("chat", new TextEncoder().encode("Hello!"));
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      */
-    publishBinary(topic: string, data: Bun.BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Subscribes a client to the topic.
@@ -2074,6 +3093,8 @@ declare module "bun" {
      * });
      */
     data: T;
+
+    getBufferedAmount(): number;
   }
 
   /**
@@ -2094,6 +3115,8 @@ declare module "bun" {
 
   /**
    * Create a server-side {@link ServerWebSocket} handler for use with {@link Bun.serve}
+   *
+   * @category HTTP & Networking
    *
    * @example
    * ```ts
@@ -2165,7 +3188,7 @@ declare module "bun" {
      *
      * @param ws The websocket that was closed
      * @param code The close code
-     * @param message The close message
+     * @param reason The close reason
      */
     close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
 
@@ -2247,6 +3270,46 @@ declare module "bun" {
         };
   }
 
+  namespace RouterTypes {
+    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
+      ? { [K in Param]: string } & ExtractRouteParams<Rest>
+      : T extends `${string}:${infer Param}`
+        ? { [K in Param]: string }
+        : T extends `${string}*`
+          ? {}
+          : {};
+
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+
+    type RouteHandlerWithWebSocketUpgrade<T extends string> = (
+      req: BunRequest<T>,
+      server: Server,
+    ) => Response | undefined | void | Promise<Response | undefined | void>;
+
+    type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+    type RouteHandlerObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandler<T>;
+    };
+
+    type RouteHandlerWithWebSocketUpgradeObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
+    };
+
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValueWithWebSocketUpgrade<T extends string> =
+      | RouteValue<T>
+      | RouteHandlerWithWebSocketUpgrade<T>
+      | RouteHandlerWithWebSocketUpgradeObject<T>;
+  }
+
+  interface BunRequest<T extends string = string> extends Request {
+    params: RouterTypes.ExtractRouteParams<T>;
+    readonly cookies: CookieMap;
+
+    clone(): BunRequest<T>;
+  }
+
   interface GenericServeOptions {
     /**
      * What URI should be used to make {@link Request.url} absolute?
@@ -2280,20 +3343,62 @@ declare module "bun" {
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */
-    development?: boolean;
+    development?:
+      | boolean
+      | {
+          /**
+           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           *
+           * @default true if process.env.NODE_ENV !== 'production'
+           *
+           */
+          hmr?: boolean;
 
-    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+          /**
+           * Enable console log streaming from browser to server
+           * @default false
+           */
+          console?: boolean;
+
+          /**
+           * Enable automatic workspace folders for Chrome DevTools
+           *
+           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * `/.well-known/appspecific/com.chrome.devtools.json`
+           *
+           * The response is a JSON object with the following shape:
+           * ```json
+           * {
+           *   "workspace": {
+           *     "root": "<cwd>",
+           *     "uuid": "<uuid>"
+           *   }
+           * }
+           * ```
+           *
+           * The `root` field is the current working directory of the server.
+           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           *
+           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * @default true
+           */
+          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
+        };
+
+    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
 
     /**
      * Uniquely identify a server instance with an ID
      *
-     * ### When bun is started with the `--hot` flag
+     * ---
+     *
+     * **When bun is started with the `--hot` flag**:
      *
      * This string will be used to hot reload the server without interrupting
      * pending requests or websockets. If not provided, a value will be
      * generated. To disable hot reloading, set this value to `null`.
      *
-     * ### When bun is not started with the `--hot` flag
+     * **When bun is not started with the `--hot` flag**:
      *
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
@@ -2308,13 +3413,19 @@ declare module "bun" {
     port?: string | number;
 
     /**
-     * If the `SO_REUSEPORT` flag should be set.
+     * Whether the `SO_REUSEPORT` flag should be set.
      *
      * This allows multiple processes to bind to the same port, which is useful for load balancing.
      *
      * @default false
      */
     reusePort?: boolean;
+
+    /**
+     * Whether the `IPV6_V6ONLY` flag should be set.
+     * @default false
+     */
+    ipv6Only?: boolean;
 
     /**
      * What hostname should the server listen on?
@@ -2341,6 +3452,14 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix?: never;
+
+    /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
 
     /**
      * Handle HTTP requests
@@ -2398,8 +3517,7 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * import { serve } from "bun";
-     * serve({
+     * Bun.serve({
      *  websocket: {
      *    open: (ws) => {
      *      console.log("Client connected");
@@ -2496,13 +3614,14 @@ declare module "bun" {
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     unix?: never;
     tls?: TLSOptions | TLSOptions[];
   }
+
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -2510,12 +3629,24 @@ declare module "bun" {
     unix: string;
     tls?: TLSOptions | TLSOptions[];
   }
+
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
+    tls?: TLSOptions | TLSOptions[];
+  }
+
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;
     syscall?: string;
   }
 
+  /**
+   * Options for TLS connections
+   */
   interface TLSOptions {
     /**
      * Passphrase for the TLS key
@@ -2557,7 +3688,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -2569,7 +3700,7 @@ declare module "bun" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -2580,21 +3711,143 @@ declare module "bun" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+
+    keyFile?: string;
+
+    certFile?: string;
+
+    ALPNProtocols?: string | BufferSource;
+
+    ciphers?: string;
+
+    clientRenegotiationLimit?: number;
+
+    clientRenegotiationWindow?: number;
   }
 
-  interface TLSServeOptions extends ServeOptions, TLSOptions {
-    tls?: TLSOptions | TLSOptions[];
-  }
+  // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
+  // and new TLS option keys should only be supported on the `.tls` property (which comes
+  // from the TLSOptions interface above).
+  /**
+   * This exists because Bun.serve() extends the TLSOptions object, but
+   * they're now considered deprecated. You should be passing the
+   * options on `.tls` instead.
+   *
+   * @example
+   * ```ts
+   * //// OLD ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   passphrase: "secret",
+   * });
+   *
+   * //// NEW ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   tls: {
+   *     passphrase: "secret",
+   *   },
+   * });
+   * ```
+   */
+  interface TLSOptionsAsDeprecated {
+    /**
+     * Passphrase for the TLS key
+     *
+     * @deprecated Use `.tls.passphrase` instead
+     */
+    passphrase?: string;
 
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    tls?: TLSOptions | TLSOptions[];
+    /**
+     * File path to a .pem file custom Diffie Helman parameters
+     *
+     * @deprecated Use `.tls.dhParamsFile` instead
+     */
+    dhParamsFile?: string;
+
+    /**
+     * Explicitly set a server name
+     *
+     * @deprecated Use `.tls.serverName` instead
+     */
+    serverName?: string;
+
+    /**
+     * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
+     * It reduces overall performance but saves some memory.
+     * @default false
+     *
+     * @deprecated Use `.tls.lowMemoryMode` instead
+     */
+    lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * @deprecated Use `.tls.rejectUnauthorized` instead
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     *
+     * @deprecated Use `.tls.requestCert` instead
+     */
+    requestCert?: boolean;
+
+    /**
+     * Optionally override the trusted CA certificates. Default is to trust
+     * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
+     * replaced when CAs are explicitly specified using this option.
+     *
+     * @deprecated Use `.tls.ca` instead
+     */
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     *  Cert chains in PEM format. One cert chain should be provided per
+     *  private key. Each cert chain should consist of the PEM formatted
+     *  certificate for a provided private key, followed by the PEM
+     *  formatted intermediate certificates (if any), in order, and not
+     *  including the root CA (the root CA must be pre-known to the peer,
+     *  see ca). When providing multiple cert chains, they do not have to
+     *  be in the same order as their private keys in key. If the
+     *  intermediate certificates are not provided, the peer will not be
+     *  able to validate the certificate, and the handshake will fail.
+     *
+     * @deprecated Use `.tls.cert` instead
+     */
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Private keys in PEM format. PEM allows the option of private keys
+     * being encrypted. Encrypted keys will be decrypted with
+     * options.passphrase. Multiple keys using different algorithms can be
+     * provided either as an array of unencrypted key strings or buffers,
+     * or an array of objects in the form {pem: <string|buffer>[,
+     * passphrase: <string>]}. The object form can only occur in an array.
+     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase if provided, or options.passphrase if it is not.
+     *
+     * @deprecated Use `.tls.key` instead
+     */
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Optionally affect the OpenSSL protocol behavior, which is not
+     * usually necessary. This should be used carefully if at all! Value is
+     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     *
+     * @deprecated `Use .tls.secureOptions` instead
+     */
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
   interface SocketAddress {
@@ -2621,7 +3874,9 @@ declare module "bun" {
    * That means starting a new server allocates about 500 KB of memory. Try to
    * avoid starting and stopping the server often (unless it's a new instance of bun).
    *
-   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you \@alexhultman.
+   *
+   * @category HTTP & Networking
    */
   interface Server extends Disposable {
     /**
@@ -2632,7 +3887,7 @@ declare module "bun" {
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
-    stop(closeActiveConnections?: boolean): void;
+    stop(closeActiveConnections?: boolean): Promise<void>;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -2660,7 +3915,14 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload(options: Serve): void;
+    reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+      options: ServeFunctionOptions<T, R> & {
+        /**
+         * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
+         */
+        static?: R;
+      },
+    ): Server;
 
     /**
      * Mock the fetch handler for a running server.
@@ -2715,7 +3977,7 @@ declare module "bun" {
         /**
          * Send any additional headers while upgrading, like cookies
          */
-        headers?: Bun.HeadersInit;
+        headers?: HeadersInit;
         /**
          * This value is passed to the {@link ServerWebSocket.data} property
          */
@@ -2760,6 +4022,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
@@ -2773,6 +4045,21 @@ declare module "bun" {
      */
     requestIP(request: Request): SocketAddress | null;
 
+    /**
+     * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    server.timeout(request, 60);
+     *    await Bun.sleep(30000);
+     *    return new Response("30 seconds have passed");
+     *  }
+     * }
+     * ```
+     */
+    timeout(request: Request, seconds: number): void;
     /**
      * Undo a call to {@link Server.unref}
      *
@@ -2804,15 +4091,30 @@ declare module "bun" {
 
     readonly url: URL;
 
-    readonly port: number;
     /**
-     * The hostname the server is listening on. Does not include the port
+     * The port the server is listening on.
+     *
+     * This will be undefined when the server is listening on a unix socket.
+     *
+     * @example
+     * ```js
+     * 3000
+     * ```
+     */
+    readonly port: number | undefined;
+
+    /**
+     * The hostname the server is listening on. Does not include the port.
+     *
+     * This will be `undefined` when the server is listening on a unix socket.
+     *
      * @example
      * ```js
      * "localhost"
      * ```
      */
-    readonly hostname: string;
+    readonly hostname: string | undefined;
+
     /**
      * Is the server running in development mode?
      *
@@ -2832,6 +4134,224 @@ declare module "bun" {
      */
     readonly id: string;
   }
+
+  /**
+   * The type of options that can be passed to {@link serve}
+   */
+  type Serve<WebSocketDataType = undefined> =
+    | ServeOptions
+    | TLSServeOptions
+    | UnixServeOptions
+    | UnixTLSServeOptions
+    | WebSocketServeOptions<WebSocketDataType>
+    | TLSWebSocketServeOptions<WebSocketDataType>
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
+
+  /**
+   * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
+   */
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+        routes: R;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+        routes?: never;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (Omit<WebSocketServeOptions<T>, "fetch"> & {
+        routes: {
+          [K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
+        };
+        fetch?: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      })
+    | (Omit<WebSocketServeOptions<T>, "fetch"> & {
+        routes?: never;
+        fetch: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      });
+
+  /**
+   * Bun.serve provides a high-performance HTTP server with built-in routing support.
+   * It enables both function-based and object-based route handlers with type-safe
+   * parameters and method-specific handling.
+   *
+   * @param options - Server configuration options
+   *
+   * @category HTTP & Networking
+   *
+   * @example Basic Usage
+   * ```ts
+   * Bun.serve({
+   *   port: 3000,
+   *   fetch(req) {
+   *     return new Response("Hello World");
+   *   }
+   * });
+   * ```
+   *
+   * @example Route-based Handlers
+   * ```ts
+   * Bun.serve({
+   *   routes: {
+   *     // Static responses
+   *     "/": new Response("Home page"),
+   *
+   *     // Function handlers with type-safe parameters
+   *     "/users/:id": (req) => {
+   *       // req.params.id is typed as string
+   *       return new Response(`User ${req.params.id}`);
+   *     },
+   *
+   *     // Method-specific handlers
+   *     "/api/posts": {
+   *       GET: () => new Response("Get posts"),
+   *       POST: async (req) => {
+   *         const body = await req.json();
+   *         return new Response("Created post");
+   *       },
+   *       DELETE: (req) => new Response("Deleted post")
+   *     },
+   *
+   *     // Wildcard routes
+   *     "/static/*": (req) => {
+   *       // Handle any path under /static/
+   *       return new Response("Static file");
+   *     },
+   *
+   *     // Disable route (fall through to fetch handler)
+   *     "/api/legacy": false
+   *   },
+   *
+   *   // Fallback handler for unmatched routes
+   *   fetch(req) {
+   *     return new Response("Not Found", { status: 404 });
+   *   }
+   * });
+   * ```
+   *
+   * @example Path Parameters
+   * ```ts
+   * Bun.serve({
+   *   routes: {
+   *     // Single parameter
+   *     "/users/:id": (req: BunRequest<"/users/:id">) => {
+   *       return new Response(`User ID: ${req.params.id}`);
+   *     },
+   *
+   *     // Multiple parameters
+   *     "/posts/:postId/comments/:commentId": (
+   *       req: BunRequest<"/posts/:postId/comments/:commentId">
+   *     ) => {
+   *       return new Response(JSON.stringify(req.params));
+   *       // Output: {"postId": "123", "commentId": "456"}
+   *     }
+   *   }
+   * });
+   * ```
+   *
+   * @example Route Precedence
+   * ```ts
+   * // Routes are matched in the following order:
+   * // 1. Exact static routes ("/about")
+   * // 2. Parameter routes ("/users/:id")
+   * // 3. Wildcard routes ("/api/*")
+   *
+   * Bun.serve({
+   *   routes: {
+   *     "/api/users": () => new Response("Users list"),
+   *     "/api/users/:id": (req) => new Response(`User ${req.params.id}`),
+   *     "/api/*": () => new Response("API catchall"),
+   *     "/*": () => new Response("Root catchall")
+   *   }
+   * });
+   * ```
+   *
+   * @example Error Handling
+   * ```ts
+   * Bun.serve({
+   *   routes: {
+   *     "/error": () => {
+   *       throw new Error("Something went wrong");
+   *     }
+   *   },
+   *   error(error) {
+   *     // Custom error handler
+   *     console.error(error);
+   *     return new Response(`Error: ${error.message}`, {
+   *       status: 500
+   *     });
+   *   }
+   * });
+   * ```
+   *
+   * @example Server Lifecycle
+   * ```ts
+   * const server = Bun.serve({
+   *   // Server config...
+   * });
+   *
+   * // Update routes at runtime
+   * server.reload({
+   *   routes: {
+   *     "/": () => new Response("Updated route")
+   *   }
+   * });
+   *
+   * // Stop the server
+   * server.stop();
+   * ```
+   *
+   * @example Development Mode
+   * ```ts
+   * Bun.serve({
+   *   development: true, // Enable hot reloading
+   *   routes: {
+   *     // Routes will auto-reload on changes
+   *   }
+   * });
+   * ```
+   *
+   * @example Type-Safe Request Handling
+   * ```ts
+   * type Post = {
+   *   id: string;
+   *   title: string;
+   * };
+   *
+   * Bun.serve({
+   *   routes: {
+   *     "/api/posts/:id": async (
+   *       req: BunRequest<"/api/posts/:id">
+   *     ) => {
+   *       if (req.method === "POST") {
+   *         const body: Post = await req.json();
+   *         return Response.json(body);
+   *       }
+   *       return new Response("Method not allowed", {
+   *         status: 405
+   *       });
+   *     }
+   *   }
+   * });
+   * ```
+   */
+  function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+    options: ServeFunctionOptions<T, R> & {
+      /**
+       * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
+       */
+      static?: R;
+    },
+  ): Server;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -2855,10 +4375,16 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded)
+   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -2874,9 +4400,8 @@ declare module "bun" {
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied)
+   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  // tslint:disable-next-line:unified-signatures
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -2893,7 +4418,6 @@ declare module "bun" {
    *
    * @param fileDescriptor The file descriptor of the file
    */
-  // tslint:disable-next-line:unified-signatures
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -2903,10 +4427,231 @@ declare module "bun" {
    */
   function allocUnsafe(size: number): Uint8Array;
 
+  /**
+   * Options for `Bun.inspect`
+   */
   interface BunInspectOptions {
+    /**
+     * Whether to colorize the output
+     */
     colors?: boolean;
+    /**
+     * The depth of the inspection
+     */
     depth?: number;
+    /**
+     * Whether to sort the properties of the object
+     */
     sorted?: boolean;
+    /**
+     * Whether to compact the output
+     */
+    compact?: boolean;
+  }
+
+  type WebSocketOptionsProtocolsOrProtocol =
+    | {
+        /**
+         * Protocols to use for the WebSocket connection
+         */
+        protocols?: string | string[];
+      }
+    | {
+        /**
+         * Protocol to use for the WebSocket connection
+         */
+        protocol?: string;
+      };
+
+  type WebSocketOptionsTLS = {
+    /**
+     * Options for the TLS connection
+     */
+    tls?: {
+      /**
+       * Whether to reject the connection if the certificate is not valid
+       *
+       * @default true
+       */
+      rejectUnauthorized?: boolean;
+    };
+  };
+
+  type WebSocketOptionsHeaders = {
+    /**
+     * Headers to send to the server
+     */
+    headers?: import("node:http").OutgoingHttpHeaders;
+  };
+
+  /**
+   * Constructor options for the `Bun.WebSocket` client
+   */
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+
+  interface WebSocketEventMap {
+    close: CloseEvent;
+    error: Event;
+    message: MessageEvent;
+    open: Event;
+  }
+
+  /**
+   * A WebSocket client implementation
+   *
+   * @example
+   * ```ts
+   * const ws = new WebSocket("ws://localhost:8080", {
+   *  headers: {
+   *    "x-custom-header": "hello",
+   *  },
+   * });
+   *
+   * ws.addEventListener("open", () => {
+   *   console.log("Connected to server");
+   * });
+   *
+   * ws.addEventListener("message", (event) => {
+   *   console.log("Received message:", event.data);
+   * });
+   *
+   * ws.send("Hello, server!");
+   * ws.terminate();
+   * ```
+   */
+  interface WebSocket extends EventTarget {
+    /**
+     * The URL of the WebSocket connection
+     */
+    readonly url: string;
+
+    /**
+     * Legacy URL property (same as url)
+     * @deprecated Use url instead
+     */
+    readonly URL: string;
+
+    /**
+     * The current state of the connection
+     */
+    readonly readyState:
+      | typeof WebSocket.CONNECTING
+      | typeof WebSocket.OPEN
+      | typeof WebSocket.CLOSING
+      | typeof WebSocket.CLOSED;
+
+    /**
+     * The number of bytes of data that have been queued using send() but not yet transmitted to the network
+     */
+    readonly bufferedAmount: number;
+
+    /**
+     * The protocol selected by the server
+     */
+    readonly protocol: string;
+
+    /**
+     * The extensions selected by the server
+     */
+    readonly extensions: string;
+
+    /**
+     * The type of binary data being received.
+     */
+    binaryType: "arraybuffer" | "nodebuffer";
+
+    /**
+     * Event handler for open event
+     */
+    onopen: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for message event
+     */
+    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+
+    /**
+     * Event handler for error event
+     */
+    onerror: ((this: WebSocket, ev: Event) => any) | null;
+
+    /**
+     * Event handler for close event
+     */
+    onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+
+    /**
+     * Transmits data to the server
+     * @param data The data to send to the server
+     */
+    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Closes the WebSocket connection
+     * @param code A numeric value indicating the status code
+     * @param reason A human-readable string explaining why the connection is closing
+     */
+    close(code?: number, reason?: string): void;
+
+    /**
+     * Sends a ping frame to the server
+     * @param data Optional data to include in the ping frame
+     */
+    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Sends a pong frame to the server
+     * @param data Optional data to include in the pong frame
+     */
+    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+
+    /**
+     * Immediately terminates the connection
+     */
+    terminate(): void;
+
+    /**
+     * Registers an event handler of a specific event type on the WebSocket.
+     * @param type A case-sensitive string representing the event type to listen for
+     * @param listener The function to be called when the event occurs
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    addEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+
+    /**
+     * Removes an event listener previously registered with addEventListener()
+     * @param type A case-sensitive string representing the event type to remove
+     * @param listener The function to remove from the event target
+     * @param options An options object that specifies characteristics about the event listener
+     */
+    removeEventListener<K extends keyof WebSocketEventMap>(
+      type: K,
+      listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+      options?: boolean | EventListenerOptions,
+    ): void;
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void;
+
+    /** @deprecated Use instance property instead */
+    readonly CONNECTING: 0;
+    /** @deprecated Use instance property instead */
+    readonly OPEN: 1;
+    /** @deprecated Use instance property instead */
+    readonly CLOSING: 2;
+    /** @deprecated Use instance property instead */
+    readonly CLOSED: 3;
   }
 
   /**
@@ -2914,7 +4659,8 @@ declare module "bun" {
    *
    * Supports JSX
    *
-   * @param args
+   * @param arg The value to inspect
+   * @param options Options for the inspection
    */
   function inspect(arg: any, options?: BunInspectOptions): string;
   namespace inspect {
@@ -2922,6 +4668,14 @@ declare module "bun" {
      * That can be used to declare custom inspect functions.
      */
     const custom: typeof import("util").inspect.custom;
+
+    /**
+     * Pretty-print an object or array as a table
+     *
+     * Like {@link console.table}, except it returns a string
+     */
+    function table(tabularData: object | unknown[], properties?: string[], options?: { colors?: boolean }): string;
+    function table(tabularData: object | unknown[], options?: { colors?: boolean }): string;
   }
 
   interface MMapOptions {
@@ -2954,36 +4708,153 @@ declare module "bun" {
    *
    * To close the file, set the array to `null` and it will be garbage collected eventually.
    */
-  function mmap(path: Bun.PathLike, opts?: MMapOptions): Uint8Array;
+  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
-  /** Write to stdout */
+  /**
+   * Write to stdout
+   */
   const stdout: BunFile;
-  /** Write to stderr */
+
+  /**
+   * Write to stderr
+   */
   const stderr: BunFile;
+
   /**
    * Read from stdin
    *
-   * This is read-only
+   * This is a read-only BunFile
    */
   const stdin: BunFile;
 
   type StringLike = string | { toString(): string };
 
-  interface Semver {
+  /**
+   * Valid inputs for {@link color}
+   *
+   * @category Utilities
+   */
+  type ColorInput =
+    | { r: number; g: number; b: number; a?: number }
+    | [number, number, number]
+    | [number, number, number, number]
+    | Uint8Array
+    | Uint8ClampedArray
+    | Float32Array
+    | Float64Array
+    | string
+    | number
+    | { toString(): string };
+
+  /**
+   * Converts formats of colors
+   *
+   * @category Utilities
+   *
+   * @param input A value that could possibly be a color
+   * @param outputFormat An optional output format
+   */
+  function color(
+    input: ColorInput,
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
+      | "ansi-16"
+      | "ansi-16m"
+      /**
+       * 256 color ANSI color string, for use in terminals which don't support true color
+       *
+       * Tries to match closest 24-bit color to 256 color palette
+       */
+      | "ansi-256"
+      /**
+       * Picks the format that produces the shortest output
+       */
+      | "css"
+      /**
+       * Lowercase hex color string without alpha
+       * @example #ff9800
+       */
+      | "hex"
+      /**
+       * Uppercase hex color string without alpha
+       * @example #FF9800
+       */
+      | "HEX"
+      /**
+       * @example hsl(35.764706, 1, 0.5)
+       */
+      | "hsl"
+      /**
+       * @example lab(0.72732764, 33.938198, -25.311619)
+       */
+      | "lab"
+      /**
+       * @example 16750592
+       */
+      | "number"
+      /**
+       * RGB color string without alpha
+       * @example rgb(255, 152, 0)
+       */
+      | "rgb"
+      /**
+       * RGB color string with alpha
+       * @example rgba(255, 152, 0, 1)
+       */
+      | "rgba",
+  ): string | null;
+
+  /**
+   * Convert any color input to rgb
+   * @param input Any color input
+   * @param outputFormat Specify `[rgb]` to output as an array with `r`, `g`, and `b` properties
+   */
+  function color(input: ColorInput, outputFormat: "[rgb]"): [number, number, number] | null;
+  /**
+   * Convert any color input to rgba
+   * @param input Any color input
+   * @param outputFormat Specify `[rgba]` to output as an array with `r`, `g`, `b`, and `a` properties
+   */
+  function color(input: ColorInput, outputFormat: "[rgba]"): [number, number, number, number] | null;
+  /**
+   * Convert any color input to a number
+   * @param input Any color input
+   * @param outputFormat Specify `{rgb}` to output as an object with `r`, `g`, and `b` properties
+   */
+  function color(input: ColorInput, outputFormat: "{rgb}"): { r: number; g: number; b: number } | null;
+  /**
+   * Convert any color input to rgba
+   * @param input Any color input
+   * @param outputFormat Specify {rgba} to output as an object with `r`, `g`, `b`, and `a` properties
+   */
+  function color(input: ColorInput, outputFormat: "{rgba}"): { r: number; g: number; b: number; a: number } | null;
+  /**
+   * Convert any color input to a number
+   * @param input Any color input
+   * @param outputFormat Specify `number` to output as a number
+   */
+  function color(input: ColorInput, outputFormat: "number"): number | null;
+
+  /**
+   * Bun.semver provides a fast way to parse and compare version numbers.
+   */
+  namespace semver {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
      */
-    satisfies(version: StringLike, range: StringLike): boolean;
+    function satisfies(version: StringLike, range: StringLike): boolean;
 
     /**
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
      * Throws an error if either version is invalid.
      */
-    order(this: void, v1: StringLike, v2: StringLike): -1 | 0 | 1;
+    function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
-  var semver: Semver;
 
-  interface Unsafe {
+  namespace unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
      *
@@ -2991,7 +4862,7 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
+    function arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
 
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint16Array`
@@ -3000,11 +4871,8 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    // tslint:disable-next-line:unified-signatures
-    arrayBufferToString(buffer: Uint16Array): string;
 
-    /** Mock bun's segfault handler. You probably don't want to use this */
-    segfault(): void;
+    function arrayBufferToString(buffer: Uint16Array): string;
 
     /**
      * Force the garbage collector to run extremely often,
@@ -3021,11 +4889,15 @@ declare module "bun" {
      * @param level
      * @returns The previous level
      */
-    gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
-  }
-  const unsafe: Unsafe;
+    function gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
 
-  type DigestEncoding = "hex" | "base64";
+    /**
+     * Dump the mimalloc heap to the console
+     */
+    function mimallocDump(): void;
+  }
+
+  type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
    * Are ANSI colors enabled for stdin and stdout?
@@ -3035,7 +4907,7 @@ declare module "bun" {
   const enableANSIColors: boolean;
 
   /**
-   * What script launched bun?
+   * What script launched Bun?
    *
    * Absolute file path
    *
@@ -3052,7 +4924,7 @@ declare module "bun" {
    *
    * @param force Synchronously run the garbage collector
    */
-  function gc(force: boolean): void;
+  function gc(force?: boolean): void;
 
   /**
    * JavaScriptCore engine's internal heap snapshot
@@ -3094,12 +4966,29 @@ declare module "bun" {
   function nanoseconds(): number;
 
   /**
-   * Generate a heap snapshot for seeing where the heap is being used
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a heap snapshot in JavaScriptCore's format that can be viewed with `bun --inspect` or Safari's Web Inspector
    */
-  function generateHeapSnapshot(): HeapSnapshot;
+  function generateHeapSnapshot(format?: "jsc"): HeapSnapshot;
+
+  /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot that can be used with Chrome DevTools & Visual Studio Code
+   *
+   * This is a JSON string that can be saved to a file.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format: "v8"): string;
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
+   *
+   * @deprecated
    */
   function shrink(): void;
 
@@ -3110,9 +4999,7 @@ declare module "bun" {
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
-  const fetch: typeof globalThis.fetch & {
-    preconnect(url: string): void;
-  };
+  var fetch: typeof globalThis.fetch;
 
   interface EditorOptions {
     editor?: "vscode" | "subl";
@@ -3204,15 +5091,16 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
      */
-    constructor(algorithm: SupportedCryptoAlgorithms);
+    constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
      *
      * @param input
      */
-    update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
+    update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: import("crypto").Encoding): CryptoHasher;
 
     /**
      * Perform a deep copy of the hasher
@@ -3227,12 +5115,23 @@ declare module "bun" {
     digest(encoding: DigestEncoding): string;
 
     /**
+     * Finalize the hash and return a `Buffer`
+     */
+    digest(): Buffer;
+
+    /**
      * Finalize the hash
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    digest(): Buffer;
     digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     */
+    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
 
     /**
      * Run the hash over the given data
@@ -3241,7 +5140,6 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
     static hash(
       algorithm: SupportedCryptoAlgorithms,
       input: Bun.BlobOrStringOrBuffer,
@@ -3272,6 +5170,8 @@ declare module "bun" {
   /**
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
+   *
+   * @category Utilities
    *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
@@ -3315,6 +5215,8 @@ declare module "bun" {
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
+   * @category Utilities
+   *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
    *
@@ -3333,6 +5235,8 @@ declare module "bun" {
 
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
+   *
+   * @category Utilities
    *
    * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
    * @param encoding `DigestEncoding` to return the hash in
@@ -3539,6 +5443,42 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array;
 
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns The output buffer with the compressed data
+   */
+  function zstdCompressSync(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Buffer;
+
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns A promise that resolves to the output buffer with the compressed data
+   */
+  function zstdCompress(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Promise<Buffer>;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdDecompressSync(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Buffer;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns A promise that resolves to the output buffer with the decompressed data
+   */
+  function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,
@@ -3560,7 +5500,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
     /**
@@ -3648,10 +5588,17 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+    /**
+     * Defer the execution of this callback until all other modules have been parsed.
+     *
+     * @returns Promise which will be resolved when all modules have been parsed
+     */
+    defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3666,6 +5613,10 @@ declare module "bun" {
      * The namespace of the importer.
      */
     namespace: string;
+    /**
+     * The directory to perform file-based resolutions in.
+     */
+    resolveDir: string;
     /**
      * The kind of import this resolve is for.
      */
@@ -3695,7 +5646,44 @@ declare module "bun" {
     args: OnResolveArgs,
   ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
 
+  type FFIFunctionCallable = Function & {
+    // Making a nominally typed function so that the user must get it from dlopen
+    readonly __ffi_function_callable: typeof import("bun:ffi").FFIFunctionCallableSymbol;
+  };
+
+  /**
+   * The builder object passed to `Bun.plugin`
+   *
+   * @category Bundler
+   */
   interface PluginBuilder {
+    /**
+     * Register a callback which will be invoked when bundling starts. When
+     * using hot module reloading, this is called at the start of each
+     * incremental rebuild.
+     *
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStart(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onStart(callback: OnStartCallback): this;
+    onBeforeParse(
+      constraints: PluginConstraints,
+      callback: {
+        napiModule: unknown;
+        symbol: string;
+        external?: unknown | undefined;
+      },
+    ): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -3710,8 +5698,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): void;
+    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): this;
     /**
      * Register a callback to resolve imports matching a filter and/or namespace
      * @param constraints The constraints to apply the plugin to
@@ -3726,8 +5716,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
@@ -3739,7 +5731,6 @@ declare module "bun" {
      * @param specifier The module specifier to register the callback for
      * @param callback The function to run when the module is imported or required
      *
-     * ### Example
      * @example
      * ```ts
      * Bun.plugin({
@@ -3758,17 +5749,24 @@ declare module "bun" {
      * const { foo } = require("hello:world");
      * console.log(foo); // "bar"
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): void;
+    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
   }
 
+  /**
+   * A Bun plugin. Used for extending Bun's behavior at runtime, or with {@link Bun.build}
+   *
+   * @category Bundler
+   */
   interface BunPlugin {
     /**
      * Human-readable name of the plugin
      *
      * In a future version of Bun, this will be used in error messages.
      */
-    name?: string;
+    name: string;
 
     /**
      * The target JavaScript environment the plugin should be applied to.
@@ -3776,15 +5774,18 @@ declare module "bun" {
      * - `browser`: The plugin will be applied to browser builds
      * - `node`: The plugin will be applied to Node.js builds
      *
-     * If in Bun's runtime, the default target is `bun`.
+     * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * If unspecified, it is assumed that the plugin is compatible with the default target.
+     * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
      */
     target?: Target;
+
     /**
      * A function that will be called when the plugin is loaded.
      *
-     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     * This function may be called in the same tick that it is registered, or it
+     * may be called later. It could potentially be called multiple times for
+     * different targets.
      */
     setup(
       /**
@@ -3857,33 +5858,93 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
+  /**
+   * Used when importing an HTML file at runtime.
+   *
+   * @example
+   *
+   * ```ts
+   * import app from "./index.html";
+   * ```
+   *
+   * Bun.build support for this isn't imlpemented yet.
+   */
+  interface HTMLBundle {
+    index: string;
+  }
+
+  /**
+   * Represents a TCP or TLS socket connection used for network communication.
+   * This interface provides methods for reading, writing, managing the connection state,
+   * and handling TLS-specific features if applicable.
+   *
+   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   *
+   * @category HTTP & Networking
+   */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Write `data` to the socket
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
      *
-     * @param data The data to write to the socket
-     * @param byteOffset The offset in the buffer to start writing from (defaults to 0)
-     * @param byteLength The number of bytes to write (defaults to the length of the buffer)
+     * For optimal performance with multiple small writes, consider batching multiple
+     * writes together into a single `socket.write()` call.
      *
-     * When passed a string, `byteOffset` and `byteLength` refer to the UTF-8 offset, not the string character offset.
+     * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
+     * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
+     * @param byteLength The number of bytes to write from the buffer. Defaults to the remaining length of the buffer from the offset. Ignored for strings.
+     * @returns The number of bytes written. Returns `-1` if the socket is closed or shutting down. Can return less than the input size if the socket's buffer is full (backpressure).
+     * @example
+     * ```ts
+     * // Send a string
+     * const bytesWritten = socket.write("Hello, world!\n");
      *
-     * This is unbuffered as of Bun v0.2.2. That means individual write() calls
-     * will be slow. In the future, Bun will buffer writes and flush them at the
-     * end of the tick, when the event loop is idle, or sooner if the buffer is full.
+     * // Send binary data
+     * const buffer = new Uint8Array([0x01, 0x02, 0x03]);
+     * socket.write(buffer);
+     *
+     * // Send part of a buffer
+     * const largeBuffer = new Uint8Array(1024);
+     * // ... fill largeBuffer ...
+     * socket.write(largeBuffer, 100, 50); // Write 50 bytes starting from index 100
+     * ```
      */
-    write(data: string | Bun.BufferSource, byteOffset?: number, byteLength?: number): number;
+    write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * The data context for the socket.
+     * The user-defined data associated with this socket instance.
+     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * It can be read or updated at any time.
+     *
+     * @example
+     * ```ts
+     * // In a socket handler
+     * function open(socket: Socket<{ userId: string }>) {
+     *   console.log(`Socket opened for user: ${socket.data.userId}`);
+     *   socket.data.lastActivity = Date.now(); // Update data
+     * }
+     * ```
      */
     data: Data;
 
     /**
-     * Like {@link Socket.write} except it includes a TCP FIN packet
+     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
+     * After calling `end()`, no more data can be written using `write()` or `end()`.
+     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
+     * This sends a TCP FIN packet after writing the data.
      *
-     * Use it to send your last message and close the connection.
+     * @param data Optional final data to write before closing. Same types as `write()`.
+     * @param byteOffset Optional offset for buffer data.
+     * @param byteLength Optional length for buffer data.
+     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @example
+     * ```ts
+     * // send some data and close the write side
+     * socket.end("Goodbye!");
+     * // or close write side without sending final data
+     * socket.end();
+     * ```
      */
-    end(data?: string | Bun.BufferSource, byteOffset?: number, byteLength?: number): number;
+    end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
      * Close the socket immediately
@@ -3908,24 +5969,48 @@ declare module "bun" {
     timeout(seconds: number): void;
 
     /**
-     * Forcefully close the socket. The other end may not receive all data, and
-     * the socket will be closed immediately.
+     * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
+     * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
+     * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
-     * This passes `SO_LINGER` with `l_onoff` set to `1` and `l_linger` set to
-     * `0` and then calls `close(2)`.
+     * @example
+     * ```ts
+     * socket.terminate();
+     * ```
      */
     terminate(): void;
 
     /**
-     * Shutdown writes to a socket
+     * Shuts down the write-half or both halves of the connection.
+     * This allows the socket to enter a half-closed state where it can still receive data
+     * but can no longer send data (`halfClose = true`), or close both read and write
+     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Calls `shutdown(2)` syscall internally.
      *
-     * This makes the socket a half-closed socket. It can still receive data.
+     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @example
+     * ```ts
+     * // Stop sending data, but allow receiving
+     * socket.shutdown(true);
      *
-     * This calls [shutdown(2)](https://man7.org/linux/man-pages/man2/shutdown.2.html) internally
+     * // Shutdown both reading and writing
+     * socket.shutdown();
+     * ```
      */
     shutdown(halfClose?: boolean): void;
 
-    readonly readyState: "open" | "closing" | "closed";
+    /**
+     * The ready state of the socket.
+     *
+     * You can assume that a positive value means the socket is open and usable
+     *
+     * - `-2` = Shutdown
+     * - `-1` = Detached
+     * - `0` = Closed
+     * - `1` = Established
+     * - `2` = Else
+     */
+    readonly readyState: -2 | -1 | 0 | 1 | 2;
 
     /**
      * Allow Bun's process to exit even if this socket is still open
@@ -3936,6 +6021,11 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     * This attempts to send the data immediately, but success depends on the network conditions
+     * and the receiving end.
+     * It might be necessary after several `write` calls if immediate sending is critical,
+     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
@@ -3953,13 +6043,35 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+    readonly remoteFamily: "IPv4" | "IPv6";
+
     /**
      * Remote IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly remoteAddress: string;
 
     /**
+     * Remote port connected to the socket
+     * @example 8080
+     */
+    readonly remotePort: number;
+
+    /**
+     * IP protocol family used for the local endpoint of the socket
+     * @example "IPv4" | "IPv6"
+     */
+    readonly localFamily: "IPv4" | "IPv6";
+
+    /**
+     * Local IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
+     */
+    readonly localAddress: string;
+
+    /**
      * local port connected to the socket
+     * @example 8080
      */
     readonly localPort: number;
 
@@ -4024,7 +6136,8 @@ declare module "bun" {
      * If there is no local certificate, an empty object will be returned. If the
      * socket has been destroyed, `null` will be returned.
      */
-    getCertificate(): PeerCertificate | object | null;
+    getCertificate(): import("tls").PeerCertificate | object | null;
+    getX509Certificate(): import("node:crypto").X509Certificate | undefined;
 
     /**
      * Returns an object containing information on the negotiated cipher suite.
@@ -4040,7 +6153,7 @@ declare module "bun" {
      * ```
      *
      */
-    getCipher(): CipherNameAndProtocol;
+    getCipher(): import("tls").CipherNameAndProtocol;
 
     /**
      * Returns an object representing the type, name, and size of parameter of
@@ -4051,7 +6164,7 @@ declare module "bun" {
      *
      * For example: `{ type: 'ECDH', name: 'prime256v1', size: 256 }`.
      */
-    getEphemeralKeyInfo(): EphemeralKeyInfo | object | null;
+    getEphemeralKeyInfo(): import("tls").EphemeralKeyInfo | object | null;
 
     /**
      * Returns an object representing the peer's certificate. If the peer does not
@@ -4062,7 +6175,8 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(): PeerCertificate;
+    getPeerCertificate(): import("node:tls").PeerCertificate;
+    getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
@@ -4121,6 +6235,8 @@ declare module "bun" {
     /**
      * See `Session Resumption` for more information.
      * @return `true` if the session was reused, `false` otherwise.
+     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
+     * Returns `true` if the session was resumed, `false` otherwise.
      */
     isSessionReused(): boolean;
 
@@ -4137,6 +6253,124 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * Enable/disable the use of Nagle's algorithm.
+     * Only available for already connected sockets, will return false otherwise
+     * @param noDelay Default: `true`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setNoDelay(noDelay?: boolean): boolean;
+
+    /**
+     * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
+     * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Only available for already connected sockets, will return false otherwise.
+     *
+     * Enabling the keep-alive functionality will set the following socket options:
+     * SO_KEEPALIVE=1
+     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPCNT=10
+     * TCP_KEEPINTVL=1
+     * @param enable Default: `false`
+     * @param initialDelay Default: `0`
+     * @returns true if is able to setNoDelay and false if it fails.
+     */
+    setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
+
+    /**
+     * The total number of bytes successfully written to the socket since it was established.
+     * This includes data currently buffered by the OS but not yet acknowledged by the remote peer.
+     */
+    readonly bytesWritten: number;
+
+    /**
+     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
+     * for automatic resource management.
+     * @example
+     * ```ts
+     * async function processSocket() {
+     *   using socket = await Bun.connect({ ... });
+     *   socket.write("Data");
+     *   // socket.end() is called automatically when exiting the scope
+     * }
+     * ```
+     */
+    [Symbol.dispose](): void;
+
+    resume(): void;
+
+    pause(): void;
+
+    /**
+     * If this is a TLS Socket
+     */
+    renegotiate(): void;
+
+    /**
+     * Sets the verify mode of the socket.
+     *
+     * @param requestCert Whether to request a certificate.
+     * @param rejectUnauthorized Whether to reject unauthorized certificates.
+     */
+    setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
+
+    getSession(): void;
+
+    /**
+     * Sets the session of the socket.
+     *
+     * @param session The session to set.
+     */
+    setSession(session: string | Buffer | BufferSource): void;
+
+    /**
+     * Exports the keying material of the socket.
+     *
+     * @param length The length of the keying material to export.
+     * @param label The label of the keying material to export.
+     * @param context The context of the keying material to export.
+     */
+    exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
+
+    /**
+     * Upgrades the socket to a TLS socket.
+     *
+     * @param options The options for the upgrade.
+     * @returns A tuple containing the raw socket and the TLS socket.
+     * @see {@link TLSUpgradeOptions}
+     */
+    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
+
+    /**
+     * Closes the socket.
+     *
+     * This is a wrapper around `end()` and `shutdown()`.
+     *
+     * @see {@link end}
+     * @see {@link shutdown}
+     */
+    close(): void;
+
+    /**
+     * Returns the servername of the socket.
+     *
+     * @see {@link setServername}
+     */
+    getServername(): string;
+
+    /**
+     * Sets the servername of the socket.
+     *
+     * @see {@link getServername}
+     */
+    setServername(name: string): void;
+  }
+
+  interface TLSUpgradeOptions<Data> {
+    data?: Data;
+    tls: TLSOptions | boolean;
+    socket: SocketHandler<Data>;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4173,7 +6407,7 @@ declare module "bun" {
      * @param socket
      */
     open?(socket: Socket<Data>): void | Promise<void>;
-    close?(socket: Socket<Data>): void | Promise<void>;
+    close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
@@ -4229,58 +6463,161 @@ declare module "bun" {
   }
 
   interface SocketOptions<Data = unknown> {
+    /**
+     * Handlers for socket events
+     */
     socket: SocketHandler<Data>;
+    /**
+     * The per-instance data context
+     */
     data?: Data;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false`, the socket automatically closes both ends of the connection when
+     * either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
-  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
-  //   hostname: string;
-  //   port: number;
-  // }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to listen on
+     */
     hostname: string;
+    /**
+     * The port to listen on
+     */
     port: number;
-    tls?: TLSOptions;
+    /**
+     * The TLS configuration object with which to create the server
+     */
+    tls?: TLSOptions | boolean;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
+    exclusive?: boolean;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false` (default), the socket automatically closes both ends of the connection
+     * when either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The hostname to connect to
+     */
     hostname: string;
+    /**
+     * The port to connect to
+     */
     port: number;
-    tls?: boolean;
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions | boolean;
+    /**
+     * Whether to use exclusive mode.
+     *
+     * When set to `true`, the socket binds exclusively to the specified address:port
+     * combination, preventing other processes from binding to the same port.
+     *
+     * When `false` (default), other sockets may be able to bind to the same port
+     * depending on the operating system's socket sharing capabilities and settings.
+     *
+     * Exclusive mode is useful in scenarios where you want to ensure only one
+     * instance of your server can bind to a specific port at a time.
+     *
+     * @default false
+     */
+    exclusive?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * The unix socket to listen on or connect to
+     */
     unix: string;
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions | boolean;
+  }
+
+  interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    /**
+     * TLS Configuration with which to create the socket
+     */
+    tls?: TLSOptions | boolean;
+    /**
+     * The file descriptor to connect to
+     */
+    fd: number;
   }
 
   /**
-   * Create a TCP client that connects to a server
+   * Create a TCP client that connects to a server via a TCP socket
    *
-   * @param options The options to use when creating the client
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;
+  /**
+   * Create a TCP client that connects to a server via a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function connect<Data = undefined>(options: UnixSocketOptions<Data>): Promise<Socket<Data>>;
 
   /**
    * Create a TCP server that listens on a port
    *
-   * @param options The options to use when creating the server
-   * @param options.socket The socket handler to use
-   * @param options.data The per-instance data context
-   * @param options.hostname The hostname to connect to
-   * @param options.port The port to connect to
-   * @param options.tls The TLS configuration object
-   * @param options.unix The unix socket to connect to
+   * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
+  /**
+   * Create a TCP server that listens on a unix socket
+   *
+   * @category HTTP & Networking
+   */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  /**
+   * @category HTTP & Networking
+   */
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
@@ -4358,6 +6695,8 @@ declare module "bun" {
    * @param options.port The port to listen on
    * @param options.binaryType The binary type to use for the socket
    * @param options.connect The hostname and port to connect to
+   *
+   * @category HTTP & Networking
    */
   export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
     options: udp.SocketOptions<DataBinaryType>,
@@ -4397,11 +6736,7 @@ declare module "bun" {
       | Response
       | Request;
 
-    interface OptionsObject<
-      In extends Writable = Writable,
-      Out extends Readable = Readable,
-      Err extends Readable = Readable,
-    > {
+    interface OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> {
       /**
        * The current working directory of the process
        *
@@ -4441,7 +6776,8 @@ declare module "bun" {
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err];
+      stdio?: [In, Out, Err, ...Readable[]];
+
       /**
        * The file descriptor for the standard input. It may be:
        *
@@ -4515,7 +6851,7 @@ declare module "bun" {
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
        * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
        * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
        *
        * Currently, this is only compatible with processes that are other `bun` instances.
@@ -4523,9 +6859,10 @@ declare module "bun" {
       ipc?(
         message: any,
         /**
-         * The {@link Subprocess} that sent the message
+         * The {@link Subprocess} that received the message
          */
         subprocess: Subprocess<In, Out, Err>,
+        handle?: unknown,
       ): void;
 
       /**
@@ -4555,23 +6892,78 @@ declare module "bun" {
        * @default cmds[0]
        */
       argv0?: string;
+
+      /**
+       * An {@link AbortSignal} that can be used to abort the subprocess.
+       *
+       * This is useful for aborting a subprocess when some other part of the
+       * program is aborted, such as a `fetch` response.
+       *
+       * If the signal is aborted, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
+       *
+       * @example
+       * ```ts
+       * const controller = new AbortController();
+       * const { signal } = controller;
+       * const start = performance.now();
+       * const subprocess = Bun.spawn({
+       *  cmd: ["sleep", "100"],
+       *  signal,
+       * });
+       * await Bun.sleep(1);
+       * controller.abort();
+       * await subprocess.exited;
+       * const end = performance.now();
+       * console.log(end - start); // 1ms instead of 101ms
+       * ```
+       */
+      signal?: AbortSignal;
+
+      /**
+       * The maximum amount of time the process is allowed to run in milliseconds.
+       *
+       * If the timeout is reached, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
+       *
+       * @example
+       * ```ts
+       * // Kill the process after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       * });
+       * await subprocess.exited; // Will resolve after 5 seconds
+       * ```
+       */
+      timeout?: number;
+
+      /**
+       * The signal to use when killing the process after a timeout, when the AbortSignal is aborted,
+       * or when the process goes over the `maxBuffer` limit.
+       *
+       * @default "SIGTERM" (signal 15)
+       *
+       * @example
+       * ```ts
+       * // Kill the process with SIGKILL after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       *   killSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      killSignal?: string | number;
+
+      /**
+       * The maximum number of bytes the process may output. If the process goes over this limit,
+       * it is killed with signal `killSignal` (defaults to SIGTERM).
+       *
+       * @default undefined (no limit)
+       */
+      maxBuffer?: number;
     }
-
-    type OptionsToSubprocess<Opts extends OptionsObject> =
-      Opts extends OptionsObject<infer In, infer Out, infer Err>
-        ? Subprocess<
-            // "Writable extends In" means "if In === Writable",
-            // aka if true that means the user didn't specify anything
-            Writable extends In ? "ignore" : In,
-            Readable extends Out ? "pipe" : Out,
-            Readable extends Err ? "inherit" : Err
-          >
-        : Subprocess<Writable, Readable, Readable>;
-
-    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
-      Opts extends OptionsObject<any, infer Out, infer Err>
-        ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
-        : SyncSubprocess<Readable, Readable>;
 
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
@@ -4688,6 +7080,11 @@ declare module "bun" {
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
+     * Access extra file descriptors passed to the `stdio` option in the options object.
+     */
+    readonly stdio: [null, null, null, ...number[]];
+
+    /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
@@ -4703,6 +7100,7 @@ declare module "bun" {
      * ```
      */
     readonly pid: number;
+
     /**
      * The exit code of the process
      *
@@ -4800,10 +7198,15 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
+    exitedDueToTimeout?: boolean;
+    exitedDueToMaxBuffer?: boolean;
+    pid: number;
   }
 
   /**
    * Spawn a new process
+   *
+   * @category Process Management
    *
    * ```js
    * const subprocess = Bun.spawn({
@@ -4816,8 +7219,12 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -4834,7 +7241,7 @@ declare module "bun" {
        */
       cmd: string[]; // to support dynamically constructed commands
     },
-  ): SpawnOptions.OptionsToSubprocess<Opts>;
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
@@ -4847,7 +7254,11 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn<Opts extends SpawnOptions.OptionsObject>(
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
     /**
      * The command to run
      *
@@ -4863,11 +7274,13 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: Opts,
-  ): SpawnOptions.OptionsToSubprocess<Opts>;
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+  ): Subprocess<In, Out, Err>;
 
   /**
    * Spawn a new process
+   *
+   * @category Process Management
    *
    * ```js
    * const {stdout} = Bun.spawnSync({
@@ -4878,8 +7291,11 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
-    options: Opts & {
+  function spawnSync<
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
       /**
        * The command to run
        *
@@ -4898,7 +7314,7 @@ declare module "bun" {
 
       onExit?: never;
     },
-  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+  ): SyncSubprocess<Out, Err>;
 
   /**
    * Synchronously spawn a new process
@@ -4910,7 +7326,10 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawnSync<Opts extends SpawnOptions.OptionsObject>(
+  function spawnSync<
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
     /**
      * The command to run
      *
@@ -4926,8 +7345,8 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: Opts,
-  ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
+    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+  ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
@@ -5054,9 +7473,15 @@ declare module "bun" {
   /**
    * The current version of Bun
    * @example
-   * "0.2.0"
+   * "1.2.0"
    */
   const version: string;
+
+  /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.2.0 (a1b2c3d4)"
+   */
+  const version_with_sha: string;
 
   /**
    * The git sha at the time the currently-running version of Bun was compiled
@@ -5204,9 +7629,406 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
-}
 
-// extends lib.dom.d.ts
-interface BufferEncodingOption {
-  encoding?: BufferEncoding;
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
+
+  /**
+   * Types for `bun.lock`
+   */
+  type BunLockFile = {
+    lockfileVersion: 0 | 1;
+    workspaces: {
+      [workspace: string]: BunLockFileWorkspacePackage;
+    };
+    /** @see https://bun.sh/docs/install/overrides */
+    overrides?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/patch */
+    patchedDependencies?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/lifecycle#trusteddependencies */
+    trustedDependencies?: string[];
+    /** @see https://bun.sh/docs/install/catalogs */
+    catalog?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/catalogs */
+    catalogs?: Record<string, Record<string, string>>;
+
+    /**
+     * ```
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     *
+     * // first index is resolution for each type of package
+     * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+     * symlink     -> [ "name@link:path", INFO ]
+     * folder      -> [ "name@file:path", INFO ]
+     * workspace   -> [ "name@workspace:path" ] // workspace is only path
+     * tarball     -> [ "name@tarball", INFO ]
+     * root        -> [ "name@root:", { bin, binDir } ]
+     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
+     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * ```
+     * */
+    packages: {
+      [pkg: string]: BunLockFilePackageArray;
+    };
+  };
+
+  type BunLockFileBasePackageInfo = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalPeers?: string[];
+    bin?: string | Record<string, string>;
+    binDir?: string;
+  };
+
+  type BunLockFileWorkspacePackage = BunLockFileBasePackageInfo & {
+    name?: string;
+    version?: string;
+  };
+
+  type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
+    os?: string | string[];
+    cpu?: string | string[];
+    bundled?: true;
+  };
+
+  /** @see {@link BunLockFile.packages} for more info */
+  type BunLockFilePackageArray =
+    /** npm */
+    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
+    /** symlink, folder, tarball */
+    | [pkg: string, info: BunLockFilePackageInfo]
+    /** workspace */
+    | [pkg: string]
+    /** git, github */
+    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    /** root */
+    | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
+
+  interface CookieInit {
+    name?: string;
+    value?: string;
+    domain?: string;
+    /** Defaults to '/'. To allow the browser to set the path, use an empty string. */
+    path?: string;
+    expires?: number | Date | string;
+    secure?: boolean;
+    /** Defaults to `lax`. */
+    sameSite?: CookieSameSite;
+    httpOnly?: boolean;
+    partitioned?: boolean;
+    maxAge?: number;
+  }
+
+  interface CookieStoreDeleteOptions {
+    name: string;
+    domain?: string | null;
+    path?: string;
+  }
+
+  interface CookieStoreGetOptions {
+    name?: string;
+    url?: string;
+  }
+
+  type CookieSameSite = "strict" | "lax" | "none";
+
+  /**
+   * A class for working with a single cookie
+   *
+   * @example
+   * ```js
+   * const cookie = new Bun.Cookie("name", "value");
+   * console.log(cookie.toString()); // "name=value; Path=/; SameSite=Lax"
+   * ```
+   */
+  class Cookie {
+    /**
+     * Create a new cookie
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
+    constructor(name: string, value: string, options?: CookieInit);
+
+    /**
+     * Create a new cookie from a cookie string
+     * @param cookieString - The cookie string
+     */
+    constructor(cookieString: string);
+
+    /**
+     * Create a new cookie from a cookie object
+     * @param cookieObject - The cookie object
+     */
+    constructor(cookieObject?: CookieInit);
+
+    /**
+     * The name of the cookie
+     */
+    readonly name: string;
+
+    /**
+     * The value of the cookie
+     */
+    value: string;
+
+    /**
+     * The domain of the cookie
+     */
+    domain?: string;
+
+    /**
+     * The path of the cookie
+     */
+    path: string;
+
+    /**
+     * The expiration date of the cookie
+     */
+    expires?: Date;
+
+    /**
+     * Whether the cookie is secure
+     */
+    secure: boolean;
+
+    /**
+     * The same-site attribute of the cookie
+     */
+    sameSite: CookieSameSite;
+
+    /**
+     * Whether the cookie is partitioned
+     */
+    partitioned: boolean;
+
+    /**
+     * The maximum age of the cookie in seconds
+     */
+    maxAge?: number;
+
+    /**
+     * Whether the cookie is HTTP-only
+     */
+    httpOnly: boolean;
+
+    /**
+     * Whether the cookie is expired
+     */
+    isExpired(): boolean;
+
+    /**
+     * Serialize the cookie to a string
+     *
+     * @example
+     * ```ts
+     * const cookie = Bun.Cookie.from("session", "abc123", {
+     *   domain: "example.com",
+     *   path: "/",
+     *   secure: true,
+     *   httpOnly: true
+     * }).serialize(); // "session=abc123; Domain=example.com; Path=/; Secure; HttpOnly; SameSite=Lax"
+     * ```
+     */
+    serialize(): string;
+
+    /**
+     * Serialize the cookie to a string
+     *
+     * Alias of {@link Cookie.serialize}
+     */
+    toString(): string;
+
+    /**
+     * Serialize the cookie to a JSON object
+     */
+    toJSON(): CookieInit;
+
+    /**
+     * Parse a cookie string into a Cookie object
+     * @param cookieString - The cookie string
+     */
+    static parse(cookieString: string): Cookie;
+
+    /**
+     * Create a new cookie from a name and value and optional options
+     */
+    static from(name: string, value: string, options?: CookieInit): Cookie;
+  }
+
+  /**
+   * A Map-like interface for working with collections of cookies.
+   *
+   * Implements the `Iterable` interface, allowing use with `for...of` loops.
+   */
+  class CookieMap implements Iterable<[string, string]> {
+    /**
+     * Creates a new CookieMap instance.
+     *
+     * @param init - Optional initial data for the cookie map:
+     *   - string: A cookie header string (e.g., "name=value; foo=bar")
+     *   - string[][]: An array of name/value pairs (e.g., [["name", "value"], ["foo", "bar"]])
+     *   - Record<string, string>: An object with cookie names as keys (e.g., { name: "value", foo: "bar" })
+     */
+    constructor(init?: string[][] | Record<string, string> | string);
+
+    /**
+     * Gets the value of a cookie with the specified name.
+     *
+     * @param name - The name of the cookie to retrieve
+     * @returns The cookie value as a string, or null if the cookie doesn't exist
+     */
+    get(name: string): string | null;
+
+    /**
+     * Gets an array of values for Set-Cookie headers in order to apply all changes to cookies.
+     *
+     * @returns An array of values for Set-Cookie headers
+     */
+    toSetCookieHeaders(): string[];
+
+    /**
+     * Checks if a cookie with the given name exists.
+     *
+     * @param name - The name of the cookie to check
+     * @returns true if the cookie exists, false otherwise
+     */
+    has(name: string): boolean;
+
+    /**
+     * Adds or updates a cookie in the map.
+     *
+     * @param name - The name of the cookie
+     * @param value - The value of the cookie
+     * @param options - Optional cookie attributes
+     */
+    set(name: string, value: string, options?: CookieInit): void;
+
+    /**
+     * Adds or updates a cookie in the map using a cookie options object.
+     *
+     * @param options - Cookie options including name and value
+     */
+    set(options: CookieInit): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     */
+    delete(name: string): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param options - The options for the cookie to delete
+     */
+    delete(options: CookieStoreDeleteOptions): void;
+
+    /**
+     * Removes a cookie from the map.
+     *
+     * @param name - The name of the cookie to delete
+     * @param options - The options for the cookie to delete
+     */
+    delete(name: string, options: Omit<CookieStoreDeleteOptions, "name">): void;
+
+    /**
+     * Converts the cookie map to a serializable format.
+     *
+     * @returns An array of name/value pairs
+     */
+    toJSON(): Record<string, string>;
+
+    /**
+     * The number of cookies in the map.
+     */
+    readonly size: number;
+
+    /**
+     * Returns an iterator of [name, value] pairs for every cookie in the map.
+     *
+     * @returns An iterator for the entries in the map
+     */
+    entries(): IterableIterator<[string, string]>;
+
+    /**
+     * Returns an iterator of all cookie names in the map.
+     *
+     * @returns An iterator for the cookie names
+     */
+    keys(): IterableIterator<string>;
+
+    /**
+     * Returns an iterator of all cookie values in the map.
+     *
+     * @returns An iterator for the cookie values
+     */
+    values(): IterableIterator<string>;
+
+    /**
+     * Executes a provided function once for each cookie in the map.
+     *
+     * @param callback - Function to execute for each entry
+     */
+    forEach(callback: (value: string, key: string, map: CookieMap) => void): void;
+
+    /**
+     * Returns the default iterator for the CookieMap.
+     * Used by for...of loops to iterate over all entries.
+     *
+     * @returns An iterator for the entries in the map
+     */
+    [Symbol.iterator](): IterableIterator<[string, string]>;
+  }
 }

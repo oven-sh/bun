@@ -16,68 +16,72 @@
 namespace Bun {
 using namespace JSC;
 
-extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JSC::JSGlobalObject* globalObject)
+static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(vm.hasPendingTerminationException())) {
-        return;
-    }
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    WebCore::JSTimeout* timeout = jsCast<WebCore::JSTimeout*>(JSC::JSValue::decode(encodedTimeoutValue));
-
-    JSCell* callbackCell = timeout->m_callback.get().asCell();
-    JSValue restoreAsyncContext{};
+    JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
-    if (auto *wrapper = jsDynamicCast<AsyncContextFrame*>(callbackCell)) {
-        callbackCell = wrapper->callback.get().asCell();
+    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(callbackValue)) {
+        callbackValue = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
 
-    switch (callbackCell->type()) {
-    case JSC::JSPromiseType: {
+    if (auto* promise = jsDynamicCast<JSPromise*>(callbackValue)) {
         // This was a Bun.sleep() call
-        auto promise = jsCast<JSPromise*>(callbackCell);
         promise->resolve(globalObject, jsUndefined());
-        break;
-    }
-
-    default: {
-        MarkedArgumentBuffer args;
-        if (timeout->m_arguments) {
-            JSValue argumentsValue = timeout->m_arguments.get();
-            auto* butterfly = jsDynamicCast<JSImmutableButterfly*>(argumentsValue);
-
-            //  If it's a JSImmutableButterfly, there is more than 1 argument.
-            if (butterfly) {
-                unsigned length = butterfly->length();
-                args.ensureCapacity(length);
-                for (unsigned i = 0; i < length; ++i) {
-                    args.append(butterfly->get(i));
-                }
-            } else {
-                // Otherwise, it's a single argument.
-                args.append(argumentsValue);
-            }
+    } else {
+        auto callData = JSC::getCallData(callbackValue);
+        if (callData.type == CallData::Type::None) {
+            Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            return true;
         }
 
-        JSC::profiledCall(globalObject, ProfilingReason::API, JSValue(callbackCell), JSC::getCallData(callbackCell),  timeout, ArgList(args));
-        break;
-    }
+        MarkedArgumentBuffer args;
+        if (auto* butterfly = jsDynamicCast<JSImmutableButterfly*>(argumentsValue)) {
+            //  If it's a JSImmutableButterfly, there is more than 1 argument.
+            unsigned length = butterfly->length();
+            args.ensureCapacity(length);
+            for (unsigned i = 0; i < length; ++i) {
+                args.append(butterfly->get(i));
+            }
+        } else if (!argumentsValue.isUndefined()) {
+            // Otherwise, it's a single argument.
+            args.append(argumentsValue);
+        }
+
+        JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
-    if (UNLIKELY(scope.exception())) {
+    bool hadException = false;
+
+    if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         scope.clearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        hadException = true;
     }
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
+
+    return hadException;
+}
+
+// Returns true if an exception was thrown.
+extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
+{
+    auto& vm = globalObject->vm();
+    if (vm.hasPendingTerminationException()) [[unlikely]] {
+        return true;
+    }
+
+    return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));
 }
 
 }

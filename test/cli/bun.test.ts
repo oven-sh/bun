@@ -1,8 +1,8 @@
-import { describe, test, expect } from "bun:test";
 import { spawnSync } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "node:os";
 import fs from "node:fs";
+import { tmpdir } from "node:os";
 
 describe("bun", () => {
   describe("NO_COLOR", () => {

@@ -1,5 +1,5 @@
-import tty from "tty";
 import fs from "fs";
+import tty from "tty";
 
 import { dlopen } from "bun:ffi";
 

@@ -1,11 +1,8 @@
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
-    // TODO: https://github.com/oven-sh/bun/issues/4217
-    todo: true,
-
     files: {
       "/entry.js": /* js */ `
         capture(\`\${1}-\${2}-\${3}-\${null}-\${undefined}-\${true}-\${false}\`);
@@ -28,6 +25,11 @@ describe("bundler", () => {
         capture(\`😋📋👌\`.length == 6)
         capture(\`😋📋👌\`.length === 2)
         capture(\`😋📋👌\`.length == 2)
+        capture(\`\\n\`.length)
+        capture(\`\n\`.length)
+        capture("\\uD800\\uDF34".length)
+        capture("\\u{10334}".length)
+        capture("𐌴".length)
       `,
     },
     capture: [
@@ -51,6 +53,11 @@ describe("bundler", () => {
       "!0",
       "!1",
       "!1",
+      "1",
+      "1",
+      "2",
+      "2",
+      "2",
     ],
     minifySyntax: true,
     target: "bun",
@@ -466,5 +473,157 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("require");
       api.expectFile("/out.js").not.toContain("module");
     },
+  });
+  itBundled("minify/ConstantFoldingUnaryPlusString", {
+    files: {
+      "/entry.ts": `
+        // supported
+        capture(+'1.0');
+        capture(+'-123.567');
+        capture(+'8.325');
+        capture(+'100000000');
+        capture(+'\\u0030\\u002e\\u0031');
+        capture(+'\\x30\\x2e\\x31');
+        capture(+'NotANumber');
+        // not supported
+        capture(+'æ');
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "1",
+      "-123.567",
+      "8.325",
+      "1e8",
+      "0.1",
+      "0.1",
+      "NaN",
+      // untouched
+      '+"æ"',
+    ],
+  });
+  itBundled("minify/ImportMetaHotTreeShaking", {
+    files: {
+      "/entry.ts": `
+        import { value } from "./other.ts";
+        capture(import.meta.hot);
+        if (import.meta.hot) {
+          throw new Error("FAIL");
+        }
+        import.meta.hot.accept(() => {"FAIL";value});
+        import.meta.hot.dispose(() => {"FAIL";value});
+        import.meta.hot.on(() => {"FAIL";value});
+        import.meta.hot.off(() => {"FAIL";value});
+        import.meta.hot.send(() => {"FAIL";value});
+        import.meta.hot.invalidate(() => {"FAIL";value});
+        import.meta.hot.prune(() => {"FAIL";value});
+        capture(import.meta.hot.accept());
+        capture("This should remain");
+        import.meta.hot.accept(async() => {
+          await import("crash");
+          require("crash");
+        });
+        capture(import.meta.hot.data);
+        capture(import.meta.hot.data.value ??= "hello");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("FAIL");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
+  itBundled("minify/ProductionMode", {
+    files: {
+      "/entry.jsx": `
+        import {foo} from 'dev-trap';
+        capture(process.env.NODE_ENV);
+        capture(1232 + 521)
+        console.log(<div>Hello</div>);
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        throw new Error("Should not use dev runtime");
+      `,
+      "/node_modules/react/jsx-runtime.js": `
+        export function jsx(type, props) {
+          return {type, props};
+        }
+        export const Fragment = Symbol.for("jsx-runtime");
+      `,
+      "/node_modules/dev-trap/package.json": `{
+        "name": "dev-trap",
+        "exports": {
+          "development": "./dev.js",
+          "default": "./prod.js"
+        }
+      }`,
+      "/node_modules/dev-trap/dev.js": `
+        throw new Error("FAIL");
+      `,
+      "/node_modules/dev-trap/prod.js": `
+        export const foo = "production";
+      `,
+    },
+    capture: ['"production"', "1753"],
+    production: true,
+    onAfterBundle(api) {
+      const output = api.readFile("out.js");
+
+      expect(output).not.toContain("FAIL");
+
+      // Check minification
+      expect(output).not.toContain("\t");
+      expect(output).not.toContain("  ");
+
+      // Check NODE_ENV is inlined
+      expect(output).toContain('"production"');
+      expect(output).not.toContain("process.env.NODE_ENV");
+
+      // Check JSX uses production runtime
+      expect(output).toContain("jsx-runtime");
+    },
+  });
+  itBundled("minify/UnusedInCommaExpression", {
+    files: {
+      "/entry.ts": `
+        let flag = computeSomethingUnknown();
+        // the expression 'flag === 1' has no side effects
+        capture((flag === 1234 ? "a" : "b", "c"));
+        // 'flag == 1234' may invoke a side effect
+        capture((flag == 1234 ? "a" : "b", "c"));
+        // 'unbound' may invoke a side effect
+        capture((unbound ? "a" : "b", "c"));
+        // two side effects
+        capture((flag == 1234 ? "a" : unbound, "c"));
+        // two side effects 2
+        capture(([flag == 1234] ? unbound : other, "c"));
+        // new expression
+        capture((new Date(), 123));
+        // call expression
+        const funcWithNoSideEffects = () => 1;
+        capture((/* @__PURE__ */ funcWithNoSideEffects(), 456));
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      // 'flag' cannot throw on access or comparison via '==='
+      '"c"',
+      // 0 is inserted instead of 1234 because it is shorter and invokes the same coercion side effects
+      '(flag == 0, "c")',
+      // 'unbound' may throw on access
+      '(unbound, "c")',
+      // 0 is not inserted here because the result of 'flag == 1234' is used by the ternary
+      '(flag == 1234 || unbound, "c")',
+      // || is not inserted since the condition is always true, can simplify '1234' to '0'
+      '(flag == 0, unbound, "c")',
+      "123",
+      "456",
+    ],
   });
 });

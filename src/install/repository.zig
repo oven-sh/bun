@@ -1,5 +1,4 @@
-const bun = @import("root").bun;
-const Global = bun.Global;
+const bun = @import("bun");
 const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
@@ -8,19 +7,127 @@ const FileSystem = @import("../fs.zig").FileSystem;
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
-const Semver = @import("./semver.zig");
-const ExternalString = Semver.ExternalString;
+const Semver = bun.Semver;
 const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 const Path = bun.path;
+const File = bun.sys.File;
+const OOM = bun.OOM;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
+
+const SloppyGlobalGitConfig = struct {
+    has_askpass: bool = false,
+    has_ssh_command: bool = false,
+
+    var holder: SloppyGlobalGitConfig = .{};
+    var load_and_parse_once = std.once(loadAndParse);
+
+    pub fn get() SloppyGlobalGitConfig {
+        load_and_parse_once.call();
+        return holder;
+    }
+
+    pub fn loadAndParse() void {
+        const home_dir_path = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("USERPROFILE")) |env|
+                    break :brk env;
+            } else {
+                if (bun.getenvZ("HOME")) |env|
+                    break :brk env;
+            }
+
+            // won't find anything
+            return;
+        };
+
+        var config_file_path_buf: bun.PathBuffer = undefined;
+        const config_file_path = bun.path.joinAbsStringBufZ(home_dir_path, &config_file_path_buf, &.{".gitconfig"}, .auto);
+        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+        const allocator = stack_fallback.get();
+        const source = File.toSource(config_file_path, allocator, .{ .convert_bom = true }).unwrap() catch {
+            return;
+        };
+        defer allocator.free(source.contents);
+
+        var remaining = bun.strings.split(source.contents, "\n");
+        var found_askpass = false;
+        var found_ssh_command = false;
+        var @"[core]" = false;
+        while (remaining.next()) |line_| {
+            if (found_askpass and found_ssh_command) break;
+
+            const line = strings.trim(line_, "\t \r");
+
+            if (line.len == 0) continue;
+            // skip comments
+            if (line[0] == '#') continue;
+
+            if (line[0] == '[') {
+                if (strings.indexOfChar(line, ']')) |end_bracket| {
+                    if (strings.eqlComptime(line[0 .. end_bracket + 1], "[core]")) {
+                        @"[core]" = true;
+                        continue;
+                    }
+                }
+                @"[core]" = false;
+                continue;
+            }
+
+            if (@"[core]") {
+                if (!found_askpass) {
+                    if (line.len > "askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."askpass".len], "askpass") and switch (line["askpass".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_askpass = true;
+                        continue;
+                    }
+                }
+
+                if (!found_ssh_command) {
+                    if (line.len > "sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."sshCommand".len], "sshCommand") and switch (line["sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_ssh_command = true;
+                    }
+                }
+            } else {
+                if (!found_askpass) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["core.askpass".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_askpass = true;
+                        continue;
+                    }
+                }
+
+                if (!found_ssh_command) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["core.sshCommand".len]) {
+                        ' ', '\t', '=' => true,
+                        else => false,
+                    }) {
+                        found_ssh_command = true;
+                    }
+                }
+            }
+        }
+
+        holder = .{
+            .has_askpass = found_askpass,
+            .has_ssh_command = found_ssh_command,
+        };
+    }
+};
 
 pub const Repository = extern struct {
     owner: String = .{},
@@ -41,22 +148,18 @@ pub const Repository = extern struct {
                 // below will cause no prompt and throw instead.
                 var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
 
-                const askpass_entry = cloned.getOrPutWithoutValue("GIT_ASKPASS") catch bun.outOfMemory();
-                if (!askpass_entry.found_existing) {
-                    askpass_entry.key_ptr.* = allocator.dupe(u8, "GIT_ASKPASS") catch bun.outOfMemory();
-                    askpass_entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, "echo") catch bun.outOfMemory(),
-                        .conditional = false,
-                    };
+                if (cloned.get("GIT_ASKPASS") == null) {
+                    const config = SloppyGlobalGitConfig.get();
+                    if (!config.has_askpass) {
+                        cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
+                    }
                 }
 
-                const git_ssh_command_entry = cloned.getOrPutWithoutValue("GIT_SSH_COMMAND") catch bun.outOfMemory();
-                if (!git_ssh_command_entry.found_existing) {
-                    git_ssh_command_entry.key_ptr.* = allocator.dupe(u8, "GIT_SSH_COMMAND") catch bun.outOfMemory();
-                    git_ssh_command_entry.value_ptr.* = .{
-                        .value = allocator.dupe(u8, "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory(),
-                        .conditional = false,
-                    };
+                if (cloned.get("GIT_SSH_COMMAND") == null) {
+                    const config = SloppyGlobalGitConfig.get();
+                    if (!config.has_ssh_command) {
+                        cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
+                    }
                 }
 
                 this.env = cloned;
@@ -70,6 +173,51 @@ pub const Repository = extern struct {
         .{ "github", ".com" },
         .{ "gitlab", ".com" },
     });
+
+    pub fn parseAppendGit(input: string, buf: *String.Buf) OOM!Repository {
+        var remain = input;
+        if (strings.hasPrefixComptime(remain, "git+")) {
+            remain = remain["git+".len..];
+        }
+        if (strings.lastIndexOfChar(remain, '#')) |hash| {
+            return .{
+                .repo = try buf.append(remain[0..hash]),
+                .committish = try buf.append(remain[hash + 1 ..]),
+            };
+        }
+        return .{
+            .repo = try buf.append(remain),
+        };
+    }
+
+    pub fn parseAppendGithub(input: string, buf: *String.Buf) OOM!Repository {
+        var remain = input;
+        if (strings.hasPrefixComptime(remain, "github:")) {
+            remain = remain["github:".len..];
+        }
+        var hash: usize = 0;
+        var slash: usize = 0;
+        for (remain, 0..) |c, i| {
+            switch (c) {
+                '/' => slash = i,
+                '#' => hash = i,
+                else => {},
+            }
+        }
+
+        const repo = if (hash == 0) remain[slash + 1 ..] else remain[slash + 1 .. hash];
+
+        var result: Repository = .{
+            .owner = try buf.append(remain[0..slash]),
+            .repo = try buf.append(repo),
+        };
+
+        if (hash != 0) {
+            result.committish = try buf.append(remain[hash + 1 ..]);
+        }
+
+        return result;
+    }
 
     pub fn createDependencyNameFromVersionLiteral(
         allocator: std.mem.Allocator,
@@ -148,6 +296,14 @@ pub const Repository = extern struct {
     pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
+    }
+
+    pub fn fmt(this: *const Repository, label: string, buf: []const u8) Formatter {
+        return .{
+            .repository = this,
+            .buf = buf,
+            .label = label,
+        };
     }
 
     pub const Formatter = struct {
@@ -313,7 +469,7 @@ pub const Repository = extern struct {
         });
 
         return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
-            const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(
                 allocator,
@@ -333,7 +489,7 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -369,7 +525,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: u64,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),
         })}, .auto);
 
@@ -410,7 +566,7 @@ pub const Repository = extern struct {
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
 
-            const target = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{
                 "git",
@@ -418,7 +574,7 @@ pub const Repository = extern struct {
                 "-c core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(repo_dir.fd, &final_path_buf),
+                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
                 target,
             }) catch |err| {
                 log.addErrorFmt(
@@ -431,7 +587,7 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            const folder = Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .auto);
+            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(

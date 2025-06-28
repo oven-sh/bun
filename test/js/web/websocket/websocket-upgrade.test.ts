@@ -1,5 +1,5 @@
 import { serve } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("WebSocket upgrade", () => {
   test("should send correct upgrade headers", async () => {

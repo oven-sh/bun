@@ -1,4 +1,4 @@
-import { spawn, serve } from "bun";
+import { serve, spawn } from "bun";
 
 const server = serve({
   port: 0,

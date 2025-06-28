@@ -1,6 +1,5 @@
 declare var document: any;
 import { ByteBuffer } from "peechy";
-import { FallbackStep } from "./api/schema";
 import { decodeFallbackMessageContainer, FallbackMessageContainer } from "./api/schema";
 
 function getFallbackInfo(): FallbackMessageContainer {

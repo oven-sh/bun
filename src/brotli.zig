@@ -1,15 +1,12 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
-pub const c = struct {
-    pub usingnamespace @import("./deps/brotli_decoder.zig");
-    pub usingnamespace @import("./deps/brotli_encoder.zig");
-};
+pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
 
 const mimalloc = bun.Mimalloc;
 
-const BrotliAllocator = struct {
+pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
@@ -55,14 +52,25 @@ pub const BrotliReaderArrayList = struct {
     state: State = State.Uninitialized,
     total_out: usize = 0,
     total_in: usize = 0,
+    flushOp: BrotliEncoder.Operation,
+    finishFlushOp: BrotliEncoder.Operation,
+    fullFlushOp: BrotliEncoder.Operation,
 
-    pub usingnamespace bun.New(BrotliReaderArrayList);
+    pub const new = bun.TrivialNew(BrotliReaderArrayList);
 
     pub fn newWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !*BrotliReaderArrayList {
-        return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options));
+        return BrotliReaderArrayList.new(try initWithOptions(input, list, allocator, options, .process, .finish, .flush));
     }
 
-    pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: DecoderOptions) !BrotliReaderArrayList {
+    pub fn initWithOptions(
+        input: []const u8,
+        list: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+        options: DecoderOptions,
+        flushOp: BrotliEncoder.Operation,
+        finishFlushOp: BrotliEncoder.Operation,
+        fullFlushOp: BrotliEncoder.Operation,
+    ) !BrotliReaderArrayList {
         if (!BrotliDecoder.initializeBrotli()) {
             return error.BrotliFailedToLoad;
         }
@@ -81,6 +89,9 @@ pub const BrotliReaderArrayList = struct {
             .list = list.*,
             .list_allocator = allocator,
             .brotli = brotli,
+            .flushOp = flushOp,
+            .finishFlushOp = finishFlushOp,
+            .fullFlushOp = fullFlushOp,
         };
     }
 
@@ -166,7 +177,7 @@ pub const BrotliReaderArrayList = struct {
 
     pub fn deinit(this: *BrotliReaderArrayList) void {
         this.brotli.destroyInstance();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -181,17 +192,28 @@ pub const BrotliCompressionStream = struct {
     state: State = State.Inflating,
     total_out: usize = 0,
     total_in: usize = 0,
+    flushOp: BrotliEncoder.Operation,
+    finishFlushOp: BrotliEncoder.Operation,
+    fullFlushOp: BrotliEncoder.Operation,
 
-    pub fn init() !BrotliCompressionStream {
+    pub fn init(
+        flushOp: BrotliEncoder.Operation,
+        finishFlushOp: BrotliEncoder.Operation,
+        fullFlushOp: BrotliEncoder.Operation,
+    ) !BrotliCompressionStream {
         const instance = BrotliEncoder.createInstance(&BrotliAllocator.alloc, &BrotliAllocator.free, null) orelse return error.BrotliFailedToCreateInstance;
 
         return BrotliCompressionStream{
             .brotli = instance,
+            .flushOp = flushOp,
+            .finishFlushOp = finishFlushOp,
+            .fullFlushOp = fullFlushOp,
         };
     }
 
     pub fn writeChunk(this: *BrotliCompressionStream, input: []const u8, last: bool) ![]const u8 {
-        const result = this.brotli.compressStream(if (last) BrotliEncoder.Operation.finish else .process, input);
+        this.total_in += input.len;
+        const result = this.brotli.compressStream(if (last) this.finishFlushOp else this.flushOp, input);
 
         if (!result.success) {
             this.state = .Error;

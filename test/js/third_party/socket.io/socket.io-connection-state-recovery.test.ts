@@ -1,9 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
-import { Server, Socket } from "socket.io";
-import { waitFor, eioHandshake, eioPush, eioPoll, fail, success } from "./support/util.ts";
 import { createServer, Server as HttpServer } from "http";
+import { Server, Socket } from "socket.io";
 import { Adapter } from "socket.io-adapter";
+import { eioHandshake, eioPoll, eioPush, fail, success, waitFor } from "./support/util.ts";
 
 async function init(httpServer: HttpServer, io: Server) {
   // Engine.IO handshake

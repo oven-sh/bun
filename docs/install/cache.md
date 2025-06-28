@@ -1,4 +1,4 @@
-All packages downloaded from the registry are stored in a global cache at `~/.bun/install/cache`. They are stored in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
+All packages downloaded from the registry are stored in a global cache at `~/.bun/install/cache`, or the path defined by the environment variable `BUN_INSTALL_CACHE_DIR`. They are stored in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
 
 {% details summary="Configuring cache behavior (bunfig.toml)" %}
 
@@ -14,6 +14,8 @@ disable = false
 # when true, always resolve the latest versions from the registry
 disableManifest = false
 ```
+
+{% /details %}
 
 ## Minimizing re-downloads
 
@@ -33,14 +35,14 @@ Once a package is downloaded into the cache, Bun still needs to copy those files
 
 ## Saving disk space
 
-Since Bun uses hardlinks to "copy" a module into a project's `node_modules` directory on Linux, the contents of the package only exist in a single location on disk, greatly reducing the amount of disk space dedicated to `node_modules`.
+Since Bun uses hardlinks to "copy" a module into a project's `node_modules` directory on Linux and Windows, the contents of the package only exist in a single location on disk, greatly reducing the amount of disk space dedicated to `node_modules`.
 
 This benefit also applies to macOS, but there are exceptions. It uses `clonefile` which is copy-on-write, meaning it will not occupy disk space, but it will count towards drive's limit. This behavior is useful if something attempts to patch `node_modules/*`, so it's impossible to affect other installations.
 
 {% details summary="Installation strategies" %}
 This behavior is configurable with the `--backend` flag, which is respected by all of Bun's package management commands.
 
-- **`hardlink`**: Default on Linux.
+- **`hardlink`**: Default on Linux and Windows.
 - **`clonefile`** Default on macOS.
 - **`clonefile_each_dir`**: Similar to `clonefile`, except it clones each file individually per directory. It is only available on macOS and tends to perform slower than `clonefile`.
 - **`copyfile`**: The fallback used when any of the above fail. It is the slowest option. On macOS, it uses `fcopyfile()`; on Linux it uses `copy_file_range()`.

@@ -1,7 +1,7 @@
+import { pathToFileURL } from "bun";
+import { bunRun, bunRunAsScript, isWindows, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { pathToFileURL } from "bun";
 
 import { describe, expect, mock, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
@@ -23,8 +23,6 @@ const testDir = tempDirWithFiles("watch", {
   "sym.txt": "hello",
   [encodingFileName]: "hello",
 });
-
-const isWindows = process.platform === "win32";
 
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
@@ -261,7 +259,7 @@ describe("fs.watch", () => {
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
       done();
     }
   });
@@ -449,9 +447,10 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message).toBe("Permission denied");
+      expect(err.message).toBe(`EACCES: permission denied, watch '${filepath}'`);
+      expect(err.path).toBe(filepath);
       expect(err.code).toBe("EACCES");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
     }
   });
 
@@ -465,9 +464,10 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message).toBe("Permission denied");
+      expect(err.message).toBe(`EACCES: permission denied, watch '${filepath}'`);
+      expect(err.path).toBe(filepath);
       expect(err.code).toBe("EACCES");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
     }
   });
 });

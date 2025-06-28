@@ -1,11 +1,11 @@
 {
   "name": "bench",
   "scripts": {
-    "bench:bun": "$BUN bun.js",
-    "bench:node": "$NODE node.mjs",
+    "bench:bun": "bun bun.js",
+    "bench:node": "node node.mjs",
     "deps": "cd src && bun run deps",
     "build": "cd src && bun run build",
-    "bench:deno": "$DENO run -A --unstable deno.js",
+    "bench:deno": "deno run -A --unstable deno.js",
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
   }
 }

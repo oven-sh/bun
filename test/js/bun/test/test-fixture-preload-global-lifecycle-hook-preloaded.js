@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, afterEach, beforeEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
 
 for (let suffix of ["#1", "#2"]) {
   for (let fn of [

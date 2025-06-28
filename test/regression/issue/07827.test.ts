@@ -1,4 +1,4 @@
-import { test, expect, jest } from "bun:test";
+import { expect, jest, test } from "bun:test";
 
 test("#7827", () => {
   for (let i = 0; i < 10; i++)

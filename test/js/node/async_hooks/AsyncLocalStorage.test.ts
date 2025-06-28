@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -545,8 +545,9 @@ describe("async context passes through", () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;
     await s.run("value", async () => {
-      Bun.build({
+      return Bun.build({
         entrypoints: [import.meta.path],
+        target: "bun",
         plugins: [
           {
             name: "test",

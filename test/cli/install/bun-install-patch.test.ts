@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -515,7 +515,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       },
       "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
     });
-
+    console.log(filedir);
     await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
     const pkgjsonWithPatch = {

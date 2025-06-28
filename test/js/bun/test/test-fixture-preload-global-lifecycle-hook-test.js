@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, afterEach, beforeEach, test, describe } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, test } from "bun:test";
 
 for (let suffix of ["TEST-FILE"]) {
   for (let fn of [

@@ -1,7 +1,7 @@
-import { expect, test, describe, beforeAll } from "bun:test";
 import { Glob } from "bun";
-import { tempFixturesDir } from "./util";
+import { beforeAll, test } from "bun:test";
 import path from "path";
+import { tempFixturesDir } from "./util";
 const paths = [
   path.join(import.meta.dir, "fixtures/file.md"),
   path.join(import.meta.dir, "fixtures/second/file.md"),

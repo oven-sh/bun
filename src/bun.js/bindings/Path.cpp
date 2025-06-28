@@ -28,149 +28,86 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 using namespace JSC;
 
-// clang-format off
-#define DEFINE_CALLBACK_FUNCTION_BODY(ZigFunction) JSC::VM& vm = globalObject->vm(); \
-    auto* thisObject = JSC::jsDynamicCast<JSC::JSFinalObject*>(callFrame->thisValue()); \
-    if (!thisObject) { \
-        auto scope = DECLARE_THROW_SCOPE(vm); \
-        return throwVMTypeError(globalObject, scope); \
-    } \
-    auto argCount = static_cast<uint16_t>(callFrame->argumentCount()); \
-    WTF::Vector<JSC::EncodedJSValue, 16> arguments; \
-    arguments.reserveInitialCapacity(argCount); \
-    if (argCount) { \
-        for (uint16_t i = 0; i < argCount; ++i) { \
-            arguments.unsafeAppendWithoutCapacityCheck(JSC::JSValue::encode(callFrame->uncheckedArgument(i))); \
-        } \
-    } \
-    auto isWindows = thisObject->get(globalObject, WebCore::clientData(vm)->builtinNames().isWindowsPrivateName()); \
-    return ZigFunction(globalObject, isWindows.asBoolean(), reinterpret_cast<JSC__JSValue*>(arguments.data()), argCount);
+using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len);
 
-// clang-format on
-
-JSC_DECLARE_HOST_FUNCTION(Path_functionBasename);
-JSC_DEFINE_HOST_FUNCTION(Path_functionBasename,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+template<bool isWindows, PathFunction Function>
+static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__basename);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
+    for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
+        args.append(callFrame->argument(i));
+    }
+    const auto result = Function(globalObject, isWindows, args.data(), args.size());
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
-JSC_DECLARE_HOST_FUNCTION(Path_functionDirname);
-JSC_DEFINE_HOST_FUNCTION(Path_functionDirname,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__dirname);
-}
+#define DEFINE_PATH_FUNCTION(jsFunctionName, Function, isWindows)               \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionName,                                    \
+        (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame))       \
+    {                                                                           \
+        return createZigFunction<isWindows, Function>(globalObject, callFrame); \
+    }
 
-JSC_DEFINE_HOST_FUNCTION(Path_functionExtname,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__extname);
-}
+DEFINE_PATH_FUNCTION(jsFunctionPath_basenamePosix, Bun__Path__basename, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_dirnamePosix, Bun__Path__dirname, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_extnamePosix, Bun__Path__extname, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_formatPosix, Bun__Path__format, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_isAbsolutePosix, Bun__Path__isAbsolute, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_joinPosix, Bun__Path__join, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_normalizePosix, Bun__Path__normalize, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_parsePosix, Bun__Path__parse, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_relativePosix, Bun__Path__relative, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_resolvePosix, Bun__Path__resolve, false)
+DEFINE_PATH_FUNCTION(jsFunctionPath_toNamespacedPathPosix, Bun__Path__toNamespacedPath, false)
 
-JSC_DEFINE_HOST_FUNCTION(Path_functionFormat,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__format);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionIsAbsolute,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__isAbsolute);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionJoin,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__join);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionNormalize,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__normalize);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionParse,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__parse);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionRelative,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__relative);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionResolve,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__resolve);
-}
-
-JSC_DEFINE_HOST_FUNCTION(Path_functionToNamespacedPath,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__toNamespacedPath);
-}
+DEFINE_PATH_FUNCTION(jsFunctionPath_basenameWindows, Bun__Path__basename, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_dirnameWindows, Bun__Path__dirname, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_extnameWindows, Bun__Path__extname, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_formatWindows, Bun__Path__format, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_isAbsoluteWindows, Bun__Path__isAbsolute, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_joinWindows, Bun__Path__join, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_normalizeWindows, Bun__Path__normalize, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_parseWindows, Bun__Path__parse, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_relativeWindows, Bun__Path__relative, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_resolveWindows, Bun__Path__resolve, true)
+DEFINE_PATH_FUNCTION(jsFunctionPath_toNamespacedPathWindows, Bun__Path__toNamespacedPath, true)
 
 static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 {
-    JSC::VM& vm = globalThis->vm();
+    auto& vm = JSC::getVM(globalThis);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* path = JSC::constructEmptyObject(globalThis);
-    auto clientData = WebCore::clientData(vm);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto builtinNames = WebCore::builtinNames(vm);
 
-    path->putDirect(vm, clientData->builtinNames().isWindowsPrivateName(),
-        JSC::jsBoolean(isWindows), 0);
-
-    path->putDirect(vm, clientData->builtinNames().basenamePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "basename"_s, Path_functionBasename, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().dirnamePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "dirname"_s, Path_functionDirname, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().extnamePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "extname"_s, Path_functionExtname, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().formatPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "format"_s, Path_functionFormat, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().isAbsolutePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "isAbsolute"_s, Path_functionIsAbsolute, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().joinPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "join"_s, Path_functionJoin, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().normalizePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "normalize"_s, Path_functionNormalize, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().parsePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "parse"_s, Path_functionParse, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, clientData->builtinNames().relativePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "relative"_s, Path_functionRelative, ImplementationVisibility::Public),
-        0);
-    path->putDirect(vm, vm.propertyNames->resolve,
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "resolve"_s, Path_functionResolve, ImplementationVisibility::Public),
-        0);
-
-    path->putDirect(vm, clientData->builtinNames().toNamespacedPathPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "toNamespacedPath"_s,
-            Path_functionToNamespacedPath, ImplementationVisibility::Public),
-        0);
+    if (!isWindows) {
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.basenamePublicName(), 1, jsFunctionPath_basenamePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.dirnamePublicName(), 1, jsFunctionPath_dirnamePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.extnamePublicName(), 1, jsFunctionPath_extnamePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.formatPublicName(), 1, jsFunctionPath_formatPosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.isAbsolutePublicName(), 1, jsFunctionPath_isAbsolutePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.joinPublicName(), 1, jsFunctionPath_joinPosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.normalizePublicName(), 1, jsFunctionPath_normalizePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.parsePublicName(), 1, jsFunctionPath_parsePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.relativePublicName(), 1, jsFunctionPath_relativePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.resolvePublicName(), 1, jsFunctionPath_resolvePosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.toNamespacedPathPublicName(), 1, jsFunctionPath_toNamespacedPathPosix, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+    } else {
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.basenamePublicName(), 1, jsFunctionPath_basenameWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.dirnamePublicName(), 1, jsFunctionPath_dirnameWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.extnamePublicName(), 1, jsFunctionPath_extnameWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.formatPublicName(), 1, jsFunctionPath_formatWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.isAbsolutePublicName(), 1, jsFunctionPath_isAbsoluteWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.joinPublicName(), 1, jsFunctionPath_joinWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.normalizePublicName(), 1, jsFunctionPath_normalizeWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.parsePublicName(), 1, jsFunctionPath_parseWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.relativePublicName(), 1, jsFunctionPath_relativeWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.resolvePublicName(), 1, jsFunctionPath_resolveWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        path->putDirectNativeFunction(vm, globalThis, builtinNames.toNamespacedPathPublicName(), 1, jsFunctionPath_toNamespacedPathWindows, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+    }
 
     return path;
 }
@@ -181,17 +118,20 @@ namespace Bun {
 
 JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
-    binding->putByIndexInline(
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(
         globalObject,
         (unsigned)0,
-        Zig::createPath(globalObject, false),
-        false);
-    binding->putByIndexInline(
+        Zig::createPath(globalObject, false));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(
         globalObject,
         (unsigned)1,
-        Zig::createPath(globalObject, true),
-        false);
+        Zig::createPath(globalObject, true));
+    RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }
 

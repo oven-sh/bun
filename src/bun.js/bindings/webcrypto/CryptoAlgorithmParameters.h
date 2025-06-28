@@ -35,6 +35,7 @@ namespace WebCore {
 
 class CryptoAlgorithmParameters {
     WTF_MAKE_FAST_ALLOCATED;
+
 public:
     enum class Class {
         None,
@@ -53,11 +54,12 @@ public:
         RsaKeyGenParams,
         RsaOaepParams,
         RsaPssParams,
+        X25519Params,
     };
 
     // FIXME: Consider merging name and identifier.
     String name;
-    CryptoAlgorithmIdentifier identifier;
+    CryptoAlgorithmIdentifier identifier { CryptoAlgorithmIdentifier::None };
 
     virtual ~CryptoAlgorithmParameters() = default;
 
@@ -66,9 +68,13 @@ public:
 
 } // namespace WebCore
 
+// clang-format off
+
 #define SPECIALIZE_TYPE_TRAITS_CRYPTO_ALGORITHM_PARAMETERS(ToClassName) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CryptoAlgorithm##ToClassName) \
 static bool isType(const WebCore::CryptoAlgorithmParameters& parameters) { return parameters.parametersClass() == WebCore::CryptoAlgorithmParameters::Class::ToClassName; } \
 SPECIALIZE_TYPE_TRAITS_END()
+
+// clang-format on
 
 #endif // ENABLE(WEB_CRYPTO)

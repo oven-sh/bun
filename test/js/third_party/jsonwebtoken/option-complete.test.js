@@ -1,10 +1,10 @@
 "use strict";
 
-import { expect, describe, it } from "bun:test";
-import testUtils from "./test-utils";
-import jws from "jws";
+import { describe, expect, it } from "bun:test";
 import fs from "fs";
+import jws from "jws";
 import path from "path";
+import testUtils from "./test-utils";
 
 describe("complete option", function () {
   const secret = fs.readFileSync(path.join(__dirname, "priv.pem"));

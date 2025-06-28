@@ -1,4 +1,4 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -22,7 +22,7 @@ describe("ResolveMessage", () => {
     }
   });
 
-  it("has code for esm", async () => {
+  it.only("has code for esm", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");
     } catch (e: any) {

@@ -38,7 +38,7 @@ namespace Detail {
 template<typename IDLType>
 struct NullableConversionType;
 
-template<typename IDLType> 
+template<typename IDLType>
 struct NullableConversionType {
     using Type = typename IDLNullable<IDLType>::ImplementationType;
 };
@@ -57,7 +57,7 @@ struct NullableConversionType<IDLAny> {
 
 template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNullable<T>> {
     using ReturnType = typename Detail::NullableConversionType<T>::Type;
-    
+
     // 1. If Type(V) is not Object, and the conversion to an IDL value is being performed
     // due to V being assigned to an attribute whose type is a nullable callback function
     // that is annotated with [LegacyTreatNonObjectAsNull], then return the IDL nullable
@@ -145,6 +145,5 @@ template<typename T> struct JSConverter<IDLNullable<T>> {
         return JSConverter<T>::convert(lexicalGlobalObject, globalObject, T::extractValueFromNullable(value));
     }
 };
-
 
 } // namespace WebCore

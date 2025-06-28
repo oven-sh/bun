@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1063,5 +1063,14 @@ describe("parseArgs extra tests", () => {
       }
       expect(Object.keys(result.values)).toHaveLength(93);
     });
+  });
+
+  test("undefined or null options", () => {
+    expect(parseArgs({ args: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
+    expect(parseArgs({ args: null })).toEqual({ values: { __proto__: null }, positionals: [] });
+    expect(parseArgs({ options: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
+    expect(parseArgs({ options: null })).toEqual({ values: { __proto__: null }, positionals: [] });
+    expect(parseArgs({ allowPositionals: undefined })).toEqual({ values: { __proto__: null }, positionals: [] });
+    expect(parseArgs({ allowPositionals: null })).toEqual({ values: { __proto__: null }, positionals: [] });
   });
 });

@@ -1,4 +1,4 @@
-import { expect, describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 // Custom class for testing
 class CustomException extends Error {

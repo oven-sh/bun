@@ -24,7 +24,7 @@ class JSEventListener;
 
 struct EventEmitterData {
     WTF_MAKE_NONCOPYABLE(EventEmitterData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitterData);
 
 public:
     EventEmitterData() = default;
@@ -33,7 +33,7 @@ public:
 };
 
 class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(EventEmitter);
+    WTF_MAKE_TZONE_ALLOCATED(EventEmitter);
 
 public:
     static Ref<EventEmitter> create(ScriptExecutionContext&);
@@ -55,7 +55,7 @@ public:
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    WEBCORE_EXPORT void emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
@@ -76,7 +76,7 @@ public:
     Vector<Identifier> eventTypes();
     const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
 
-    void fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
     void invalidateJSEventListeners(JSC::JSObject*);
@@ -94,8 +94,6 @@ public:
         }
     }
 
-    bool m_hasIPCRef { false };
-
 private:
     EventEmitter(ScriptExecutionContext& context)
         : ContextDestructionObserver(&context)
@@ -109,7 +107,7 @@ private:
     {
     }
 
-    void innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;

@@ -155,14 +155,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamConstructor, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSTextEncoderStreamPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTextEncoderStream::getConstructor(vm, prototype->globalObject()));
 }
 
 JSC::GCClient::IsoSubspace* JSTextEncoderStream::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoderStream, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoderStream = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForTextEncoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoderStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoderStream, UseCustomHeapCellType::No>(
+        vm, [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoderStream = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForTextEncoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoderStream = std::forward<decltype(space)>(space); });
 }
 
 }

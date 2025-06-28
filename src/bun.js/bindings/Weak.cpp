@@ -1,7 +1,6 @@
 #include "root.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
-#include "root.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/Strong.h>
 
@@ -32,7 +31,7 @@ class WeakRefOwner : public JSC::WeakHandleOwner {
 public:
     void finalize(JSC::Handle<JSC::Unknown> handle, void* context) final
     {
-        if (LIKELY(context)) {
+        if (context) [[likely]] {
             switch (T) {
             case WeakRefType::FetchResponse:
                 Bun__FetchResponse_finalize(context);
@@ -72,7 +71,7 @@ static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
 }
 
 class WeakRef {
-    WTF_MAKE_ISO_ALLOCATED(WeakRef);
+    WTF_MAKE_TZONE_ALLOCATED(WeakRef);
 
 public:
     WeakRef(JSC::VM& vm, JSC::JSValue value, WeakRefType kind, void* ctx = nullptr)
@@ -91,8 +90,6 @@ public:
 
     JSC::Weak<JSC::JSObject> m_cell;
 };
-
-WTF_MAKE_ISO_ALLOCATED_IMPL(WeakRef);
 
 }
 

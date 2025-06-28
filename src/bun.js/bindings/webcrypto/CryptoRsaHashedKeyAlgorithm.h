@@ -35,4 +35,3 @@ struct CryptoRsaHashedKeyAlgorithm : CryptoRsaKeyAlgorithm {
 };
 
 }
-

@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("which rlly long", async () => {
   const longstr = "a".repeat(100000);

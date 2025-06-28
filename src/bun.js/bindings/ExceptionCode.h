@@ -24,7 +24,8 @@
 
 namespace WebCore {
 
-enum ExceptionCode {
+// keep in sync with DOMExceptionCode in src/bun.js/bindings/JSErrorCode.Zig
+enum ExceptionCode : uint8_t {
     // DOMException error names (https://webidl.spec.whatwg.org/#idl-DOMException-error-names).
     // Those need to be kept in sync with the array in DOMException.cpp.
     IndexSizeError, // Deprecated. Use RangeError instead.
@@ -71,6 +72,12 @@ enum ExceptionCode {
 
     // Used to indicate to the bindings that a JS exception was thrown below and it should be propagated.
     ExistingExceptionError,
+
+    // Node errors
+    InvalidThisError,
+    InvalidURLError,
+    CryptoOperationFailedError,
+    EVENT_RECURSION,
 };
 
 } // namespace WebCore
@@ -116,7 +123,10 @@ template<> struct EnumTraits<WebCore::ExceptionCode> {
         WebCore::ExceptionCode::TypeError,
         WebCore::ExceptionCode::JSSyntaxError,
         WebCore::ExceptionCode::StackOverflowError,
-        WebCore::ExceptionCode::ExistingExceptionError>;
+        WebCore::ExceptionCode::ExistingExceptionError,
+        WebCore::ExceptionCode::InvalidThisError,
+        WebCore::ExceptionCode::InvalidURLError,
+        WebCore::ExceptionCode::CryptoOperationFailedError>;
 };
 
 } // namespace WTF

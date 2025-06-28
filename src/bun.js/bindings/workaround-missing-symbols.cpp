@@ -1,5 +1,3 @@
-
-
 #if defined(WIN32)
 
 #include <cstdint>
@@ -53,12 +51,23 @@ extern "C" int kill(int pid, int sig)
 
 // if linux
 #if defined(__linux__)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include <fcntl.h>
-// #include <sys/stat.h>
+#include <dlfcn.h>
 #include <stdarg.h>
-#include <math.h>
 #include <errno.h>
+#include <math.h>
+#include <mutex>
+#include <semaphore.h>
+#include <stdio.h>
+#include <signal.h>
+#include <sys/random.h>
 #include <dlfcn.h>
 
 #ifndef _STAT_VER
@@ -72,197 +81,156 @@ extern "C" int kill(int pid, int sig)
 #endif
 
 #if defined(__x86_64__)
-// Force older versions of symbols
-__asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver exp,exp@GLIBC_2.2.5");
+__asm__(".symver exp2,exp2@GLIBC_2.2.5");
+__asm__(".symver expf,expf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
+__asm__(".symver log2,log2@GLIBC_2.2.5");
+__asm__(".symver log2f,log2f@GLIBC_2.2.5");
+__asm__(".symver logf,logf@GLIBC_2.2.5");
+__asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver powf,powf@GLIBC_2.2.5");
+#elif defined(__aarch64__)
+__asm__(".symver expf,expf@GLIBC_2.17");
+__asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver exp2,exp2@GLIBC_2.17");
+__asm__(".symver log,log@GLIBC_2.17");
+__asm__(".symver log2,log2@GLIBC_2.17");
+__asm__(".symver log2f,log2f@GLIBC_2.17");
+__asm__(".symver logf,logf@GLIBC_2.17");
+__asm__(".symver pow,pow@GLIBC_2.17");
+__asm__(".symver powf,powf@GLIBC_2.17");
 #endif
 
-// ban statx, for now
-extern "C" int __wrap_statx(int fd, const char* path, int flags,
-    unsigned int mask, struct statx* buf)
-{
-    errno = ENOSYS;
-#ifdef BUN_DEBUG
-    abort();
+#if defined(__x86_64__) || defined(__aarch64__)
+#define BUN_WRAP_GLIBC_SYMBOL(symbol) __wrap_##symbol
+#else
+#define BUN_WRAP_GLIBC_SYMBOL(symbol) symbol
 #endif
-    return -1;
-}
 
-extern "C" int __real_fcntl(int fd, int cmd, ...);
-typedef double (*MathFunction)(double);
-typedef double (*MathFunction2)(double, double);
+extern "C" {
 
-static inline double __real_exp(double x)
+double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
+double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
+float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
+float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(powf)(float, float);
+double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
+double BUN_WRAP_GLIBC_SYMBOL(log)(double);
+double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
+int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+
+float __wrap_expf(float x) { return expf(x); }
+float __wrap_powf(float x, float y) { return powf(x, y); }
+float __wrap_logf(float x) { return logf(x); }
+float __wrap_log2f(float x) { return log2f(x); }
+double __wrap_exp(double x) { return exp(x); }
+double __wrap_exp2(double x) { return exp2(x); }
+double __wrap_pow(double x, double y) { return pow(x, y); }
+double __wrap_log(double x) { return log(x); }
+double __wrap_log2(double x) { return log2(x); }
+
+} // extern "C"
+
+typedef int (*fcntl64_func)(int fd, int cmd, ...);
+
+enum arg_type {
+    NO_ARG,
+    INT_ARG,
+    PTR_ARG
+};
+
+static enum arg_type get_arg_type(int cmd)
 {
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "exp"));
-        if (UNLIKELY(function == nullptr))
-            abort();
+    switch (cmd) {
+    // Commands that take no argument
+    case F_GETFD:
+    case F_GETFL:
+    case F_GETOWN:
+    case F_GETSIG:
+    case F_GETLEASE:
+    case F_GETPIPE_SZ:
+#ifdef F_GET_SEALS
+    case F_GET_SEALS:
+#endif
+        return NO_ARG;
+
+    // Commands that take an integer argument
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC:
+    case F_SETFD:
+    case F_SETFL:
+    case F_SETOWN:
+    case F_SETSIG:
+    case F_SETLEASE:
+    case F_NOTIFY:
+    case F_SETPIPE_SZ:
+#ifdef F_ADD_SEALS
+    case F_ADD_SEALS:
+#endif
+        return INT_ARG;
+
+    // Commands that take a pointer argument
+    case F_GETLK:
+    case F_SETLK:
+    case F_SETLKW:
+    case F_GETOWN_EX:
+    case F_SETOWN_EX:
+        return PTR_ARG;
+
+    default:
+        return PTR_ARG; // Default to pointer for unknown commands
     }
-
-    return function(x);
-}
-static inline double __real_log(double x)
-{
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x);
-}
-static inline double __real_log2(double x)
-{
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log2"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x);
-}
-static inline double __real_fmod(double x, double y)
-{
-    static MathFunction2 function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x, y);
-}
-
-extern "C" int __wrap_fcntl(int fd, int cmd, ...)
-{
-    va_list va;
-    va_start(va, cmd);
-    return __real_fcntl(fd, cmd, va_arg(va, void*));
-    va_end(va);
 }
 
 extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
 {
-    va_list va;
-    va_start(va, cmd);
-    return __real_fcntl(fd, cmd, va_arg(va, void*));
-    va_end(va);
-}
+    va_list ap;
+    enum arg_type type = get_arg_type(cmd);
 
-extern "C" double __wrap_pow(double x, double y)
-{
-    static void* pow_ptr = nullptr;
-    if (UNLIKELY(pow_ptr == nullptr)) {
-        pow_ptr = dlsym(RTLD_DEFAULT, "pow");
+    static fcntl64_func real_fcntl64;
+    static std::once_flag real_fcntl64_initialized;
+    std::call_once(real_fcntl64_initialized, []() {
+        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+        if (!real_fcntl64) {
+            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        }
+    });
+
+    switch (type) {
+    case NO_ARG:
+        return real_fcntl64(fd, cmd);
+
+    case INT_ARG: {
+        va_start(ap, cmd);
+        int arg = va_arg(ap, int);
+        va_end(ap);
+        return real_fcntl64(fd, cmd, arg);
     }
 
-    return ((double (*)(double, double))pow_ptr)(x, y);
-}
-
-extern "C" double __wrap_exp(double x)
-{
-    return __real_exp(x);
-}
-
-extern "C" double __wrap_log(double x)
-{
-    return __real_log(x);
-}
-
-extern "C" double __wrap_log2(double x)
-{
-    return __real_log2(x);
-}
-
-extern "C" double __wrap_fmod(double x, double y)
-{
-    return __real_fmod(x, y);
-}
-
-static inline float __real_expf(float arg)
-{
-    static void* ptr = nullptr;
-    if (UNLIKELY(ptr == nullptr)) {
-        ptr = dlsym(RTLD_DEFAULT, "expf");
+    case PTR_ARG: {
+        va_start(ap, cmd);
+        void* arg = va_arg(ap, void*);
+        va_end(ap);
+        return real_fcntl64(fd, cmd, arg);
     }
 
-    return ((float (*)(float))ptr)(arg);
+    default:
+        va_end(ap);
+        errno = EINVAL;
+        return -1;
+    }
 }
 
-extern "C" float __wrap_expf(float arg)
-{
-    return __real_expf(arg);
-}
+extern "C" __attribute__((used)) char _libc_single_threaded = 0;
+extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 
-#ifndef _MKNOD_VER
-#define _MKNOD_VER 1
-#endif
+#endif // glibc
 
-extern "C" int __lxstat(int ver, const char* filename, struct stat* stat);
-extern "C" int __wrap_lstat(const char* filename, struct stat* stat)
-{
-    return __lxstat(_STAT_VER, filename, stat);
-}
+// musl
 
-extern "C" int __xstat(int ver, const char* filename, struct stat* stat);
-extern "C" int __wrap_stat(const char* filename, struct stat* stat)
-{
-    return __xstat(_STAT_VER, filename, stat);
-}
-
-extern "C" int __fxstat(int ver, int fd, struct stat* stat);
-extern "C" int __wrap_fstat(int fd, struct stat* stat)
-{
-    return __fxstat(_STAT_VER, fd, stat);
-}
-
-extern "C" int __fxstatat(int ver, int dirfd, const char* path, struct stat* stat, int flags);
-extern "C" int __wrap_fstatat(int dirfd, const char* path, struct stat* stat, int flags)
-{
-    return __fxstatat(_STAT_VER, dirfd, path, stat, flags);
-}
-
-extern "C" int __lxstat64(int ver, const char* filename, struct stat64* stat);
-extern "C" int __wrap_lstat64(const char* filename, struct stat64* stat)
-{
-    return __lxstat64(_STAT_VER, filename, stat);
-}
-
-extern "C" int __xstat64(int ver, const char* filename, struct stat64* stat);
-extern "C" int __wrap_stat64(const char* filename, struct stat64* stat)
-{
-    return __xstat64(_STAT_VER, filename, stat);
-}
-
-extern "C" int __fxstat64(int ver, int fd, struct stat64* stat);
-extern "C" int __wrap_fstat64(int fd, struct stat64* stat)
-{
-    return __fxstat64(_STAT_VER, fd, stat);
-}
-
-extern "C" int __fxstatat64(int ver, int dirfd, const char* path, struct stat64* stat, int flags);
-extern "C" int __wrap_fstatat64(int dirfd, const char* path, struct stat64* stat, int flags)
-{
-    return __fxstatat64(_STAT_VER, dirfd, path, stat, flags);
-}
-
-extern "C" int __xmknod(int ver, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknod(const char* path, __mode_t mode, __dev_t dev)
-{
-    return __xmknod(_MKNOD_VER, path, mode, dev);
-}
-
-extern "C" int __xmknodat(int ver, int dirfd, const char* path, __mode_t mode, __dev_t dev);
-extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_t dev)
-{
-    return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
-}
-
-#endif
+#endif // linux
 
 // macOS
 #if defined(__APPLE__)
@@ -283,93 +251,6 @@ void std::__libcpp_verbose_abort(char const* format, ...)
     va_end(list);
 
     Bun__panic(buffer, len);
-}
-
-extern "C" int pthread_self_is_exiting_np()
-{
-    static void* pthread_self_is_exiting_np_ptr = nullptr;
-    static bool pthread_self_is_exiting_np_ptr_initialized = false;
-    if (UNLIKELY(!pthread_self_is_exiting_np_ptr_initialized)) {
-        pthread_self_is_exiting_np_ptr_initialized = true;
-        pthread_self_is_exiting_np_ptr = dlsym(RTLD_DEFAULT, "pthread_self_is_exiting_np");
-    }
-
-    if (UNLIKELY(pthread_self_is_exiting_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)())pthread_self_is_exiting_np_ptr)();
-}
-
-extern "C" int posix_spawn_file_actions_addchdir_np(
-    void* file_actions,
-    const char* path)
-{
-    static void* posix_spawn_file_actions_addchdir_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addchdir_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addchdir_np_ptr_initialized)) {
-        posix_spawn_file_actions_addchdir_np_ptr_initialized = true;
-        posix_spawn_file_actions_addchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addchdir_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, const char*))posix_spawn_file_actions_addchdir_np_ptr)(file_actions, path);
-}
-
-extern "C" int posix_spawn_file_actions_addinherit_np(void* ptr,
-    int status)
-{
-    static void* posix_spawn_file_actions_addinherit_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addinherit_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addinherit_np_ptr_initialized)) {
-        posix_spawn_file_actions_addinherit_np_ptr_initialized = true;
-        posix_spawn_file_actions_addinherit_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addinherit_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addinherit_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, int))posix_spawn_file_actions_addinherit_np_ptr)(ptr, status);
-}
-
-extern "C" int posix_spawn_file_actions_addfchdir_np(void* ptr,
-    int fd)
-{
-    static void* posix_spawn_file_actions_addfchdir_np_ptr = nullptr;
-    static bool posix_spawn_file_actions_addfchdir_np_ptr_initialized = false;
-    if (UNLIKELY(!posix_spawn_file_actions_addfchdir_np_ptr_initialized)) {
-        posix_spawn_file_actions_addfchdir_np_ptr_initialized = true;
-        posix_spawn_file_actions_addfchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np");
-    }
-
-    if (UNLIKELY(posix_spawn_file_actions_addfchdir_np_ptr == nullptr))
-        return 0;
-
-    return ((int (*)(void*, int))posix_spawn_file_actions_addfchdir_np_ptr)(ptr, fd);
-}
-
-extern "C" int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
-    uint32_t timeout_microseconds); /* timeout is specified in microseconds */
-
-// https://github.com/oven-sh/bun/pull/2426#issuecomment-1532343394
-extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
-    uint64_t timeout_ns, uint64_t value2)
-{
-    static void* __ulock_wait2_ptr = nullptr;
-    static bool __ulock_wait2_ptr_initialized = false;
-    if (UNLIKELY(!__ulock_wait2_ptr_initialized)) {
-        __ulock_wait2_ptr_initialized = true;
-        __ulock_wait2_ptr = dlsym(RTLD_DEFAULT, "__ulock_wait2");
-    }
-
-    if (UNLIKELY(__ulock_wait2_ptr == nullptr)) {
-        uint64_t timeout = timeout_ns / 1000;
-        uint32_t timeout_us = static_cast<uint32_t>(timeout > UINT32_MAX ? UINT32_MAX : timeout);
-        return __ulock_wait(operation, addr, value, timeout_us);
-    }
-
-    return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
 }
 
 #endif

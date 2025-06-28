@@ -1,5 +1,7 @@
-import { AnyFunction } from "bun";
-import { gcTick, hideFromStackTrace } from "harness";
+/**
+ * @note this file patches `node:test` via the require cache.
+ */
+import { hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
 type DoneCb = (err?: Error) => any;
@@ -126,11 +128,11 @@ export function createTest(path: string) {
       }, exact);
     }
 
-    function mustCallAtLeast(fn: AnyFunction, minimum: number) {
+    function mustCallAtLeast(fn: unknown, minimum: number) {
       return _mustCallInner(fn, minimum, "minimum");
     }
 
-    function _mustCallInner(fn: AnyFunction, criteria = 1, field: string) {
+    function _mustCallInner(fn: unknown, criteria = 1, field: string) {
       // @ts-ignore
       if (process._exiting) throw new Error("Cannot use common.mustCall*() in process exit handler");
       if (typeof fn === "number") {

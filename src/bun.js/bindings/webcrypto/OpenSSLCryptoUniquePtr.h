@@ -37,14 +37,14 @@
 
 namespace WebCore {
 
-template <typename T>
+template<typename T>
 struct OpenSSLCryptoPtrDeleter {
     void operator()(T* ptr) const = delete;
 };
 
-template <typename T>
+template<typename T>
 using OpenSSLCryptoPtr = std::unique_ptr<T, OpenSSLCryptoPtrDeleter<T>>;
-
+// clang-format off
 #define DEFINE_OPENSSL_CRYPTO_PTR_FULL(alias, typeName, deleterFunc) \
     template<> struct OpenSSLCryptoPtrDeleter<typeName> { \
         void operator()(typeName* ptr) const { \
@@ -55,7 +55,7 @@ using OpenSSLCryptoPtr = std::unique_ptr<T, OpenSSLCryptoPtrDeleter<T>>;
 
 #define DEFINE_OPENSSL_CRYPTO_PTR(alias, typeName, deleterFunc)      \
     DEFINE_OPENSSL_CRYPTO_PTR_FULL(alias, typeName, deleterFunc(ptr))
-
+// clang-format on
 DEFINE_OPENSSL_CRYPTO_PTR(EvpCipherCtxPtr, EVP_CIPHER_CTX, EVP_CIPHER_CTX_free)
 DEFINE_OPENSSL_CRYPTO_PTR(EvpDigestCtxPtr, EVP_MD_CTX, EVP_MD_CTX_free)
 DEFINE_OPENSSL_CRYPTO_PTR(EvpPKeyPtr, EVP_PKEY, EVP_PKEY_free)

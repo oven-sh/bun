@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
 import { $ } from "bun";
-import { readdirSync } from "node:fs";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { readdirSync } from "node:fs";
 
 test("bun shell should move multiple files", async () => {
   const files = { file1: "", file2: "", file3: "" };

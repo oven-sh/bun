@@ -1,5 +1,5 @@
-import { BinaryLike, DecipherGCM, CipherGCM, createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
+import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, randomBytes } from "crypto";
 
 /**
  * Perform a sample encryption and decryption
@@ -141,18 +141,21 @@ const references = {
     ciphertext: "8497dba3f7f3252e7f5f3cf2c49c5e16cd83da98a942532537a77283afb875ec5a865020ced4242615edb7ec2eaf7e6c",
     authTag: null,
   },
-  "aes-128-cfb8": {
-    iv: "3021d44812302ae0312c9ef523f01bf5",
-    key: "20787258b5d2a166262ecc6e3e917a58",
-    ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
-    authTag: null,
-  },
-  "aes-128-cfb1": {
-    iv: "c91453a0182f1efeeb4525ed96b0aad3",
-    key: "26bfaea72f720475528cc5b2bfd5cf2e",
-    ciphertext: "5d3f5c646140be734f9283e67759f8b06340cc96a8bb21b591cfd43a48cc2941decdd9b4aea13b7c5c7a48d443c8d384",
-    authTag: null,
-  },
+
+  // BoringSSL does not support these modes
+  // "aes-128-cfb8": {
+  //   iv: "3021d44812302ae0312c9ef523f01bf5",
+  //   key: "20787258b5d2a166262ecc6e3e917a58",
+  //   ciphertext: "db4596b2f0d7a74bea91a1d715e1327ca149591f5bc64d19fde7138eacfa5dd0da503596dcc66bc771edcf14b6eb8f69",
+  //   authTag: null,
+  // },
+  // "aes-128-cfb1": {
+  //   iv: "c91453a0182f1efeeb4525ed96b0aad3",
+  //   key: "26bfaea72f720475528cc5b2bfd5cf2e",
+  //   ciphertext: "5d3f5c646140be734f9283e67759f8b06340cc96a8bb21b591cfd43a48cc2941decdd9b4aea13b7c5c7a48d443c8d384",
+  //   authTag: null,
+  // },
+
   "aes-128-ofb": {
     iv: "ca6bf9503134e3a4bad0890a973d4189",
     key: "f4687e40072a015e25d927e13b7318c4",
@@ -198,4 +201,24 @@ it("should encrypt & decrypt well-known values", () => {
       expect(cipher.getAuthTag().toString("hex")).toBe(params.authTag);
     }
   });
+});
+
+it("should work with authTagLength missing from options", () => {
+  const cipher = createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {});
+  cipher.update("hi");
+  cipher.final();
+  const authTag = cipher.getAuthTag();
+  expect(authTag.length).toBe(16);
+});
+
+it("should not accept negative authTagLength, or other coercable values", () => {
+  const lengths = [-2, true, new Number(12), {}];
+
+  for (const length of lengths) {
+    expect(() => {
+      createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {
+        authTagLength: length,
+      });
+    }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
+  }
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, getMaxFD, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -165,3 +165,55 @@ describe("FileSink", () => {
     });
   }
 });
+
+import fs from "node:fs";
+import path from "node:path";
+import util from "node:util";
+
+it("end doesn't close when backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const chunk = Buffer.from("1 Hello, world!");
+  const file = Bun.file(fd);
+  const writer = file.writer();
+  const written = await writer.write(chunk);
+  await writer.end();
+  await util.promisify(fs.ftruncate)(fd, written);
+  await util.promisify(fs.close)(fd);
+});
+
+it("end does close when not backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const file = Bun.file(path.join(x, "test.txt"));
+  const writer = file.writer();
+  await writer.write(Buffer.from("1 Hello, world!"));
+  await writer.end();
+  await Bun.sleep(10); // For the file descriptor leak checker.
+});
+
+it("write result is not cumulative", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const file = Bun.file(fd);
+  const writer = file.writer();
+  expect(await writer.write("1 ")).toBe(2);
+  expect(await writer.write("Hello, ")).toBe(7);
+  expect(await writer.write("world!")).toBe(6);
+  await writer.end();
+  await util.promisify(fs.close)(fd);
+});
+
+if (isWindows) {
+  it("ENOENT, Windows", () => {
+    expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(
+      expect.objectContaining({
+        code: "ENOENT",
+        path: "A:\\this-does-not-exist.txt",
+        syscall: "open",
+      }),
+    );
+  });
+}

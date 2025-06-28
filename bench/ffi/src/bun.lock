@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bench",
+      "dependencies": {
+        "@napi-rs/cli": "^2.10.1",
+        "@node-rs/helper": "^1.3.3",
+      },
+    },
+  },
+  "packages": {
+    "@napi-rs/cli": ["@napi-rs/cli@2.14.8", "", { "bin": { "napi": "scripts/index.js" } }, "sha512-IvA3s8BqohMdUbOkFn7+23u1dhIJZCkA8Xps7DD4SLdCMbcbUF6MUuKiqxuqmVHBFTaxU25sU56WdX3efqGgPw=="],
+
+    "@napi-rs/triples": ["@napi-rs/triples@1.1.0", "", {}, "sha512-XQr74QaLeMiqhStEhLn1im9EOMnkypp7MZOwQhGzqp2Weu5eQJbpPxWxixxlYRKWPOmJjsk6qYfYH9kq43yc2w=="],
+
+    "@node-rs/helper": ["@node-rs/helper@1.3.3", "", { "dependencies": { "@napi-rs/triples": "^1.1.0" } }, "sha512-p4OdfQObGN9YFy5WZaGwlPYICQSe7xZYyXB0sxREmvj1HzGKp5bPg2PlfgfMZEfnjIA882B9ZrnagYzZihIwjA=="],
+  }
+}

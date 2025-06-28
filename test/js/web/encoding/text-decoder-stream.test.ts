@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { readableStreamFromArray } from "harness";
 
 {
@@ -132,7 +132,7 @@ import { readableStreamFromArray } from "harness";
   test("constructing with an invalid encoding should throw", () => {
     expect(() => {
       new TextDecoderStream("");
-    }).toThrow(TypeError);
+    }).toThrow(RangeError);
   });
 
   test("constructing with a non-stringifiable encoding should throw", () => {

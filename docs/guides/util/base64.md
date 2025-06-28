@@ -12,4 +12,4 @@ const decoded = atob(encoded); // => "hello world"
 
 ---
 
-See [Docs > Web APIs](/docs/runtime/web-apis) for a complete breakdown of the Web APIs implemented in Bun.
+See [Docs > Web APIs](https://bun.sh/docs/runtime/web-apis) for a complete breakdown of the Web APIs implemented in Bun.

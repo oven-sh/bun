@@ -2,7 +2,7 @@
 name: Stream a file as an HTTP Response
 ---
 
-This snippet reads a file from disk using [`Bun.file()`](/docs/api/file-io#reading-files-bun-file). This returns a `BunFile` instance, which can be passed directly into the `new Response` constructor.
+This snippet reads a file from disk using [`Bun.file()`](https://bun.sh/docs/api/file-io#reading-files-bun-file). This returns a `BunFile` instance, which can be passed directly into the `new Response` constructor.
 
 ```ts
 const path = "/path/to/file.txt";
@@ -30,7 +30,7 @@ new Response(Bun.file("./img.png")).headers.get("Content-Type");
 
 ---
 
-Putting it all together with [`Bun.serve()`](/docs/api/http#bun-serve).
+Putting it all together with [`Bun.serve()`](https://bun.sh/docs/api/http#bun-serve).
 
 ```ts
 // static file server
@@ -45,4 +45,4 @@ Bun.serve({
 
 ---
 
-See [Docs > API > File I/O](/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.
+See [Docs > API > File I/O](https://bun.sh/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.

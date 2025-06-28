@@ -1,17 +1,16 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
 const Api = @import("./api/schema.zig").Api;
 const Logger = bun.logger;
-const global = @import("root").bun;
+const global = @import("bun");
 const default_allocator = global.default_allocator;
 const std = @import("std");
 const Define = @import("./defines.zig");
 const Options = @import("./options.zig");
 const ApiWriter = @import("./api/schema.zig").Writer;
 const ApiReader = @import("./api/schema.zig").Reader;
-const ImportKind = @import("./import_record.zig").ImportKind;
 const Output = global.Output;
 
 export var code_buffer_ptr: ?[*]const u8 = null;
@@ -195,7 +194,7 @@ export fn init(heapsize: u32) void {
 
         JSAst.Stmt.Data.Store.create(default_allocator);
         JSAst.Expr.Data.Store.create(default_allocator);
-        buffer_writer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
+        buffer_writer = JSPrinter.BufferWriter.init(default_allocator);
         buffer_writer.buffer.growBy(1024) catch unreachable;
         writer = JSPrinter.BufferPrinter.init(buffer_writer);
         define = Define.Define.init(default_allocator, null, null) catch unreachable;
@@ -205,7 +204,7 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 
@@ -483,7 +482,7 @@ export fn getTests(opts_array: u64) u64 {
 
         Output.print("Error: {s}\n", .{@errorName(err)});
 
-        log_.printForLogLevel(Output.writer()) catch unreachable;
+        log_.print(Output.writer()) catch unreachable;
         return 0;
     };
 

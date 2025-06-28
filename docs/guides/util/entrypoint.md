@@ -2,7 +2,7 @@
 name: Check if the current file is the entrypoint
 ---
 
-Bun provides a handful of module-specific utilities on the [`import.meta`](/docs/api/import-meta) object. Use `import.meta.main` to check if the current file is the entrypoint of the current process.
+Bun provides a handful of module-specific utilities on the [`import.meta`](https://bun.sh/docs/api/import-meta) object. Use `import.meta.main` to check if the current file is the entrypoint of the current process.
 
 ```ts#index.ts
 if (import.meta.main) {
@@ -14,4 +14,4 @@ if (import.meta.main) {
 
 ---
 
-See [Docs > API > import.meta](/docs/api/import-meta) for complete documentation.
+See [Docs > API > import.meta](https://bun.sh/docs/api/import-meta) for complete documentation.

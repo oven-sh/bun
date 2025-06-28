@@ -1,6 +1,6 @@
 name: 🇹 TypeScript Type Bug Report
 description: Report an issue with TypeScript types
-labels: [bug, typescript]
+labels: [bug, types]
 body:
 - type: markdown
   attributes:

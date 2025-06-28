@@ -19,111 +19,189 @@ Click the link in the right column to jump to the associated documentation.
 
 ---
 
-- HTTP server
-- [`Bun.serve`](/docs/api/http#bun-serve)
+- HTTP Server
+- [`Bun.serve`](https://bun.sh/docs/api/http#bun-serve)
+
+---
+
+- Shell
+- [`$`](https://bun.sh/docs/runtime/shell)
 
 ---
 
 - Bundler
-- [`Bun.build`](/docs/bundler)
+- [`Bun.build`](https://bun.sh/docs/bundler)
 
 ---
 
 - File I/O
-- [`Bun.file`](/docs/api/file-io#reading-files-bun-file)
-  [`Bun.write`](/docs/api/file-io#writing-files-bun-write)
+- [`Bun.file`](https://bun.sh/docs/api/file-io#reading-files-bun-file), [`Bun.write`](https://bun.sh/docs/api/file-io#writing-files-bun-write), `Bun.stdin`, `Bun.stdout`, `Bun.stderr`
 
 ---
 
-- Child processes
-- [`Bun.spawn`](/docs/api/spawn#spawn-a-process-bun-spawn)
-  [`Bun.spawnSync`](/docs/api/spawn#blocking-api-bun-spawnsync)
+- Child Processes
+- [`Bun.spawn`](https://bun.sh/docs/api/spawn#spawn-a-process-bun-spawn), [`Bun.spawnSync`](https://bun.sh/docs/api/spawn#blocking-api-bun-spawnsync)
 
 ---
 
-- TCP
-- [`Bun.listen`](/docs/api/tcp#start-a-server-bun-listen)
-  [`Bun.connect`](/docs/api/tcp#start-a-server-bun-listen)
+- TCP Sockets
+- [`Bun.listen`](https://bun.sh/docs/api/tcp#start-a-server-bun-listen), [`Bun.connect`](https://bun.sh/docs/api/tcp#start-a-server-bun-listen)
+
+---
+
+- UDP Sockets
+- [`Bun.udpSocket`](https://bun.sh/docs/api/udp)
+
+---
+
+- WebSockets
+- `new WebSocket()` (client), [`Bun.serve`](https://bun.sh/docs/api/websockets) (server)
 
 ---
 
 - Transpiler
-- [`Bun.Transpiler`](/docs/api/transpiler)
+- [`Bun.Transpiler`](https://bun.sh/docs/api/transpiler)
 
 ---
 
 - Routing
-- [`Bun.FileSystemRouter`](/docs/api/file-system-router)
+- [`Bun.FileSystemRouter`](https://bun.sh/docs/api/file-system-router)
 
 ---
 
-- Streaming HTML Transformations
-- [`HTMLRewriter`](/docs/api/html-rewriter)
+- Streaming HTML
+- [`HTMLRewriter`](https://bun.sh/docs/api/html-rewriter)
 
 ---
 
 - Hashing
-- [`Bun.hash`](/docs/api/hashing#bun-hash)
-  [`Bun.CryptoHasher`](/docs/api/hashing#bun-cryptohasher)
+- [`Bun.password`](https://bun.sh/docs/api/hashing#bun-password), [`Bun.hash`](https://bun.sh/docs/api/hashing#bun-hash), [`Bun.CryptoHasher`](https://bun.sh/docs/api/hashing#bun-cryptohasher), `Bun.sha`
 
 ---
-
-- import.meta
-- [`import.meta`](/docs/api/import-meta)
-
----
-
-<!-- - [DNS](/docs/api/dns)
-- `Bun.dns`
-
---- -->
 
 - SQLite
-- [`bun:sqlite`](/docs/api/sqlite)
+- [`bun:sqlite`](https://bun.sh/docs/api/sqlite)
 
 ---
 
-- FFI
-- [`bun:ffi`](/docs/api/ffi)
+- PostgreSQL Client
+- [`Bun.SQL`](https://bun.sh/docs/api/sql), `Bun.sql`
+
+---
+
+- Redis (Valkey) Client
+- [`Bun.RedisClient`](https://bun.sh/docs/api/redis), `Bun.redis`
+
+---
+
+- FFI (Foreign Function Interface)
+- [`bun:ffi`](https://bun.sh/docs/api/ffi)
+
+---
+
+- DNS
+- [`Bun.dns.lookup`](https://bun.sh/docs/api/dns), `Bun.dns.prefetch`, `Bun.dns.getCacheStats`
 
 ---
 
 - Testing
-- [`bun:test`](/docs/cli/test)
+- [`bun:test`](https://bun.sh/docs/cli/test)
 
 ---
 
-- Node-API
-- [`Node-API`](/docs/api/node-api)
+- Workers
+- [`new Worker()`](https://bun.sh/docs/api/workers)
+
+---
+
+- Module Loaders
+- [`Bun.plugin`](https://bun.sh/docs/bundler/plugins)
 
 ---
 
 - Glob
-- [`Bun.Glob`](/docs/api/glob)
+- [`Bun.Glob`](https://bun.sh/docs/api/glob)
+
+---
+
+- Cookies
+- [`Bun.Cookie`](https://bun.sh/docs/api/cookie), [`Bun.CookieMap`](https://bun.sh/docs/api/cookie)
+
+---
+
+- Node-API
+- [`Node-API`](https://bun.sh/docs/api/node-api)
+
+---
+
+- `import.meta`
+- [`import.meta`](https://bun.sh/docs/api/import-meta)
 
 ---
 
 - Utilities
-- [`Bun.version`](/docs/api/utils#bun-version)
-  [`Bun.revision`](/docs/api/utils#bun-revision)
-  [`Bun.env`](/docs/api/utils#bun-env)
-  [`Bun.main`](/docs/api/utils#bun-main)
-  [`Bun.sleep()`](/docs/api/utils#bun-sleep)
-  [`Bun.sleepSync()`](/docs/api/utils#bun-sleepsync)
-  [`Bun.which()`](/docs/api/utils#bun-which)
-  [`Bun.peek()`](/docs/api/utils#bun-peek)
-  [`Bun.openInEditor()`](/docs/api/utils#bun-openineditor)
-  [`Bun.deepEquals()`](/docs/api/utils#bun-deepequals)
-  [`Bun.escapeHTML()`](/docs/api/utils#bun-escapehtml)
-  [`Bun.fileURLToPath()`](/docs/api/utils#bun-fileurltopath)
-  [`Bun.pathToFileURL()`](/docs/api/utils#bun-pathtofileurl)
-  [`Bun.gzipSync()`](/docs/api/utils#bun-gzipsync)
-  [`Bun.gunzipSync()`](/docs/api/utils#bun-gunzipsync)
-  [`Bun.deflateSync()`](/docs/api/utils#bun-deflatesync)
-  [`Bun.inflateSync()`](/docs/api/utils#bun-inflatesync)
-  [`Bun.inspect()`](/docs/api/utils#bun-inspect)
-  [`Bun.nanoseconds()`](/docs/api/utils#bun-nanoseconds)
-  [`Bun.readableStreamTo*()`](/docs/api/utils#bun-readablestreamto)
-  [`Bun.resolveSync()`](/docs/api/utils#bun-resolvesync)
+- [`Bun.version`](https://bun.sh/docs/api/utils#bun-version), [`Bun.revision`](https://bun.sh/docs/api/utils#bun-revision), [`Bun.env`](https://bun.sh/docs/api/utils#bun-env), [`Bun.main`](https://bun.sh/docs/api/utils#bun-main)
+
+---
+
+- Sleep & Timing
+- [`Bun.sleep()`](https://bun.sh/docs/api/utils#bun-sleep), [`Bun.sleepSync()`](https://bun.sh/docs/api/utils#bun-sleepsync), [`Bun.nanoseconds()`](https://bun.sh/docs/api/utils#bun-nanoseconds)
+
+---
+
+- Random & UUID
+- [`Bun.randomUUIDv7()`](https://bun.sh/docs/api/utils#bun-randomuuidv7)
+
+---
+
+- System & Environment
+- [`Bun.which()`](https://bun.sh/docs/api/utils#bun-which)
+
+---
+
+- Comparison & Inspection
+- [`Bun.peek()`](https://bun.sh/docs/api/utils#bun-peek), [`Bun.deepEquals()`](https://bun.sh/docs/api/utils#bun-deepequals), `Bun.deepMatch`, [`Bun.inspect()`](https://bun.sh/docs/api/utils#bun-inspect)
+
+---
+
+- String & Text Processing
+- [`Bun.escapeHTML()`](https://bun.sh/docs/api/utils#bun-escapehtml), [`Bun.stringWidth()`](https://bun.sh/docs/api/utils#bun-stringwidth), `Bun.indexOfLine`
+
+---
+
+- URL & Path Utilities
+- [`Bun.fileURLToPath()`](https://bun.sh/docs/api/utils#bun-fileurltopath), [`Bun.pathToFileURL()`](https://bun.sh/docs/api/utils#bun-pathtofileurl)
+
+---
+
+- Compression
+- [`Bun.gzipSync()`](https://bun.sh/docs/api/utils#bun-gzipsync), [`Bun.gunzipSync()`](https://bun.sh/docs/api/utils#bun-gunzipsync), [`Bun.deflateSync()`](https://bun.sh/docs/api/utils#bun-deflatesync), [`Bun.inflateSync()`](https://bun.sh/docs/api/utils#bun-inflatesync), `Bun.zstdCompressSync()`, `Bun.zstdDecompressSync()`, `Bun.zstdCompress()`, `Bun.zstdDecompress()`
+
+---
+
+- Stream Processing
+- [`Bun.readableStreamTo*()`](https://bun.sh/docs/api/utils#bun-readablestreamto), `Bun.readableStreamToBytes()`, `Bun.readableStreamToBlob()`, `Bun.readableStreamToFormData()`, `Bun.readableStreamToJSON()`, `Bun.readableStreamToArray()`
+
+---
+
+- Memory & Buffer Management
+- `Bun.ArrayBufferSink`, `Bun.allocUnsafe`, `Bun.concatArrayBuffers`
+
+---
+
+- Module Resolution
+- [`Bun.resolveSync()`](https://bun.sh/docs/api/utils#bun-resolvesync)
+
+---
+
+- Parsing & Formatting
+- [`Bun.semver`](https://bun.sh/docs/api/semver), `Bun.TOML.parse`, [`Bun.color`](https://bun.sh/docs/api/color)
+
+---
+
+- Low-level / Internals
+- `Bun.mmap`, `Bun.gc`, `Bun.generateHeapSnapshot`, [`bun:jsc`](https://bun.sh/docs/api/bun-jsc)
+
+---
 
 {% /table %}

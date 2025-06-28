@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
-import path from "path";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { readFileSync } from "node:fs";
+import path from "path";
 
 test("coverage crash", () => {
   const dir = tempDirWithFiles("cov", {

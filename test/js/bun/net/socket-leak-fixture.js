@@ -1,5 +1,5 @@
-import { openSync, closeSync } from "node:fs";
 import { expect } from "bun:test";
+import { closeSync, openSync } from "node:fs";
 
 const server = Bun.listen({
   port: 0,

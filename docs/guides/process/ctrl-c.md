@@ -13,4 +13,4 @@ process.on("SIGINT", () => {
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils) for more useful utilities.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils) for more useful utilities.

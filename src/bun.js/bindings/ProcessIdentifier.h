@@ -29,13 +29,12 @@
 
 namespace WebCore {
 
-enum ProcessIdentifierType {};
+enum class ProcessIdentifierType {};
 using ProcessIdentifier = ObjectIdentifier<ProcessIdentifierType>;
 
-namespace ProcessIdent {
+namespace Process {
 
-WEBCORE_EXPORT void setIdentifier(ProcessIdentifier);
 WEBCORE_EXPORT ProcessIdentifier identifier();
 
-} // namespace ProcessIdent
+} // namespace Process
 } // namespace WebCore

@@ -4,11 +4,11 @@
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
 import { file, Server } from "bun";
-
-let expect: (typeof import("bun:test"))["expect"];
 import { tmpdirSync } from "harness";
 
-import { readdir, rm, writeFile } from "fs/promises";
+let expect: (typeof import("bun:test"))["expect"];
+
+import { readdir, writeFile } from "fs/promises";
 import { basename, join } from "path";
 
 type Handler = (req: Request) => Response | Promise<Response>;
@@ -24,6 +24,7 @@ let server: Server;
 export let package_dir: string;
 export let requested: number;
 export let root_url: string;
+export let check_npm_auth_type = { check: true };
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numberOfTimesTo500PerURL = 0) {
   let retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
@@ -50,7 +51,9 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numbe
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
     );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
+    if (check_npm_auth_type.check) {
+      expect(request.headers.get("npm-auth-type")).toBe(null);
+    }
     expect(await request.text()).toBe("");
 
     const name = url.slice(url.indexOf("/", root_url.length) + 1);
@@ -84,12 +87,6 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numbe
   return _handler;
 }
 
-export async function readdirSorted(path: PathLike): Promise<string[]> {
-  const results = await readdir(path);
-  results.sort();
-  return results;
-}
-
 export function setHandler(newHandler: Handler) {
   handler = newHandler;
 }
@@ -113,6 +110,10 @@ export function dummyAfterAll() {
   server.stop();
 }
 
+export function getPort() {
+  return server.port;
+}
+
 let packageDirGetter: () => string = () => {
   return tmpdirSync();
 };
@@ -126,6 +127,7 @@ export async function dummyBeforeEach() {
 [install]
 cache = false
 registry = "http://localhost:${server.port}/"
+saveTextLockfile = false
 `,
   );
 }

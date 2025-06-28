@@ -27,4 +27,4 @@ To configure a private registry scoped to a particular organization:
 
 ### `.npmrc`
 
-Bun does not currently read `.npmrc` files. For private registries, migrate your registry configuration to `bunfig.toml` as documented above.
+Bun also reads `.npmrc` files, [learn more](https://bun.sh/docs/install/npmrc).

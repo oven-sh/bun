@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const JSC = bun.JSC;
 const uws = bun.uws;
@@ -187,10 +187,10 @@ pub const FilePoll = struct {
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
-        // TODO(@paperdave): This cast is extremely suspicious. At best, `fd` is
+        // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
-        uv.uv_unref(@ptrFromInt(@intFromEnum(this.fd)));
+        uv.uv_unref(@ptrFromInt(@as(u64, @bitCast(this.fd))));
         return true;
     }
 
@@ -358,8 +358,10 @@ pub const FilePoll = struct {
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
-            vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
+
+            const callback = JSC.OpaqueWrap(Store, processDeferredFrees);
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, callback));
+            vm.after_event_loop_callback = callback;
             vm.after_event_loop_callback_ctx = this;
         }
     };
@@ -390,24 +392,22 @@ pub const Waker = struct {
 };
 
 pub const Closer = struct {
-    io_request: uv.fs_t = std.mem.zeroes(uv.fs_t),
-    pub usingnamespace bun.New(@This());
+    io_request: uv.fs_t,
 
-    pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
-        var closer = Closer.new(.{});
+    pub fn close(fd: bun.FileDescriptor, loop: *uv.Loop) void {
+        const closer = bun.new(Closer, .{ .io_request = std.mem.zeroes(uv.fs_t) });
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         closer.io_request.data = closer;
-        if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
+        if (uv.uv_fs_close(loop, &closer.io_request, fd.uv(), onClose).errEnum()) |err| {
             Output.debugWarn("libuv close() failed = {}", .{err});
-            closer.destroy();
-            return;
+            bun.destroy(closer);
         }
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
         var closer: *Closer = @fieldParentPtr("io_request", req);
         bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
-        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
+        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.FD.fromUV(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {
             if (closer.io_request.result.errEnum()) |err| {
@@ -416,6 +416,6 @@ pub const Closer = struct {
         }
 
         req.deinit();
-        closer.destroy();
+        bun.destroy(closer);
     }
 };

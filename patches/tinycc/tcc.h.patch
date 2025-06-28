@@ -1,0 +1,12 @@
+--- tcc.h
++++ tcc.h
+@@ -23,7 +23,9 @@
+ 
+ #define _GNU_SOURCE
+ #define _DARWIN_C_SOURCE
++#if __has_include("config.h")
+ #include "config.h"
++#endif
+ 
+ #include <stdarg.h>
+ #include <stdlib.h>

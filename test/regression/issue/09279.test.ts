@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { which } from "bun";
+import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 
 test.if(!!which("sleep"))("child_process.spawn({ timeout }) should not exit instantly", async () => {

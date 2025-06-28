@@ -1,4 +1,4 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../runner.mjs";
 // This is a benchmark of the performance impact of using private properties.
 
 bench("Polyfillprivate", () => {

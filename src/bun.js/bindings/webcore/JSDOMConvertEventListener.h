@@ -38,7 +38,7 @@ template<typename T> struct Converter<IDLEventListener<T>> : DefaultConverter<ID
     {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
 
-        if (UNLIKELY(!value.isObject())) {
+        if (!value.isObject()) [[unlikely]] {
             exceptionThrower(lexicalGlobalObject, scope);
             return nullptr;
         }

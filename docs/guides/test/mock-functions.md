@@ -65,4 +65,4 @@ test("random", async () => {
 
 ---
 
-See [Docs > Test Runner > Mocks](/docs/test/mocks) for complete documentation on mocking with the Bun test runner.
+See [Docs > Test Runner > Mocks](https://bun.sh/docs/test/mocks) for complete documentation on mocking with the Bun test runner.

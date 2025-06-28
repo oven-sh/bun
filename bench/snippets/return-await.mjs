@@ -1,4 +1,4 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("return await Promise.resolve(1)", async function () {
   return await Promise.resolve(1);

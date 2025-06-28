@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createServer } from "http";
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { io as ioc, Socket as ClientSocket } from "socket.io-client";
-import { Adapter, BroadcastOptions } from "socket.io-adapter";
 import type { AddressInfo } from "net";
 import { Server } from "socket.io";
+import { Adapter, BroadcastOptions } from "socket.io-adapter";
+import { Socket as ClientSocket, io as ioc } from "socket.io-client";
 
 import { createPartialDone } from "./support/util.ts";
 

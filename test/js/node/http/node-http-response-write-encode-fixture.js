@@ -1,5 +1,5 @@
-import { createServer } from "node:http";
 import { expect } from "bun:test";
+import { createServer } from "node:http";
 function disableAggressiveGCScope() {
   const gc = Bun.unsafe.gcAggressionLevel(0);
   return {

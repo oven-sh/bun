@@ -4,7 +4,7 @@ name: Write a string to a file
 
 This code snippet writes a string to disk at a particular _absolute path_.
 
-It uses the fast [`Bun.write()`](/docs/api/file-io#writing-files-bun-write) API to efficiently write data to disk. The first argument is a _destination_; the second is the _data_ to write.
+It uses the fast [`Bun.write()`](https://bun.sh/docs/api/file-io#writing-files-bun-write) API to efficiently write data to disk. The first argument is a _destination_; the second is the _data_ to write.
 
 ```ts
 const path = "/path/to/file.txt";
@@ -41,4 +41,4 @@ const bytes = await Bun.write(path, "Lorem ipsum");
 
 ---
 
-See [Docs > API > File I/O](/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.
+See [Docs > API > File I/O](https://bun.sh/docs/api/file-io#writing-files-bun-write) for complete documentation of `Bun.write()`.

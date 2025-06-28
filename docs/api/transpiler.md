@@ -137,7 +137,8 @@ Each import in the `imports` array has a `path` and `kind`. Bun categories impor
 - `import-rule`: `@import 'foo.css'`
 - `url-token`: `url('./foo.png')`
 <!-- - `internal`: `import {foo} from 'bun:internal'`
-- `entry-point`: `import {foo} from 'bun:entry'` -->
+- `entry-point-build`: `import {foo} from 'bun:entry'`
+- `entry-point-run`: `bun ./mymodule` -->
 
 ## `.scanImports()`
 
@@ -267,7 +268,8 @@ type Import = {
   // The import was injected by Bun
   | "internal" 
   // Entry point (not common)
-  | "entry-point"
+  | "entry-point-build"
+  | "entry-point-run"
 }
 
 const transpiler = new Bun.Transpiler({ loader: "jsx" });

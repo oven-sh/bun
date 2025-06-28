@@ -8,7 +8,7 @@
 // first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
-// This means context tracking is *kind-of* manual. If we recieve a callback in native code
+// This means context tracking is *kind-of* manual. If we receive a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
@@ -22,7 +22,9 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
+const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
+const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
+const { validateFunction, validateString, validateObject } = require("internal/validators");
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -89,6 +91,7 @@ class AsyncLocalStorage {
   }
 
   static bind(fn, ...args: any) {
+    validateFunction(fn);
     return this.snapshot().bind(null, fn, ...args);
   }
 
@@ -99,8 +102,6 @@ class AsyncLocalStorage {
       set(context);
       try {
         return fn(...args);
-      } catch (error) {
-        throw error;
       } finally {
         set(prev);
       }
@@ -136,7 +137,7 @@ class AsyncLocalStorage {
     return this.run(undefined, cb, ...args);
   }
 
-  // This function is literred with $asserts to ensure that everything that
+  // This function is litered with $asserts to ensure that everything that
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
@@ -171,8 +172,6 @@ class AsyncLocalStorage {
     $assert(this.getStore() === store_value, "run: store_value was not set");
     try {
       return callback(...args);
-    } catch (e) {
-      throw e;
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
@@ -234,6 +233,14 @@ class AsyncLocalStorage {
       if (context[i] === this) return context[i + 1];
     }
   }
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _enable() {}
+
+  // Node.js internal function. In Bun's implementation, calling this is not
+  // observable from outside the AsyncLocalStorage implementation.
+  _propagate(_resource, _triggerResource, _type) {}
 }
 
 if (IS_BUN_DEVELOPMENT) {
@@ -250,10 +257,22 @@ class AsyncResource {
   type;
   #snapshot;
 
-  constructor(type, options?) {
-    if (typeof type !== "string") {
-      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+  constructor(type, opts?) {
+    validateString(type, "type");
+
+    let triggerAsyncId = opts;
+    if (opts != null) {
+      if (typeof opts !== "number") {
+        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
+      }
+      if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
+        throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
+      }
     }
+    if (hasEnabledCreateHook && type.length === 0) {
+      throw $ERR_ASYNC_TYPE(type);
+    }
+
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
@@ -284,14 +303,13 @@ class AsyncResource {
     set(this.#snapshot);
     try {
       return fn.$apply(thisArg, args);
-    } catch (error) {
-      throw error;
     } finally {
       set(prev);
     }
   }
 
   bind(fn, thisArg) {
+    validateFunction(fn, "fn");
     return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
   }
 
@@ -303,9 +321,9 @@ class AsyncResource {
 
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
 
-function createWarning(message) {
+function createWarning(message, isCreateHook?: boolean) {
   let warned = false;
-  var wrapped = function () {
+  var wrapped = function (arg1?) {
     if (warned) return;
 
     const known_supported_modules = [
@@ -315,6 +333,18 @@ function createWarning(message) {
     ];
     const e = new Error().stack!;
     if (known_supported_modules.some(m => e.includes(m))) return;
+    if (isCreateHook && arg1) {
+      // this block is to specifically filter out react-server, which is often
+      // times bundled into a framework or application. Their use defines three
+      // handlers which are all TODO stubs. for more info see this comment:
+      // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
+      if (typeof arg1 === "object") {
+        const { init, promiseResolve, destroy } = arg1;
+        if (init && promiseResolve && destroy) {
+          if (isEmptyFunction(init) && isEmptyFunction(destroy)) return;
+        }
+      }
+    }
 
     warned = true;
     console.warn("[bun] Warning:", message);
@@ -322,14 +352,39 @@ function createWarning(message) {
   return wrapped;
 }
 
+function isEmptyFunction(f: Function) {
+  let str = f.toString();
+  if (!str.startsWith("function()")) return false;
+  str = str.slice("function()".length).trim();
+  return /^{\s*}$/.test(str);
+}
+
 const createHookNotImpl = createWarning(
   "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+  true,
 );
 
-function createHook(callbacks) {
+let hasEnabledCreateHook = false;
+function createHook(hook) {
+  validateObject(hook, "hook");
+  const { init, before, after, destroy, promiseResolve } = hook;
+  if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
+  if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before");
+  if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after");
+  if (destroy !== undefined && typeof destroy !== "function") throw $ERR_ASYNC_CALLBACK("hook.destroy");
+  if (promiseResolve !== undefined && typeof promiseResolve !== "function")
+    throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
+
   return {
-    enable: createHookNotImpl,
-    disable: createHookNotImpl,
+    enable() {
+      createHookNotImpl(hook);
+      hasEnabledCreateHook = true;
+      return this;
+    },
+    disable() {
+      createHookNotImpl();
+      return this;
+    },
   };
 }
 

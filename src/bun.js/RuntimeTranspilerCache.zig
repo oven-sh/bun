@@ -2,12 +2,20 @@
 /// Version 3: "Infinity" becomes "1/0".
 /// Version 4: TypeScript enums are properly handled + more constant folding
 /// Version 5: `require.main === module` no longer marks a module as CJS
-const expected_version = 5;
+/// Version 6: `use strict` is preserved in CommonJS modules when at the top of the file
+/// Version 7: Several bundler changes that are likely to impact the runtime as well.
+/// Version 8: Fix for generated symbols
+/// Version 9: String printing changes
+/// Version 10: Constant folding for ''.charCodeAt(n)
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+/// Version 13: Hoist `import.meta.require` definition, see #15738
+/// Version 14: Updated global defines table list.
+const expected_version = 14;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Output = bun.Output;
-const JSC = bun.JSC;
 
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -152,7 +160,7 @@ pub const RuntimeTranspilerCache = struct {
             output_code: OutputCode,
             exports_kind: bun.JSAst.ExportsKind,
         ) !void {
-            var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.save");
+            var tracer = bun.perf.trace("RuntimeTranspilerCache.save");
             defer tracer.end();
 
             // atomically write to a tmpfile and then move it to the final destination
@@ -164,7 +172,7 @@ pub const RuntimeTranspilerCache = struct {
             // First we open the tmpfile, to avoid any other work in the event of failure.
             var tmpfile = try bun.Tmpfile.create(destination_dir, tmpfilename).unwrap();
             defer {
-                _ = bun.sys.close(tmpfile.fd);
+                tmpfile.fd.close();
             }
             {
                 errdefer {
@@ -237,7 +245,7 @@ pub const RuntimeTranspilerCache = struct {
                 }
                 bun.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
+                bun.sys.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
                     const written = try bun.sys.pwritev(tmpfile.fd, vecs, position).unwrap();
                     if (written <= 0) {
@@ -358,7 +366,7 @@ pub const RuntimeTranspilerCache = struct {
     ) !usize {
         const fmt_name = if (comptime bun.Environment.allow_assert) "{any}.debug.pile" else "{any}.pile";
 
-        const printed = try std.fmt.bufPrint(buf, fmt_name, .{bun.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
+        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
         return printed.len;
     }
 
@@ -449,7 +457,7 @@ pub const RuntimeTranspilerCache = struct {
         sourcemap_allocator: std.mem.Allocator,
         output_code_allocator: std.mem.Allocator,
     ) !Entry {
-        var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.fromFile");
+        var tracer = bun.perf.trace("RuntimeTranspilerCache.fromFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;
@@ -475,13 +483,13 @@ pub const RuntimeTranspilerCache = struct {
     ) !Entry {
         var metadata_bytes_buf: [Metadata.size * 2]u8 = undefined;
         const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), bun.O.RDONLY, 0).unwrap();
-        defer _ = bun.sys.close(cache_fd);
+        defer cache_fd.close();
         errdefer {
             // On any error, we delete the cache file
             _ = bun.sys.unlink(cache_file_path.sliceAssumeZ());
         }
 
-        const file = cache_fd.asFile();
+        const file = cache_fd.stdFile();
         const metadata_bytes = try file.preadAll(&metadata_bytes_buf, 0);
         if (comptime bun.Environment.isWindows) try file.seekTo(0);
         var metadata_stream = std.io.fixedBufferStream(metadata_bytes_buf[0..metadata_bytes]);
@@ -523,7 +531,7 @@ pub const RuntimeTranspilerCache = struct {
         source_code: bun.String,
         exports_kind: bun.JSAst.ExportsKind,
     ) !void {
-        var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.toFile");
+        var tracer = bun.perf.trace("RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;
@@ -543,13 +551,13 @@ pub const RuntimeTranspilerCache = struct {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
                 var dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
                 errdefer dir.close();
-                break :brk try bun.toLibUVOwnedFD(dir.fd);
+                break :brk try bun.FD.fromStdDir(dir).makeLibUVOwned();
             }
 
             break :brk bun.FD.cwd();
         };
         defer {
-            if (cache_dir_fd != bun.FD.cwd()) _ = bun.sys.close(cache_dir_fd);
+            if (cache_dir_fd != bun.FD.cwd()) cache_dir_fd.close();
         }
 
         try Entry.save(

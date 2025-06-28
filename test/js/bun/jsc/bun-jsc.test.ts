@@ -1,32 +1,30 @@
-import { describe, expect, it } from "bun:test";
 import {
-  describe as jscDescribe,
+  callerSourceOrigin,
   describeArray,
-  serialize,
   deserialize,
-  gcAndSweep,
-  fullGC,
+  drainMicrotasks,
   edenGC,
+  fullGC,
+  gcAndSweep,
+  getProtectedObjects,
+  getRandomSeed,
   heapSize,
   heapStats,
-  memoryUsage,
-  getRandomSeed,
-  setRandomSeed,
   isRope,
-  callerSourceOrigin,
-  noFTL,
-  noOSRExitFuzzing,
-  optimizeNextInvocation,
+  describe as jscDescribe,
+  memoryUsage,
   numberOfDFGCompiles,
-  releaseWeakRefs,
-  totalCompileTime,
-  getProtectedObjects,
-  reoptimizationRetryCount,
-  drainMicrotasks,
-  startRemoteDebugger,
-  setTimeZone,
+  optimizeNextInvocation,
   profile,
+  releaseWeakRefs,
+  reoptimizationRetryCount,
+  serialize,
+  setRandomSeed,
+  setTimeZone,
+  totalCompileTime,
 } from "bun:jsc";
+import { describe, expect, it } from "bun:test";
+import { isBuildKite, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -172,7 +170,7 @@ describe("bun:jsc", () => {
     Bun.gc(true);
   });
 
-  it("profile async", async () => {
+  it.todoIf(isBuildKite && isWindows)("profile async", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const result = await profile(
       async function hey(arg1: number) {

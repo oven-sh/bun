@@ -1,4 +1,4 @@
-import { isMainThread, parentPort, workerData } from "worker_threads";
+import { isMainThread, parentPort } from "worker_threads";
 
 if (parentPort === null) throw new Error("worker_threads.parentPort is null");
 

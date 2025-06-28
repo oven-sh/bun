@@ -5,16 +5,7 @@ pub const struct_internal_state = extern struct {
 };
 
 // https://zlib.net/manual.html#Stream
-const Byte = u8;
-const Bytef = Byte;
-const charf = u8;
-const intf = c_int;
-const uIntf = uInt;
-const uLongf = uLong;
-const voidpc = ?*const anyopaque;
 const voidpf = ?*anyopaque;
-const voidp = ?*anyopaque;
-const z_crc_t = c_uint;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
@@ -38,7 +29,7 @@ pub const zStream_struct = extern struct {
     total_out: uLong,
 
     /// last error message, NULL if no error
-    err_msg: [*c]const u8,
+    err_msg: ?[*:0]const u8,
     /// not visible by applications
     internal_state: ?*struct_internal_state,
 

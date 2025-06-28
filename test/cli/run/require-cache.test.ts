@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isBroken, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+test("require.cache is not an empty object literal when inspected", () => {
+  const inspected = Bun.inspect(require.cache);
+  expect(inspected).not.toBe("{}");
+  expect(inspected).toContain("Module {");
+});
 
 // This also tests __dirname and __filename
 test("require.cache", () => {
@@ -26,7 +32,7 @@ test("require.cache does not include unevaluated modules", () => {
   expect(exitCode).toBe(0);
 });
 
-describe("files transpiled and loaded don't leak the output source code", () => {
+describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't leak the output source code", () => {
   test("via require() with a lot of long export names", () => {
     let text = "";
     for (let i = 0; i < 10000; i++) {
@@ -40,11 +46,12 @@ describe("files transpiled and loaded don't leak the output source code", () => 
       "require-cache-bug-leak-fixture.js": `
         const path = require.resolve("./index.js");
         const gc = global.gc || globalThis?.Bun?.gc || (() => {});
+        const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
         function bust() {
           const mod = require.cache[path];
           if (mod) {
             mod.parent = null;
-            mod.children = [];
+            mod.children = noChildren;
             delete require.cache[path];
           }
         }
@@ -66,7 +73,7 @@ describe("files transpiled and loaded don't leak the output source code", () => 
         console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
         console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
         if (diff > 100 * 1024 * 1024) {
-          // Bun v1.1.21 reported 844 MB here on macoS arm64.
+          // Bun v1.1.21 reported 844 MB here on macOS arm64.
           throw new Error("Memory leak detected");
         }
 

@@ -27,10 +27,12 @@
 #pragma once
 
 #include "JSDOMConvert.h"
-#include <JavaScriptCore/IteratorPrototype.h>
+#include <JavaScriptCore/JSIteratorPrototype.h>
 #include <JavaScriptCore/PropertySlot.h>
 #include <type_traits>
-
+#include "ErrorCode.h"
+#include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
 void addValueIterableMethods(JSC::JSGlobalObject&, JSC::JSObject&);
@@ -101,7 +103,9 @@ public:
 
     static Prototype* createPrototype(JSC::VM& vm, JSC::JSGlobalObject& globalObject)
     {
-        return Prototype::create(vm, &globalObject, Prototype::createStructure(vm, &globalObject, globalObject.iteratorPrototype()));
+        auto* structure = Prototype::createStructure(vm, &globalObject, globalObject.iteratorPrototype());
+        structure->setMayBePrototype(true);
+        return Prototype::create(vm, &globalObject, structure);
     }
 
     JSC::JSValue next(JSC::JSGlobalObject&);
@@ -111,7 +115,7 @@ public:
 protected:
     JSDOMIteratorBase(JSC::Structure* structure, JSWrapper& iteratedObject, IterationKind kind)
         : Base(structure, *iteratedObject.globalObject())
-        , m_iterator(iteratedObject.wrapped().createIterator())
+        , m_iterator(iteratedObject.wrapped().createIterator(iteratedObject.globalObject()->scriptExecutionContext()))
         , m_kind(kind)
     {
     }
@@ -211,20 +215,22 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
     JSC::JSValue thisValue = callFrame.argument(1);
 
     auto callData = JSC::getCallData(callback);
-    if (callData.type == JSC::CallData::Type::None)
-        return throwTypeError(&lexicalGlobalObject, scope, "Cannot call callback"_s);
+    if (callData.type == JSC::CallData::Type::None) {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Cannot call callback on a non-function"_s);
+        return {};
+    }
 
-    auto iterator = thisObject.wrapped().createIterator();
+    auto iterator = thisObject.wrapped().createIterator(JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)->scriptExecutionContext());
     while (auto value = iterator.next()) {
         JSC::MarkedArgumentBuffer arguments;
         appendForEachArguments<JSIterator>(lexicalGlobalObject, *thisObject.globalObject(), arguments, value);
         arguments.append(&thisObject);
-        if (UNLIKELY(arguments.hasOverflowed())) {
+        if (arguments.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        JSC::call(&lexicalGlobalObject, callback, callData, thisValue, arguments);
-        if (UNLIKELY(scope.exception()))
+        JSC::profiledCall(&lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
+        if (scope.exception()) [[unlikely]]
             break;
     }
     return JSC::jsUndefined();
@@ -252,12 +258,13 @@ JSC::JSValue JSDOMIteratorBase<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObj
 template<typename JSWrapper, typename IteratorTraits>
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto iterator = JSC::jsDynamicCast<JSDOMIteratorBase<JSWrapper, IteratorTraits>*>(callFrame->thisValue());
-    if (!iterator)
-        return JSC::JSValue::encode(throwTypeError(globalObject, scope, "Cannot call next() on a non-Iterator object"_s));
+    if (!iterator) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Cannot call next() on a non-Iterator object"_s);
+    }
 
     return JSC::JSValue::encode(iterator->next(*globalObject));
 }
@@ -268,7 +275,7 @@ void JSDOMIteratorPrototype<JSWrapper, IteratorTraits>::finishCreation(JSC::VM& 
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->next, next, 0, 0, ImplementationVisibility::Public, JSC::NoIntrinsic);
+    JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->next, next, 0, 0, JSC::ImplementationVisibility::Public);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

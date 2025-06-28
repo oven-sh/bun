@@ -21,10 +21,10 @@
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
-import { expect, describe, it } from "bun:test";
-import util from "util";
 import assert from "assert";
+import { describe, expect, it } from "bun:test";
 import "harness";
+import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
@@ -53,6 +53,19 @@ describe("util", () => {
     for (let i = 0; i < strings.length; i++) {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
+  });
+  it("inherits", () => {
+    function Bar() {}
+    Bar.prototype.bar = function () {};
+
+    Wat.prototype.func = function () {
+      return 43;
+    };
+
+    function Wat() {}
+
+    expect(util.inherits(Wat, Bar)).toBeUndefined();
+    expect(Wat.prototype.func).toBeDefined();
   });
   describe("isArray", () => {
     it("all cases", () => {
@@ -284,12 +297,13 @@ describe("util", () => {
       strictEqual(util.types.isNativeError({}), false);
       strictEqual(util.types.isNativeError({ name: "Error", message: "" }), false);
       strictEqual(util.types.isNativeError([]), false);
+      strictEqual(
+        // FIXME: failing test
+        util.types.isNativeError(Object.create(Error.prototype)),
+        false,
+      );
       //   strictEqual( // FIXME: failing test
-      //     util.types.isNativeError(Object.create(Error.prototype)),
-      //     false
-      //   );
-      //   strictEqual( // FIXME: failing test
-      //     util.types.isNativeError(new errors.codes.ERR_IPC_CHANNEL_CLOSED()),
+      //     util.types.isNativeError(new errors.codes.ERR(.IPC_CHANNEL_CLOSED, )),
       //     true
       //   );
     });
@@ -327,8 +341,14 @@ describe("util", () => {
     );
   });
 
+  it("multiplecolors", () => {
+    expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+    expect(util.styleText("bold", "test")).toBe("\u001b[1mtest\u001b[22m");
+    expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+  });
+
   it("styleText", () => {
-    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}, []].forEach(invalidOption => {
+    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}].forEach(invalidOption => {
       assert.throws(
         () => {
           util.styleText(invalidOption, "test");

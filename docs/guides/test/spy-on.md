@@ -43,4 +43,4 @@ Once the spy is created, it can be used to write `expect` assertions relating to
 
 ---
 
-See [Docs > Test Runner > Mocks](/docs/test/mocks) for complete documentation on mocking with the Bun test runner.
+See [Docs > Test Runner > Mocks](https://bun.sh/docs/test/mocks) for complete documentation on mocking with the Bun test runner.

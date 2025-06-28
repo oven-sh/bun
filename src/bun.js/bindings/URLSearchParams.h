@@ -34,6 +34,7 @@
 namespace WebCore {
 
 class DOMURL;
+class ScriptExecutionContext;
 
 class URLSearchParams : public RefCounted<URLSearchParams> {
 public:
@@ -46,15 +47,16 @@ public:
     }
 
     void append(const String& name, const String& value);
-    void remove(const String& name, const String& value = {});
-    String get(const String& name) const;
-    Vector<String> getAll(const String& name) const;
-    bool has(const String& name, const String& value = {}) const;
+    void remove(const StringView name, const String& value = {});
+    String get(const StringView name) const;
+    Vector<String> getAll(const StringView name) const;
+    bool has(const StringView name, const String& value = {}) const;
     void set(const String& name, const String& value);
     String toString() const;
     void updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
+    size_t memoryCost() const;
 
     class Iterator {
     public:
@@ -66,6 +68,7 @@ public:
         size_t m_index { 0 };
     };
     Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }

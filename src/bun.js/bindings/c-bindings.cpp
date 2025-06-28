@@ -1,17 +1,18 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <cstdio>
 
 #if !OS(WINDOWS)
 #include <sys/resource.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/signal.h>
+#include <signal.h>
 #include <unistd.h>
 #include <cstring>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-#include <sys/termios.h>
+#include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #else
@@ -36,23 +37,29 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf, str);
     strcpy(buf + len, url);
     strcpy(buf + len + strlen(url), "\n\0");
-    write(STDERR_FILENO, buf, strlen(buf));
+    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
 }
 #endif
 
-extern "C" int32_t get_process_priority(uint32_t pid)
+// Error condition is encoded as max int32_t.
+// The only error in this function is ESRCH (no process found)
+extern "C" int32_t get_process_priority(int32_t pid)
 {
 #if OS(WINDOWS)
     int priority = 0;
     if (uv_os_getpriority(pid, &priority))
-        return 0;
+        return std::numeric_limits<int32_t>::max();
     return priority;
 #else
-    return getpriority(PRIO_PROCESS, pid);
+    errno = 0;
+    int priority = getpriority(PRIO_PROCESS, pid);
+    if (priority == -1 && errno != 0)
+        return std::numeric_limits<int32_t>::max();
+    return priority;
 #endif // OS(WINDOWS)
 }
 
-extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
+extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
 #if OS(WINDOWS)
     return uv_os_setpriority(pid, priority);
@@ -251,6 +258,8 @@ typedef struct {
     size_t name_len;
     const char* value;
     size_t value_len;
+    bool never_index;
+    uint16_t hpack_index;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -309,6 +318,12 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->name_len = hdr.name_len;
     output->value = lsxpack_header_get_value(&hdr);
     output->value_len = hdr.val_len;
+    output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
+    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
+        output->hpack_index = hdr.hpack_index - 1;
+    } else {
+        output->hpack_index = 255;
+    }
     return s - src;
 }
 
@@ -401,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif
@@ -464,7 +480,7 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (UNLIKELY(err != 0)) {
+        if (err != 0) [[unlikely]] {
             abort();
         }
     };
@@ -472,7 +488,7 @@ extern "C" void bun_initialize_process()
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
-            if (UNLIKELY(errno == EBADF)) {
+            if (errno == EBADF) [[unlikely]] {
                 // the fd is invalid, let's make sure it's always valid
                 setDevNullFd(fd);
             }
@@ -484,7 +500,7 @@ extern "C" void bun_initialize_process()
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
 
-            if (LIKELY(err == 0)) {
+            if (err == 0) [[likely]] {
                 anyTTYs = true;
             }
         }
@@ -548,7 +564,7 @@ extern "C" void bun_initialize_process()
 
 #if OS(DARWIN)
     atexit(Bun__onExit);
-#else
+#elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
 #endif
 }
@@ -623,4 +639,286 @@ extern "C" void Bun__disableSOLinger(SOCKET fd)
     setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
 }
 
+#endif
+
+extern "C" int ffi_vprintf(const char* fmt, va_list ap)
+{
+    int ret = vfprintf(stderr, fmt, ap);
+    fflush(stderr);
+    return ret;
+}
+
+extern "C" int ffi_vfprintf(FILE* stream, const char* fmt, va_list ap)
+{
+    int ret = vfprintf(stream, fmt, ap);
+    fflush(stream);
+    return ret;
+}
+
+extern "C" int ffi_printf(const char* __restrict fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vprintf(fmt, ap);
+    va_end(ap);
+    fflush(stdout);
+    return r;
+}
+
+extern "C" int ffi_fprintf(FILE* stream, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfprintf(stream, fmt, ap);
+    va_end(ap);
+    fflush(stream);
+    return r;
+}
+
+extern "C" int ffi_scanf(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vscanf(fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+extern "C" int ffi_fscanf(FILE* stream, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfscanf(stream, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+extern "C" int ffi_vsscanf(const char* str, const char* fmt, va_list ap)
+{
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    int result = vsscanf(str, fmt, ap_copy);
+    va_end(ap_copy);
+    return result;
+}
+
+extern "C" int ffi_sscanf(const char* str, const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf(str, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+extern "C" FILE* ffi_fopen(const char* path, const char* mode)
+{
+    return fopen(path, mode);
+}
+
+extern "C" int ffi_fclose(FILE* file)
+{
+    return fclose(file);
+}
+
+extern "C" int ffi_fgetc(FILE* file)
+{
+    return fgetc(file);
+}
+
+extern "C" int ffi_fputc(int c, FILE* file)
+{
+    return fputc(c, file);
+}
+
+extern "C" int ffi_ungetc(int c, FILE* file)
+{
+    return ungetc(c, file);
+}
+
+extern "C" int ffi_feof(FILE* file)
+{
+    return feof(file);
+}
+
+extern "C" int ffi_fseek(FILE* file, long offset, int whence)
+{
+    return fseek(file, offset, whence);
+}
+
+extern "C" long ffi_ftell(FILE* file)
+{
+    return ftell(file);
+}
+
+extern "C" int ffi_fflush(FILE* file)
+{
+    return fflush(file);
+}
+
+extern "C" int ffi_fileno(FILE* file)
+{
+    return fileno(file);
+}
+
+// Handle signals in bun.spawnSync.
+// If we receive a signal, we want to forward the signal to the child process.
+#if OS(LINUX) || OS(DARWIN)
+#include <signal.h>
+#include <pthread.h>
+
+// Note: We only ever use bun.spawnSync on the main thread.
+extern "C" int64_t Bun__currentSyncPID = 0;
+static int Bun__pendingSignalToSend = 0;
+static struct sigaction previous_actions[NSIG];
+
+// This list of signals is copied from npm.
+// https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
+#define FOR_EACH_POSIX_SIGNAL(M) \
+    M(SIGABRT);                  \
+    M(SIGALRM);                  \
+    M(SIGHUP);                   \
+    M(SIGINT);                   \
+    M(SIGTERM);                  \
+    M(SIGVTALRM);                \
+    M(SIGXCPU);                  \
+    M(SIGXFSZ);                  \
+    M(SIGUSR2);                  \
+    M(SIGTRAP);                  \
+    M(SIGSYS);                   \
+    M(SIGQUIT);                  \
+    M(SIGIOT);                   \
+    M(SIGIO);
+
+#if OS(LINUX)
+#define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
+    M(SIGPOLL);                       \
+    M(SIGPWR);                        \
+    M(SIGSTKFLT);
+
+#endif
+
+#if OS(DARWIN)
+#define FOR_EACH_SIGNAL(M) FOR_EACH_POSIX_SIGNAL(M)
+#endif
+
+#if OS(LINUX)
+#define FOR_EACH_SIGNAL(M)   \
+    FOR_EACH_POSIX_SIGNAL(M) \
+    FOR_EACH_LINUX_ONLY_SIGNAL(M)
+#endif
+
+static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
+{
+    sigset_t restore_mask;
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, sig);
+    sigemptyset(&restore_mask);
+    sigaddset(&restore_mask, sig);
+    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
+    kill(pid, sig);
+    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
+}
+
+extern "C" void Bun__sendPendingSignalIfNecessary()
+{
+    int sig = Bun__pendingSignalToSend;
+    Bun__pendingSignalToSend = 0;
+    int pid = Bun__currentSyncPID;
+    if (sig == 0 || pid == 0)
+        return;
+
+    Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+}
+
+extern "C" void Bun__registerSignalsForForwarding()
+{
+    Bun__pendingSignalToSend = 0;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = [](int sig) {
+        if (Bun__currentSyncPID == 0) {
+            Bun__pendingSignalToSend = sig;
+            return;
+        }
+
+        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+    };
+
+#define REGISTER_SIGNAL(SIG)                                 \
+    if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \
+    }
+
+    FOR_EACH_SIGNAL(REGISTER_SIGNAL)
+
+#undef REGISTER_SIGNAL
+}
+
+extern "C" void Bun__unregisterSignalsForForwarding()
+{
+    Bun__currentSyncPID = 0;
+
+#define UNREGISTER_SIGNAL(SIG)                                \
+    if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
+    }
+
+    FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
+    memset(previous_actions, 0, sizeof(previous_actions));
+#undef UNREGISTER_SIGNAL
+}
+
+#endif
+
+#if OS(LINUX) || OS(DARWIN)
+#include <paths.h>
+
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#elif OS(WINDOWS)
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
+#else
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif
+
+#if OS(DARWIN)
+#include <os/signpost.h>
+#include "generated_perf_trace_events.h"
+
+// The event names have to be compile-time constants.
+// So we trick the compiler into thinking they are by using a macro.
+extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_signpost_id_t spid, int trace_event_id)
+{
+#define EMIT_SIGNPOST(name, id)                                 \
+    case id:                                                    \
+        os_signpost_emit_with_type(log, type, spid, #name, ""); \
+        break;
+
+    switch (trace_event_id) {
+        FOR_EACH_TRACE_EVENT(EMIT_SIGNPOST)
+    default: {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid trace event id. Please run scripts/generate-perf-trace-events.sh to update the list of trace events.");
+    }
+    }
+}
+
+#undef EMIT_SIGNPOST
+#undef FOR_EACH_TRACE_EVENT
+
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
 #endif

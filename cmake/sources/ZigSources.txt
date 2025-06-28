@@ -607,6 +607,7 @@ src/install/resolvers/folder_resolver.zig
 src/install/versioned_url.zig
 src/install/windows-shim/BinLinkingShim.zig
 src/install/windows-shim/bun_shim_impl.zig
+src/install/workspaces.zig
 src/io/heap.zig
 src/io/io.zig
 src/io/MaxBuf.zig
@@ -643,6 +644,7 @@ src/options.zig
 src/output.zig
 src/OutputFile.zig
 src/patch.zig
+src/paths.zig
 src/perf.zig
 src/pool.zig
 src/Progress.zig

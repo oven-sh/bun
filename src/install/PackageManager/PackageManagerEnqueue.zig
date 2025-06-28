@@ -209,7 +209,7 @@ pub fn enqueueGitForCheckout(
 
 pub fn enqueueParseNPMPackage(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     name: strings.StringOrTinyString,
     network_task: *NetworkTask,
 ) *ThreadPool.Task {
@@ -652,7 +652,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         const name_str = this.lockfile.str(&name);
                         const task_id = Task.Id.forManifest(name_str);
 
-                        if (comptime Environment.allow_assert) bun.assert(task_id != 0);
+                        if (comptime Environment.allow_assert) bun.assert(task_id.get() != 0);
 
                         if (comptime Environment.allow_assert)
                             debug(
@@ -1132,7 +1132,7 @@ pub fn enqueueExtractNPMPackage(
 
 fn enqueueGitClone(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     name: string,
     repository: *const Repository,
     dep_id: DependencyID,
@@ -1182,7 +1182,7 @@ fn enqueueGitClone(
 
 pub fn enqueueGitCheckout(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     dir: bun.FileDescriptor,
     dependency_id: DependencyID,
     name: string,
@@ -1238,7 +1238,7 @@ pub fn enqueueGitCheckout(
 
 fn enqueueLocalTarball(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     dependency_id: DependencyID,
     name: string,
     path: string,

@@ -43,7 +43,7 @@ pub const PackageInstall = struct {
 
     package_name: String,
     package_version: string,
-    patch: Patch,
+    patch: ?Patch,
 
     // TODO: this is never read
     file_count: u32 = 0,
@@ -53,15 +53,8 @@ pub const PackageInstall = struct {
     const ThisPackageInstall = @This();
 
     pub const Patch = struct {
-        root_project_dir: ?[]const u8 = null,
-        patch_path: string = undefined,
-        patch_contents_hash: u64 = 0,
-
-        pub const NULL = Patch{};
-
-        pub fn isNull(this: Patch) bool {
-            return this.root_project_dir == null;
-        }
+        path: string,
+        contents_hash: u64,
     };
 
     const debug = Output.scoped(.install, true);
@@ -140,12 +133,11 @@ pub const PackageInstall = struct {
     ///
     fn verifyPatchHash(
         this: *@This(),
+        patch: *const Patch,
         root_node_modules_dir: std.fs.Dir,
     ) bool {
-        bun.debugAssert(!this.patch.isNull());
-
         // hash from the .patch file, to be checked against bun tag
-        const patchfile_contents_hash = this.patch.patch_contents_hash;
+        const patchfile_contents_hash = patch.contents_hash;
         var buf: BuntagHashBuf = undefined;
         const bunhashtag = buntaghashbuf_make(&buf, patchfile_contents_hash);
 
@@ -211,9 +203,12 @@ pub const PackageInstall = struct {
                     this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
                 else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
             };
-        if (this.patch.isNull()) return verified;
-        if (!verified) return false;
-        return this.verifyPatchHash(root_node_modules_dir);
+
+        if (this.patch) |*patch| {
+            if (!verified) return false;
+            return this.verifyPatchHash(patch, root_node_modules_dir);
+        }
+        return verified;
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because
@@ -917,13 +912,13 @@ pub const PackageInstall = struct {
                                 bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
                             },
                             .file => {
-                                std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                std.posix.linkatZ(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
                                         return err;
                                     }
 
-                                    std.posix.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.posix.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
+                                    std.posix.unlinkatZ(destination_dir.fd, entry.path, 0) catch {};
+                                    try std.posix.linkatZ(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
                                 };
 
                                 real_file_count += 1;
@@ -1181,7 +1176,7 @@ pub const PackageInstall = struct {
                         var unintall_task: *@This() = @fieldParentPtr("task", task);
                         var debug_timer = bun.Output.DebugTimer.start();
                         defer {
-                            _ = PackageManager.get().decrementPendingTasks();
+                            PackageManager.get().decrementPendingTasks();
                             PackageManager.get().wake();
                         }
 
@@ -1334,12 +1329,12 @@ pub const PackageInstall = struct {
 
             // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
             // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+            switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                 .err => |err_| brk: {
                     var err = err_;
                     if (err.getErrno() == .EXIST) {
                         _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
-                        switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
+                        switch (bun.sys.symlinkOrJunction(dest_z, target_z, null)) {
                             .err => |e| err = e,
                             .result => break :brk,
                         }
@@ -1380,7 +1375,7 @@ pub const PackageInstall = struct {
         return switch (state) {
             .done => false,
             else => brk: {
-                if (this.patch.isNull()) {
+                if (this.patch == null) {
                     const exists = switch (resolution_tag) {
                         .npm => package_json_exists: {
                             var buf = &PackageManager.cached_package_folder_name_buf;

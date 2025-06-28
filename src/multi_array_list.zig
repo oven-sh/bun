@@ -184,9 +184,9 @@ pub fn MultiArrayList(comptime T: type) type {
         };
 
         /// Release all allocated memory.
-        pub fn deinit(self: *Self, gpa: Allocator) void {
+        pub fn deinit(self: *const Self, gpa: Allocator) void {
             gpa.free(self.allocatedBytes());
-            self.* = undefined;
+            @constCast(self).* = undefined;
         }
 
         /// The caller owns the returned memory. Empties this MultiArrayList.

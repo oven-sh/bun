@@ -527,6 +527,7 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
+            node_linker_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -543,6 +544,7 @@ pub const Package = extern struct {
 
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
+                    this.node_linker_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -657,6 +659,10 @@ pub const Package = extern struct {
                             break :catalogs;
                         }
                     }
+                }
+
+                if (from_lockfile.node_linker != to_lockfile.node_linker) {
+                    summary.node_linker_changed = true;
                 }
             }
 
@@ -1576,6 +1582,19 @@ pub const Package = extern struct {
 
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
+
+                if (workspaces_expr.get("nodeLinker")) |node_linker_expr| {
+                    if (!node_linker_expr.isString()) {
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        return error.InvalidPackageJSON;
+                    }
+
+                    const node_linker_str = node_linker_expr.data.e_string.slice(allocator);
+                    lockfile.node_linker = Lockfile.NodeLinker.fromStr(node_linker_str) orelse {
+                        try log.addError(source, node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
+                        return error.InvalidPackageJSON;
+                    };
+                }
             }
         }
 

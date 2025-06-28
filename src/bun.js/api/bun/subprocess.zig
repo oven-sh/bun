@@ -629,9 +629,8 @@ const Readable = union(enum) {
                 // For text mode, return a string instead of a buffer
                 if (tag == .text_promise) {
                     const bytes = pipe.toOwnedSlice();
-                    const str = bun.String.createUTF8(bytes);
-                    defer bun.default_allocator.free(bytes);
-                    return str.toJS(globalThis);
+                    // Use createUTF8ForJS which properly handles the memory for JS
+                    return bun.String.createUTF8ForJS(globalThis, bytes);
                 }
                 
                 return pipe.toBuffer(globalThis);

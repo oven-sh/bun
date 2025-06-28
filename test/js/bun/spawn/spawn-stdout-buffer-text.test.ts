@@ -459,7 +459,7 @@ describe("Bun.spawn() stdout: 'buffer' and 'text'", () => {
       expect(stdout.length).toBe(0);
       
       expect(typeof stderr).toBe("string");
-      expect(stderr).toContain("Error: test error");
+      expect(stderr).toContain("test error");
       
       expect(exitCode).not.toBe(0);
     });

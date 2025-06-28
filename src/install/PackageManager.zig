@@ -1115,6 +1115,8 @@ const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, Id
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
 const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 
+// pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
+
 // @sortImports
 
 pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
@@ -1142,7 +1144,6 @@ pub const cachedNPMPackageFolderPrintBasename = directories.cachedNPMPackageFold
 pub const cachedTarballFolderName = directories.cachedTarballFolderName;
 pub const cachedTarballFolderNamePrint = directories.cachedTarballFolderNamePrint;
 pub const computeCacheDirAndSubpath = directories.computeCacheDirAndSubpath;
-// pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 pub const fetchCacheDirectoryPath = directories.fetchCacheDirectoryPath;
 pub const getCacheDirectory = directories.getCacheDirectory;
 pub const getCacheDirectoryAndAbsPath = directories.getCacheDirectoryAndAbsPath;
@@ -1177,6 +1178,7 @@ const lifecycle = @import("PackageManager/PackageManagerLifecycle.zig");
 const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 pub const determinePreinstallState = lifecycle.determinePreinstallState;
 pub const ensurePreinstallStateListCapacity = lifecycle.ensurePreinstallStateListCapacity;
+pub const findTrustedDependenciesFromUpdateRequests = lifecycle.findTrustedDependenciesFromUpdateRequests;
 pub const getPreinstallState = lifecycle.getPreinstallState;
 pub const hasNoMorePendingLifecycleScripts = lifecycle.hasNoMorePendingLifecycleScripts;
 pub const loadRootLifecycleScripts = lifecycle.loadRootLifecycleScripts;
@@ -1185,7 +1187,6 @@ pub const setPreinstallState = lifecycle.setPreinstallState;
 pub const sleep = lifecycle.sleep;
 pub const spawnPackageLifecycleScripts = lifecycle.spawnPackageLifecycleScripts;
 pub const tickLifecycleScripts = lifecycle.tickLifecycleScripts;
-pub const findTrustedDependenciesFromUpdateRequests = lifecycle.findTrustedDependenciesFromUpdateRequests;
 
 const resolution = @import("PackageManager/PackageManagerResolution.zig");
 pub const assignResolution = resolution.assignResolution;

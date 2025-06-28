@@ -747,7 +747,6 @@ const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
 const stringZ = bun.stringZ;
-const strings = bun.strings;
 const Command = bun.CLI.Command;
 const File = bun.sys.File;
 

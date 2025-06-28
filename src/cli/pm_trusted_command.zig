@@ -11,7 +11,6 @@ const String = bun.Semver.String;
 const PackageManager = Install.PackageManager;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 const Lockfile = Install.Lockfile;
-const Fs = @import("../fs.zig");
 const Global = bun.Global;
 const DependencyID = Install.DependencyID;
 const ArrayIdentityContext = bun.ArrayIdentityContext;

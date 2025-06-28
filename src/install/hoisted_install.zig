@@ -16,9 +16,7 @@ const ProgressStrings = PackageManager.ProgressStrings;
 const Bin = install.Bin;
 const PackageInstaller = PackageManager.PackageInstaller;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
 const PackageID = install.PackageID;
-const invalid_package_id = install.invalid_package_id;
 const TreeContext = PackageInstaller.TreeContext;
 
 pub fn installHoistedPackages(

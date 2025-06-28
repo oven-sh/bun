@@ -392,8 +392,8 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const PreinstallState = bun.install.PreinstallState;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const invalid_package_id = bun.install.invalid_package_id;

@@ -546,7 +546,7 @@ pub fn toBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
             return err;

@@ -392,11 +392,11 @@ public:
         case WeakTypeTag::Primitive:
             return m_value.primitive;
         case WeakTypeTag::Cell:
-            return JSC::JSValue(m_value.cell.get());
+            return m_value.cell.get();
         case WeakTypeTag::String:
-            return JSC::JSValue(m_value.string.get());
+            return m_value.string.get();
         default:
-            return JSC::JSValue();
+            return {};
         }
     }
 

@@ -27,6 +27,7 @@
 #include <wtf/text/StringView.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
+#include <span>
 #include "BufferEncodingType.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
@@ -1247,7 +1248,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 
     auto globalObject = toJS(env);
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -1892,6 +1893,31 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
+    void** data,
+    napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    // In Node.js, napi_create_buffer is uninitialized memory.
+    auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    if (data != nullptr) {
+        // Node.js' code looks like this:
+        //    *data = node::Buffer::Data(buffer);
+        // That means they unconditionally update the data pointer.
+        *data = length > 0 ? uint8Array->typedVector() : nullptr;
+    }
+
+    *result = toNapi(uint8Array, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,
@@ -2033,23 +2059,26 @@ struct BufferElement<NapiStringEncoding::utf16le> {
 template<NapiStringEncoding EncodeTo>
 napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, typename BufferElement<EncodeTo>::Type* buf, size_t bufsize, size_t* writtenPtr)
 {
+    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isString(), napi_string_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    String view = jsValue.asCell()->getString(globalObject);
-    size_t length = view.length();
+    JSString* jsString = jsValue.toString(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    const auto view = jsString->view(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     if (buf == nullptr) {
         // they just want to know the length
         NAPI_CHECK_ARG(env, writtenPtr);
         switch (EncodeTo) {
         case NapiStringEncoding::utf8:
-            if (view.is8Bit()) {
-                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view.span8().data(), length);
+            if (view->is8Bit()) {
+                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view->span8().data(), view->length());
             } else {
-                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view.span16().data(), length);
+                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view->span16().data(), view->length());
             }
             break;
         case NapiStringEncoding::utf16le:
@@ -2058,7 +2087,7 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
             // if the string's encoding is the same as the destination encoding, this is trivially correct
             // if we are converting UTF-16 to Latin-1, then we do so by truncating each code unit, so the length is the same
             // if we are converting Latin-1 to UTF-16, then we do so by extending each code unit, so the length is also the same
-            *writtenPtr = length;
+            *writtenPtr = view->length();
             break;
         }
         return napi_set_last_error(env, napi_ok);
@@ -2082,19 +2111,22 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
             // since we need to put a null terminator there
             ? 2 * (bufsize - 1)
             : bufsize - 1);
-    if (view.is8Bit()) {
+    if (view->is8Bit()) {
+        const auto span = view->span8();
         if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+
             // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
-            written = Bun__encoding__writeLatin1(view.span8().data(),
-                std::min(static_cast<size_t>(view.span8().size()), bufsize),
+            written = Bun__encoding__writeLatin1(span.data(),
+                std::min(static_cast<size_t>(span.size()), bufsize),
                 writable_byte_slice.data(),
                 writable_byte_slice.size(),
                 static_cast<uint8_t>(EncodeTo));
         } else {
-            written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
         }
     } else {
-        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+        const auto span = view->span16();
+        written = Bun__encoding__writeUTF16(span.data(), span.size(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
     }
 
     // convert bytes to code units
@@ -2331,9 +2363,10 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     *result = jsValue.toBigInt64(toJS(env));
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
-    uint64_t digit = bigint->length() > 0 ? bigint->digit(0) : 0;
+    auto length = bigint->length();
+    uint64_t digit = length > 0 ? bigint->digit(0) : 0;
 
-    if (bigint->length() > 1) {
+    if (length > 1) {
         *lossless = false;
     } else if (bigint->sign()) {
         // negative
@@ -2362,6 +2395,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive
@@ -2389,21 +2423,16 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
 
-    size_t available_words = *word_count;
-    *word_count = bigInt->length();
-
     // Return ok in this case
     if (sign_bit == nullptr && words == nullptr) {
+        *word_count = bigInt->length();
         NAPI_RETURN_SUCCESS(env);
     }
 
-    *sign_bit = (int)bigInt->sign();
-
-    size_t len = *word_count;
-    for (size_t i = 0; i < available_words && i < len; i++) {
-        words[i] = bigInt->digit(i);
-    }
-
+    std::span<uint64_t> writable_words(words, *word_count);
+    *sign_bit = static_cast<int>(bigInt->sign());
+    *word_count = bigInt->toWordsArray(writable_words);
+    ensureStillAliveHere(bigInt);
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2478,6 +2507,30 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+extern "C" napi_status napi_create_bigint_uint64(napi_env env, uint64_t value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    auto* globalObject = toJS(env);
+    auto* bigint = JSBigInt::createFrom(globalObject, value);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = toNapi(bigint, globalObject);
+    ensureStillAliveHere(bigint);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_create_bigint_int64(napi_env env, int64_t value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, result);
+    auto* globalObject = toJS(env);
+    auto* bigint = JSBigInt::createFrom(globalObject, value);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = toNapi(bigint, globalObject);
+    ensureStillAliveHere(bigint);
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" napi_status napi_create_bigint_words(napi_env env,
     int sign_bit,
     size_t word_count,
@@ -2504,34 +2557,16 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     }
 
-    // JSBigInt requires there are no leading zeroes in the words array, but native modules may have
-    // passed an array containing leading zeroes. so we have to cut those off.
-    while (word_count > 0 && words[word_count - 1] == 0) {
-        word_count--;
-    }
-
-    if (word_count == 0) {
-        auto* bigint = JSBigInt::createZero(globalObject);
-        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-        *result = toNapi(bigint, globalObject);
-        return napi_set_last_error(env, napi_ok);
-    }
+    std::span<const uint64_t> words_span(words, word_count);
 
     // throws RangeError if size is larger than JSC's limit
-    auto* bigint = JSBigInt::createWithLength(globalObject, word_count);
+    auto* bigint = JSBigInt::createFromWords(globalObject, words_span, sign_bit != 0);
     RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     ASSERT(bigint);
 
-    bigint->setSign(sign_bit != 0);
-
-    const uint64_t* current_word = words;
-    // TODO: add fast path that uses memcpy here instead of setDigit
-    // we need to add this to JSC. V8 has this optimization
-    for (size_t i = 0; i < word_count; i++) {
-        bigint->setDigit(i, *current_word++);
-    }
-
     *result = toNapi(bigint, globalObject);
+
+    ensureStillAliveHere(bigint);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -2560,7 +2595,9 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
         // TODO handle empty string?
     }
 
-    *result = toNapi(JSC::Symbol::create(vm), globalObject);
+    auto* symbol = JSC::Symbol::create(vm);
+    *result = toNapi(symbol, globalObject);
+    ensureStillAliveHere(symbol);
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2671,8 +2708,9 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+    JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
-    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue);
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
@@ -2733,7 +2771,7 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (function != nullptr && !env->globalObject()->vm().hasTerminationRequest()) [[likely]] {
+    if (function != nullptr && !env->isVMTerminating()) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 
@@ -2747,7 +2785,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
 
     NAPI_PREAMBLE(env);
 
-    if (!env->globalObject()->vm().hasTerminationRequest()) {
+    if (!env->isVMTerminating()) {
         env->removeAsyncCleanupHook(handle);
     }
 

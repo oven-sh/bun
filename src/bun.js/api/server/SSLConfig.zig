@@ -41,7 +41,7 @@ const BlobFileContentResult = struct {
                 const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
                 switch (read) {
                     .err => {
-                        return global.throwValue(read.err.toJSC(global));
+                        return global.throwValue(read.err.toJS(global));
                     },
                     else => {
                         const str = read.result.null_terminated;

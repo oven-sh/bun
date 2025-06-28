@@ -424,14 +424,18 @@ pub const Error = struct {
         };
     }
 
-    /// Only call this after it's been .clone()'d
     pub fn deinit(this: *Error) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    /// Only call this after it's been .clone()'d
+    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
         if (this.path.len > 0) {
-            bun.default_allocator.free(this.path);
+            allocator.free(this.path);
             this.path = "";
         }
         if (this.dest.len > 0) {
-            bun.default_allocator.free(this.dest);
+            allocator.free(this.dest);
             this.dest = "";
         }
     }
@@ -536,6 +540,7 @@ pub const Error = struct {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label
@@ -571,6 +576,7 @@ pub const Error = struct {
         var err = SystemError{
             .errno = -%@as(c_int, this.errno),
             .syscall = bun.String.static(@tagName(this.syscall)),
+            .message = .empty,
         };
 
         // errno label
@@ -637,11 +643,7 @@ pub const Error = struct {
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
 
-    pub fn toJS(this: Error, ctx: *JSC.JSGlobalObject) JSC.C.JSObjectRef {
-        return this.toSystemError().toErrorInstance(ctx).asObjectRef();
-    }
-
-    pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
         return this.toSystemError().toErrorInstance(ptr);
     }
 };

@@ -20,7 +20,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
-const URLPath = @import("./http/url_path.zig");
+const URLPath = @import("./http/URLPath.zig");
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 

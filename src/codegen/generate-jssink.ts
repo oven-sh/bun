@@ -162,8 +162,8 @@ function header() {
                 static size_t memoryCost(void* sinkPtr);
 
                 void* m_sinkPtr;
-                mutable WriteBarrier<JSC::Unknown> m_onPull;
-                mutable WriteBarrier<JSC::Unknown> m_onClose;
+                mutable WriteBarrier<JSC::JSObject> m_onPull;
+                mutable WriteBarrier<JSC::JSObject> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
 
                 uintptr_t m_onDestroy { 0 };
@@ -825,8 +825,16 @@ DEFINE_VISIT_CHILDREN(${className});
 
 void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
-    this->m_onPull.set(globalObject->vm(), this, onPull);
-    this->m_onClose.set(globalObject->vm(), this, onClose);
+    if (onPull) {
+        if (auto* object = onPull.getObject()) {
+            this->m_onPull.set(globalObject->vm(), this, object);
+        }
+    }
+    if (onClose) {
+        if (auto* object = onClose.getObject()) {
+            this->m_onClose.set(globalObject->vm(), this, object);
+        }
+    }
 }
 
 void ${className}::destroy(JSCell* cell)

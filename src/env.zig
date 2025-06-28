@@ -32,6 +32,12 @@ pub const show_crash_trace = isDebug or isTest or enable_asan;
 /// unused code.
 pub const export_cpp_apis = if (build_options.override_no_export_cpp_apis) false else (@import("builtin").output_mode == .Obj or isTest);
 
+/// Whether or not to enable allocation tracking when the `AllocationScope`
+/// allocator is used.
+pub const enableAllocScopes = brk: {
+    break :brk isDebug or enable_asan;
+};
+
 pub const build_options = @import("build_options");
 
 /// Set if compiling with `-Dno_llvm`

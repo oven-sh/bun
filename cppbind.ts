@@ -18,8 +18,7 @@ console.log(allZigFiles.length);
 const parser = lezerCpp.parser;
 
 const inputFile = "src/bun.js/bindings/InspectorHTTPServerAgent.cpp";
-const trimmedOutputFile = "build/debug/codegen/cpp_min.zig";
-const fullOutputFile = "build/debug/codegen/cpp_full.zig";
+const outputFile = "build/debug/codegen/cpp.zig";
 
 const input = await Bun.file(inputFile).text();
 
@@ -290,5 +289,5 @@ functions.forEach(func => {
 });
 
 const outputContent = output.flat(Infinity as 0).join("");
-await Bun.write(fullOutputFile, outputContent);
-console.log(`\nGenerated Zig bindings written to: ${fullOutputFile}`);
+await Bun.write(outputFile, outputContent);
+console.log(`\nGenerated Zig bindings written to: ${outputFile}`);

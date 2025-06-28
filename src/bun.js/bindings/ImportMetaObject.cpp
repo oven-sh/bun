@@ -651,6 +651,16 @@ void ImportMetaObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    if (this->url.startsWith("bake:"_s)) [[unlikely]] {
+        // Add bakeBuiltin function for bake SSR modules
+        auto* globalObject = this->globalObject();
+
+        // Use the requireESM code generator from CommonJS builtins
+        this->putDirect(vm, Identifier::fromString(vm, "bakeBuiltin"_s),
+            JSFunction::create(vm, globalObject, commonJSRequireESMCodeGenerator(vm), globalObject),
+            JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    }
+
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);

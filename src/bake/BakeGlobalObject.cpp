@@ -46,6 +46,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
+    // TODO: make static cast instead of jscast
     // Use Zig::GlobalObject's function
     return jsCast<Zig::GlobalObject*>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, parameters, sourceOrigin);
 }

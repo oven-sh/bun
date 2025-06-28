@@ -118,6 +118,10 @@ pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yiel
         this.state = .err;
         return this.bltn().done(1);
     }
+    if (this.state == .waiting_write_err) {
+        return this.bltn().done(1);
+    }
+    bun.assert(this.bltn().stdout.needsIO());
     return this.bltn().stdout.enqueue(this, this.buffer[0..this.buffer_used], .output_needs_io);
 }
 

@@ -187,6 +187,7 @@ it("bun add --only-missing should not install existing package", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
+      env,
     });
     const out = await new Response(stdout).text();
     expect(out).not.toContain("Saved lockfile");
@@ -260,6 +261,7 @@ it("bun add --analyze should scan dependencies", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
+      env,
     });
     const out = await new Response(stdout).text();
     expect(out).not.toContain("Saved lockfile");
@@ -601,7 +603,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(

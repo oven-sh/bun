@@ -1,6 +1,6 @@
 // Hardcoded module "node:zlib"
 
-const assert = require("node:assert");
+const assert = require("internal/assert/utils");
 const BufferModule = require("node:buffer");
 
 const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);

@@ -209,6 +209,10 @@ pub const ShellSubprocess = struct {
                     // The shell never uses this
                     @panic("Unimplemented stdin pipe");
                 },
+                .buffer, .text => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin buffer/text");
+                },
 
                 .blob => |blob| {
                     return Writable{
@@ -380,6 +384,7 @@ pub const ShellSubprocess = struct {
                     .blob => Readable{ .ignore = {} },
                     .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
+                    .buffer, .text => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
                     .array_buffer => {
                         const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) };
                         readable.pipe.buffered_output = .{
@@ -402,6 +407,7 @@ pub const ShellSubprocess = struct {
                 .blob => Readable{ .ignore = {} },
                 .memfd => Readable{ .memfd = stdio.memfd },
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
+                .buffer, .text => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
                 .array_buffer => {
                     const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) };
                     readable.pipe.buffered_output = .{

@@ -22,6 +22,8 @@ pub const Stdio = union(enum) {
     array_buffer: JSC.ArrayBuffer.Strong,
     memfd: bun.FileDescriptor,
     pipe,
+    buffer,
+    text,
     ipc,
     readable_stream: JSC.WebCore.ReadableStream,
 
@@ -196,6 +198,7 @@ pub const Stdio = union(enum) {
                 },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = {} },
+                .buffer, .text => .{ .buffer = {} },
                 .ipc => .{ .ipc = {} },
                 .fd => |fd| .{ .pipe = fd },
                 .memfd => |fd| .{ .pipe = fd },
@@ -249,6 +252,7 @@ pub const Stdio = union(enum) {
                 },
                 .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .buffer, .text => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -262,7 +266,7 @@ pub const Stdio = union(enum) {
 
     pub fn toSync(this: *@This(), i: u32) void {
         // Piping an empty stdin doesn't make sense
-        if (i == 0 and this.* == .pipe) {
+        if (i == 0 and (this.* == .pipe or this.* == .buffer or this.* == .text)) {
             this.* = .{ .ignore = {} };
         }
     }
@@ -281,7 +285,7 @@ pub const Stdio = union(enum) {
 
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
-            .capture, .array_buffer, .blob, .pipe, .readable_stream => true,
+            .capture, .array_buffer, .blob, .pipe, .readable_stream, .buffer, .text => true,
             .ipc => Environment.isWindows,
             else => false,
         };
@@ -357,10 +361,14 @@ pub const Stdio = union(enum) {
                 out_stdio.* = Stdio{ .ignore = {} };
             } else if (str.eqlComptime("pipe") or str.eqlComptime("overlapped")) {
                 out_stdio.* = Stdio{ .pipe = {} };
+            } else if (str.eqlComptime("buffer")) {
+                out_stdio.* = Stdio{ .buffer = {} };
+            } else if (str.eqlComptime("text")) {
+                out_stdio.* = Stdio{ .text = {} };
             } else if (str.eqlComptime("ipc")) {
                 out_stdio.* = Stdio{ .ipc = {} };
             } else {
-                return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
+                return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', 'buffer', 'text', 'ipc', Bun.file(pathOrFd), number, or null", .{});
             }
             return;
         } else if (value.isNumber()) {

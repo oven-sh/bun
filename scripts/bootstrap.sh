@@ -982,15 +982,11 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ]; then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
+	then
 		return
 	fi
 	
-	# Default to GCC 13 if not specified (needed for C++20 support)
-	if [ -z "$gcc_version" ]; then
-		gcc_version="13"
-	fi
-
 	# Taken from WebKit's Dockerfile.
 	# https://github.com/oven-sh/WebKit/blob/816a3c02e0f8b53f8eec06b5ed911192589b51e2/Dockerfile
 

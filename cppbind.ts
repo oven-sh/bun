@@ -96,7 +96,14 @@ function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isR
   }
 
   // Handle pointers and references
-  if (isPointer || isReference) {
+  if (isPointer) {
+    // must use [*c] because we don't know if it is a single-item or many-item pointer
+    if (isConst) {
+      return `[*c]const ${zigType}`;
+    } else {
+      return `[*c]${zigType}`;
+    }
+  } else if (isReference) {
     if (isConst) {
       return `*const ${zigType}`;
     } else {
@@ -162,7 +169,7 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
         if (!hasZigExport && !hasZigExceptionJSValue) return;
 
         // Calculate line and column from the function position
-        const linesBefore = input.slice(0, funcStart).split('\n');
+        const linesBefore = input.slice(0, funcStart).split("\n");
         const line = linesBefore.length;
         const column = linesBefore[linesBefore.length - 1].length + 1;
 

@@ -1,5 +1,6 @@
 #include "root.h"
 #include "JSYogaNode.h"
+#include "JSYogaConfig.h"
 #include "webcore/DOMIsoSubspaces.h"
 #include "webcore/DOMClientIsoSubspaces.h"
 #include "webcore/WebCoreJSClientData.h"

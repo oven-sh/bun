@@ -6966,9 +6966,9 @@ declare module "bun" {
 
       /**
        * The user ID to run the subprocess as (Linux only).
-       * 
+       *
        * On macOS and Windows, this option is silently ignored.
-       * 
+       *
        * @platform Linux
        * @example
        * ```ts
@@ -6983,9 +6983,9 @@ declare module "bun" {
 
       /**
        * The group ID to run the subprocess as (Linux only).
-       * 
+       *
        * On macOS and Windows, this option is silently ignored.
-       * 
+       *
        * @platform Linux
        * @example
        * ```ts

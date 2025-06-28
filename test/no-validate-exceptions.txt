@@ -1248,7 +1248,6 @@ test/js/node/test/parallel/test-net-better-error-messages-port-hostname.js
 test/js/node/test/parallel/test-net-bind-twice.js
 test/js/node/test/parallel/test-net-blocklist.js
 test/js/node/test/parallel/test-net-buffersize.js
-test/js/node/test/parallel/test-net-bytes-stats.js
 test/js/node/test/parallel/test-net-bytes-written-large.js
 test/js/node/test/parallel/test-net-can-reset-timeout.js
 test/js/node/test/parallel/test-net-child-process-connect-reset.js

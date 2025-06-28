@@ -163,10 +163,21 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
         const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
         const precedingText = input.slice(searchStart, funcStart);
         const hasZigExport = precedingText.includes("ZIG_EXPORT");
-        const hasZigExceptionJSValue = precedingText.includes("ZIG_EXCEPTION_JSVALUE");
 
-        // Skip if not marked with either ZIG_EXPORT or ZIG_EXCEPTION_JSVALUE
-        if (!hasZigExport && !hasZigExceptionJSValue) return;
+        // Skip if not marked with ZIG_EXPORT
+        if (!hasZigExport) return;
+
+        const exceptionType = precedingText.includes("ZIG_EXPORT_ZEROISTHROW")
+          ? "ZeroIsThrow"
+          : precedingText.includes("ZIG_EXPORT_CHECKEXCEPTION")
+            ? "CheckException"
+            : precedingText.includes("ZIG_EXPORT_NOTHROW")
+              ? "NoThrow"
+              : "error";
+        if (exceptionType === "error") {
+          console.error(`Error: ${filePath}:${funcStart}:${funcEnd} has no exception type`);
+          process.exit(1);
+        }
 
         // Calculate line and column from the function position
         const linesBefore = input.slice(0, funcStart).split("\n");
@@ -179,7 +190,7 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
           params: [],
           isExternC: true,
           sourceFile: filePath,
-          isExceptionJSValue: hasZigExceptionJSValue,
+          isExceptionJSValue: exceptionType === "ZeroIsThrow",
           line: line,
           column: column,
         };

@@ -57,6 +57,8 @@ pub const BufferReadStream = struct {
         _ = this.archive.readSupportFormatTar();
         _ = this.archive.readSupportFormatGnutar();
         _ = this.archive.readSupportFilterGzip();
+        _ = this.archive.readSupportFilterbZip2();
+        _ = this.archive.readSupportFormatZip();
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
         // have been concatenated together.

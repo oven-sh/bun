@@ -65,6 +65,7 @@ interface FunctionSignature {
   isExternC: boolean;
   sourceFile: string;
   isExceptionJSValue: boolean;
+  isCheckException: boolean;
   line: number;
   column: number;
 }
@@ -191,6 +192,7 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
           isExternC: true,
           sourceFile: filePath,
           isExceptionJSValue: exceptionType === "ZeroIsThrow",
+          isCheckException: exceptionType === "CheckException",
           line: line,
           column: column,
         };
@@ -329,11 +331,36 @@ for (const cppFile of allCppFiles) {
           fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !JSC.JSValue {\n`);
           fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
-          fileBindings.push(`        scope.init(${globalThisName}, .assertions_only);\n`);
+          fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
           fileBindings.push(`        defer scope.deinit();\n`);
           fileBindings.push(`        const value = raw.${func.name}(${func.params.map(p => p.name).join(", ")});\n`);
           fileBindings.push(`        scope.assertExceptionPresenceMatches(value == .zero);\n`);
           fileBindings.push(`        return if (value == .zero) error.JSError else value;\n`);
+          fileBindings.push(`    }\n`);
+        } else if (func.isCheckException) {
+          outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+
+          // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION
+          const wrapperParams = func.params
+            .map(
+              param => `${param.name}: ${cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference)}`,
+            )
+            .join(", ");
+
+          // Find the globalThis parameter name (should be first parameter of type JSGlobalObject)
+          const globalThisParam = func.params.find(
+            p => p.type === "JSC::JSGlobalObject" || p.type === "JSGlobalObject",
+          );
+          const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
+
+          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
+          fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !${returnType} {\n`);
+          fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
+          fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
+          fileBindings.push(`        defer scope.deinit();\n`);
+          fileBindings.push(`        const result = raw.${func.name}(${func.params.map(p => p.name).join(", ")});\n`);
+          fileBindings.push(`        try scope.returnIfException();\n`);
+          fileBindings.push(`        return result;\n`);
           fileBindings.push(`    }\n`);
         } else {
           // Regular ZIG_EXPORT function
@@ -347,15 +374,17 @@ for (const cppFile of allCppFiles) {
       outputBindings.push(fileBindings);
 
       totalFunctions += functions.length;
-      const exportCount = functions.filter(f => !f.isExceptionJSValue).length;
+      const exportCount = functions.filter(f => !f.isExceptionJSValue && !f.isCheckException).length;
       const exceptionCount = functions.filter(f => f.isExceptionJSValue).length;
+      const checkExceptionCount = functions.filter(f => f.isCheckException).length;
 
-      if (exportCount > 0 && exceptionCount > 0) {
-        console.log(`  - ${cppFile}: ${exportCount} ZIG_EXPORT, ${exceptionCount} ZIG_EXCEPTION_JSVALUE functions`);
-      } else if (exportCount > 0) {
-        console.log(`  - ${cppFile}: ${exportCount} ZIG_EXPORT functions`);
-      } else {
-        console.log(`  - ${cppFile}: ${exceptionCount} ZIG_EXCEPTION_JSVALUE functions`);
+      const parts: Zig[] = [];
+      if (exportCount > 0) parts.push(`${exportCount} ZIG_EXPORT`);
+      if (exceptionCount > 0) parts.push(`${exceptionCount} ZIG_EXPORT_ZEROISTHROW`);
+      if (checkExceptionCount > 0) parts.push(`${checkExceptionCount} ZIG_EXPORT_CHECKEXCEPTION`);
+
+      if (parts.length > 0) {
+        console.log(`  - ${cppFile}: ${parts.join(", ")} functions`);
       }
     }
   } catch (error) {

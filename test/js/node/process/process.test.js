@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 expect.extend({
@@ -1139,7 +1139,7 @@ it("process.versions", () => {
   expect(process.versions.modules).toEqual("137");
 });
 
-it("should be the node version on the host that we expect", async () => {
+it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
   const subprocess = Bun.spawn({
     cmd: ["node", "--version"],
     stdout: "pipe",

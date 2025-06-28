@@ -688,6 +688,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);
+
 #endif
 
 #ifdef __cplusplus

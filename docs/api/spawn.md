@@ -113,6 +113,40 @@ proc.stdin.flush();
 proc.stdin.end();
 ```
 
+The `ReadableStream` option lets you pipe data from a JavaScript `ReadableStream` directly to the subprocess's input:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("Hello from ");
+    controller.enqueue("ReadableStream!");
+    controller.close();
+  },
+});
+
+const proc = Bun.spawn(["cat"], {
+  stdin: stream,
+  stdout: "pipe",
+});
+
+const output = await new Response(proc.stdout).text();
+console.log(output); // "Hello from ReadableStream!"
+```
+
+This is particularly useful for streaming data from HTTP responses, file streams, or any other source that provides a `ReadableStream`:
+
+```ts
+// Stream an HTTP response through a subprocess
+const response = await fetch("https://example.com/large-file.txt");
+const proc = Bun.spawn(["gzip"], {
+  stdin: response.body,
+  stdout: "pipe",
+});
+
+// Save the compressed output
+await Bun.write("compressed.gz", proc.stdout);
+```
+
 ## Output streams
 
 You can read results from the subprocess via the `stdout` and `stderr` properties. By default these are instances of `ReadableStream`.

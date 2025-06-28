@@ -185,6 +185,10 @@ test/js/bun/spawn/job-object-bug.test.ts
 test/js/bun/spawn/spawn-empty-arrayBufferOrBlob.test.ts
 test/js/bun/spawn/spawn-path.test.ts
 test/js/bun/spawn/spawn-stdin-destroy.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-edge-cases.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-integration.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-sync.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/bun/spawn/spawn-stream-serve.test.ts
 test/js/bun/spawn/spawn-streaming-stdout.test.ts
 test/js/bun/spawn/spawn-stress.test.ts

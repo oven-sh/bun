@@ -149,7 +149,7 @@ pub const ShellSubprocess = struct {
 
             if (Environment.isWindows) {
                 switch (stdio) {
-                    .pipe => {
+                    .pipe, .readable_stream => {
                         if (result == .buffer) {
                             const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
 
@@ -236,6 +236,10 @@ pub const ShellSubprocess = struct {
                 .ipc, .capture => {
                     return Writable{ .ignore = {} };
                 },
+                .readable_stream => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin readable_stream");
+                },
             }
         }
 
@@ -247,7 +251,7 @@ pub const ShellSubprocess = struct {
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
-                        pipe.onAttachedProcessExit();
+                        pipe.onAttachedProcessExit(&subprocess.process.status);
                         return pipe.toJS(globalThis);
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
@@ -384,6 +388,7 @@ pub const ShellSubprocess = struct {
                         return readable;
                     },
                     .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
+                    .readable_stream => Readable{ .ignore = {} }, // Shell doesn't use readable_stream
                 };
             }
 
@@ -405,6 +410,7 @@ pub const ShellSubprocess = struct {
                     return readable;
                 },
                 .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
+                .readable_stream => Readable{ .ignore = {} }, // Shell doesn't use readable_stream
             };
         }
 

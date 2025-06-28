@@ -1089,7 +1089,8 @@ pub const PipeReader = struct {
             return this.state.done;
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
-        const out = this.reader._buffer;
+        var out = this.reader._buffer;
+        out.shrinkAndFree(out.items.len);
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
 
@@ -1996,7 +1997,7 @@ pub fn spawnMaybeSync(
             if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
                 const argv0_str = try argv0_.getZigString(globalThis);
                 if (argv0_str.len > 0) {
-                    argv0 = try argv0_str.toOwnedSliceZ(allocator);
+                    argv0 = try argv0_str.toOwnedSlice(allocator);
                 }
             }
 
@@ -2004,7 +2005,7 @@ pub fn spawnMaybeSync(
             if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
                 const cwd_str = try cwd_.getZigString(globalThis);
                 if (cwd_str.len > 0) {
-                    cwd = try cwd_str.toOwnedSliceZ(allocator);
+                    cwd = try cwd_str.toOwnedSlice(allocator);
                 }
             }
         }

@@ -408,6 +408,50 @@ const IncomingMessagePrototype = {
   set socket(value) {
     this[fakeSocketSymbol] = value;
   },
+  _addHeaderLine(field: string, value: string | undefined, dest: any) {
+    field = String(field);
+    const key = field.toLowerCase();
+
+    if (key === "set-cookie") {
+      if (dest[key] !== undefined) {
+        dest[key].push(value);
+      } else {
+        dest[key] = [value];
+      }
+      return;
+    }
+
+    switch (key) {
+      case "content-type":
+      case "user-agent":
+      case "referer":
+      case "host":
+      case "authorization":
+      case "proxy-authorization":
+      case "if-modified-since":
+      case "if-unmodified-since":
+      case "location":
+      case "max-forwards":
+      case "retry-after":
+      case "etag":
+      case "last-modified":
+      case "server":
+      case "age":
+      case "expires":
+        if (dest[key] === undefined) dest[key] = value;
+        return;
+      case "cookie":
+        if (dest[key] === undefined) dest[key] = value;
+        else dest[key] += "; " + value;
+        return;
+    }
+
+    if (dest[key] === undefined) {
+      dest[key] = value;
+    } else {
+      dest[key] += ", " + value;
+    }
+  },
 } satisfies typeof import("node:http").IncomingMessage.prototype;
 IncomingMessage.prototype = IncomingMessagePrototype;
 $setPrototypeDirect.$call(IncomingMessage, Readable);

@@ -1131,3 +1131,7 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
     1,
   ]).toRunInlineFixture();
 });
+
+it("process.versions", () => {
+  expect(process.versions.node).toEqual("24.3.0");
+});

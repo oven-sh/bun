@@ -5374,8 +5374,8 @@ describe("bundler", () => {
           number 567
           string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
           string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-          object {"default":123,"module.exports":123}
-          object {"default":567,"module.exports":567}
+          object {"default":123}
+          object {"default":567}
         `,
     },
   });
@@ -5400,8 +5400,8 @@ describe("bundler", () => {
         number 567
         string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
         string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-        object {"default":123,"module.exports":123}
-        object {"default":567,"module.exports":567}
+        object {"default":123}
+        object {"default":567}
       `,
     },
   });

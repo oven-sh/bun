@@ -98,4 +98,8 @@
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
 
+#define ZIG_EXPORT
+#define ZIG_EXCEPTION_JSVALUE
+#define ZIG_EXCEPTION_CHECK
+
 #endif

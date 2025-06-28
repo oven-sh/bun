@@ -187,8 +187,6 @@ typedef int HotReloadId;
 typedef int RouteId;
 typedef int RequestId;
 
-#define ZIG_EXPORT
-
 ZIG_EXPORT void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, BunString* address, double startTime, void* serverInstance)
 {
 

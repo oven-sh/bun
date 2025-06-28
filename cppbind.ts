@@ -11,6 +11,7 @@ const outputFile = "build/debug/codegen/cpp.zig";
 
 type Zig = string | Zig[];
 const outputTypes: Zig[] = [];
+const outputRawBindings: Zig[] = [];
 const outputBindings: Zig[] = [];
 const addedTypes: Set<string> = new Set();
 
@@ -63,6 +64,7 @@ interface FunctionSignature {
   params: FunctionParam[];
   isExternC: boolean;
   sourceFile: string;
+  isExceptionJSValue: boolean;
 }
 
 // Helper to convert C++ type to Zig type
@@ -147,14 +149,15 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
         // Skip if not extern C
         if (!isExternC) return;
 
-        // Check if this function has ZIG_EXPORT marker
-        // Look for ZIG_EXPORT in the line(s) immediately before the function
+        // Check if this function has ZIG_EXPORT or ZIG_EXCEPTION_JSVALUE marker
+        // Look for markers in the line(s) immediately before the function
         const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
         const precedingText = input.slice(searchStart, funcStart);
         const hasZigExport = precedingText.includes("ZIG_EXPORT");
+        const hasZigExceptionJSValue = precedingText.includes("ZIG_EXCEPTION_JSVALUE");
 
-        // Skip if not marked with ZIG_EXPORT
-        if (!hasZigExport) return;
+        // Skip if not marked with either ZIG_EXPORT or ZIG_EXCEPTION_JSVALUE
+        if (!hasZigExport && !hasZigExceptionJSValue) return;
 
         let signature: FunctionSignature = {
           name: "",
@@ -162,6 +165,7 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
           params: [],
           isExternC: true,
           sourceFile: filePath,
+          isExceptionJSValue: hasZigExceptionJSValue,
         };
 
         // Parse the function
@@ -268,10 +272,7 @@ for (const cppFile of allCppFiles) {
       // Group functions by source file for organized output
       const fileBindings: Zig[] = [];
 
-      // Add comment for this file
-      fileBindings.push(`    // Source: ${filePath}\n`);
-
-      // Generate Zig extern declarations for ZIG_EXPORT functions
+      // Generate Zig extern declarations
       functions.forEach(func => {
         const params = func.params
           .map(param => {
@@ -282,7 +283,36 @@ for (const cppFile of allCppFiles) {
 
         const returnType = cppTypeToZig(func.returnType, false, false, false);
 
-        fileBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+        if (func.isExceptionJSValue) {
+          outputRawBindings.push(`    /// Source: ${filePath}\n`);
+          outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+
+          // Generate wrapper function for exception handling
+          const wrapperParams = func.params
+            .map(
+              param => `${param.name}: ${cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference)}`,
+            )
+            .join(", ");
+
+          // Find the globalThis parameter name (should be first parameter of type JSGlobalObject)
+          const globalThisParam = func.params.find(
+            p => p.type === "JSC::JSGlobalObject" || p.type === "JSGlobalObject",
+          );
+          const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
+
+          fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !JSC.JSValue {\n`);
+          fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
+          fileBindings.push(`        scope.init(${globalThisName}, .assertions_only);\n`);
+          fileBindings.push(`        defer scope.deinit();\n`);
+          fileBindings.push(`        const value = raw.${func.name}(${func.params.map(p => p.name).join(", ")});\n`);
+          fileBindings.push(`        scope.assertExceptionPresenceMatches(value == .zero);\n`);
+          fileBindings.push(`        return if (value == .zero) error.JSError else value;\n`);
+          fileBindings.push(`    }\n`);
+        } else {
+          // Regular ZIG_EXPORT function
+          fileBindings.push(`    /// Source: ${filePath}\n`);
+          fileBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+        }
       });
 
       fileBindings.push("\n");
@@ -290,7 +320,16 @@ for (const cppFile of allCppFiles) {
       outputBindings.push(fileBindings);
 
       totalFunctions += functions.length;
-      console.log(`  - ${cppFile}: ${functions.length} ZIG_EXPORT functions`);
+      const exportCount = functions.filter(f => !f.isExceptionJSValue).length;
+      const exceptionCount = functions.filter(f => f.isExceptionJSValue).length;
+
+      if (exportCount > 0 && exceptionCount > 0) {
+        console.log(`  - ${cppFile}: ${exportCount} ZIG_EXPORT, ${exceptionCount} ZIG_EXCEPTION_JSVALUE functions`);
+      } else if (exportCount > 0) {
+        console.log(`  - ${cppFile}: ${exportCount} ZIG_EXPORT functions`);
+      } else {
+        console.log(`  - ${cppFile}: ${exceptionCount} ZIG_EXCEPTION_JSVALUE functions`);
+      }
     }
   } catch (error) {
     console.error(`Error processing ${filePath}: ${error}`);
@@ -309,6 +348,7 @@ const output: Zig = [
   outputTypes,
   "};\n",
   "\n",
+  outputRawBindings.length > 0 ? ["pub const raw = struct {\n", outputRawBindings, "};\n", "\n"] : [],
   "pub const bindings = struct {\n",
   outputBindings,
   "};\n",
@@ -317,5 +357,5 @@ const output: Zig = [
 const outputContent = output.flat(Infinity as 0).join("");
 await Bun.write(outputFile, outputContent);
 
-console.log(`\nTotal ZIG_EXPORT functions found: ${totalFunctions}`);
+console.log(`\nTotal functions found: ${totalFunctions}`);
 console.log(`Generated Zig bindings written to: ${outputFile}`);

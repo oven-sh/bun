@@ -79,5 +79,8 @@
     "node:test:cp": "bun ./scripts/fetch-node-test.ts ",
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
+  },
+  "dependencies": {
+    "@lezer/cpp": "^1.1.3"
   }
 }

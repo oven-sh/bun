@@ -787,7 +787,7 @@ function getWindowsStartupScript(cloudInit) {
  * @returns {number}
  */
 export function getDiskSize(options) {
-  const { os, diskSizeGb } = options;
+  const { os, diskSizeGb, distro, release } = options;
 
   if (diskSizeGb) {
     return diskSizeGb;
@@ -796,6 +796,9 @@ export function getDiskSize(options) {
   // After Visual Studio and dependencies are installed,
   // there is ~50GB of used disk space.
   if (os === "windows") {
+    return 60;
+  }
+  if (distro === "ubuntu" && release === "25.04") {
     return 60;
   }
 

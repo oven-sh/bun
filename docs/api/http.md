@@ -166,7 +166,7 @@ Static route responses are cached for the lifetime of the server object. To relo
 
 ```ts
 const server = Bun.serve({
-  static: {
+  routes: {
     "/api/time": new Response(new Date().toISOString()),
   },
 
@@ -178,7 +178,7 @@ const server = Bun.serve({
 // Update the time every second.
 setInterval(() => {
   server.reload({
-    static: {
+    routes: {
       "/api/time": new Response(new Date().toISOString()),
     },
 

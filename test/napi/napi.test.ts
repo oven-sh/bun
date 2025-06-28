@@ -275,18 +275,23 @@ describe("napi", () => {
         runOn("node", "test_napi_async_work_complete_null_check", []),
         runOn(bunExe(), "test_napi_async_work_complete_null_check", []),
       ]);
-      
+
       // Filter out debug logs and normalize
-      const cleanBunResult = bunResult
-        .replaceAll(/^\[\w+\].+$/gm, "")
-        .trim();
-      
+      const cleanBunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+
       // Both should contain these two lines, but order may vary
       const expectedLines = ["execute called!", "resolved to undefined"];
-      
-      const nodeLines = nodeResult.trim().split('\n').filter(line => line).sort();
-      const bunLines = cleanBunResult.split('\n').filter(line => line).sort();
-      
+
+      const nodeLines = nodeResult
+        .trim()
+        .split("\n")
+        .filter(line => line)
+        .sort();
+      const bunLines = cleanBunResult
+        .split("\n")
+        .filter(line => line)
+        .sort();
+
       expect(bunLines).toEqual(nodeLines);
       expect(bunLines).toEqual(expectedLines.sort());
     });

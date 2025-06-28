@@ -5,7 +5,6 @@ const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const assert = bun.assert;
 
-
 len: usize = 0,
 cap: usize = 0,
 ptr: ?[*]u8 = null,

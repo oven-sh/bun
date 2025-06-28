@@ -12,6 +12,7 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
 
+/// Caller must check for termination exception
 pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.get().eventLoop().tick();
 }
@@ -91,7 +92,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     if (!value.isTerminationException(vm.jsc)) {
         _ = vm.uncaughtException(globalObject, value, false);
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 /// This function is called on another thread
@@ -115,8 +116,26 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    _ = jsc_vm.unhandledRejection(global, result, promise.toJS());
+    jsc_vm.unhandledRejection(global, result, promise.toJS());
     jsc_vm.autoGarbageCollect();
+}
+
+pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    const Context = struct {
+        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.JSValue,
+        pub fn callback(context: *@This()) void {
+            _ = context.globalThis.bunVM().handledPromise(context.globalThis, context.promise);
+            context.promise.unprotect();
+            bun.default_allocator.destroy(context);
+        }
+    };
+    JSC.markBinding(@src());
+    const promise_js = promise.toJS();
+    promise_js.protect();
+    const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+    context.* = .{ .globalThis = global, .promise = promise_js };
+    global.bunVM().eventLoop().enqueueTask(JSC.ManagedTask.New(Context, Context.callback).init(context));
 }
 
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
@@ -179,7 +198,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
         return globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
-    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const limit: usize = @intCast(@max(try args[0].coerceToInt64(globalObject), 1024 * 1024));
     const prev = VirtualMachine.synthetic_allocation_limit;
     VirtualMachine.synthetic_allocation_limit = limit;
     VirtualMachine.string_allocation_limit = limit;

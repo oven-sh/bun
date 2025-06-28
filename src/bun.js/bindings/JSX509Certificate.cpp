@@ -391,7 +391,6 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
 
         // Check if this key already exists
         JSValue existing = result->getIfPropertyExists(globalObject, Identifier::fromString(vm, key));
-
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (existing) {
             JSArray* array = jsDynamicCast<JSArray*>(existing);
@@ -1084,6 +1083,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
             array->push(globalObject, jsString(vm, value));
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, 0, jsString(vm, value));
             object->putDirect(vm, identifier, array);
         }

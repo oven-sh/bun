@@ -154,11 +154,7 @@ pub const CryptoHasher = union(enum) {
         };
     }
 
-    pub fn getAlgorithms(
-        globalThis_: *JSC.JSGlobalObject,
-        _: JSValue,
-        _: JSValue,
-    ) JSC.JSValue {
+    pub fn getAlgorithms(globalThis_: *JSC.JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSC.JSValue {
         return bun.String.toJSArray(globalThis_, &EVP.Algorithm.names.values);
     }
 
@@ -843,7 +839,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             }
         }
 
-        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
+        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
             var output_digest_buf: Hasher.Digest = comptime brk: {
                 var bytes: Hasher.Digest = undefined;
                 var i: usize = 0;

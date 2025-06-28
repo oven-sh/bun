@@ -426,15 +426,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
         "onStructuredCloneDeserialize",
       )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
   }
-  if (obj.customInspect) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(typeName, "customInspect")}(JSC::JSGlobalObject*, JSC::CallFrame*);\n`;
-
-    specialSymbols += `
-    this->putDirect(vm, builtinNames(vm).inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${protoSymbolName(
-      typeName,
-      "customInspect",
-    )}, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
-  }
   if (obj.finalize) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "finalize")}(void*);` + "\n";
@@ -457,14 +448,31 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       const privateSymbol = protoFields[name].privateSymbol;
       const fn = protoFields[name].fn;
       if (!fn) throw Error(`(field: ${name}) private field needs 'fn' key `);
+      const observable_name = protoFields[name].name ?? fn;
 
       specialSymbols += `
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
       protoFields[name].length || 0
-    }, String("${fn}"_s), ${protoSymbolName(
+    }, String("${observable_name}"_s), ${protoSymbolName(
       typeName,
       fn,
     )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+      continue;
+    }
+
+    if (protoFields[name].publicSymbol !== undefined) {
+      const publicSymbol = protoFields[name].publicSymbol;
+      const fn = protoFields[name].fn;
+      if (!fn) throw Error(`(field: ${name}) public field needs 'fn' key `);
+      const observable_name = protoFields[name].name ?? fn;
+
+      specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${publicSymbol}PublicName(), JSFunction::create(vm, globalObject, ${
+      protoFields[name].length || 0
+    }, String("${observable_name}"_s), ${protoSymbolName(
+      typeName,
+      fn,
+    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
       continue;
     }
 
@@ -1789,7 +1797,6 @@ function generateZig(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    customInspect = false,
     getInternalProperties = false,
     callbacks = {},
   } = {} as ClassDefinition,
@@ -1812,10 +1819,6 @@ function generateZig(
     }
 
     exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
-  }
-
-  if (customInspect) {
-    exports.set("customInspect", symbolName(typeName, "customInspect"));
   }
 
   proto = {
@@ -1955,7 +1958,7 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) log_zig_getter("${typeName}", "${name}");
           return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
             .error_union => {
-              return @call(.always_inline, jsc.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject})});
+              return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}});
             },
             else => @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}),
           };
@@ -1999,7 +2002,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame${proto[name].passThis ? ", js_this_value: jsc.JSValue" : ""}) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_method("${typeName}", "${name}", callFrame);
-          return @call(.always_inline, jsc.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}})});
+          return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}});
         }
         `;
         }
@@ -2017,7 +2020,7 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) log_zig_class_getter("${typeName}", "${name}");
           return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
             .error_union => {
-              return @call(.always_inline, jsc.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName})});
+              return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName}});
             },
             else => {
               return @call(.always_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
@@ -2084,7 +2087,7 @@ const JavaScriptCoreBindings = struct {
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
-        return @call(.always_inline, jsc.toJSHostValue, .{ globalObject, @call(.always_inline, ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end}) });
+        return @call(.always_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
       }
       `;
     } else {
@@ -2095,19 +2098,6 @@ const JavaScriptCoreBindings = struct {
         _ = ctx;
         _ = writeBytes;
         @compileLog("onStructuredCloneSerialize not implemented for ${typeName}");
-      }
-      `;
-    }
-
-    if (customInspect) {
-      // TODO: perhaps exposing this on classes directly isn't the best API choice long term
-      // it would be better to make a different signature that accepts a writer, then a generated-only function that returns a js string
-      // the writer function can integrate with our native console.log implementation, the generated function can call the writer version and collect the result
-      exports.set("customInspect", protoSymbolName(typeName, "customInspect"));
-      output += `
-      pub fn ${protoSymbolName(typeName, "customInspect")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        if (comptime Environment.enable_logs) JSC.markBinding(@src());
-        return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.customInspect, .{thisValue, globalObject, callFrame})});
       }
       `;
     }

@@ -11,12 +11,10 @@ const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
 const Property = css.css_properties.Property;
 
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Length = css.css_values.length.LengthValue;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Angle = css.css_values.angle.Angle;
-
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
 pub const TransformList = struct {

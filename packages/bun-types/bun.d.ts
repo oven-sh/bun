@@ -1126,6 +1126,7 @@ declare module "bun" {
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
+     * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
      *
      * @example
      * ```js
@@ -1135,7 +1136,7 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    function prefetch(hostname: string): void;
+    function prefetch(hostname: string, port?: number): void;
 
     /**
      * **Experimental API**
@@ -1865,6 +1866,7 @@ declare module "bun" {
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    rapidhash: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
   }
 
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -3686,7 +3688,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3698,7 +3700,7 @@ declare module "bun" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3709,13 +3711,25 @@ declare module "bun" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+
+    keyFile?: string;
+
+    certFile?: string;
+
+    ALPNProtocols?: string | BufferSource;
+
+    ciphers?: string;
+
+    clientRenegotiationLimit?: number;
+
+    clientRenegotiationWindow?: number;
   }
 
   // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
@@ -4910,7 +4924,7 @@ declare module "bun" {
    *
    * @param force Synchronously run the garbage collector
    */
-  function gc(force: boolean): void;
+  function gc(force?: boolean): void;
 
   /**
    * JavaScriptCore engine's internal heap snapshot
@@ -5859,31 +5873,76 @@ declare module "bun" {
     index: string;
   }
 
+  /**
+   * Represents a TCP or TLS socket connection used for network communication.
+   * This interface provides methods for reading, writing, managing the connection state,
+   * and handling TLS-specific features if applicable.
+   *
+   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   *
+   * @category HTTP & Networking
+   */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Write `data` to the socket
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
      *
-     * @param data The data to write to the socket
-     * @param byteOffset The offset in the buffer to start writing from (defaults to 0)
-     * @param byteLength The number of bytes to write (defaults to the length of the buffer)
+     * For optimal performance with multiple small writes, consider batching multiple
+     * writes together into a single `socket.write()` call.
      *
-     * When passed a string, `byteOffset` and `byteLength` refer to the UTF-8 offset, not the string character offset.
+     * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
+     * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
+     * @param byteLength The number of bytes to write from the buffer. Defaults to the remaining length of the buffer from the offset. Ignored for strings.
+     * @returns The number of bytes written. Returns `-1` if the socket is closed or shutting down. Can return less than the input size if the socket's buffer is full (backpressure).
+     * @example
+     * ```ts
+     * // Send a string
+     * const bytesWritten = socket.write("Hello, world!\n");
      *
-     * This is unbuffered as of Bun v0.2.2. That means individual write() calls
-     * will be slow. In the future, Bun will buffer writes and flush them at the
-     * end of the tick, when the event loop is idle, or sooner if the buffer is full.
+     * // Send binary data
+     * const buffer = new Uint8Array([0x01, 0x02, 0x03]);
+     * socket.write(buffer);
+     *
+     * // Send part of a buffer
+     * const largeBuffer = new Uint8Array(1024);
+     * // ... fill largeBuffer ...
+     * socket.write(largeBuffer, 100, 50); // Write 50 bytes starting from index 100
+     * ```
      */
     write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * The data context for the socket.
+     * The user-defined data associated with this socket instance.
+     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * It can be read or updated at any time.
+     *
+     * @example
+     * ```ts
+     * // In a socket handler
+     * function open(socket: Socket<{ userId: string }>) {
+     *   console.log(`Socket opened for user: ${socket.data.userId}`);
+     *   socket.data.lastActivity = Date.now(); // Update data
+     * }
+     * ```
      */
     data: Data;
 
     /**
-     * Like {@link Socket.write} except it includes a TCP FIN packet
+     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
+     * After calling `end()`, no more data can be written using `write()` or `end()`.
+     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
+     * This sends a TCP FIN packet after writing the data.
      *
-     * Use it to send your last message and close the connection.
+     * @param data Optional final data to write before closing. Same types as `write()`.
+     * @param byteOffset Optional offset for buffer data.
+     * @param byteLength Optional length for buffer data.
+     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @example
+     * ```ts
+     * // send some data and close the write side
+     * socket.end("Goodbye!");
+     * // or close write side without sending final data
+     * socket.end();
+     * ```
      */
     end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
@@ -5910,20 +5969,33 @@ declare module "bun" {
     timeout(seconds: number): void;
 
     /**
-     * Forcefully close the socket. The other end may not receive all data, and
-     * the socket will be closed immediately.
+     * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
+     * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
+     * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
-     * This passes `SO_LINGER` with `l_onoff` set to `1` and `l_linger` set to
-     * `0` and then calls `close(2)`.
+     * @example
+     * ```ts
+     * socket.terminate();
+     * ```
      */
     terminate(): void;
 
     /**
-     * Shutdown writes to a socket
+     * Shuts down the write-half or both halves of the connection.
+     * This allows the socket to enter a half-closed state where it can still receive data
+     * but can no longer send data (`halfClose = true`), or close both read and write
+     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Calls `shutdown(2)` syscall internally.
      *
-     * This makes the socket a half-closed socket. It can still receive data.
+     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @example
+     * ```ts
+     * // Stop sending data, but allow receiving
+     * socket.shutdown(true);
      *
-     * This calls [shutdown(2)](https://man7.org/linux/man-pages/man2/shutdown.2.html) internally
+     * // Shutdown both reading and writing
+     * socket.shutdown();
+     * ```
      */
     shutdown(halfClose?: boolean): void;
 
@@ -5949,6 +6021,11 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     * This attempts to send the data immediately, but success depends on the network conditions
+     * and the receiving end.
+     * It might be necessary after several `write` calls if immediate sending is critical,
+     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
@@ -5970,17 +6047,31 @@ declare module "bun" {
 
     /**
      * Remote IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly remoteAddress: string;
 
+    /**
+     * Remote port connected to the socket
+     * @example 8080
+     */
     readonly remotePort: number;
 
+    /**
+     * IP protocol family used for the local endpoint of the socket
+     * @example "IPv4" | "IPv6"
+     */
     readonly localFamily: "IPv4" | "IPv6";
 
+    /**
+     * Local IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
+     */
     readonly localAddress: string;
 
     /**
      * local port connected to the socket
+     * @example 8080
      */
     readonly localPort: number;
 
@@ -6084,7 +6175,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(): import("tls").PeerCertificate;
+    getPeerCertificate(): import("node:tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
@@ -6144,6 +6235,8 @@ declare module "bun" {
     /**
      * See `Session Resumption` for more information.
      * @return `true` if the session was reused, `false` otherwise.
+     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
+     * Returns `true` if the session was resumed, `false` otherwise.
      */
     isSessionReused(): boolean;
 
@@ -6186,9 +6279,98 @@ declare module "bun" {
     setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
 
     /**
-     * The number of bytes written to the socket.
+     * The total number of bytes successfully written to the socket since it was established.
+     * This includes data currently buffered by the OS but not yet acknowledged by the remote peer.
      */
     readonly bytesWritten: number;
+
+    /**
+     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
+     * for automatic resource management.
+     * @example
+     * ```ts
+     * async function processSocket() {
+     *   using socket = await Bun.connect({ ... });
+     *   socket.write("Data");
+     *   // socket.end() is called automatically when exiting the scope
+     * }
+     * ```
+     */
+    [Symbol.dispose](): void;
+
+    resume(): void;
+
+    pause(): void;
+
+    /**
+     * If this is a TLS Socket
+     */
+    renegotiate(): void;
+
+    /**
+     * Sets the verify mode of the socket.
+     *
+     * @param requestCert Whether to request a certificate.
+     * @param rejectUnauthorized Whether to reject unauthorized certificates.
+     */
+    setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
+
+    getSession(): void;
+
+    /**
+     * Sets the session of the socket.
+     *
+     * @param session The session to set.
+     */
+    setSession(session: string | Buffer | BufferSource): void;
+
+    /**
+     * Exports the keying material of the socket.
+     *
+     * @param length The length of the keying material to export.
+     * @param label The label of the keying material to export.
+     * @param context The context of the keying material to export.
+     */
+    exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
+
+    /**
+     * Upgrades the socket to a TLS socket.
+     *
+     * @param options The options for the upgrade.
+     * @returns A tuple containing the raw socket and the TLS socket.
+     * @see {@link TLSUpgradeOptions}
+     */
+    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
+
+    /**
+     * Closes the socket.
+     *
+     * This is a wrapper around `end()` and `shutdown()`.
+     *
+     * @see {@link end}
+     * @see {@link shutdown}
+     */
+    close(): void;
+
+    /**
+     * Returns the servername of the socket.
+     *
+     * @see {@link setServername}
+     */
+    getServername(): string;
+
+    /**
+     * Sets the servername of the socket.
+     *
+     * @see {@link getServername}
+     */
+    setServername(name: string): void;
+  }
+
+  interface TLSUpgradeOptions<Data> {
+    data?: Data;
+    tls: TLSOptions | boolean;
+    socket: SocketHandler<Data>;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -6289,6 +6471,22 @@ declare module "bun" {
      * The per-instance data context
      */
     data?: Data;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false`, the socket automatically closes both ends of the connection when
+     * either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6303,7 +6501,7 @@ declare module "bun" {
     /**
      * The TLS configuration object with which to create the server
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6349,7 +6547,7 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: boolean;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6365,22 +6563,8 @@ declare module "bun" {
      * @default false
      */
     exclusive?: boolean;
-    /**
-     * Whether to allow half-open connections.
-     *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
-     *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
-     *
-     * When `false` (default), the socket automatically closes both ends of the connection
-     * when either side closes.
-     *
-     * @default false
-     */
-    allowHalfOpen?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6391,14 +6575,14 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * The file descriptor to connect to
      */
@@ -6667,7 +6851,7 @@ declare module "bun" {
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
        * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
        * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
        *
        * Currently, this is only compatible with processes that are other `bun` instances.

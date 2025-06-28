@@ -64,10 +64,7 @@ void JSBunRequest::setParams(JSObject* params)
 
 JSObject* JSBunRequest::cookies() const
 {
-    if (m_cookies) {
-        return m_cookies.get();
-    }
-    return nullptr;
+    return m_cookies.get();
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
@@ -98,11 +95,13 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         clone->setParams(paramsClone);
     }
 
-    if (auto* wrapper = jsDynamicCast<JSCookieMap*>(this->cookies())) {
-        auto cookieMap = wrapper->protectedWrapped();
-        auto cookieMapClone = cookieMap->clone();
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
-        clone->setCookies(cookies.getObject());
+    if (auto* cookiesObject = cookies()) {
+        if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookiesObject)) {
+            auto cookieMap = wrapper->protectedWrapped();
+            auto cookieMapClone = cookieMap->clone();
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
+            clone->setCookies(cookies.getObject());
+        }
     }
 
     RELEASE_AND_RETURN(throwScope, clone);
@@ -230,7 +229,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         if (cookieMapResult.hasException()) {
             WebCore::propagateException(*globalObject, throwScope, cookieMapResult.releaseException());
-            return JSValue::encode(jsUndefined());
+            RELEASE_AND_RETURN(throwScope, {});
         }
 
         auto cookieMap = cookieMapResult.releaseReturnValue();
@@ -279,7 +278,7 @@ extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisVal
         return JSValue::encode(params);
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 } // namespace Bun

@@ -144,7 +144,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportRaw(CryptoAlgorithmIdentifier ide
     auto group = EC_KEY_get0_group(key.get());
     auto point = ECPointPtr(EC_POINT_new(group));
     // Load an EC point from the keyData. This point is used as a public key.
-    if (EC_POINT_oct2point(group, point.get(), keyData.data(), keyData.size(), nullptr) <= 0)
+    if (EC_POINT_oct2point(group, point.get(), keyData.begin(), keyData.size(), nullptr) <= 0)
         return nullptr;
 
     if (EC_KEY_set_public_key(key.get(), point.get()) <= 0)
@@ -258,11 +258,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     //   subjectPublicKey  BIT STRING
     // }
 
-    const uint8_t* ptr = keyData.data();
+    const uint8_t* ptr = keyData.begin();
     auto subjectPublicKeyInfo = ASN1SequencePtr(d2i_ASN1_SEQUENCE_ANY(nullptr, &ptr, keyData.size()));
     if (!subjectPublicKeyInfo)
         return nullptr;
-    if (ptr - keyData.data() != (ptrdiff_t)keyData.size())
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
         return nullptr;
 
     if (sk_ASN1_TYPE_num(subjectPublicKeyInfo.get()) != 2)
@@ -348,13 +348,13 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
-    const uint8_t* ptr = keyData.data();
+    const uint8_t* ptr = keyData.begin();
 
     // We use d2i_PKCS8_PRIV_KEY_INFO() to import a private key.
     auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
     if (!p8inf)
         return nullptr;
-    if (ptr - keyData.data() != (ptrdiff_t)keyData.size())
+    if (ptr - keyData.begin() != (ptrdiff_t)keyData.size())
         return nullptr;
 
     auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
@@ -389,7 +389,7 @@ Vector<uint8_t> CryptoKeyEC::platformExportRaw() const
         return {};
 
     Vector<uint8_t> keyData(keyDataSize);
-    if (EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, keyData.data(), keyData.size(), nullptr) != keyDataSize)
+    if (EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, keyData.begin(), keyData.size(), nullptr) != keyDataSize)
         return {};
 
     return keyData;
@@ -432,7 +432,7 @@ Vector<uint8_t> CryptoKeyEC::platformExportSpki() const
         return {};
 
     Vector<uint8_t> keyData(len);
-    auto ptr = keyData.data();
+    auto ptr = keyData.begin();
     if (i2d_PUBKEY(platformKey(), &ptr) < 0)
         return {};
 
@@ -453,7 +453,7 @@ Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
         return {};
 
     Vector<uint8_t> keyData(len);
-    auto ptr = keyData.data();
+    auto ptr = keyData.begin();
     if (i2d_PKCS8_PRIV_KEY_INFO(p8inf.get(), &ptr) < 0)
         return {};
 

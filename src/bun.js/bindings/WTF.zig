@@ -17,4 +17,19 @@ pub const WTF = struct {
             return error.InvalidCharacter;
         return res;
     }
+
+    extern fn Bun__writeHTTPDate(buffer: *[32]u8, length: usize, timestampMs: u64) c_int;
+
+    pub fn writeHTTPDate(buffer: *[32]u8, timestampMs: u64) []u8 {
+        if (timestampMs == 0) {
+            return buffer[0..0];
+        }
+
+        const res = Bun__writeHTTPDate(buffer, 32, timestampMs);
+        if (res < 1) {
+            return buffer[0..0];
+        }
+
+        return buffer[0..@intCast(res)];
+    }
 };

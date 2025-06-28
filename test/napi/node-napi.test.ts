@@ -98,7 +98,7 @@ beforeAll(async () => {
 
   async function buildOne(dir: string) {
     const child = spawn({
-      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
+      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug", "-j", "max"],
       cwd: dir,
       stderr: "pipe",
       stdout: "ignore",

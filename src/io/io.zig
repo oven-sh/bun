@@ -1,3 +1,8 @@
+//! Confusingly, this is the barely used epoll/kqueue event loop
+//! This is only used by Bun.write() and Bun.file(path).text() & friends.
+//!
+//! Most I/O happens on the main thread.
+
 const bun = @import("bun");
 const std = @import("std");
 const sys = bun.sys;
@@ -5,6 +10,9 @@ const linux = std.os.linux;
 const Environment = bun.Environment;
 pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
+
+pub const openForWriting = @import("./openForWriting.zig").openForWriting;
+pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
 const log = bun.Output.scoped(.loop, false);
 

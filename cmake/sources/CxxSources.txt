@@ -28,6 +28,7 @@ src/bun.js/bindings/BunWorkerGlobalScope.cpp
 src/bun.js/bindings/c-bindings.cpp
 src/bun.js/bindings/CallSite.cpp
 src/bun.js/bindings/CallSitePrototype.cpp
+src/bun.js/bindings/CatchScopeBinding.cpp
 src/bun.js/bindings/CodeCoverage.cpp
 src/bun.js/bindings/ConsoleObject.cpp
 src/bun.js/bindings/Cookie.cpp
@@ -99,6 +100,9 @@ src/bun.js/bindings/napi_finalizer.cpp
 src/bun.js/bindings/napi_handle_scope.cpp
 src/bun.js/bindings/napi_type_tag.cpp
 src/bun.js/bindings/napi.cpp
+src/bun.js/bindings/NapiClass.cpp
+src/bun.js/bindings/NapiRef.cpp
+src/bun.js/bindings/NapiWeakValue.cpp
 src/bun.js/bindings/ncrpyto_engine.cpp
 src/bun.js/bindings/ncrypto.cpp
 src/bun.js/bindings/node/crypto/CryptoDhJob.cpp
@@ -144,6 +148,13 @@ src/bun.js/bindings/node/crypto/JSSign.cpp
 src/bun.js/bindings/node/crypto/JSVerify.cpp
 src/bun.js/bindings/node/crypto/KeyObject.cpp
 src/bun.js/bindings/node/crypto/node_crypto_binding.cpp
+src/bun.js/bindings/node/http/JSConnectionsList.cpp
+src/bun.js/bindings/node/http/JSConnectionsListConstructor.cpp
+src/bun.js/bindings/node/http/JSConnectionsListPrototype.cpp
+src/bun.js/bindings/node/http/JSHTTPParser.cpp
+src/bun.js/bindings/node/http/JSHTTPParserConstructor.cpp
+src/bun.js/bindings/node/http/JSHTTPParserPrototype.cpp
+src/bun.js/bindings/node/http/NodeHTTPParser.cpp
 src/bun.js/bindings/node/NodeTimers.cpp
 src/bun.js/bindings/NodeAsyncHooks.cpp
 src/bun.js/bindings/NodeDirent.cpp
@@ -159,6 +170,7 @@ src/bun.js/bindings/NodeVM.cpp
 src/bun.js/bindings/NodeVMModule.cpp
 src/bun.js/bindings/NodeVMScript.cpp
 src/bun.js/bindings/NodeVMSourceTextModule.cpp
+src/bun.js/bindings/NodeVMSyntheticModule.cpp
 src/bun.js/bindings/NoOpForTesting.cpp
 src/bun.js/bindings/ObjectBindings.cpp
 src/bun.js/bindings/objects.cpp
@@ -167,6 +179,7 @@ src/bun.js/bindings/Path.cpp
 src/bun.js/bindings/ProcessBindingBuffer.cpp
 src/bun.js/bindings/ProcessBindingConstants.cpp
 src/bun.js/bindings/ProcessBindingFs.cpp
+src/bun.js/bindings/ProcessBindingHTTPParser.cpp
 src/bun.js/bindings/ProcessBindingNatives.cpp
 src/bun.js/bindings/ProcessBindingTTYWrap.cpp
 src/bun.js/bindings/ProcessBindingUV.cpp

@@ -15,13 +15,13 @@ pub fn StatFSType(comptime big: bool) type {
 
         const This = @This();
 
-        pub fn toJS(this: *const This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const This, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             return statfsToJS(this, globalObject);
         }
 
-        fn statfsToJS(this: *const This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        fn statfsToJS(this: *const This, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             if (big) {
-                return Bun__createJSBigIntStatFSObject(
+                return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatFSObject, .{
                     globalObject,
                     this._fstype,
                     this._bsize,
@@ -30,7 +30,7 @@ pub fn StatFSType(comptime big: bool) type {
                     this._bavail,
                     this._files,
                     this._ffree,
-                );
+                });
             }
 
             return Bun__createJSStatFSObject(
@@ -121,7 +121,7 @@ pub const StatFS = union(enum) {
         }
     }
 
-    pub fn toJSNewlyCreated(this: *const StatFS, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatFS, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .big => |*big| big.toJS(globalObject),
             .small => |*small| small.toJS(globalObject),

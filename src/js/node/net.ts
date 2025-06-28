@@ -31,7 +31,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -412,7 +412,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
       if (!isTLS) {
-        connectionListener.$call(self, _socket);
+        self.prependOnceListener("connection", connectionListener);
       }
     }
     self.emit("connection", _socket);
@@ -457,7 +457,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
+      server.prependOnceListener("secureConnection", connectionListener);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -625,7 +625,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       callback(error);
     }
-    self.emit("error", error);
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
@@ -1106,6 +1105,7 @@ Socket.prototype.connect = function connect(...args) {
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {
+    validateString(path, "options.path");
     internalConnect(this, options, path);
   }
   return this;
@@ -1513,6 +1513,8 @@ function lookupAndConnect(self, options) {
   const { localAddress, localPort } = options;
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
+
+  validateString(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);
@@ -2440,6 +2442,16 @@ Server.prototype[kRealListen] = function (
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
   setTimeout(emitListeningNextTick, 1, this);
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
 };
 
 Server.prototype.getsockname = function getsockname(out) {

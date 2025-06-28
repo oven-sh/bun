@@ -505,7 +505,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
         scope.clearException();
         if (!plugin->plugin.tombstoned) {

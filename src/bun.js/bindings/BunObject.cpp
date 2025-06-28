@@ -111,15 +111,12 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     size_t arrayLength = array->length();
     const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
         if (asUint8Array) {
-            return JSValue::encode(
-                JSC::JSUint8Array::create(
-                    lexicalGlobalObject,
-                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
-                    0));
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0)));
         }
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (arrayLength < 1) {
         return returnEmptyArrayBufferView();
@@ -228,6 +225,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTFMove(buffer), 0, byteLength);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8array);
     }
 
@@ -265,7 +263,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
         asUint8Array = arg2.toBoolean(globalObject);
     }
 
-    return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
+    RELEASE_AND_RETURN(throwScope, flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
@@ -571,7 +569,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        RETURN_IF_EXCEPTION(throwScope, {});
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);

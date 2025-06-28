@@ -20,7 +20,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     JSValue encodingValue = callFrame->argument(1);
 
     KeyObject keyObject = KeyObject::prepareSecretKey(lexicalGlobalObject, scope, keyValue, encodingValue, true);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
@@ -37,7 +37,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
     JSValue keyValue = callFrame->argument(0);
 
     auto prepareResult = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, keyValue, KeyObject::PrepareAsymmetricKeyMode::CreatePublic);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     KeyObject keyObject;
 

@@ -264,6 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     auto emailString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = emailString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
@@ -300,6 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     auto hostString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = hostString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Bun::UTF8View hostView(view);
 
@@ -330,6 +332,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     auto ipString = arg0.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = ipString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     WTF::CString ip = view->utf8();
 
     // ignore flags

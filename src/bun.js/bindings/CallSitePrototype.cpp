@@ -55,11 +55,9 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
 #define ENTER_PROTO_FUNC()                                                  \
     auto& vm = JSC::getVM(globalObject);                                    \
     auto scope = DECLARE_THROW_SCOPE(vm);                                   \
-                                                                            \
     CallSite* callSite = getCallSite(globalObject, callFrame->thisValue()); \
-    if (!callSite) {                                                        \
-        return JSC::JSValue::encode(JSC::jsUndefined());                    \
-    }
+    RETURN_IF_EXCEPTION(scope, {});                                         \
+    (void)callSite;
 
 static const HashTableValue CallSitePrototypeTableValues[]
     = {
@@ -251,7 +249,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     ENTER_PROTO_FUNC();
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
-    return JSC::JSValue::encode(JSC::JSValue(jsString(vm, sb.toString())));
+    return JSC::JSValue::encode(jsString(vm, sb.toString()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

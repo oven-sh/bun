@@ -77,3 +77,35 @@ test("coverage excludes node_modules directory", () => {
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });
+
+test("coverage includes node_modules when enabled", () => {
+  const dir = tempDirWithFiles("cov", {
+    "node_modules/pi/index.js": `
+    export const pi = 3.14;
+    export const tau = 6.28;
+    `,
+    "demo.test.ts": `
+    import { pi } from 'pi';
+    console.log(pi);
+    `,
+    // Add a bunfig.toml to enable node_modules coverage
+    "bunfig.toml": `\
+[test]
+coverage = true
+coverageIncludeNodeModules = true
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  // Should include both the test file and node_modules/pi/index.js in the report
+  const stderr = result.stderr.toString();
+  expect(stderr).toContain("demo.test.ts");
+  expect(stderr).toContain(path.join("node_modules", "pi", "index.js"));
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});

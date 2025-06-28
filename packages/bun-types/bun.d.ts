@@ -346,6 +346,13 @@ declare module "bun" {
 
   type WorkerType = "classic" | "module";
 
+  interface BunReadableStream extends ReadableStream<Uint8Array> {
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    bytes(): Promise<Uint8Array>;
+    json(): Promise<any>;
+  }
+
   interface AbstractWorker {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
     onerror: ((this: AbstractWorker, ev: ErrorEvent) => any) | null;
@@ -1242,7 +1249,7 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: ReadableStream;
+    readonly readable: BunReadableStream;
 
     // TODO: writable: WritableStream;
 
@@ -6767,7 +6774,7 @@ declare module "bun" {
        *
        * For stdout and stdin you may pass:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6793,7 +6800,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6805,7 +6812,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6968,7 +6975,7 @@ declare module "bun" {
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Uint8Array>
+      ? BunReadableStream
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;

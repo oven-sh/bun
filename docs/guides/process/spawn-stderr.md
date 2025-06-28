@@ -13,14 +13,14 @@ proc.stderr; // => ReadableStream
 
 ---
 
-To read `stderr` until the child process exits, use the [`Bun.readableStreamToText()`](https://bun.sh/docs/api/utils#bun-readablestreamto) convenience function.
+To read `stderr` until the child process exits, use .text()
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"], {
   stderr: "pipe",
 });
 
-const errors: string = await Bun.readableStreamToText(proc.stderr);
+const errors: string = await proc.stderr.text();
 if (errors) {
   // handle errors
 }

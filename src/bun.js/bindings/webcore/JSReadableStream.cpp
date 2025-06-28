@@ -40,6 +40,7 @@
 #include <wtf/PointerPreparations.h>
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/BuiltinNames.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -84,6 +85,58 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamPrototype, JSReadableStreamPrototype::Base);
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncText, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "text"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToText(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "arrayBuffer"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToArrayBuffer(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "bytes"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToBytes(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "json"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToJSON(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
+
 using JSReadableStreamDOMConstructor = JSDOMBuiltinConstructor<JSReadableStream>;
 
 template<> const ClassInfo JSReadableStreamDOMConstructor::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDOMConstructor) };
@@ -118,6 +171,10 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
     { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
     { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamTeeCodeGenerator, 0 } },
+    { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncText, 0 } },
+    { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncArrayBuffer, 0 } },
+    { "bytes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncBytes, 0 } },
+    { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncJSON, 0 } },
 
 };
 

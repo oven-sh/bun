@@ -256,7 +256,7 @@ CPP_DECL bool JSC__JSValue__isObject(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isPrimitive(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isSameValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__isSymbol(JSC::EncodedJSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
+CPP_DECL bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3);

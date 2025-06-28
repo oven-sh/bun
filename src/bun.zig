@@ -1457,10 +1457,6 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
     }
 }
 
-pub const fast_debug_build_cmd = .None;
-pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
-    Environment.isDebug;
-
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
@@ -1479,10 +1475,8 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 }
 
 comptime {
-    if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
-        _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
-        _ = @import("./cli/upgrade_command.zig").Version;
-    }
+    _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
+    _ = @import("./cli/upgrade_command.zig").Version;
 }
 
 pub fn DebugOnlyDisabler(comptime Type: type) type {

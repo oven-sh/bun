@@ -950,20 +950,14 @@ pub const Jest = struct {
 //   Range (min … max):    24.1 ms …  39.7 ms    500 runs
 // '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
-pub const JavaScriptParser = if (bun.fast_debug_build_mode)
-    TSXParser
-else
-    NewParser(.{});
-pub const JSXParser = if (bun.fast_debug_build_mode)
-    TSXParser
-else
-    NewParser(.{ .jsx = .react });
+pub const JavaScriptParser = NewParser(.{});
+pub const JSXParser = NewParser(.{ .jsx = .react });
 pub const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 pub const TypeScriptParser = NewParser(.{ .typescript = true });
-pub const JavaScriptImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .scan_only = true });
-pub const JSXImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .jsx = .react, .scan_only = true });
+pub const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
+pub const JSXImportScanner = NewParser(.{ .jsx = .react, .scan_only = true });
 pub const TSXImportScanner = NewParser(.{ .jsx = .react, .typescript = true, .scan_only = true });
-pub const TypeScriptImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .typescript = true, .scan_only = true });
+pub const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only = true });
 
 // The "await" and "yield" expressions are never allowed in argument lists but
 // may or may not be allowed otherwise depending on the details of the enclosing

@@ -37,7 +37,7 @@ Bun.serve({
     // Redirect from /blog/hello to /blog/hello/world
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
-    // Serve a file by buffering it in memory
+    // Serve files directly (Bun v1.2.16+)
     "/favicon.ico": new Response(Bun.file("./favicon.ico"), {
       headers: {
         "Content-Type": "image/x-icon",

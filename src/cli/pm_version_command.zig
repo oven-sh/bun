@@ -1,0 +1,632 @@
+const std = @import("std");
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const strings = bun.strings;
+const string = bun.string;
+const Command = bun.CLI.Command;
+const PackageManager = bun.install.PackageManager;
+const Semver = bun.Semver;
+const logger = bun.logger;
+const JSON = bun.JSON;
+const RunCommand = bun.RunCommand;
+
+pub const PmVersionCommand = struct {
+    const VersionType = enum {
+        patch,
+        minor,
+        major,
+        prepatch,
+        preminor,
+        premajor,
+        prerelease,
+        specific,
+        from_git,
+
+        pub fn fromString(str: []const u8) ?VersionType {
+            if (strings.eqlComptime(str, "patch")) return .patch;
+            if (strings.eqlComptime(str, "minor")) return .minor;
+            if (strings.eqlComptime(str, "major")) return .major;
+            if (strings.eqlComptime(str, "prepatch")) return .prepatch;
+            if (strings.eqlComptime(str, "preminor")) return .preminor;
+            if (strings.eqlComptime(str, "premajor")) return .premajor;
+            if (strings.eqlComptime(str, "prerelease")) return .prerelease;
+            if (strings.eqlComptime(str, "from-git")) return .from_git;
+            return null;
+        }
+    };
+
+    pub fn exec(ctx: Command.Context, pm: *PackageManager, positionals: []const string, original_cwd: []const u8) !void {
+        const package_json_dir = findPackageDir(ctx.allocator, original_cwd) catch original_cwd;
+
+        if (positionals.len <= 1) {
+            try showHelp(ctx, pm, package_json_dir);
+            return;
+        }
+
+        const version_type, const new_version = parseVersionArgument(positionals[1]);
+
+        try verifyGit(package_json_dir, pm);
+
+        var path_buf: bun.PathBuffer = undefined;
+        const package_json_path = bun.path.joinAbsStringBuf(package_json_dir, &path_buf, &.{"package.json"}, .auto);
+        const package_json_contents = std.fs.cwd().readFileAllocOptions(ctx.allocator, package_json_path, 1024 * 1024 * 16, null, @alignOf(u8), 0) catch |err| {
+            Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+        defer ctx.allocator.free(package_json_contents);
+
+        const package_json_source = logger.Source.initPathString(package_json_path, package_json_contents);
+        const json = JSON.parsePackageJSONUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+            Output.errGeneric("Failed to parse package.json: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        const scripts = json.asProperty("scripts");
+        const scripts_obj = if (scripts) |s| if (s.expr.data == .e_object) s.expr else null else null;
+
+        if (scripts_obj) |s| {
+            if (s.get("preversion")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "preversion",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
+                }
+            }
+        }
+        const current_version = try extractCurrentVersion(package_json_contents);
+        const new_version_str = try calculateNewVersion(ctx.allocator, current_version, version_type, new_version, pm.options.preid);
+        defer ctx.allocator.free(new_version_str);
+
+        if (!pm.options.allow_same_version and strings.eql(current_version, new_version_str)) {
+            Output.errGeneric("Version not changed", .{});
+            Global.exit(1);
+        }
+
+        try updatePackageJson(ctx.allocator, package_json_contents, current_version, new_version_str, package_json_dir);
+
+        if (scripts_obj) |s| {
+            if (s.get("version")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "version",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
+                }
+            }
+        }
+
+        if (pm.options.git_tag_version) {
+            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir);
+        }
+
+        if (scripts_obj) |s| {
+            if (s.get("postversion")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "postversion",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
+                }
+            }
+        }
+
+        Output.println("v{s}", .{new_version_str});
+        Output.flush();
+    }
+
+    fn findPackageDir(allocator: std.mem.Allocator, start_dir: []const u8) ![]const u8 {
+        var path_buf: bun.PathBuffer = undefined;
+        var current_dir = start_dir;
+
+        while (true) {
+            const package_json_path = bun.path.joinAbsStringBuf(current_dir, &path_buf, &.{"package.json"}, .auto);
+            if (std.fs.cwd().access(package_json_path, .{})) {
+                return try allocator.dupe(u8, current_dir);
+            } else |_| {}
+
+            if (std.fs.path.dirname(current_dir)) |parent| {
+                if (strings.eql(parent, current_dir)) {
+                    break;
+                }
+                current_dir = parent;
+            } else {
+                break;
+            }
+        }
+
+        return try allocator.dupe(u8, start_dir);
+    }
+
+    fn verifyGit(cwd: []const u8, pm: *PackageManager) !void {
+        if (!pm.options.git_tag_version) return;
+
+        var path_buf: bun.PathBuffer = undefined;
+        const git_dir_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{".git"}, .auto);
+        std.fs.cwd().access(git_dir_path, .{}) catch {
+            pm.options.git_tag_version = false;
+            return;
+        };
+
+        if (!isGitClean(cwd) and !pm.options.force) {
+            Output.errGeneric("Git working directory not clean.", .{});
+            Global.exit(1);
+        }
+    }
+
+    fn parseVersionArgument(arg: []const u8) struct { VersionType, ?[]const u8 } {
+        if (VersionType.fromString(arg)) |vtype| {
+            return .{ vtype, null };
+        }
+
+        const version = Semver.Version.parse(Semver.SlicedString.init(arg, arg));
+        if (version.valid) {
+            return .{ .specific, arg };
+        }
+
+        Output.errGeneric("Invalid version argument: \"{s}\"", .{arg});
+        Output.note("Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version", .{});
+        Global.exit(1);
+    }
+
+    fn extractCurrentVersion(contents: []const u8) ![]const u8 {
+        const version_start = std.mem.indexOf(u8, contents, "\"version\"") orelse {
+            Output.errGeneric("No version field found in package.json", .{});
+            Global.exit(1);
+        };
+
+        const colon_pos = std.mem.indexOfPos(u8, contents, version_start, ":") orelse {
+            Output.errGeneric("No version field found in package.json", .{});
+            Global.exit(1);
+        };
+
+        var quote_pos = colon_pos + 1;
+        while (quote_pos < contents.len and (contents[quote_pos] == ' ' or contents[quote_pos] == '\t')) {
+            quote_pos += 1;
+        }
+
+        if (quote_pos >= contents.len or contents[quote_pos] != '"') {
+            Output.errGeneric("Invalid version field in package.json", .{});
+            Global.exit(1);
+        }
+
+        const value_start = quote_pos + 1;
+        var value_end = value_start;
+        while (value_end < contents.len and contents[value_end] != '"') {
+            value_end += 1;
+        }
+
+        if (value_end >= contents.len) {
+            Output.errGeneric("Invalid version field in package.json", .{});
+            Global.exit(1);
+        }
+
+        return contents[value_start..value_end];
+    }
+
+    fn updatePackageJson(allocator: std.mem.Allocator, contents: []const u8, old_version: []const u8, new_version: []const u8, cwd: []const u8) !void {
+        const updated_contents = try updateVersionString(allocator, contents, old_version, new_version);
+        defer allocator.free(updated_contents);
+
+        var path_buf: bun.PathBuffer = undefined;
+        const package_json_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{"package.json"}, .auto);
+        const file = std.fs.cwd().openFile(package_json_path, .{ .mode = .write_only }) catch |err| {
+            Output.errGeneric("Failed to open package.json for writing: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+        defer file.close();
+
+        try file.seekTo(0);
+        try file.setEndPos(0);
+        try file.writeAll(updated_contents);
+    }
+
+    fn showHelp(ctx: Command.Context, pm: *PackageManager, cwd: []const u8) !void {
+        var path_buf: bun.PathBuffer = undefined;
+        const package_json_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{"package.json"}, .auto);
+        const package_json_contents = std.fs.cwd().readFileAllocOptions(ctx.allocator, package_json_path, 1024 * 1024 * 16, null, @alignOf(u8), 0) catch |err| {
+            Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+        defer ctx.allocator.free(package_json_contents);
+
+        const _current_version = extractVersion(package_json_contents);
+        const current_version = _current_version orelse "1.0.0";
+
+        Output.prettyln("<r><b>bun pm <green>version<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        if (_current_version) |version| {
+            Output.prettyln("Current package version: <green>v{s}<r>", .{version});
+        }
+
+        const increment_help_text =
+            \\
+            \\<b>Increment<r>:
+            \\  <cyan>patch<r>      <d>{s} → {s}<r>
+            \\  <cyan>minor<r>      <d>{s} → {s}<r>
+            \\  <cyan>major<r>      <d>{s} → {s}<r>
+            \\  <cyan>prerelease<r> <d>{s} → {s}<r> 
+            \\
+        ;
+        Output.pretty(increment_help_text, .{
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .patch, null, pm.options.preid),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .minor, null, pm.options.preid),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .major, null, pm.options.preid),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, pm.options.preid),
+        });
+
+        if (strings.indexOfChar(current_version, '-') != null or pm.options.preid.len > 0) {
+            const prerelease_help_text =
+                \\  <cyan>prepatch<r>   <d>{s} → {s}<r>
+                \\  <cyan>preminor<r>   <d>{s} → {s}<r>
+                \\  <cyan>premajor<r>   <d>{s} → {s}<r>
+                \\
+            ;
+            Output.pretty(prerelease_help_text, .{
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .prepatch, null, pm.options.preid),
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .preminor, null, pm.options.preid),
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .premajor, null, pm.options.preid),
+            });
+        }
+
+        const set_specific_version_help_text =
+            \\  <cyan>from-git<r>   <d>Use version from latest git tag<r>
+            \\  <blue>1.2.3<r>      <d>Set specific version<r>
+            \\
+            \\<b>Options<r>:
+            \\  <cyan>--no-git-tag-version<r> <d>Skip git operations<r>
+            \\  <cyan>--allow-same-version<r> <d>Prevents throwing error if version is the same<r>
+            \\  <cyan>--message<d>=\<val\><r>, <cyan>-m<r>  <d>Custom commit message<r>
+            \\  <cyan>--preid<d>=\<val\><r>        <d>Prerelease identifier<r>
+            \\
+            \\<b>Examples<r>:
+            \\  <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>
+            \\  <d>$<r> <b><green>bun pm version<r> <blue>1.2.3<r> <cyan>--no-git-tag-version<r>
+            \\  <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r>
+            \\
+            \\More info: <magenta>https://bun.sh/docs/cli/pm#version<r>
+            \\
+        ;
+        Output.pretty(set_specific_version_help_text, .{});
+        Output.flush();
+    }
+
+    fn extractVersion(contents: []const u8) ?[]const u8 {
+        const version_start = std.mem.indexOf(u8, contents, "\"version\"") orelse return null;
+        const colon_pos = std.mem.indexOfPos(u8, contents, version_start, ":") orelse return null;
+        var quote_pos = colon_pos + 1;
+        while (quote_pos < contents.len and (contents[quote_pos] == ' ' or contents[quote_pos] == '\t')) {
+            quote_pos += 1;
+        }
+        if (quote_pos >= contents.len or contents[quote_pos] != '"') return null;
+
+        const value_start = quote_pos + 1;
+        var value_end = value_start;
+        while (value_end < contents.len and contents[value_end] != '"') {
+            value_end += 1;
+        }
+        if (value_end >= contents.len) return null;
+
+        return contents[value_start..value_end];
+    }
+
+    fn updateVersionString(allocator: std.mem.Allocator, contents: []const u8, old_version: []const u8, new_version: []const u8) ![]const u8 {
+        const version_key = "\"version\"";
+
+        var search_start: usize = 0;
+        while (std.mem.indexOfPos(u8, contents, search_start, version_key)) |key_pos| {
+            var colon_pos = key_pos + version_key.len;
+            while (colon_pos < contents.len and (contents[colon_pos] == ' ' or contents[colon_pos] == '\t')) {
+                colon_pos += 1;
+            }
+
+            if (colon_pos >= contents.len or contents[colon_pos] != ':') {
+                search_start = key_pos + 1;
+                continue;
+            }
+
+            colon_pos += 1;
+            while (colon_pos < contents.len and (contents[colon_pos] == ' ' or contents[colon_pos] == '\t')) {
+                colon_pos += 1;
+            }
+
+            if (colon_pos >= contents.len or contents[colon_pos] != '"') {
+                search_start = key_pos + 1;
+                continue;
+            }
+
+            const value_start = colon_pos + 1;
+
+            var value_end = value_start;
+            while (value_end < contents.len and contents[value_end] != '"') {
+                if (contents[value_end] == '\\' and value_end + 1 < contents.len) {
+                    value_end += 2;
+                } else {
+                    value_end += 1;
+                }
+            }
+
+            if (value_end >= contents.len) {
+                search_start = key_pos + 1;
+                continue;
+            }
+
+            const current_value = contents[value_start..value_end];
+            if (strings.eql(current_value, old_version)) {
+                var result = std.ArrayList(u8).init(allocator);
+                try result.appendSlice(contents[0..value_start]);
+                try result.appendSlice(new_version);
+                try result.appendSlice(contents[value_end..]);
+                return result.toOwnedSlice();
+            }
+
+            search_start = value_end + 1;
+        }
+
+        return error.VersionNotFound;
+    }
+
+    fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8) ![]const u8 {
+        if (version_type == .specific) {
+            return try allocator.dupe(u8, specific_version.?);
+        }
+
+        if (version_type == .from_git) {
+            return try getVersionFromGit(allocator);
+        }
+
+        const current = Semver.Version.parse(Semver.SlicedString.init(current_str, current_str));
+        if (!current.valid) {
+            Output.errGeneric("Current version \"{s}\" is not a valid semver", .{current_str});
+            Global.exit(1);
+        }
+
+        const prerelease_id: []const u8 = if (preid.len > 0)
+            try allocator.dupe(u8, preid)
+        else if (!current.version.tag.hasPre())
+            try allocator.dupe(u8, "")
+        else blk: {
+            const current_prerelease = current.version.tag.pre.slice(current_str);
+
+            if (strings.indexOfChar(current_prerelease, '.')) |dot_index| {
+                break :blk try allocator.dupe(u8, current_prerelease[0..dot_index]);
+            }
+
+            break :blk if (std.fmt.parseInt(u32, current_prerelease, 10)) |_|
+                try allocator.dupe(u8, "")
+            else |_|
+                try allocator.dupe(u8, current_prerelease);
+        };
+        defer allocator.free(prerelease_id);
+
+        return try incrementVersion(allocator, current_str, current, version_type, prerelease_id);
+    }
+
+    fn incrementVersion(allocator: std.mem.Allocator, current_str: []const u8, current: Semver.Version.ParseResult, version_type: VersionType, preid: []const u8) ![]const u8 {
+        var new_version = current.version.min();
+
+        switch (version_type) {
+            .patch => {
+                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch + 1 });
+            },
+            .minor => {
+                return try std.fmt.allocPrint(allocator, "{d}.{d}.0", .{ new_version.major, new_version.minor + 1 });
+            },
+            .major => {
+                return try std.fmt.allocPrint(allocator, "{d}.0.0", .{new_version.major + 1});
+            },
+            .prepatch => {
+                if (preid.len > 0) {
+                    return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch + 1, preid });
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch + 1 });
+                }
+            },
+            .preminor => {
+                if (preid.len > 0) {
+                    return try std.fmt.allocPrint(allocator, "{d}.{d}.0-{s}.0", .{ new_version.major, new_version.minor + 1, preid });
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{d}.{d}.0-0", .{ new_version.major, new_version.minor + 1 });
+                }
+            },
+            .premajor => {
+                if (preid.len > 0) {
+                    return try std.fmt.allocPrint(allocator, "{d}.0.0-{s}.0", .{ new_version.major + 1, preid });
+                } else {
+                    return try std.fmt.allocPrint(allocator, "{d}.0.0-0", .{new_version.major + 1});
+                }
+            },
+            .prerelease => {
+                if (current.version.tag.hasPre()) {
+                    const current_prerelease = current.version.tag.pre.slice(current_str);
+                    const identifier = if (preid.len > 0) preid else current_prerelease;
+
+                    if (strings.lastIndexOfChar(current_prerelease, '.')) |dot_index| {
+                        const number_str = current_prerelease[dot_index + 1 ..];
+                        const next_num = std.fmt.parseInt(u32, number_str, 10) catch 0;
+                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, identifier, next_num + 1 });
+                    } else {
+                        const num = std.fmt.parseInt(u32, current_prerelease, 10) catch null;
+                        if (num) |n| {
+                            if (preid.len > 0) {
+                                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, preid, n + 1 });
+                            } else {
+                                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{d}", .{ new_version.major, new_version.minor, new_version.patch, n + 1 });
+                            }
+                        } else {
+                            return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.1", .{ new_version.major, new_version.minor, new_version.patch, identifier });
+                        }
+                    }
+                } else {
+                    new_version.patch += 1;
+                    if (preid.len > 0) {
+                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch, preid });
+                    } else {
+                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch });
+                    }
+                }
+            },
+            else => {},
+        }
+        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
+    }
+
+    fn isGitClean(cwd: []const u8) bool {
+        var child_proc = std.process.Child.init(
+            &[_][]const u8{ "git", "status", "--porcelain" },
+            bun.default_allocator,
+        );
+        child_proc.stdout_behavior = .Pipe;
+        child_proc.stderr_behavior = .Pipe;
+
+        child_proc.cwd = cwd;
+        child_proc.spawn() catch return false;
+
+        var stdout = std.ArrayListUnmanaged(u8){};
+        defer stdout.deinit(bun.default_allocator);
+        var stderr = std.ArrayListUnmanaged(u8){};
+        defer stderr.deinit(bun.default_allocator);
+
+        child_proc.collectOutput(bun.default_allocator, &stdout, &stderr, 1024 * 1024) catch return false;
+
+        const result = child_proc.wait() catch return false;
+
+        return switch (result) {
+            .Exited => |code| code == 0 and stdout.items.len == 0,
+            else => false,
+        };
+    }
+
+    fn getVersionFromGit(allocator: std.mem.Allocator) ![]const u8 {
+        var child_proc = std.process.Child.init(
+            &[_][]const u8{ "git", "describe", "--tags", "--abbrev=0" },
+            allocator,
+        );
+        child_proc.stdout_behavior = .Pipe;
+        child_proc.stderr_behavior = .Pipe;
+
+        child_proc.spawn() catch |err| {
+            Output.errGeneric("Failed to run git command: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        var stdout = std.ArrayListUnmanaged(u8){};
+        defer stdout.deinit(allocator);
+        var stderr = std.ArrayListUnmanaged(u8){};
+        defer stderr.deinit(allocator);
+
+        child_proc.collectOutput(allocator, &stdout, &stderr, 1024 * 1024) catch |err| {
+            Output.errGeneric("Failed to collect git output: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        const result = child_proc.wait() catch |err| {
+            Output.errGeneric("Failed to wait for git process: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        switch (result) {
+            .Exited => |code| {
+                if (code != 0) {
+                    if (stderr.items.len > 0) {
+                        Output.errGeneric("Git error: {s}", .{strings.trim(stderr.items, " \n\r\t")});
+                    } else {
+                        Output.errGeneric("No git tags found", .{});
+                    }
+                    Global.exit(1);
+                }
+            },
+            else => {
+                Output.errGeneric("Git command failed unexpectedly", .{});
+                Global.exit(1);
+            },
+        }
+
+        var version_str = strings.trim(stdout.items, " \n\r\t");
+        if (strings.startsWith(version_str, "v")) {
+            version_str = version_str[1..];
+        }
+
+        return try allocator.dupe(u8, version_str);
+    }
+
+    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) !void {
+        var stage_proc = std.process.Child.init(
+            &[_][]const u8{ "git", "add", "package.json" },
+            allocator,
+        );
+        stage_proc.cwd = cwd;
+        stage_proc.stdout_behavior = .Ignore;
+        stage_proc.stderr_behavior = .Ignore;
+        const stage_result = stage_proc.spawnAndWait() catch |err| {
+            Output.errGeneric("Git add failed: {s}", .{@errorName(err)});
+            return;
+        };
+
+        if (stage_result != .Exited or stage_result.Exited != 0) {
+            Output.errGeneric("Git add failed with result: {any}", .{stage_result});
+            return;
+        }
+
+        const commit_message = custom_message orelse try std.fmt.allocPrint(allocator, "v{s}", .{version});
+        defer if (custom_message == null) allocator.free(commit_message);
+
+        var commit_proc = std.process.Child.init(
+            &[_][]const u8{ "git", "commit", "-m", commit_message },
+            allocator,
+        );
+        commit_proc.cwd = cwd;
+        commit_proc.stdout_behavior = .Ignore;
+        commit_proc.stderr_behavior = .Ignore;
+        const commit_result = commit_proc.spawnAndWait() catch |err| {
+            Output.errGeneric("Git commit failed: {s}", .{@errorName(err)});
+            return;
+        };
+
+        if (commit_result != .Exited or commit_result.Exited != 0) {
+            Output.errGeneric("Git commit failed", .{});
+            return;
+        }
+
+        const tag_name = try std.fmt.allocPrint(allocator, "v{s}", .{version});
+        defer allocator.free(tag_name);
+
+        var tag_proc = std.process.Child.init(
+            &[_][]const u8{ "git", "tag", "-a", tag_name, "-m", tag_name },
+            allocator,
+        );
+        tag_proc.cwd = cwd;
+        tag_proc.stdout_behavior = .Ignore;
+        tag_proc.stderr_behavior = .Ignore;
+        const tag_result = tag_proc.spawnAndWait() catch |err| {
+            Output.errGeneric("Git tag failed: {s}", .{@errorName(err)});
+            return;
+        };
+
+        if (tag_result != .Exited or tag_result.Exited != 0) {
+            Output.errGeneric("Git tag failed", .{});
+            return;
+        }
+    }
+};

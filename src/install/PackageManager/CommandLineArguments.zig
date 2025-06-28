@@ -74,6 +74,11 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
     clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--git-tag-version                      Create a git commit and tag") catch unreachable,
+    clap.parseParam("--no-git-tag-version                   Don't create a git commit and tag") catch unreachable,
+    clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
+    clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
+    clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -199,6 +204,12 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+
+// Version command options
+git_tag_version: bool = true,
+allow_same_version: bool = false,
+preid: string = "",
+message: ?string = null,
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -878,6 +889,18 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (cli.analyze and cli.positionals.len == 0) {
         Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
         Global.crash();
+    }
+
+    if (comptime subcommand == .pm) {
+        // `bun pm version` command options
+        cli.git_tag_version = !args.flag("--no-git-tag-version");
+        cli.allow_same_version = args.flag("--allow-same-version");
+        if (args.option("--preid")) |preid| {
+            cli.preid = preid;
+        }
+        if (args.option("--message")) |message| {
+            cli.message = message;
+        }
     }
 
     return cli;

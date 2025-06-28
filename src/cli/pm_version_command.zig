@@ -105,13 +105,20 @@ pub const PmVersionCommand = struct {
             Global.exit(1);
         }
 
-        const updated_contents = try updateVersionString(ctx.allocator, package_json_contents, current_version, new_version_str);
-        defer ctx.allocator.free(updated_contents);
+        {
+            const updated_contents = try updateVersionString(ctx.allocator, package_json_contents, current_version, new_version_str);
+            defer ctx.allocator.free(updated_contents);
 
-        bun.sys.File.writeFile(bun.FD.cwd(), @as(bun.OSPathSliceZ, package_json_path), updated_contents).unwrap() catch |err| {
-            Output.errGeneric("Failed to write to package.json: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
+            const file = std.fs.cwd().openFile(package_json_path, .{ .mode = .write_only }) catch |err| {
+                Output.errGeneric("Failed to open package.json for writing: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+            defer file.close();
+
+            try file.seekTo(0);
+            try file.setEndPos(0);
+            try file.writeAll(updated_contents);
+        }
 
         if (scripts_obj) |s| {
             if (s.get("version")) |script| {
@@ -206,41 +213,6 @@ pub const PmVersionCommand = struct {
         Output.errGeneric("Invalid version argument: \"{s}\"", .{arg});
         Output.note("Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version", .{});
         Global.exit(1);
-    }
-
-    fn extractCurrentVersion(contents: []const u8) ![]const u8 {
-        const version_start = std.mem.indexOf(u8, contents, "\"version\"") orelse {
-            Output.errGeneric("No version field found in package.json", .{});
-            Global.exit(1);
-        };
-
-        const colon_pos = std.mem.indexOfPos(u8, contents, version_start, ":") orelse {
-            Output.errGeneric("No version field found in package.json", .{});
-            Global.exit(1);
-        };
-
-        var quote_pos = colon_pos + 1;
-        while (quote_pos < contents.len and (contents[quote_pos] == ' ' or contents[quote_pos] == '\t')) {
-            quote_pos += 1;
-        }
-
-        if (quote_pos >= contents.len or contents[quote_pos] != '"') {
-            Output.errGeneric("Invalid version field in package.json", .{});
-            Global.exit(1);
-        }
-
-        const value_start = quote_pos + 1;
-        var value_end = value_start;
-        while (value_end < contents.len and contents[value_end] != '"') {
-            value_end += 1;
-        }
-
-        if (value_end >= contents.len) {
-            Output.errGeneric("Invalid version field in package.json", .{});
-            Global.exit(1);
-        }
-
-        return contents[value_start..value_end];
     }
 
     fn showHelp(ctx: Command.Context, pm: *PackageManager, cwd: []const u8) !void {

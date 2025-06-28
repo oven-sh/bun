@@ -541,6 +541,8 @@ describe("bun pm version", () => {
     await Bun.spawn([bunExe(), "pm", "version", "patch", "--no-git-tag-version"], {
       cwd: testDir4,
       env: bunEnv,
+      stderr: "ignore",
+      stdout: "ignore",
     }).exited;
 
     expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);

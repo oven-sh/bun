@@ -49,8 +49,9 @@ pub const PmVersionCommand = struct {
         try verifyGit(package_json_dir, pm);
 
         var path_buf: bun.PathBuffer = undefined;
-        const package_json_path = bun.path.joinAbsStringBuf(package_json_dir, &path_buf, &.{"package.json"}, .auto);
-        const package_json_contents = std.fs.cwd().readFileAllocOptions(ctx.allocator, package_json_path, 1024 * 1024 * 16, null, @alignOf(u8), 0) catch |err| {
+        const package_json_path = bun.path.joinAbsStringBufZ(package_json_dir, &path_buf, &.{"package.json"}, .auto);
+
+        const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, ctx.allocator).unwrap() catch |err| {
             Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
             Global.exit(1);
         };
@@ -82,7 +83,20 @@ pub const PmVersionCommand = struct {
                 }
             }
         }
-        const current_version = try extractCurrentVersion(package_json_contents);
+
+        const current_version = brk_version: {
+            if (json.asProperty("version")) |v| {
+                switch (v.expr.data) {
+                    .e_string => |s| {
+                        break :brk_version s.data;
+                    },
+                    else => {},
+                }
+            }
+            Output.errGeneric("No version field found in package.json", .{});
+            Global.exit(1);
+        };
+
         const new_version_str = try calculateNewVersion(ctx.allocator, current_version, version_type, new_version, pm.options.preid);
         defer ctx.allocator.free(new_version_str);
 
@@ -91,7 +105,13 @@ pub const PmVersionCommand = struct {
             Global.exit(1);
         }
 
-        try updatePackageJson(ctx.allocator, package_json_contents, current_version, new_version_str, package_json_dir);
+        const updated_contents = try updateVersionString(ctx.allocator, package_json_contents, current_version, new_version_str);
+        defer ctx.allocator.free(updated_contents);
+
+        bun.sys.File.writeFile(bun.FD.cwd(), package_json_path, updated_contents).unwrap() catch |err| {
+            Output.errGeneric("Failed to write to package.json: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
 
         if (scripts_obj) |s| {
             if (s.get("version")) |script| {
@@ -142,19 +162,16 @@ pub const PmVersionCommand = struct {
         var current_dir = start_dir;
 
         while (true) {
-            const package_json_path = bun.path.joinAbsStringBuf(current_dir, &path_buf, &.{"package.json"}, .auto);
-            if (std.fs.cwd().access(package_json_path, .{})) {
+            const package_json_path_z = bun.path.joinAbsStringBufZ(current_dir, &path_buf, &.{"package.json"}, .auto);
+            if (bun.FD.cwd().existsAt(package_json_path_z)) {
                 return try allocator.dupe(u8, current_dir);
-            } else |_| {}
+            }
 
-            if (std.fs.path.dirname(current_dir)) |parent| {
-                if (strings.eql(parent, current_dir)) {
-                    break;
-                }
-                current_dir = parent;
-            } else {
+            const parent = bun.path.dirname(current_dir, .auto);
+            if (strings.eql(parent, current_dir)) {
                 break;
             }
+            current_dir = parent;
         }
 
         return try allocator.dupe(u8, start_dir);
@@ -165,10 +182,10 @@ pub const PmVersionCommand = struct {
 
         var path_buf: bun.PathBuffer = undefined;
         const git_dir_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{".git"}, .auto);
-        std.fs.cwd().access(git_dir_path, .{}) catch {
+        if (!bun.FD.cwd().directoryExistsAt(git_dir_path).isTrue()) {
             pm.options.git_tag_version = false;
             return;
-        };
+        }
 
         if (!isGitClean(cwd) and !pm.options.force) {
             Output.errGeneric("Git working directory not clean.", .{});
@@ -226,27 +243,10 @@ pub const PmVersionCommand = struct {
         return contents[value_start..value_end];
     }
 
-    fn updatePackageJson(allocator: std.mem.Allocator, contents: []const u8, old_version: []const u8, new_version: []const u8, cwd: []const u8) !void {
-        const updated_contents = try updateVersionString(allocator, contents, old_version, new_version);
-        defer allocator.free(updated_contents);
-
-        var path_buf: bun.PathBuffer = undefined;
-        const package_json_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{"package.json"}, .auto);
-        const file = std.fs.cwd().openFile(package_json_path, .{ .mode = .write_only }) catch |err| {
-            Output.errGeneric("Failed to open package.json for writing: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
-        defer file.close();
-
-        try file.seekTo(0);
-        try file.setEndPos(0);
-        try file.writeAll(updated_contents);
-    }
-
     fn showHelp(ctx: Command.Context, pm: *PackageManager, cwd: []const u8) !void {
         var path_buf: bun.PathBuffer = undefined;
         const package_json_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{"package.json"}, .auto);
-        const package_json_contents = std.fs.cwd().readFileAllocOptions(ctx.allocator, package_json_path, 1024 * 1024 * 16, null, @alignOf(u8), 0) catch |err| {
+        const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, ctx.allocator).unwrap() catch |err| {
             Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
             Global.exit(1);
         };
@@ -255,7 +255,7 @@ pub const PmVersionCommand = struct {
         const _current_version = extractVersion(package_json_contents);
         const current_version = _current_version orelse "1.0.0";
 
-        Output.prettyln("<r><b>bun pm <green>version<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun pm version<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         if (_current_version) |version| {
             Output.prettyln("Current package version: <green>v{s}<r>", .{version});
         }
@@ -384,7 +384,8 @@ pub const PmVersionCommand = struct {
             search_start = value_end + 1;
         }
 
-        return error.VersionNotFound;
+        Output.errGeneric("Version not found in package.json", .{});
+        Global.exit(1);
     }
 
     fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8) ![]const u8 {

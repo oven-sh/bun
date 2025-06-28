@@ -3,17 +3,6 @@ import { readdir } from "fs/promises";
 
 const allSourceFiles = await readdir("src");
 const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp"));
-const allZigFiles = allSourceFiles.filter(file => file.endsWith(".zig"));
-const allUsedIdentifiers = new Set<string>();
-for (const zigFile of allZigFiles) {
-  const contents = await Bun.file(`src/${zigFile}`).text();
-  for (const identifier of contents.split(/\b/)) {
-    if (identifier.match(/^[A-Z][a-zA-Z0-9_]*$/)) {
-      allUsedIdentifiers.add(identifier);
-    }
-  }
-}
-console.log(allZigFiles.length);
 
 const parser = lezerCpp.parser;
 

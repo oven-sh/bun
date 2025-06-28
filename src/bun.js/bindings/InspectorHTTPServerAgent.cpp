@@ -187,13 +187,15 @@ typedef int HotReloadId;
 typedef int RouteId;
 typedef int RequestId;
 
-void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, BunString* address, double startTime, void* serverInstance)
+#define ZIG_EXPORT
+
+ZIG_EXPORT void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
 }
 
-void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
+ZIG_EXPORT void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
 {
 
     agent->serverStopped(serverId, timestamp);
@@ -219,7 +221,7 @@ struct Route {
     BunString script_url;
 };
 
-void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId,
+ZIG_EXPORT void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId,
     Route* routes_ptr, size_t routes_len)
 {
 

@@ -3,7 +3,7 @@ import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
-const { validateFunction, validateInteger } = require("internal/validators");
+const { validateAbortSignal, validateFunction, validateInteger } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -640,6 +640,33 @@ function getValidatedPath(p: any) {
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   return require("node:path").resolve(p);
 }
+function getOptions(options, defaultOptions = kEmptyObject) {
+  if (options == null || typeof options === "function") {
+    return defaultOptions;
+  }
+
+  if (typeof options === "string") {
+    defaultOptions = { ...defaultOptions };
+    defaultOptions.encoding = options;
+    options = defaultOptions;
+  } else if (typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", ["string", "object"], options);
+  }
+
+  if (options.encoding !== "buffer") assertEncoding(options.encoding);
+
+  if (options.signal !== undefined) {
+    validateAbortSignal(options.signal, "options.signal");
+  }
+
+  return options;
+}
+function assertEncoding(encoding) {
+  if (encoding && !Buffer.isEncoding(encoding)) {
+    const reason = "is invalid encoding";
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, reason);
+  }
+}
 function watchFile(filename, options, listener) {
   filename = getValidatedPath(filename);
 
@@ -1024,9 +1051,10 @@ function _toUnixTimestamp(time: any, name = "time") {
 }
 
 function opendirSync(path, options) {
-  // TODO: validatePath
-  // validateString(path, "path");
-  return new Dir(1, path, options);
+  const handle = 1;
+  path = getValidatedPath(path);
+  options = getOptions(options, { encoding: "utf8" });
+  return new Dir(handle, path, options);
 }
 
 class Dir {

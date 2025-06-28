@@ -6,6 +6,7 @@ const stringZ = bun.stringZ;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const path = bun.path;
 const strings = bun.strings;
+const FD = bun.FD;
 
 fn trimLeadingSlashes(input: string) string {
     var trimmed = input;
@@ -58,6 +59,10 @@ const Options = struct {
 
     // pub fn BufType(comptime opts: @This()) type {
     //     return switch (opts.buf_type) {
+    //         .stack_buffer => struct {
+    //             buf: PathBuffer,
+    //             len: u16,
+    //         },
     //         .pool => struct {
     //             buf: *PathBuffer,
     //             len: u16,
@@ -278,6 +283,13 @@ pub fn AbsPath(comptime opts: Options) type {
         pub fn initTopLevelDir() callconv(bun.callconv_inline) Result(@This()) {
             bun.debugAssert(bun.fs.FileSystem.instance_loaded);
             return init(bun.fs.FileSystem.instance.top_level_dir);
+        }
+
+        pub fn initFdPath(fd: FD) !@This() {
+            var new = initEmpty();
+            const trimmed = trimTrailingSlashes(try fd.getFdPath(new._buf));
+            new.len = @intCast(trimmed.len);
+            return new;
         }
 
         pub fn deinit(this: *const @This()) void {

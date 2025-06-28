@@ -71,10 +71,7 @@ pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
-    pub const Entry = struct {
-        script: string,
-    };
-    pub const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(string);
 
     pub const names = [_]string{
         "preinstall",
@@ -113,7 +110,7 @@ pub const Scripts = struct {
         inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
-                allocator.free(entry.script);
+                allocator.free(entry);
             }
             list.deinit(allocator);
         }
@@ -1846,8 +1843,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
         const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
-            if (script.script.len > 0) {
-                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script.script });
+            if (script.len > 0) {
+                string_builder.fmtCount("{s}: {s}\n", .{ field_name, script });
                 has_scripts = true;
             }
         }
@@ -1882,8 +1879,8 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
             const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
-                if (script.script.len > 0) {
-                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script.script });
+                if (script.len > 0) {
+                    _ = string_builder.fmt("{s}: {s}\n", .{ field_name, script });
                 }
             }
         }

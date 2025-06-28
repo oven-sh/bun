@@ -3777,3 +3777,11 @@ pub const highway = @import("./highway.zig");
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
+
+pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item))) bool {
+    const T = @TypeOf(item);
+    return switch (T) {
+        u8 => strings.containsChar(list.items, item),
+        else => std.mem.indexOfScalar(T, list.items, item) != null,
+    };
+}

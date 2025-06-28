@@ -34,9 +34,14 @@ pub const LifecycleScriptSubprocess = struct {
     optional: bool = false,
     started_at: u64 = 0,
 
-    entry_id: ?Store.Entry.Id = null,
+    ctx: ?InstallCtx,
 
     heap: bun.io.heap.IntrusiveField(LifecycleScriptSubprocess) = .{},
+
+    pub const InstallCtx = struct {
+        entry_id: Store.Entry.Id,
+        installer: *Store.Installer,
+    };
 
     pub const List = bun.io.heap.Intrusive(LifecycleScriptSubprocess, *PackageManager, sortByStartedAt);
 
@@ -153,9 +158,9 @@ pub const LifecycleScriptSubprocess = struct {
 
         const shell_bin = if (Environment.isWindows) null else bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse null;
 
-        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
+        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.len + 1);
         defer copy_script.deinit();
-        try bun.CLI.RunCommand.replacePackageManagerRun(&copy_script, original_script.script);
+        try bun.CLI.RunCommand.replacePackageManagerRun(&copy_script, original_script);
         try copy_script.append(0);
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
@@ -386,12 +391,20 @@ pub const LifecycleScriptSubprocess = struct {
                     }
                 }
 
-                // if (this.entry_id) |entry_id| {
-                //     this.manager.store_tasks.set(entry_id);
-                //     this.manager.wake();
-                //     _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
-                //     this.deinit();
-                // }
+                if (this.ctx) |ctx| {
+                    switch (this.current_script_index) {
+                        // preinstall
+                        0 => {
+                            const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.binaries, .monotonic);
+                            bun.debugAssert(previous_step == .@"run preinstall");
+                            ctx.installer.resumeTask(ctx.entry_id);
+                            _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                            this.deinit();
+                            return;
+                        },
+                        else => {},
+                    }
+                }
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
                     if (this.scripts.items[new_script_index] != null) {
@@ -411,6 +424,14 @@ pub const LifecycleScriptSubprocess = struct {
                     Output.prettyErrorln("<r><d>[Scripts]<r> Finished scripts for <b>{}<r>", .{
                         bun.fmt.quote(this.package_name),
                     });
+                }
+
+                if (this.ctx) |ctx| {
+                    bun.debugAssert(this.current_script_index != 0);
+                    const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.done, .monotonic);
+                    bun.debugAssert(previous_step == .@"run (post)install and (pre/post)prepare");
+                    this.manager.decrementPendingTasks();
+                    ctx.installer.resumeAvailableTasks();
                 }
 
                 // the last script finished
@@ -519,6 +540,7 @@ pub const LifecycleScriptSubprocess = struct {
         optional: bool,
         log_level: PackageManager.Options.LogLevel,
         foreground: bool,
+        ctx: ?InstallCtx,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
@@ -527,6 +549,7 @@ pub const LifecycleScriptSubprocess = struct {
             .package_name = list.package_name,
             .foreground = foreground,
             .optional = optional,
+            .ctx = ctx,
         });
 
         if (log_level.isVerbose()) {

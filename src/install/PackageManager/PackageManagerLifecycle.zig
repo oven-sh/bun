@@ -218,7 +218,9 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     const buf = this.lockfile.buffers.string_bytes.items;
     // need to clone because this is a copy before Lockfile.cleanWithLogger
     const name = root_package.name.slice(buf);
-    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+
+    var top_level_dir: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+    defer top_level_dir.deinit();
 
     if (root_package.scripts.hasAny()) {
         const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
@@ -226,7 +228,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
         this.root_lifecycle_scripts = root_package.scripts.createList(
             this.lockfile,
             buf,
-            top_level_dir_without_trailing_slash,
+            &top_level_dir,
             name,
             .root,
             add_node_gyp_rebuild_script,
@@ -237,7 +239,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
             this.root_lifecycle_scripts = root_package.scripts.createList(
                 this.lockfile,
                 buf,
-                top_level_dir_without_trailing_slash,
+                &top_level_dir,
                 name,
                 .root,
                 true,
@@ -252,6 +254,7 @@ pub fn spawnPackageLifecycleScripts(
     list: Lockfile.Package.Scripts.List,
     optional: bool,
     foreground: bool,
+    install_ctx: ?LifecycleScriptSubprocess.InstallCtx,
 ) !void {
     const log_level = this.options.log_level;
     var any_scripts = false;
@@ -311,7 +314,57 @@ pub fn spawnPackageLifecycleScripts(
     try this_transpiler.env.map.put("PATH", original_path);
     PATH.deinit();
 
-    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground);
+    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground, install_ctx);
+}
+
+pub fn findTrustedDependenciesFromUpdateRequests(this: *PackageManager) std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) {
+    const parts = this.lockfile.packages.slice();
+    // find all deps originating from --trust packages from cli
+    var set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{};
+    if (this.options.do.trust_dependencies_from_args and this.lockfile.packages.len > 0) {
+        const root_deps = parts.items(.dependencies)[this.root_package_id.get(this.lockfile, this.workspace_name_hash)];
+        var dep_id = root_deps.off;
+        const end = dep_id +| root_deps.len;
+        while (dep_id < end) : (dep_id += 1) {
+            const root_dep = this.lockfile.buffers.dependencies.items[dep_id];
+            for (this.update_requests) |request| {
+                if (request.matches(root_dep, this.lockfile.buffers.string_bytes.items)) {
+                    const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+                    if (package_id == invalid_package_id) continue;
+
+                    const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
+                    if (!entry.found_existing) {
+                        const dependency_slice = parts.items(.dependencies)[package_id];
+                        addDependenciesToSet(&set, this.lockfile, dependency_slice);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return set;
+}
+
+fn addDependenciesToSet(
+    names: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
+    lockfile: *Lockfile,
+    dependencies_slice: Lockfile.DependencySlice,
+) void {
+    const begin = dependencies_slice.off;
+    const end = begin +| dependencies_slice.len;
+    var dep_id = begin;
+    while (dep_id < end) : (dep_id += 1) {
+        const package_id = lockfile.buffers.resolutions.items[dep_id];
+        if (package_id == invalid_package_id) continue;
+
+        const dep = lockfile.buffers.dependencies.items[dep_id];
+        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+        if (!entry.found_existing) {
+            const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
+            addDependenciesToSet(names, lockfile, dependency_slice);
+        }
+    }
 }
 
 // @sortImports
@@ -342,3 +395,5 @@ const PreinstallState = bun.install.PreinstallState;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
+const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
+const invalid_package_id = bun.install.invalid_package_id;

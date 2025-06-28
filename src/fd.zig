@@ -563,14 +563,6 @@ pub const FD = packed struct(backing_int) {
         };
     }
 
-    pub fn open(path: [:0]const u8, flags: i32, perm: bun.Mode) bun.Maybe(FD) {
-        if (comptime Environment.isWindows) {
-            @compileError("oops");
-        }
-
-        return openat(cwd(), path, flags, perm);
-    }
-
     // The following functions are from bun.sys but with the 'f' prefix dropped
     // where it is relevant. These functions all take FD as the first argument,
     // so that makes them Zig methods, even when declared in a separate file.

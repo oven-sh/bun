@@ -754,7 +754,12 @@ pub fn installWithManager(
             );
         }
 
-        break :install_summary installIsolatedPackages(manager, install_root_dependencies, workspace_filters.items) catch |err| switch (err) {
+        break :install_summary installIsolatedPackages(
+            manager,
+            ctx,
+            install_root_dependencies,
+            workspace_filters.items,
+        ) catch |err| switch (err) {
             error.OutOfMemory => bun.outOfMemory(),
         };
     };
@@ -834,7 +839,7 @@ pub fn installWithManager(
             // have finished, and lockfiles have been saved
             const optional = false;
             const output_in_foreground = true;
-            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground);
+            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();

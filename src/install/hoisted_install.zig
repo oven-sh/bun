@@ -21,27 +21,6 @@ const PackageID = install.PackageID;
 const invalid_package_id = install.invalid_package_id;
 const TreeContext = PackageInstaller.TreeContext;
 
-fn addDependenciesToSet(
-    names: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
-    lockfile: *Lockfile,
-    dependencies_slice: Lockfile.DependencySlice,
-) void {
-    const begin = dependencies_slice.off;
-    const end = begin +| dependencies_slice.len;
-    var dep_id = begin;
-    while (dep_id < end) : (dep_id += 1) {
-        const package_id = lockfile.buffers.resolutions.items[dep_id];
-        if (package_id == invalid_package_id) continue;
-
-        const dep = lockfile.buffers.dependencies.items[dep_id];
-        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
-        if (!entry.found_existing) {
-            const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
-            addDependenciesToSet(names, lockfile, dependency_slice);
-        }
-    }
-}
-
 pub fn installHoistedPackages(
     this: *PackageManager,
     ctx: Command.Context,
@@ -184,35 +163,6 @@ pub fn installHoistedPackages(
             // to make mistakes harder
             var parts = this.lockfile.packages.slice();
 
-            const trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = trusted_deps: {
-
-                // find all deps originating from --trust packages from cli
-                var set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{};
-                if (this.options.do.trust_dependencies_from_args and this.lockfile.packages.len > 0) {
-                    const root_deps = parts.items(.dependencies)[this.root_package_id.get(this.lockfile, this.workspace_name_hash)];
-                    var dep_id = root_deps.off;
-                    const end = dep_id +| root_deps.len;
-                    while (dep_id < end) : (dep_id += 1) {
-                        const root_dep = this.lockfile.buffers.dependencies.items[dep_id];
-                        for (this.update_requests) |request| {
-                            if (request.matches(root_dep, this.lockfile.buffers.string_bytes.items)) {
-                                const package_id = this.lockfile.buffers.resolutions.items[dep_id];
-                                if (package_id == invalid_package_id) continue;
-
-                                const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
-                                if (!entry.found_existing) {
-                                    const dependency_slice = parts.items(.dependencies)[package_id];
-                                    addDependenciesToSet(&set, this.lockfile, dependency_slice);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                break :trusted_deps set;
-            };
-
             break :brk PackageInstaller{
                 .manager = this,
                 .options = &this.options,
@@ -260,7 +210,7 @@ pub fn installHoistedPackages(
                     }
                     break :trees trees;
                 },
-                .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
+                .trusted_dependencies_from_update_requests = this.findTrustedDependenciesFromUpdateRequests(),
                 .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
             };
         };

@@ -128,16 +128,18 @@ fn link(ctx: Command.Context) !void {
             var link_target_buf: bun.PathBuffer = undefined;
             var link_dest_buf: bun.PathBuffer = undefined;
             var link_rel_buf: bun.PathBuffer = undefined;
-            var node_modules_path_buf: bun.PathBuffer = undefined;
+
+            var node_modules_path = bun.AbsPath(.{}).initFdPath(.fromStdDir(node_modules)) catch |err| {
+                if (manager.options.log_level != .silent) {
+                    Output.err(err, "failed to link binary", .{});
+                }
+                Global.crash();
+            };
+            defer node_modules_path.deinit();
+
             var bin_linker = Bin.Linker{
                 .bin = package.bin,
-                .node_modules = .fromStdDir(node_modules),
-                .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
-                    if (manager.options.log_level != .silent) {
-                        Output.err(err, "failed to link binary", .{});
-                    }
-                    Global.crash();
-                },
+                .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
 
                 // .destination_dir_subpath = destination_dir_subpath,

@@ -242,7 +242,6 @@ pub const PackageInstaller = struct {
     pub fn incrementTreeInstallCount(
         this: *PackageInstaller,
         tree_id: Lockfile.Tree.Id,
-        maybe_destination_dir: ?*LazyPackageDestinationDir,
         comptime should_install_packages: bool,
         log_level: Options.LogLevel,
     ) void {
@@ -269,19 +268,13 @@ pub const PackageInstaller = struct {
 
         this.completed_trees.set(tree_id);
 
-        // Avoid opening this directory if we don't need to.
         if (tree.binaries.count() > 0) {
-            // Don't close this directory in here. It will be closed by the caller.
-            if (maybe_destination_dir) |maybe| {
-                if (maybe.getDir() catch null) |destination_dir| {
-                    this.seen_bin_links.clearRetainingCapacity();
+            this.seen_bin_links.clearRetainingCapacity();
 
-                    var link_target_buf: bun.PathBuffer = undefined;
-                    var link_dest_buf: bun.PathBuffer = undefined;
-                    var link_rel_buf: bun.PathBuffer = undefined;
-                    this.linkTreeBins(tree, tree_id, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
-                }
-            }
+            var link_target_buf: bun.PathBuffer = undefined;
+            var link_dest_buf: bun.PathBuffer = undefined;
+            var link_rel_buf: bun.PathBuffer = undefined;
+            this.linkTreeBins(tree, tree_id, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
         }
 
         if (comptime should_install_packages) {
@@ -295,7 +288,6 @@ pub const PackageInstaller = struct {
         this: *PackageInstaller,
         tree: *TreeContext,
         tree_id: TreeContext.Id,
-        destination_dir: std.fs.Dir,
         link_target_buf: []u8,
         link_dest_buf: []u8,
         link_rel_buf: []u8,
@@ -303,6 +295,9 @@ pub const PackageInstaller = struct {
     ) void {
         const lockfile = this.lockfile;
         const string_buf = lockfile.buffers.string_bytes.items;
+        var node_modules_path: bun.AbsPath(.{}) = .init(this.node_modules.path.items);
+        defer node_modules_path.deinit();
+
         while (tree.binaries.removeOrNull()) |dep_id| {
             bun.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
             const package_id = lockfile.buffers.resolutions.items[dep_id];
@@ -319,8 +314,7 @@ pub const PackageInstaller = struct {
                 .string_buf = string_buf,
                 .extern_string_buf = lockfile.buffers.extern_strings.items,
                 .seen = &this.seen_bin_links,
-                .node_modules_path = this.node_modules.path.items,
-                .node_modules = .fromStdDir(destination_dir),
+                .node_modules_path = &node_modules_path,
                 .abs_target_buf = link_target_buf,
                 .abs_dest_buf = link_dest_buf,
                 .rel_buf = link_rel_buf,
@@ -385,18 +379,7 @@ pub const PackageInstaller = struct {
 
                 this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
 
-                var destination_dir = this.node_modules.openDir(this.root_node_modules_folder) catch |err| {
-                    if (log_level != .silent) {
-                        Output.err(err, "Failed to open node_modules folder at {s}", .{
-                            bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
-                        });
-                    }
-
-                    continue;
-                };
-                defer destination_dir.close();
-
-                this.linkTreeBins(tree, @intCast(tree_id), destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                this.linkTreeBins(tree, @intCast(tree_id), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
             }
         }
     }
@@ -417,6 +400,7 @@ pub const PackageInstaller = struct {
                     entry.list,
                     optional,
                     output_in_foreground,
+                    null,
                 ) catch |err| {
                     if (log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
@@ -498,7 +482,7 @@ pub const PackageInstaller = struct {
 
             const optional = entry.optional;
             const output_in_foreground = false;
-            this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, output_in_foreground) catch |err| {
+            this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, output_in_foreground, null) catch |err| {
                 if (log_level != .silent) {
                     const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                     const args = .{ package_name, @errorName(err) };
@@ -666,7 +650,7 @@ pub const PackageInstaller = struct {
         alias: string,
         package_id: PackageID,
         resolution_tag: Resolution.Tag,
-        node_modules_folder: *LazyPackageDestinationDir,
+        folder_path: *bun.AbsPath(.{ .normalize_slashes = true }),
         log_level: Options.LogLevel,
     ) usize {
         if (comptime Environment.allow_assert) {
@@ -688,8 +672,7 @@ pub const PackageInstaller = struct {
                 this.lockfile.allocator,
                 &string_builder,
                 this.manager.log,
-                node_modules_folder,
-                alias,
+                folder_path,
             ) catch |err| {
                 if (log_level != .silent) {
                     Output.errGeneric("failed to fill lifecycle scripts for <b>{s}<r>: {s}", .{
@@ -930,7 +913,7 @@ pub const PackageInstaller = struct {
                     Output.flush();
                     this.summary.fail += 1;
 
-                    this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 };
 
@@ -961,7 +944,7 @@ pub const PackageInstaller = struct {
                 if (comptime Environment.allow_assert) {
                     @panic("Internal assertion failure: unexpected resolution tag");
                 }
-                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             },
         }
@@ -1067,7 +1050,7 @@ pub const PackageInstaller = struct {
                         if (comptime Environment.allow_assert) {
                             @panic("unreachable, handled above");
                         }
-                        this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                         this.summary.fail += 1;
                     },
                 }
@@ -1113,7 +1096,7 @@ pub const PackageInstaller = struct {
                     });
                 }
                 this.summary.fail += 1;
-                this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             };
 
@@ -1172,10 +1155,14 @@ pub const PackageInstaller = struct {
                     };
 
                     if (resolution.tag != .root and (resolution.tag == .workspace or is_trusted)) {
+                        var folder_path: bun.AbsPath(.{ .normalize_slashes = true }) = .init(this.node_modules.path.items);
+                        defer folder_path.deinit();
+                        folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                         if (this.enqueueLifecycleScripts(
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             log_level,
-                            &lazy_package_dir,
+                            &folder_path,
                             package_id,
                             dep.behavior.optional,
                             resolution,
@@ -1199,11 +1186,15 @@ pub const PackageInstaller = struct {
                         else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
                             // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                             // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                            var folder_path: bun.AbsPath(.{ .normalize_slashes = true }) = .init(this.node_modules.path.items);
+                            defer folder_path.deinit();
+                            folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                             const count = this.getInstalledPackageScriptsCount(
                                 alias.slice(this.lockfile.buffers.string_bytes.items),
                                 package_id,
                                 resolution.tag,
-                                &lazy_package_dir,
+                                &folder_path,
                                 log_level,
                             );
                             if (count > 0) {
@@ -1221,7 +1212,7 @@ pub const PackageInstaller = struct {
                         },
                     }
 
-                    this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 },
                 .failure => |cause| {
                     if (comptime Environment.allow_assert) {
@@ -1230,7 +1221,7 @@ pub const PackageInstaller = struct {
 
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
-                    this.incrementTreeInstallCount(this.current_tree_id, &lazy_package_dir, !is_pending_package_install, log_level);
+                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
                     if (cause.err == error.DanglingSymlink) {
                         Output.prettyErrorln(
@@ -1320,7 +1311,7 @@ pub const PackageInstaller = struct {
                 destination_dir.close();
             }
 
-            defer this.incrementTreeInstallCount(this.current_tree_id, &destination_dir, !is_pending_package_install, log_level);
+            defer this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
             const dep = this.lockfile.buffers.dependencies.items[dependency_id];
             const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
@@ -1336,10 +1327,14 @@ pub const PackageInstaller = struct {
             };
 
             if (resolution.tag != .root and is_trusted) {
+                var folder_path: bun.AbsPath(.{ .normalize_slashes = true }) = .init(this.node_modules.path.items);
+                defer folder_path.deinit();
+                folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
                 if (this.enqueueLifecycleScripts(
                     alias.slice(this.lockfile.buffers.string_bytes.items),
                     log_level,
-                    &destination_dir,
+                    &folder_path,
                     package_id,
                     dep.behavior.optional,
                     resolution,
@@ -1366,7 +1361,7 @@ pub const PackageInstaller = struct {
         log_level: Options.LogLevel,
     ) void {
         this.summary.fail += 1;
-        this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
+        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
     }
 
     // returns true if scripts are enqueued
@@ -1374,7 +1369,7 @@ pub const PackageInstaller = struct {
         this: *PackageInstaller,
         folder_name: string,
         log_level: Options.LogLevel,
-        node_modules_folder: *LazyPackageDestinationDir,
+        package_path: *bun.AbsPath(.{ .normalize_slashes = true }),
         package_id: PackageID,
         optional: bool,
         resolution: *const Resolution,
@@ -1383,8 +1378,7 @@ pub const PackageInstaller = struct {
         const scripts_list = scripts.getList(
             this.manager.log,
             this.lockfile,
-            node_modules_folder,
-            this.node_modules.path.items,
+            package_path,
             folder_name,
             resolution,
         ) catch |err| {

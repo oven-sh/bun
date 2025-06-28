@@ -182,13 +182,18 @@ extern "C" {
 
 // Functions for Zig to call to notify about HTTP server events
 
-void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId, BunString* address, double startTime, void* serverInstance)
+typedef int ServerId;
+typedef int HotReloadId;
+typedef int RouteId;
+typedef int RequestId;
+
+void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
 }
 
-void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, int serverId, double timestamp)
+void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
 {
 
     agent->serverStopped(serverId, timestamp);

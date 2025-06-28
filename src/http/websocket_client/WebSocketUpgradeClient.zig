@@ -275,7 +275,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            const wrote = socket.write(this.input_body_buf, false);
+            const wrote = socket.write(this.input_body_buf);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
@@ -539,7 +539,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             defer this.deref();
 
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            const wrote = socket.write(this.to_send, false);
+            const wrote = socket.write(this.to_send);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;

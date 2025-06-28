@@ -130,7 +130,7 @@ create_directory() {
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
 	path="$(execute "$mktemp" -d)"
-	grant_to_user "$path"	
+	grant_to_user "$path"
 	print "$path"
 }
 
@@ -191,7 +191,7 @@ download_file() {
 
 	fetch "$file_url" >"$file_tmp_path"
 	grant_to_user "$file_tmp_path"
-	
+
 	print "$file_tmp_path"
 }
 
@@ -317,7 +317,7 @@ check_operating_system() {
 			distro="$("$sw_vers" -productName)"
 			release="$("$sw_vers" -productVersion)"
 		fi
-	
+
 		case "$arch" in
 		x64)
 			sysctl="$(which sysctl)"
@@ -534,7 +534,7 @@ check_ulimit() {
 		append_file "$dpkg_conf" "force-unsafe-io"
 		append_file "$dpkg_conf" "no-debsig"
 
-		apt_conf="/etc/apt/apt.conf.d/99-ci-options" 
+		apt_conf="/etc/apt/apt.conf.d/99-ci-options"
 		execute_sudo create_directory "$(dirname "$apt_conf")"
 		append_file "$apt_conf" 'Acquire::Languages "none";'
 		append_file "$apt_conf" 'Acquire::GzipIndexes "true";'
@@ -763,7 +763,7 @@ install_nodejs_headers() {
 
 	nodejs_headers_include="$nodejs_headers_dir/node-v$nodejs_version/include"
 	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
-	
+
 	# Also install to node-gyp cache locations for different node-gyp versions
 	# This ensures node-gyp finds headers without downloading them
 	setup_node_gyp_cache "$nodejs_version" "$nodejs_headers_dir/node-v$nodejs_version"
@@ -772,7 +772,7 @@ install_nodejs_headers() {
 setup_node_gyp_cache() {
 	nodejs_version="$1"
 	headers_source="$2"
-	
+
 	# Common node-gyp cache locations
 	cache_locations="
 		$HOME/.node-gyp/$nodejs_version
@@ -781,19 +781,19 @@ setup_node_gyp_cache() {
 		$current_home/.node-gyp/$nodejs_version
 		$current_home/.cache/node-gyp/$nodejs_version
 	"
-	
+
 	for cache_dir in $cache_locations; do
 		if ! [ -z "$cache_dir" ]; then
 			create_directory "$cache_dir"
-			
+
 			# Copy headers
 			if [ -d "$headers_source/include" ]; then
 				cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
 			fi
-			
+
 			# Create installVersion file (node-gyp expects this)
 			echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
-			
+
 			# For Linux, we don't need .lib files like Windows
 			# but create the directory structure node-gyp expects
 			case "$arch" in
@@ -807,7 +807,7 @@ setup_node_gyp_cache() {
 				create_directory "$cache_dir/lib" 2>/dev/null || true
 				;;
 			esac
-			
+
 			# Set proper ownership for buildkite user
 			if [ "$ci" = "1" ] && [ "$user" = "buildkite-agent" ]; then
 				execute_sudo chown -R "$user:$user" "$cache_dir" 2>/dev/null || true
@@ -962,7 +962,7 @@ install_llvm() {
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-		
+
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"
 		;;
@@ -986,7 +986,7 @@ install_gcc() {
 	then
 		return
 	fi
-	
+
 	# Taken from WebKit's Dockerfile.
 	# https://github.com/oven-sh/WebKit/blob/816a3c02e0f8b53f8eec06b5ed911192589b51e2/Dockerfile
 
@@ -1051,16 +1051,6 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
-	# Force gcc/g++ to point to clang by removing existing files first
-	# This ensures any tool looking for gcc/g++ gets clang (which supports C++20)
-	execute_sudo rm -f /usr/bin/gcc /usr/bin/g++
-	execute_sudo ln -sf $(which clang-$llvm_v) /usr/bin/gcc
-	execute_sudo ln -sf $(which clang++-$llvm_v) /usr/bin/g++
-	# Also set very high priority in alternatives to override system gcc
-	execute_sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/clang-$llvm_v 200 --force
-	execute_sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/clang++-$llvm_v 200 --force
-	execute_sudo update-alternatives --set gcc /usr/bin/clang-$llvm_v
-	execute_sudo update-alternatives --set g++ /usr/bin/clang++-$llvm_v
 	# Make sure llvm-symbolizer is available for ASAN
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }

@@ -711,7 +711,7 @@ pub fn cancel(this: *Cmd) Yield {
         .none => {},
         .subproc => |*subproc| {
             // Try to kill the subprocess with SIGTERM
-            _ = subproc.child.tryKill(std.posix.SIGTERM);
+            _ = subproc.child.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
         },
         .bltn => |*builtin| {
             // Call cancel on the builtin
@@ -721,14 +721,10 @@ pub fn cancel(this: *Cmd) Yield {
     
     // Cancel any pending IO chunks
     if (this.io.stdout == .fd) {
-        if (this.io.stdout.fd.writer) |writer| {
-            writer.cancelChunks(this);
-        }
+        this.io.stdout.fd.writer.cancelChunks(this);
     }
     if (this.io.stderr == .fd) {
-        if (this.io.stderr.fd.writer) |writer| {
-            writer.cancelChunks(this);
-        }
+        this.io.stderr.fd.writer.cancelChunks(this);
     }
     
     return .suspended;

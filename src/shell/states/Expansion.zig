@@ -151,15 +151,13 @@ pub fn cancel(this: *Expansion) Yield {
     
     // If a command substitution is running, cancel the child Script
     if (this.child_state == .cmd_subst) {
-        if (this.child_state.cmd_subst.cmd) |child| {
-            _ = child.cancel();
-        }
+        _ = this.child_state.cmd_subst.cmd.cancel();
     }
     
     // Clean up state
     if (this.current_out.items.len > 0) {
         switch (this.out) {
-            .array_of_ptr => |buf| {
+            .array_of_ptr => {
                 for (this.current_out.items) |item| {
                     _ = item; // Unused, we're cancelling
                 }

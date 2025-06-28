@@ -175,14 +175,10 @@ pub fn cancel(this: *Subshell) Yield {
     
     // Cancel any IO chunks
     if (this.io.stdout == .fd) {
-        if (this.io.stdout.fd.writer) |writer| {
-            writer.cancelChunks(this);
-        }
+        this.io.stdout.fd.writer.cancelChunks(this);
     }
     if (this.io.stderr == .fd) {
-        if (this.io.stderr.fd.writer) |writer| {
-            writer.cancelChunks(this);
-        }
+        this.io.stderr.fd.writer.cancelChunks(this);
     }
     
     // Report cancellation to parent

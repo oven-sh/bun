@@ -129,7 +129,7 @@ pub const Yield = union(enum) {
                 }
             }
 
-            state: switch (current_yield) {
+            switch (current_yield) {
                 .pipeline => |x| {
                     pipeline_stack.append(x) catch bun.outOfMemory();
                     current_yield = x.next();

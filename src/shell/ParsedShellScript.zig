@@ -69,24 +69,25 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSC.JSGlobalObject, callfra
         return globalThis.throw("$`...`.env(): expected an object argument", .{});
     };
 
-    var iter = try JSC.JSObject.DictionaryIterator.init(globalThis, jsenv.asObjectRef() orelse {
+    const obj_ref = jsenv.asObjectRef() orelse {
         return globalThis.throw("$`...`.env(): expected an object argument", .{});
-    });
+    };
+    const obj: *JSC.JSObject = @ptrCast(obj_ref);
+    var iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, obj);
     defer iter.deinit();
 
     if (this.export_env == null) {
         this.export_env = EnvMap.init(bun.default_allocator);
     }
 
-    while (iter.next()) |entry| {
-        var key = try entry.key.toOwnedSlice(globalThis);
-        const len = @as(u32, @truncate(entry.key.getLength(globalThis)));
+    while (try iter.next()) |key| {
+        var value = iter.value;
+        if (value.isUndefined()) continue;
 
-        var val = entry.value;
-        var val_slice = try val.toOwnedSlice(globalThis);
-        if (entry.key_allocated) key = try EnvStr.EnvKey.toOwnedSlice(key);
-        try this.export_env.?.put(key, val_slice);
-        _ = len; // autofix
+        const key_str = try key.toOwnedSlice(bun.default_allocator);
+        const val_slice = try (try value.getZigString(globalThis)).toOwnedSlice(bun.default_allocator);
+        
+        this.export_env.?.insert(EnvStr.initRefCounted(key_str), EnvStr.initRefCounted(val_slice));
     }
 
     return .js_undefined;

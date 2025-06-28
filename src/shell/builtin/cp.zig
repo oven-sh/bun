@@ -178,6 +178,11 @@ pub fn next(this: *Cp) Yield {
     return this.bltn().done(0);
 }
 
+pub fn cancel(cp: *Cp) void {
+    // TODO: Add atomic cancellation flag for threaded execution
+    _ = cp;
+}
+
 pub fn deinit(cp: *Cp) void {
     assert(cp.state == .done or cp.state == .waiting_write_err);
 }

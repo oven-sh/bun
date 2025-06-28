@@ -38,7 +38,7 @@ Bun.serve({
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
     // Serve a file by buffering it in memory
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
+    "/favicon.ico": new Response(Bun.file("./favicon.ico"), {
       headers: {
         "Content-Type": "image/x-icon",
       },

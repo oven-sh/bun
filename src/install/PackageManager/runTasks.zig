@@ -1059,6 +1059,7 @@ const PackageID = bun.install.PackageID;
 const PackageManifestError = bun.install.PackageManifestError;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
+const Store = bun.install.Store;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
 
@@ -1069,4 +1070,3 @@ const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const PackageInstaller = PackageManager.PackageInstaller;
 const ProgressStrings = PackageManager.ProgressStrings;
-const Store = bun.install.Store;

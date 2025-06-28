@@ -214,8 +214,6 @@ pub const DependencyInstallContext = struct {
     dependency_id: DependencyID,
 };
 
-pub const Store = @import("./workspaces.zig").Store;
-
 pub const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
     dependency_install_context: DependencyInstallContext,
@@ -255,6 +253,7 @@ pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").L
 pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Store = @import("./workspaces.zig").Store;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;

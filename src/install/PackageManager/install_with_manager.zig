@@ -977,6 +977,8 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 // @sortImports
 
 const std = @import("std");
+const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
+const installIsolatedPackages = @import("../workspaces.zig").installIsolatedPackages;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1013,6 +1015,3 @@ const Package = Lockfile.Package;
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-
-const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
-const installIsolatedPackages = @import("../workspaces.zig").installIsolatedPackages;

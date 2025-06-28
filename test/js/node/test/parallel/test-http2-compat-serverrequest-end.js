@@ -15,7 +15,6 @@ server.listen(0, common.mustCall(function() {
   server.once('request', common.mustCall(function(request, response) {
     assert.strictEqual(request.complete, false);
     request.on('data', () => {});
-
     request.on('end', common.mustCall(() => {
       assert.strictEqual(request.complete, true);
       response.on('finish', common.mustCall(function() {

@@ -20,6 +20,7 @@ server.listen(0, common.mustCall(() => {
       {
         code: 'ERR_INVALID_HTTP_TOKEN',
         name: 'TypeError',
+        message: 'Header name must be a valid HTTP token [""]'
       }
     );
     assert.throws(
@@ -52,6 +53,7 @@ server.listen(0, common.mustCall(() => {
       {
         code: 'ERR_INVALID_HTTP_TOKEN',
         name: 'TypeError',
+        message: 'Header name must be a valid HTTP token [""]'
       }
     );
 

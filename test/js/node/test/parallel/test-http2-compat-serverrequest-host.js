@@ -19,7 +19,7 @@ server.listen(0, common.mustCall(function() {
       ':path': '/foobar',
       ':method': 'GET',
       ':scheme': 'http',
-      'host': `127.0.0.1:${port}`
+      'host': `localhost:${port}`
     };
 
     assert.strictEqual(request.authority, expected.host);
@@ -35,6 +35,7 @@ server.listen(0, common.mustCall(function() {
       assert.notStrictEqual(position, -1);
       assert.strictEqual(rawHeaders[position + 1], value);
     }
+
     assert(!Object.hasOwn(headers, ':authority'));
     assert(!Object.hasOwn(rawHeaders, ':authority'));
 
@@ -44,13 +45,13 @@ server.listen(0, common.mustCall(function() {
     response.end();
   }));
 
-  const url = `http://127.0.0.1:${port}`;
+  const url = `http://localhost:${port}`;
   const client = h2.connect(url, common.mustCall(function() {
     const headers = {
       ':path': '/foobar',
       ':method': 'GET',
       ':scheme': 'http',
-      'host': `127.0.0.1:${port}`
+      'host': `localhost:${port}`
     };
     const request = client.request(headers);
     request.on('end', common.mustCall(function() {

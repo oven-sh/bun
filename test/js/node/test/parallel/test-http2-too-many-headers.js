@@ -17,7 +17,7 @@ const server = http2.createServer({ maxHeaderListPairs: 0 });
 server.on('stream', common.mustNotCall());
 
 server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
 
   const req = client.request({ foo: 'bar' });
   req.on('error', common.expectsError({

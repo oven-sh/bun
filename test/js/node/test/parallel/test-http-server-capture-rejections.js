@@ -100,7 +100,6 @@ events.captureRejections = true;
     });
 
     req.end();
-
     req.on('error', common.mustCall((err) => {
       assert.strictEqual(err.code, 'ECONNRESET');
       server.close();

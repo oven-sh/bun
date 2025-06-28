@@ -35,6 +35,6 @@ server.listen(0, common.mustCall(() => {
   const client = net.connect(
     server.address().port,
     common.mustCall(() => {
-      client.write(REQUEST_BB.replace(/\n/g, '\r\n'));
+      client.end(REQUEST_BB.replace(/\n/g, '\r\n'));
     }));
 }));

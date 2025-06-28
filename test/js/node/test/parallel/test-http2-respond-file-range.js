@@ -17,6 +17,7 @@ const {
 const fname = fixtures.path('printA.js');
 const data = fs.readFileSync(fname);
 const stat = fs.statSync(fname);
+
 const server = http2.createServer();
 server.on('stream', (stream) => {
   stream.respondWithFile(fname, {

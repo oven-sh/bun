@@ -24,7 +24,7 @@ const app = http2.createServer(mustCall((req, res) => {
 }));
 
 app.listen(0, mustCall(() => {
-  const session = http2.connect(`http://127.0.0.1:${app.address().port}`);
+  const session = http2.connect(`http://localhost:${app.address().port}`);
   const request = session.request({
     [HTTP2_HEADER_PATH]: '/',
     [HTTP2_HEADER_METHOD]: 'get'

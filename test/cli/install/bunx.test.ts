@@ -498,7 +498,7 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
   expect(exited).toBe(0);
 });
 
-it.only("should handle package that requires node 24", async () => {
+it("should handle package that requires node 24", async () => {
   const subprocess = spawn({
     cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
     cwd: x_dir,

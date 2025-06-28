@@ -711,12 +711,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	# https://unofficial-builds.nodejs.org/download/release/
-	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
-		print "16.9.1"
-	else
-		print "24.3.0"
-	fi
+	print "24.3.0"
 }
 
 nodejs_version() {

@@ -1234,7 +1234,7 @@ pub fn spawnProcessPosix(
 
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
-    
+
     // On Linux, set uid/gid in the attr struct
     if (comptime Environment.isLinux) {
         if (options.uid) |uid| {

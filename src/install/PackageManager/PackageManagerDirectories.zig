@@ -5,6 +5,11 @@ pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
     };
 }
 
+pub inline fn getCacheDirectoryAndAbsPath(this: *PackageManager) struct { std.fs.Dir, [:0]const u8 } {
+    const cache_dir = this.getCacheDirectory();
+    return .{ cache_dir, this.cache_directory_path };
+}
+
 pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
     return this.temp_dir_ orelse brk: {
         this.temp_dir_ = ensureTemporaryDirectory(this);
@@ -371,6 +376,11 @@ pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
 pub fn globalLinkDirPath(this: *PackageManager) ![]const u8 {
     _ = try this.globalLinkDir();
     return this.global_link_dir_path;
+}
+
+pub fn globalLinkDirAndPath(this: *PackageManager) !struct { std.fs.Dir, []const u8 } {
+    const dir = try this.globalLinkDir();
+    return .{ dir, this.global_link_dir_path };
 }
 
 pub fn pathForCachedNPMPath(

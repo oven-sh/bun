@@ -59,7 +59,7 @@ pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) vo
     @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
 }
 
-pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
+pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *const Lockfile, value: PreinstallState) void {
     this.ensurePreinstallStateListCapacity(lockfile.packages.len);
     this.preinstall_state.items[package_id] = value;
 }

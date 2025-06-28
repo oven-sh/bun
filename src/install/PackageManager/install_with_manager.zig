@@ -199,6 +199,8 @@ pub fn installWithManager(
                     lockfile.catalogs.count(&lockfile, builder);
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
+                    manager.lockfile.node_linker = lockfile.node_linker;
+
                     const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                     const len = @as(u32, @truncate(new_dependencies.len));
                     var packages = manager.lockfile.packages.slice();
@@ -468,7 +470,6 @@ pub fn installWithManager(
                             this,
                             .{
                                 .onExtract = {},
-                                .onPatch = {},
                                 .onResolve = {},
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
@@ -735,16 +736,28 @@ pub fn installWithManager(
         }
     }
 
-    var install_summary = PackageInstall.Summary{};
-    if (manager.options.do.install_packages) {
-        install_summary = try @import("../hoisted_install.zig").installHoistedPackages(
-            manager,
-            ctx,
-            workspace_filters.items,
-            install_root_dependencies,
-            log_level,
-        );
-    }
+    const install_summary: PackageInstall.Summary = install_summary: {
+        if (!manager.options.do.install_packages) {
+            break :install_summary .{};
+        }
+
+        if (manager.lockfile.node_linker == .hoisted or
+            // TODO
+            manager.lockfile.node_linker == .auto)
+        {
+            break :install_summary try installHoistedPackages(
+                manager,
+                ctx,
+                workspace_filters.items,
+                install_root_dependencies,
+                log_level,
+            );
+        }
+
+        break :install_summary installIsolatedPackages(manager, install_root_dependencies, workspace_filters.items) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+        };
+    };
 
     if (log_level != .silent) {
         try manager.log.print(Output.errorWriter());
@@ -1000,3 +1013,6 @@ const Package = Lockfile.Package;
 const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+
+const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
+const installIsolatedPackages = @import("../workspaces.zig").installIsolatedPackages;

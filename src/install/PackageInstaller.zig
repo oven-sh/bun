@@ -612,7 +612,7 @@ pub const PackageInstaller = struct {
         //     else => unreachable,
         // };
 
-        if (this.manager.task_queue.fetchRemove(task_id.get())) |removed| {
+        if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
             var callbacks = removed.value;
             defer callbacks.deinit(this.manager.allocator);
 

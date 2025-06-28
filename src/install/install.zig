@@ -16,6 +16,31 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     return bunhashtag;
 }
 
+pub const StorePathFormatter = struct {
+    str: string,
+
+    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        // if (!this.opts.replace_slashes) {
+        //     try writer.writeAll(this.str);
+        //     return;
+        // }
+
+        for (this.str) |c| {
+            switch (c) {
+                '/' => try writer.writeByte('+'),
+                '\\' => try writer.writeByte('+'),
+                else => try writer.writeByte(c),
+            }
+        }
+    }
+};
+
+pub fn fmtStorePath(str: string) StorePathFormatter {
+    return .{
+        .str = str,
+    };
+}
+
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 // because why not

@@ -1,7 +1,7 @@
 pub fn runTasks(
     manager: *PackageManager,
-    comptime ExtractCompletionContext: type,
-    extract_ctx: ExtractCompletionContext,
+    comptime Ctx: type,
+    extract_ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
     log_level: Options.LogLevel,
@@ -33,7 +33,7 @@ pub fn runTasks(
     var patch_tasks_iter = patch_tasks_batch.iterator();
     while (patch_tasks_iter.next()) |ptask| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
         defer ptask.deinit();
         try ptask.runFromMainThread(manager, log_level);
         if (ptask.callback == .apply) {
@@ -42,7 +42,7 @@ pub fn runTasks(
                     if (ptask.callback.apply.task_id) |task_id| {
                         _ = task_id; // autofix
 
-                    } else if (ExtractCompletionContext == *PackageInstaller) {
+                    } else if (Ctx == *PackageInstaller) {
                         if (ptask.callback.apply.install_context) |*ctx| {
                             var installer: *PackageInstaller = extract_ctx;
                             const path = ctx.path;
@@ -68,11 +68,21 @@ pub fn runTasks(
         }
     }
 
+    if (Ctx == *Store.Installer) {
+        const installer: *Store.Installer = extract_ctx;
+        const batch = installer.tasks.popBatch();
+        var iter = batch.iterator();
+        while (iter.next()) |task| {
+            defer installer.preallocated_tasks.put(task);
+            installer.onTask(task);
+        }
+    }
+
     var network_tasks_batch = manager.async_network_task_queue.popBatch();
     var network_tasks_iter = network_tasks_batch.iterator();
     while (network_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -256,7 +266,7 @@ pub fn runTasks(
 
                         try manager.processDependencyList(
                             dependency_list,
-                            ExtractCompletionContext,
+                            Ctx,
                             extract_ctx,
                             callbacks,
                             install_peer,
@@ -449,7 +459,7 @@ pub fn runTasks(
     while (resolve_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
         defer manager.preallocated_resolve_tasks.put(task);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
 
         if (task.log.msgs.items.len > 0) {
             try task.log.print(Output.errorWriter());
@@ -500,7 +510,7 @@ pub fn runTasks(
                 const dependency_list = dependency_list_entry.value_ptr.*;
                 dependency_list_entry.value_ptr.* = .{};
 
-                try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -561,14 +571,26 @@ pub fn runTasks(
                 manager.extracted_count += 1;
                 bun.Analytics.Features.extracted_packages += 1;
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                    extract_ctx.fixCachedLockfilePackageSlices();
-                    callbacks.onExtract(
-                        extract_ctx,
-                        dependency_id,
-                        &task.data.extract,
-                        log_level,
-                    );
+                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    switch (Ctx) {
+                        *PackageInstaller => {
+                            extract_ctx.fixCachedLockfilePackageSlices();
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                        *Store.Installer => {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                            );
+                        },
+                        else => @compileError("unexpected context type"),
+                    }
                 } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                     // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                     // We need to make sure we resolve the dependencies first before calling the onExtract callback
@@ -626,11 +648,6 @@ pub fn runTasks(
 
                 manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
-                    // handled *PackageInstaller above
-                    callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, log_level);
-                }
-
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
                         manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
@@ -671,7 +688,7 @@ pub fn runTasks(
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                if (comptime @TypeOf(callbacks.onExtract) != void and Ctx == *PackageInstaller) {
                     // Installing!
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
@@ -712,7 +729,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
                 }
 
                 if (log_level.showProgress()) {
@@ -745,20 +762,32 @@ pub fn runTasks(
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                if (comptime @TypeOf(callbacks.onExtract) != void) {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
+                    switch (Ctx) {
+                        *PackageInstaller => {
 
-                    // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
-                    // keeping just in case for now
-                    extract_ctx.fixCachedLockfilePackageSlices();
+                            // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                            // keeping just in case for now
+                            extract_ctx.fixCachedLockfilePackageSlices();
 
-                    callbacks.onExtract(
-                        extract_ctx,
-                        git_checkout.dependency_id,
-                        &task.data.git_checkout,
-                        log_level,
-                    );
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                        *Store.Installer => {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                            );
+                        },
+                        else => @compileError("unexpected context type"),
+                    }
                 } else if (manager.processExtractedTarballPackage(
                     &package_id,
                     git_checkout.dependency_id,
@@ -795,13 +824,8 @@ pub fn runTasks(
                         }
                     }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            log_level,
-                        );
+                    if (@TypeOf(callbacks.onExtract) != void) {
+                        @compileError("ctx should be void");
                     }
                 }
 
@@ -825,8 +849,8 @@ pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
     return manager.pending_tasks.fetchAdd(count, .monotonic);
 }
 
-pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
-    return manager.pending_tasks.fetchSub(1, .monotonic);
+pub inline fn decrementPendingTasks(manager: *PackageManager) void {
+    _ = manager.pending_tasks.fetchSub(1, .monotonic);
 }
 
 pub fn flushNetworkQueue(this: *PackageManager) void {
@@ -934,7 +958,7 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
     ) catch unreachable;
 }
 
-pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
+pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: Task.Id, is_required: bool) bool {
     const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
 
     // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
@@ -946,13 +970,13 @@ pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: b
     return gpe.found_existing;
 }
 
-pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
+pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: Task.Id) bool {
     return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
 }
 
 pub fn generateNetworkTaskForTarball(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     url: string,
     is_required: bool,
     dependency_id: DependencyID,
@@ -1045,3 +1069,4 @@ const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const PackageInstaller = PackageManager.PackageInstaller;
 const ProgressStrings = PackageManager.ProgressStrings;
+const Store = bun.install.Store;

@@ -1412,7 +1412,7 @@ pub const Store = struct {
         }
 
         pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
-            if (this.manager.task_queue.fetchRemove(task_id.get())) |removed| {
+            if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
                 for (removed.value.items) |install_ctx| {
                     const entry_id = install_ctx.isolated_package_install_context;
                     this.resumeTask(entry_id);

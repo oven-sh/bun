@@ -1,6 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
 
-// TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
 cache_directory_path: stringZ = "",
 temp_dir_: ?std.fs.Dir = null,
 temp_dir_path: stringZ = "",
@@ -96,7 +95,6 @@ preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
 global_link_dir_path: string = "",
-wait_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
@@ -409,7 +407,6 @@ pub fn wake(this: *PackageManager) void {
         this.onWake.getHandler()(ctx, this);
     }
 
-    _ = this.wait_count.fetchAdd(1, .monotonic);
     this.event_loop.wakeup();
 }
 
@@ -418,7 +415,7 @@ pub fn sleepUntil(this: *PackageManager, closure: anytype, comptime isDoneFn: an
     this.event_loop.tick(closure, isDoneFn);
 }
 
-pub var cached_package_folder_name_buf: bun.PathBuffer = undefined;
+pub threadlocal var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
 const Holder = struct {
     pub var ptr: *PackageManager = undefined;
@@ -1016,13 +1013,13 @@ const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 pub const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
-const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
+const TaskDependencyQueue = std.HashMapUnmanaged(Task.Id, TaskCallbackList, IdentityContext(Task.Id), 80);
 
 const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;
 const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 128).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
-const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
+const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
@@ -1058,6 +1055,7 @@ pub const computeCacheDirAndSubpath = directories.computeCacheDirAndSubpath;
 pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 pub const fetchCacheDirectoryPath = directories.fetchCacheDirectoryPath;
 pub const getCacheDirectory = directories.getCacheDirectory;
+pub const getCacheDirectoryAndAbsPath = directories.getCacheDirectoryAndAbsPath;
 pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
 pub const globalLinkDirPath = directories.globalLinkDirPath;

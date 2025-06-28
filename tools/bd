@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -e
+
+BUN_DEBUG_BIN="build/debug/bun-debug"
+
+# Save cursor position to restore later
+if [[ -t 1 ]]; then
+  tput sc
+fi
+
+build_if_needed() {
+  bun run build
+  local status=$?
+  if [[ $status -eq 0 && -t 1 ]]; then
+    tput rc
+    tput ed
+    tput sc
+  fi
+  return $status
+}
+
+# Build if executable missing
+if [[ ! -f "$BUN_DEBUG_BIN" ]]; then
+  build_if_needed
+fi
+
+# Check for newer source files
+if [[ -f "$BUN_DEBUG_BIN" ]]; then
+  if find src -type f \( -name '*.zig' -o -name '*.h' -o -name '*.cpp' \) -newer "$BUN_DEBUG_BIN" | grep -q . || \
+     find src/js -type f \( -name '*.ts' -o -name '*.js' \) -newer "$BUN_DEBUG_BIN" | grep -q .; then
+    build_if_needed
+  fi
+fi
+
+# Environment variables
+if [[ $(uname) == Darwin* ]]; then
+  export MallocNanoZone=0
+fi
+: "${BUN_DEBUG_QUIET_LOGS:=0}"
+: "${BUN_GARBAGE_COLLECTOR_LEVEL:=0}"
+: "${BUN_INTERNAL_FEATURE_FLAG_FOR_TESTING:=1}"
+
+exec "$BUN_DEBUG_BIN" "$@"
+

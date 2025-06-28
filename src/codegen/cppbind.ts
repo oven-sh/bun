@@ -314,6 +314,7 @@ for (const cppFile of allCppFiles) {
         const returnType = cppTypeToZig(func.returnType, false, false, false);
 
         if (func.isExceptionJSValue) {
+          outputRawBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
 
           // Generate wrapper function for exception handling
@@ -329,7 +330,6 @@ for (const cppFile of allCppFiles) {
           );
           const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
 
-          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !JSC.JSValue {\n`);
           fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
           fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
@@ -339,6 +339,7 @@ for (const cppFile of allCppFiles) {
           fileBindings.push(`        return if (value == .zero) error.JSError else value;\n`);
           fileBindings.push(`    }\n`);
         } else if (func.isCheckException) {
+          outputRawBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
 
           // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION
@@ -354,7 +355,6 @@ for (const cppFile of allCppFiles) {
           );
           const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
 
-          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !${returnType} {\n`);
           fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
           fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
@@ -416,3 +416,10 @@ await Bun.write(outputFile, outputContent);
 
 console.log(`\nTotal functions found: ${totalFunctions}`);
 console.log(`Generated Zig bindings written to: ${outputFile}`);
+
+/*
+TODO:
+- evaluate if @src() is allowed
+- use zls commit 46ca66f933693c0e5acb959ade9bc53354646f1b, it adds parseSourceLocation
+- we need to reduce `.exception()` calls in zig. ZIG_EXPORT_CHECKEXCEPTION should be removed.
+*/

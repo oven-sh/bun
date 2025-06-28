@@ -412,7 +412,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
       if (!isTLS) {
-        connectionListener.$call(self, _socket);
+        self.prependOnceListener("connection", connectionListener);
       }
     }
     self.emit("connection", _socket);
@@ -457,7 +457,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
+      server.prependOnceListener("secureConnection", connectionListener);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -2442,6 +2442,16 @@ Server.prototype[kRealListen] = function (
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
   setTimeout(emitListeningNextTick, 1, this);
+};
+
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
 };
 
 Server.prototype.getsockname = function getsockname(out) {

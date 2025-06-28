@@ -3602,7 +3602,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        bun.jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
     }
 };
 

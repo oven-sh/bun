@@ -95,6 +95,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     auto keyObjectResult = KeyObject::create(wrappedKey);
     if (keyObjectResult.hasException()) [[unlikely]] {
         WebCore::propagateException(*lexicalGlobalObject, scope, keyObjectResult.releaseException());
+        RELEASE_AND_RETURN(scope, {});
         return {};
     }
 

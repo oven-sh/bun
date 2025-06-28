@@ -255,7 +255,7 @@ pub const RESPValue = union(RESPType) {
     fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *const ToJSOptions) bun.JSError!JSC.JSValue {
         if (options.return_as_buffer) {
             // TODO: handle values > 4.7 GB
-            const buf = JSC.ArrayBuffer.createBuffer(globalObject, str);
+            const buf = try JSC.ArrayBuffer.createBuffer(globalObject, str);
             return buf.toJS(globalObject);
         } else {
             return bun.String.createUTF8ForJS(globalObject, str);

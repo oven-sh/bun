@@ -98,19 +98,6 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncText, (JSGlobalObject * global
     return ZigGlobalObject__readableStreamToText(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "arrayBuffer"_s);
-        return {};
-    }
-
-    return ZigGlobalObject__readableStreamToArrayBuffer(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
@@ -137,6 +124,18 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * global
     return ZigGlobalObject__readableStreamToJSON(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBlob, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "blob"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToBlob(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
 using JSReadableStreamDOMConstructor = JSDOMBuiltinConstructor<JSReadableStream>;
 
 template<> const ClassInfo JSReadableStreamDOMConstructor::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDOMConstructor) };
@@ -165,17 +164,16 @@ template<> FunctionExecutable* JSReadableStreamDOMConstructor::initializeExecuta
 
 static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamConstructor, 0 } },
-    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableStreamLockedCodeGenerator, 0 } },
+    { "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncBlob, 0 } },
+    { "bytes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncBytes, 0 } },
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamCancelCodeGenerator, 0 } },
     { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamGetReaderCodeGenerator, 0 } },
-    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
+    { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncJSON, 0 } },
+    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableStreamLockedCodeGenerator, 0 } },
     { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
+    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
     { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamTeeCodeGenerator, 0 } },
     { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncText, 0 } },
-    { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncArrayBuffer, 0 } },
-    { "bytes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncBytes, 0 } },
-    { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncJSON, 0 } },
-
 };
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };

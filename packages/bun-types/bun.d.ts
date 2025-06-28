@@ -346,11 +346,15 @@ declare module "bun" {
 
   type WorkerType = "classic" | "module";
 
-  interface BunReadableStream extends ReadableStream<Uint8Array> {
+  /**
+   * This type-only interface is identical at runtime to {@link ReadableStream},
+   * and exists to document types that do not exist yet in libdom.
+   */
+  interface BunReadableStream<T = any> extends ReadableStream<T> {
     text(): Promise<string>;
-    arrayBuffer(): Promise<ArrayBuffer>;
     bytes(): Promise<Uint8Array>;
     json(): Promise<any>;
+    blob(): Promise<Blob>;
   }
 
   interface AbstractWorker {

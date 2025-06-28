@@ -46,7 +46,7 @@ const typeMap: Record<string, string> = {
 
   // Common Bun types
   "BunString": "BunString",
-  "JSC::JSValue": "JSC.JSValue",
+  "JSC::EncodedJSValue": "JSC.EncodedJSValue",
   "JSC::JSGlobalObject": "JSC.JSGlobalObject",
 };
 

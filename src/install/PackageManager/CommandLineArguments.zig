@@ -120,6 +120,7 @@ const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
 const audit_params: []const ParamType = &([_]ParamType{
     clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
     clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+    clap.parseParam("--fix                                  Automatically fix vulnerable dependencies") catch unreachable,
 });
 
 const info_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -199,6 +200,10 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+
+audit_flags: struct {
+    fix: bool = false,
+} = .{},
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -567,6 +572,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Output package vulnerabilities in JSON format.<r>
                 \\  <b><green>bun audit --json<r>
                 \\
+                \\  <d>Automatically fix vulnerable dependencies.<r>
+                \\  <b><green>bun audit --fix<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.sh/docs/install/audit<r>.
                 \\
             ;
@@ -878,6 +886,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (cli.analyze and cli.positionals.len == 0) {
         Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
         Global.crash();
+    }
+
+    if (comptime subcommand == .audit) {
+        cli.audit_flags.fix = args.flag("--fix");
     }
 
     return cli;

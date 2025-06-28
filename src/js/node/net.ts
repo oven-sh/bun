@@ -640,6 +640,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
   },
+  session(socket, session) {
+    const { self } = socket.data;
+    const bunTLS = self[bunTlsSymbol];
+    const isTLS = typeof bunTLS === "function";
+    if (isTLS) {
+      self.emit("session", session);
+    }
+  },
 };
 
 function kConnectTcp(self, addressType, req, address, port) {

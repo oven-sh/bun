@@ -118,6 +118,7 @@ function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isR
 // Process a single C++ file
 async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
   const input = await Bun.file(filePath).text();
+  if (!input.includes("ZIG_EXPORT")) return []; // save time
   const functions: FunctionSignature[] = [];
 
   // Find extern "C" blocks first

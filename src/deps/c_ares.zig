@@ -1750,7 +1750,7 @@ pub const Error = enum(i32) {
 
     pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
-            .errno = @intFromEnum(this),
+            .errno = @intCast(@intFromEnum(this)),
             .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static(syscall),
             .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
@@ -1761,7 +1761,7 @@ pub const Error = enum(i32) {
 
     pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
-            .errno = @intFromEnum(this),
+            .errno = @intCast(@intFromEnum(this)),
             .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
             .syscall = bun.String.static(syscall),

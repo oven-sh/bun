@@ -3075,7 +3075,7 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
+                return globalThis.throwValue(err.toJS(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
             },
         };
 

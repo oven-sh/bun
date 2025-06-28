@@ -27,6 +27,7 @@ src/ast/KnownGlobal.zig
 src/ast/Macro.zig
 src/ast/NewStore.zig
 src/ast/Op.zig
+src/ast/P.zig
 src/ast/parse.zig
 src/ast/parseFn.zig
 src/ast/parseImportExport.zig

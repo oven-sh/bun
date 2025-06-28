@@ -310,15 +310,14 @@ function generateSortedOutput(
 }
 
 // Main execution function for a single file
-async function processFile(filePath: string): Promise<void> {
+async function processFile(filePath: string): Promise<{ written: boolean; noSortImports: boolean }> {
   const originalFileContents = await Bun.file(filePath).text();
   let fileContents = originalFileContents;
 
   if (!config.includeUnsorted && !originalFileContents.includes("// @sortImports")) {
-    return;
+    return { written: false, noSortImports: true };
   }
   const skipRemoveUnused = originalFileContents.includes("@noRemoveUnused");
-  console.log(`Processing: ${filePath}`);
 
   let needsRecurse = true;
   while (needsRecurse) {
@@ -362,20 +361,22 @@ async function processFile(filePath: string): Promise<void> {
   if (fileContents === "\n") fileContents = "";
 
   if (fileContents === originalFileContents) {
-    console.log(`✓ No changes: ${filePath}`);
-    return;
+    return { written: false, noSortImports: false };
   }
 
   // Write the sorted file
   await Bun.write(filePath, fileContents);
 
-  console.log(`✓ Done: ${filePath}`);
+  console.log(`Sorted imports: ${filePath}`);
+  return { written: true, noSortImports: false };
 }
 
 // Process all files
 async function main() {
-  let successCount = 0;
-  let errorCount = 0;
+  let filesWritten = 0;
+  let filesNotWritten = 0;
+  let filesWithErrors = 0;
+  let filesWithoutSortImports = 0;
 
   for (const filePath of filePaths) {
     const stat = await Bun.file(filePath).stat();
@@ -384,10 +385,16 @@ async function main() {
       for (const file of files) {
         if (typeof file !== "string" || !file.endsWith(".zig")) continue;
         try {
-          await processFile(path.join(filePath, file));
-          successCount++;
+          const result = await processFile(path.join(filePath, file));
+          if (result.noSortImports) {
+            filesWithoutSortImports++;
+          } else if (result.written) {
+            filesWritten++;
+          } else {
+            filesNotWritten++;
+          }
         } catch (error) {
-          errorCount++;
+          filesWithErrors++;
           console.error(`Failed to process ${filePath}`);
         }
       }
@@ -395,17 +402,58 @@ async function main() {
     }
 
     try {
-      await processFile(filePath);
-      successCount++;
+      const result = await processFile(filePath);
+      if (result.noSortImports) {
+        filesWithoutSortImports++;
+      } else if (result.written) {
+        filesWritten++;
+      } else {
+        filesNotWritten++;
+      }
     } catch (error) {
-      errorCount++;
+      filesWithErrors++;
       console.error(`Failed to process ${filePath}`);
     }
   }
 
-  console.log(`\nSummary: ${successCount} files processed successfully, ${errorCount} errors`);
+  // ANSI color codes
+  const colors = {
+    reset: "\x1b[0m",
+    bright: "\x1b[1m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    red: "\x1b[31m",
+    blue: "\x1b[34m",
+    cyan: "\x1b[36m",
+    gray: "\x1b[90m",
+  };
 
-  if (errorCount > 0) {
+  const total = filesWritten + filesNotWritten + filesWithErrors + filesWithoutSortImports;
+
+  console.log(`\n${colors.bright}${colors.cyan}╭─────────────────────────────────────╮${colors.reset}`);
+  console.log(
+    `${colors.bright}${colors.cyan}│${colors.reset}               ${colors.bright}SUMMARY${colors.reset}               ${colors.bright}${colors.cyan}│${colors.reset}`,
+  );
+  console.log(`${colors.bright}${colors.cyan}├─────────────────────────────────────┤${colors.reset}`);
+
+  function writeText(text: string) {
+    console.log(
+      `${colors.bright}${colors.cyan}│${colors.reset}   ${text}${" ".repeat(Math.max(0, 34 - Bun.stringWidth(text)))}${colors.bright}${colors.cyan}│${colors.reset}`,
+    );
+  }
+
+  if (filesWritten > 0)
+    writeText(`${colors.green}✓${colors.reset} ${filesWritten.toString().padStart(3)} files written`);
+  if (filesNotWritten > 0) writeText(`${colors.gray}○ ${filesNotWritten.toString().padStart(3)} files unchanged`);
+  if (filesWithErrors > 0) writeText(`${colors.red}✗ ${filesWithErrors.toString().padStart(3)} files with errors`);
+  if (filesWithoutSortImports > 0)
+    writeText(`${colors.yellow}⚠ ${filesWithoutSortImports.toString().padStart(3)} files without @sortImports`);
+
+  console.log(`${colors.bright}${colors.cyan}├─────────────────────────────────────┤${colors.reset}`);
+  writeText(`${colors.bright}Total: ${total} files processed${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}╰─────────────────────────────────────╯${colors.reset}`);
+
+  if (filesWithErrors > 0) {
     process.exit(1);
   }
 }

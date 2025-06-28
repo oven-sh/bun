@@ -65,6 +65,8 @@ interface FunctionSignature {
   isExternC: boolean;
   sourceFile: string;
   isExceptionJSValue: boolean;
+  line: number;
+  column: number;
 }
 
 // Helper to convert C++ type to Zig type
@@ -159,6 +161,11 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
         // Skip if not marked with either ZIG_EXPORT or ZIG_EXCEPTION_JSVALUE
         if (!hasZigExport && !hasZigExceptionJSValue) return;
 
+        // Calculate line and column from the function position
+        const linesBefore = input.slice(0, funcStart).split('\n');
+        const line = linesBefore.length;
+        const column = linesBefore[linesBefore.length - 1].length + 1;
+
         let signature: FunctionSignature = {
           name: "",
           returnType: "void",
@@ -166,6 +173,8 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
           isExternC: true,
           sourceFile: filePath,
           isExceptionJSValue: hasZigExceptionJSValue,
+          line: line,
+          column: column,
         };
 
         // Parse the function
@@ -284,7 +293,6 @@ for (const cppFile of allCppFiles) {
         const returnType = cppTypeToZig(func.returnType, false, false, false);
 
         if (func.isExceptionJSValue) {
-          outputRawBindings.push(`    /// Source: ${filePath}\n`);
           outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
 
           // Generate wrapper function for exception handling
@@ -300,6 +308,7 @@ for (const cppFile of allCppFiles) {
           );
           const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
 
+          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !JSC.JSValue {\n`);
           fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
           fileBindings.push(`        scope.init(${globalThisName}, .assertions_only);\n`);
@@ -310,7 +319,7 @@ for (const cppFile of allCppFiles) {
           fileBindings.push(`    }\n`);
         } else {
           // Regular ZIG_EXPORT function
-          fileBindings.push(`    /// Source: ${filePath}\n`);
+          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           fileBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
         }
       });

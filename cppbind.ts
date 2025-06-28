@@ -145,6 +145,15 @@ tree.iterate({
       // Skip if not extern C
       if (!isExternC) return;
 
+      // Check if this function has ZIG_EXPORT marker
+      // Look for ZIG_EXPORT in the line(s) immediately before the function
+      const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
+      const precedingText = input.slice(searchStart, funcStart);
+      const hasZigExport = precedingText.includes("ZIG_EXPORT");
+
+      // Skip if not marked with ZIG_EXPORT
+      if (!hasZigExport) return;
+
       let signature: FunctionSignature = {
         name: "",
         returnType: "void",
@@ -230,15 +239,15 @@ tree.iterate({
         }
       }
 
-      // Only add if we found a function name starting with Bun__
-      if (signature.name && signature.name.startsWith("Bun__")) {
+      // Add the function to our list
+      if (signature.name) {
         functions.push(signature);
       }
     }
   },
 });
 
-// Generate Zig extern declarations
+// Generate Zig extern declarations for ZIG_EXPORT functions
 functions.forEach(func => {
   const params = func.params
     .map(param => {
@@ -272,7 +281,7 @@ output.push(
   "};\n",
 );
 
-console.log(`Found ${functions.length} extern "C" functions:`);
+console.log(`Found ${functions.length} ZIG_EXPORT functions:`);
 functions.forEach(func => {
   console.log(`  - ${func.name}`);
 });

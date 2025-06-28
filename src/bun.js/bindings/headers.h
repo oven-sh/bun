@@ -688,6 +688,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);
+
 #endif
 
 #ifdef __cplusplus
@@ -751,11 +754,6 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC::CustomGetterSetter *arg
 BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
-BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
-
-BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveRequestStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectRequestStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);

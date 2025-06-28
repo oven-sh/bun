@@ -346,7 +346,7 @@ pub const ValkeyClient = struct {
     pub fn flushData(this: *ValkeyClient) bool {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return false;
-        const wrote = this.socket.write(chunk, false);
+        const wrote = this.socket.write(chunk);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
@@ -795,7 +795,7 @@ pub const ValkeyClient = struct {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
-            const wrote = this.socket.write(data, false);
+            const wrote = this.socket.write(data);
             const unwritten = data[@intCast(@max(wrote, 0))..];
 
             if (unwritten.len > 0) {

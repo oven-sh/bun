@@ -336,7 +336,7 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
-
+    JSC::EncodedJSValue assignStreamToResumableSink(JSValue stream, JSValue sink);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -373,14 +373,12 @@ public:
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
-        Bun__FetchTasklet__onRejectRequestStream,
-        Bun__FetchTasklet__onResolveRequestStream,
-        Bun__S3UploadStream__onRejectRequestStream,
-        Bun__S3UploadStream__onResolveRequestStream,
         Bun__FileStreamWrapper__onRejectRequestStream,
         Bun__FileStreamWrapper__onResolveRequestStream,
+        Bun__FileSink__onResolveStream,
+        Bun__FileSink__onRejectStream,
     };
-    static constexpr size_t promiseFunctionsSize = 34;
+    static constexpr size_t promiseFunctionsSize = 36;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -449,6 +447,7 @@ public:
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
+    V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
     V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \

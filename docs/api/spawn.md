@@ -113,6 +113,26 @@ proc.stdin.flush();
 proc.stdin.end();
 ```
 
+Passing a `ReadableStream` to `stdin` lets you pipe data from a JavaScript `ReadableStream` directly to the subprocess's input:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("Hello from ");
+    controller.enqueue("ReadableStream!");
+    controller.close();
+  },
+});
+
+const proc = Bun.spawn(["cat"], {
+  stdin: stream,
+  stdout: "pipe",
+});
+
+const output = await new Response(proc.stdout).text();
+console.log(output); // "Hello from ReadableStream!"
+```
+
 ## Output streams
 
 You can read results from the subprocess via the `stdout` and `stderr` properties. By default these are instances of `ReadableStream`.

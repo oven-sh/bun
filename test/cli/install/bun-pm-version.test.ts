@@ -151,10 +151,7 @@ describe("bun pm version", () => {
   it("should set specific version", async () => {
     const testDir = setupTest();
 
-    const { output, code } = await runCommand(
-      [bunExe(), "pm", "version", "3.2.1", "--no-git-tag-version"],
-      testDir,
-    );
+    const { output, code } = await runCommand([bunExe(), "pm", "version", "3.2.1", "--no-git-tag-version"], testDir);
 
     expect(code).toBe(0);
     expect(output.trim()).toBe("v3.2.1");
@@ -218,7 +215,11 @@ describe("bun pm version", () => {
   it("handles git operations correctly", async () => {
     const testDir1 = setupGitTest();
 
-    const { output: output1, code: code1, error: stderr1 } = await runCommand([bunExe(), "pm", "version", "patch"], testDir1);
+    const {
+      output: output1,
+      code: code1,
+      error: stderr1,
+    } = await runCommand([bunExe(), "pm", "version", "patch"], testDir1);
 
     expect(stderr1.trim()).toBe("");
     expect(output1.trim()).toBe("v1.0.1");
@@ -366,10 +367,7 @@ describe("bun pm version", () => {
       "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
     });
 
-    const { output: output3, code: code3 } = await runCommand(
-      [bunExe(), "pm", "version", "--preid", "beta"],
-      testDir3,
-    );
+    const { output: output3, code: code3 } = await runCommand([bunExe(), "pm", "version", "--preid", "beta"], testDir3);
 
     expect(code3).toBe(0);
     expect(output3).toContain("prepatch");
@@ -577,7 +575,6 @@ describe("bun pm version", () => {
     const testDir = tempDirWithFiles(`version-${i++}`, {
       "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
       "src/index.js": "console.log('hello');",
-      
     });
 
     const { output, code } = await runCommand(
@@ -593,7 +590,7 @@ describe("bun pm version", () => {
 
     const monorepoDir = setupMonorepoTest();
 
-    await Bun.write(join(monorepoDir, "packages", "pkg-a", "lib", "index.js"), "")
+    await Bun.write(join(monorepoDir, "packages", "pkg-a", "lib", "index.js"), "");
 
     const { output: output2, code: code2 } = await runCommand(
       [bunExe(), "pm", "version", "minor", "--no-git-tag-version"],

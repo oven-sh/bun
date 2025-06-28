@@ -1,20 +1,18 @@
 import * as lezerCpp from "@lezer/cpp";
 import { readdir } from "fs/promises";
+import { join } from "path";
 
-const allSourceFiles = await readdir("src");
+const allSourceFiles = await readdir("src", { recursive: true });
 const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp"));
 
 const parser = lezerCpp.parser;
 
-const inputFile = "src/bun.js/bindings/InspectorHTTPServerAgent.cpp";
 const outputFile = "build/debug/codegen/cpp.zig";
-
-const input = await Bun.file(inputFile).text();
 
 type Zig = string | Zig[];
 const output: Zig[] = [];
-const outputTypes: Zig[] = [];
-const outputBindings: Zig[] = [];
+const outputTypes: Map<string, string> = new Map();
+const outputBindings: Map<string, string[]> = new Map();
 
 // Map C++ types to Zig types
 const typeMap: Record<string, string> = {
@@ -64,6 +62,7 @@ interface FunctionSignature {
   returnType: string;
   params: FunctionParam[];
   isExternC: boolean;
+  sourceFile: string;
 }
 
 // Helper to convert C++ type to Zig type
@@ -85,8 +84,8 @@ function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isR
 
     // Add to types if it looks like a class/struct
     if (cleanType.match(/^[A-Z][a-zA-Z0-9_]*$/)) {
-      if (!outputTypes.some(t => typeof t === "string" && t.includes(`pub const ${cleanType} = opaque`))) {
-        outputTypes.push(`    pub const ${cleanType} = opaque {};\n`);
+      if (!outputTypes.has(cleanType)) {
+        outputTypes.set(cleanType, `    pub const ${cleanType} = opaque {};\n`);
       }
     }
   }
@@ -103,189 +102,233 @@ function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isR
   return zigType;
 }
 
-// Parse function signatures from the tree
-const functions: FunctionSignature[] = [];
+// Process a single C++ file
+async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
+  const input = await Bun.file(filePath).text();
+  const functions: FunctionSignature[] = [];
 
-// Find extern "C" blocks first
-const externCBlocks: { start: number; end: number }[] = [];
-let inExternC = false;
-let externCStart = 0;
+  // Find extern "C" blocks first
+  const externCBlocks: { start: number; end: number }[] = [];
+  let inExternC = false;
+  let externCStart = 0;
 
-const tree = parser.parse(input);
+  const tree = parser.parse(input);
 
-tree.iterate({
-  enter(node) {
-    if (node.type.name === "LinkageSpecification") {
-      const specText = input.slice(node.from, node.to);
-      if (specText.includes('extern "C"')) {
-        inExternC = true;
-        externCStart = node.from;
+  tree.iterate({
+    enter(node) {
+      if (node.type.name === "LinkageSpecification") {
+        const specText = input.slice(node.from, node.to);
+        if (specText.includes('extern "C"')) {
+          inExternC = true;
+          externCStart = node.from;
+        }
       }
-    }
-  },
-  leave(node) {
-    if (node.type.name === "LinkageSpecification" && inExternC) {
-      inExternC = false;
-      externCBlocks.push({ start: externCStart, end: node.to });
-    }
-  },
-});
+    },
+    leave(node) {
+      if (node.type.name === "LinkageSpecification" && inExternC) {
+        inExternC = false;
+        externCBlocks.push({ start: externCStart, end: node.to });
+      }
+    },
+  });
 
-// Now parse function definitions
-tree.iterate({
-  enter(node) {
-    if (node.type.name === "FunctionDefinition") {
-      const functionNode = node.node;
-      const funcStart = node.from;
-      const funcEnd = node.to;
+  // Now parse function definitions
+  tree.iterate({
+    enter(node) {
+      if (node.type.name === "FunctionDefinition") {
+        const functionNode = node.node;
+        const funcStart = node.from;
+        const funcEnd = node.to;
 
-      // Check if this function is in an extern "C" block
-      const isExternC = externCBlocks.some(block => funcStart >= block.start && funcEnd <= block.end);
+        // Check if this function is in an extern "C" block
+        const isExternC = externCBlocks.some(block => funcStart >= block.start && funcEnd <= block.end);
 
-      // Skip if not extern C
-      if (!isExternC) return;
+        // Skip if not extern C
+        if (!isExternC) return;
 
-      // Check if this function has ZIG_EXPORT marker
-      // Look for ZIG_EXPORT in the line(s) immediately before the function
-      const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
-      const precedingText = input.slice(searchStart, funcStart);
-      const hasZigExport = precedingText.includes("ZIG_EXPORT");
+        // Check if this function has ZIG_EXPORT marker
+        // Look for ZIG_EXPORT in the line(s) immediately before the function
+        const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
+        const precedingText = input.slice(searchStart, funcStart);
+        const hasZigExport = precedingText.includes("ZIG_EXPORT");
 
-      // Skip if not marked with ZIG_EXPORT
-      if (!hasZigExport) return;
+        // Skip if not marked with ZIG_EXPORT
+        if (!hasZigExport) return;
 
-      let signature: FunctionSignature = {
-        name: "",
-        returnType: "void",
-        params: [],
-        isExternC: true,
-      };
+        let signature: FunctionSignature = {
+          name: "",
+          returnType: "void",
+          params: [],
+          isExternC: true,
+          sourceFile: filePath,
+        };
 
-      // Parse the function
-      let cursor = functionNode.firstChild;
-      let returnTypeNodes: any[] = [];
+        // Parse the function
+        let cursor = functionNode.firstChild;
+        let returnTypeNodes: any[] = [];
 
-      while (cursor) {
-        if (cursor.type.name === "FunctionDeclarator") {
-          // Parse function name and parameters
-          let declaratorCursor = cursor.firstChild;
+        while (cursor) {
+          if (cursor.type.name === "FunctionDeclarator") {
+            // Parse function name and parameters
+            let declaratorCursor = cursor.firstChild;
 
-          while (declaratorCursor) {
-            if (declaratorCursor.type.name === "Identifier") {
-              signature.name = input.slice(declaratorCursor.from, declaratorCursor.to);
-            } else if (declaratorCursor.type.name === "ParameterList") {
-              // Parse parameters
-              let paramCursor = declaratorCursor.firstChild;
+            while (declaratorCursor) {
+              if (declaratorCursor.type.name === "Identifier") {
+                signature.name = input.slice(declaratorCursor.from, declaratorCursor.to);
+              } else if (declaratorCursor.type.name === "ParameterList") {
+                // Parse parameters
+                let paramCursor = declaratorCursor.firstChild;
 
-              while (paramCursor) {
-                if (paramCursor.type.name === "ParameterDeclaration") {
-                  let param: FunctionParam = {
-                    type: "",
-                    name: "",
-                    isPointer: false,
-                    isConst: false,
-                    isReference: false,
-                  };
+                while (paramCursor) {
+                  if (paramCursor.type.name === "ParameterDeclaration") {
+                    let param: FunctionParam = {
+                      type: "",
+                      name: "",
+                      isPointer: false,
+                      isConst: false,
+                      isReference: false,
+                    };
 
-                  // Parse parameter
-                  const paramText = input.slice(paramCursor.from, paramCursor.to);
+                    // Parse parameter
+                    const paramText = input.slice(paramCursor.from, paramCursor.to);
 
-                  // Simple parsing - this could be more sophisticated
-                  param.isConst = paramText.includes("const ");
-                  param.isPointer = paramText.includes("*");
-                  param.isReference = paramText.includes("&");
+                    // Simple parsing - this could be more sophisticated
+                    param.isConst = paramText.includes("const ");
+                    param.isPointer = paramText.includes("*");
+                    param.isReference = paramText.includes("&");
 
-                  // Extract type and name (simplified)
-                  let cleanParam = paramText
-                    .replace(/const\s+/g, "")
-                    .replace(/\*/g, "")
-                    .replace(/&/g, "")
-                    .trim();
-                  const parts = cleanParam.split(/\s+/);
+                    // Extract type and name (simplified)
+                    let cleanParam = paramText
+                      .replace(/const\s+/g, "")
+                      .replace(/\*/g, "")
+                      .replace(/&/g, "")
+                      .trim();
+                    const parts = cleanParam.split(/\s+/);
 
-                  if (parts.length >= 2) {
-                    param.type = parts.slice(0, -1).join(" ");
-                    param.name = parts[parts.length - 1];
-                  } else if (parts.length === 1) {
-                    param.type = parts[0];
-                    param.name = `arg${signature.params.length}`;
+                    if (parts.length >= 2) {
+                      param.type = parts.slice(0, -1).join(" ");
+                      param.name = parts[parts.length - 1];
+                    } else if (parts.length === 1) {
+                      param.type = parts[0];
+                      param.name = `arg${signature.params.length}`;
+                    }
+
+                    if (param.type) {
+                      signature.params.push(param);
+                    }
                   }
-
-                  if (param.type) {
-                    signature.params.push(param);
-                  }
+                  paramCursor = paramCursor.nextSibling;
                 }
-                paramCursor = paramCursor.nextSibling;
               }
+              declaratorCursor = declaratorCursor.nextSibling;
             }
-            declaratorCursor = declaratorCursor.nextSibling;
+          } else if (cursor.type.name !== "CompoundStatement") {
+            // Collect return type nodes
+            returnTypeNodes.push(cursor);
           }
-        } else if (cursor.type.name !== "CompoundStatement") {
-          // Collect return type nodes
-          returnTypeNodes.push(cursor);
+          cursor = cursor.nextSibling;
         }
-        cursor = cursor.nextSibling;
-      }
 
-      // Parse return type
-      if (returnTypeNodes.length > 0) {
-        const returnTypeText = returnTypeNodes
-          .map(node => input.slice(node.from, node.to))
-          .join(" ")
-          .trim();
+        // Parse return type
+        if (returnTypeNodes.length > 0) {
+          const returnTypeText = returnTypeNodes
+            .map(node => input.slice(node.from, node.to))
+            .join(" ")
+            .trim();
 
-        if (returnTypeText && returnTypeText !== "void") {
-          signature.returnType = returnTypeText;
+          if (returnTypeText && returnTypeText !== "void") {
+            signature.returnType = returnTypeText;
+          }
+        }
+
+        // Add the function to our list
+        if (signature.name) {
+          functions.push(signature);
         }
       }
+    },
+  });
 
-      // Add the function to our list
-      if (signature.name) {
-        functions.push(signature);
+  return functions;
+}
+
+// Process all C++ files
+console.log(`Processing ${allCppFiles.length} C++ files...`);
+
+let totalFunctions = 0;
+
+for (const cppFile of allCppFiles) {
+  const filePath = join("src", cppFile);
+
+  try {
+    const functions = await processCppFile(filePath);
+
+    if (functions.length > 0) {
+      // Group functions by source file for organized output
+      if (!outputBindings.has(cppFile)) {
+        outputBindings.set(cppFile, []);
       }
+
+      const fileBindings = outputBindings.get(cppFile)!;
+
+      // Add comment for this file
+      fileBindings.push(`    // Source: ${filePath}\n`);
+
+      // Generate Zig extern declarations for ZIG_EXPORT functions
+      functions.forEach(func => {
+        const params = func.params
+          .map(param => {
+            const zigType = cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference);
+            return `${param.name}: ${zigType}`;
+          })
+          .join(", ");
+
+        const returnType = cppTypeToZig(func.returnType, false, false, false);
+
+        fileBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+      });
+
+      fileBindings.push("\n");
+
+      totalFunctions += functions.length;
+      console.log(`  - ${cppFile}: ${functions.length} ZIG_EXPORT functions`);
     }
-  },
-});
-
-// Generate Zig extern declarations for ZIG_EXPORT functions
-functions.forEach(func => {
-  const params = func.params
-    .map(param => {
-      const zigType = cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference);
-      return `${param.name}: ${zigType}`;
-    })
-    .join(", ");
-
-  const returnType = cppTypeToZig(func.returnType, false, false, false);
-
-  outputBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
-});
+  } catch (error) {
+    console.error(`Error processing ${filePath}: ${error}`);
+  }
+}
 
 // Build final output
 output.push(
   "// Generated by cppbind.ts\n",
-  "// Source: ",
-  inputFile,
-  "\n\n",
+  "// Processed ",
+  allCppFiles.length.toString(),
+  " C++ files\n",
+  "// Found ",
+  totalFunctions.toString(),
+  " ZIG_EXPORT functions\n",
+  "\n",
   'const std = @import("std");\n',
   'const bun = @import("bun");\n',
   "const JSC = bun.JSC;\n",
   "const BunString = bun.String;\n",
   "\n",
   "pub const types = struct {\n",
-  outputTypes,
+  ...Array.from(outputTypes.values()),
   "};\n",
   "\n",
   "pub const bindings = struct {\n",
-  outputBindings,
-  "};\n",
 );
 
-console.log(`Found ${functions.length} ZIG_EXPORT functions:`);
-functions.forEach(func => {
-  console.log(`  - ${func.name}`);
-});
+// Add all bindings grouped by file
+for (const [file, bindings] of outputBindings) {
+  output.push(...bindings);
+}
+
+output.push("};\n");
 
 const outputContent = output.flat(Infinity as 0).join("");
 await Bun.write(outputFile, outputContent);
-console.log(`\nGenerated Zig bindings written to: ${outputFile}`);
+
+console.log(`\nTotal ZIG_EXPORT functions found: ${totalFunctions}`);
+console.log(`Generated Zig bindings written to: ${outputFile}`);

@@ -593,19 +593,17 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         }
 
         comptime {
-            if (bun.Environment.export_cpp_apis) {
-                @export(&finalize, .{ .name = abi_name ++ "__finalize" });
-                @export(&jsWrite, .{ .name = abi_name ++ "__write" });
-                @export(&jsGetInternalFd, .{ .name = abi_name ++ "__getInternalFd" });
-                @export(&close, .{ .name = abi_name ++ "__close" });
-                @export(&jsFlush, .{ .name = abi_name ++ "__flush" });
-                @export(&jsStart, .{ .name = abi_name ++ "__start" });
-                @export(&jsEnd, .{ .name = abi_name ++ "__end" });
-                @export(&jsConstruct, .{ .name = abi_name ++ "__construct" });
-                @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
-                @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
-                @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
-            }
+            @export(&finalize, .{ .name = abi_name ++ "__finalize" });
+            @export(&jsWrite, .{ .name = abi_name ++ "__write" });
+            @export(&jsGetInternalFd, .{ .name = abi_name ++ "__getInternalFd" });
+            @export(&close, .{ .name = abi_name ++ "__close" });
+            @export(&jsFlush, .{ .name = abi_name ++ "__flush" });
+            @export(&jsStart, .{ .name = abi_name ++ "__start" });
+            @export(&jsEnd, .{ .name = abi_name ++ "__end" });
+            @export(&jsConstruct, .{ .name = abi_name ++ "__construct" });
+            @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
+            @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
+            @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
         }
     };
 }

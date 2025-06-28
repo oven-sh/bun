@@ -26,7 +26,7 @@ pub fn main() void {
     if (Environment.isPosix) {
         var act: std.posix.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.IGN },
-            .mask = std.posix.empty_sigset,
+            .mask = std.posix.sigemptyset(),
             .flags = 0,
         };
         std.posix.sigaction(std.posix.SIG.PIPE, &act, null);

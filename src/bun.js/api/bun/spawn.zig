@@ -108,6 +108,8 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        uid: if (Environment.isPosix) std.posix.uid_t else void = if (Environment.isPosix) std.math.maxInt(u32) else {},
+        gid: if (Environment.isPosix) std.posix.gid_t else void = if (Environment.isPosix) std.math.maxInt(u32) else {},
 
         pub fn init() !Attr {
             return Attr{};
@@ -183,6 +185,14 @@ pub const PosixSpawn = struct {
         }
 
         extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t) c_int;
+
+        pub fn setCredentials(self: *PosixSpawnAttr, uid: ?system.uid_t, gid: ?system.gid_t) !void {
+            // macOS doesn't support setting uid/gid through posix_spawn attributes
+            // This is only supported on Linux through our custom posix_spawn_bun implementation
+            _ = self;
+            _ = uid;
+            _ = gid;
+        }
     };
 
     pub const PosixSpawnActions = struct {
@@ -282,6 +292,8 @@ pub const PosixSpawn = struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        uid: std.posix.uid_t,
+        gid: std.posix.gid_t,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -347,6 +359,8 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .uid = if (attr) |a| a.uid else std.math.maxInt(u32),
+                    .gid = if (attr) |a| a.gid else std.math.maxInt(u32),
                 },
                 argv,
                 envp,

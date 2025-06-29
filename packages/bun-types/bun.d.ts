@@ -2174,6 +2174,15 @@ declare module "bun" {
         }; // | string;
     root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
+    /**
+     * Controls how entry point signatures are preserved. 
+     * - `"strict"`: Entry chunks contain only their direct code
+     * - `"allow-extension"`: Shared modules can be merged into entry chunks (default)
+     * - `"exports-only"`: Only explicitly exported symbols are preserved
+     * - `"false"`: Maximum optimization with no restrictions
+     * @default "allow-extension"
+     */
+    preserveEntrySignatures?: "strict" | "allow-extension" | "exports-only" | "false";
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
@@ -2258,6 +2267,114 @@ declare module "bun" {
      * Force emitting @__PURE__ annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
+
+    /**
+     * Advanced chunking options for custom module grouping and size constraints.
+     * 
+     * @example
+     * ```ts
+     * Bun.build({
+     *   entrypoints: ["src/index.ts"],
+     *   splitting: true,
+     *   advancedChunks: {
+     *     minShareCount: 2,
+     *     minSize: 1024,
+     *     groups: [
+     *       {
+     *         name: "vendor",
+     *         test: /node_modules/,
+     *         priority: 10,
+     *         minSize: 5000
+     *       }
+     *     ]
+     *   }
+     * })
+     * ```
+     */
+    advancedChunks?: {
+      /**
+       * Minimum number of entry points that must share a module for it to be in a common chunk.
+       * @default undefined
+       */
+      minShareCount?: number;
+      
+      /**
+       * Minimum size for a chunk in bytes.
+       * @default undefined
+       */
+      minSize?: number;
+      
+      /**
+       * Maximum size for a chunk in bytes.
+       * @default undefined
+       */
+      maxSize?: number;
+      
+      /**
+       * Minimum size for a module to be considered for chunking.
+       * @default undefined
+       */
+      minModuleSize?: number;
+      
+      /**
+       * Maximum size for a module to be included in a chunk.
+       * @default undefined
+       */
+      maxModuleSize?: number;
+      
+      /**
+       * Custom grouping rules for modules.
+       */
+      groups?: Array<{
+        /**
+         * Name of the group.
+         */
+        name: string;
+        
+        /**
+         * Test pattern for matching modules (string will be treated as regex).
+         */
+        test?: string | RegExp;
+        
+        /**
+         * Priority for group matching (higher priority groups are matched first).
+         * @default 0
+         */
+        priority?: number;
+        
+        /**
+         * Type of modules to include.
+         * @default "all"
+         */
+        type?: "javascript" | "css" | "asset" | "all";
+        
+        /**
+         * Minimum size for the group.
+         */
+        minSize?: number;
+        
+        /**
+         * Maximum size for the group.
+         */
+        maxSize?: number;
+        
+        /**
+         * Minimum number of modules in the group.
+         */
+        minChunks?: number;
+        
+        /**
+         * Maximum number of modules in the group.
+         */
+        maxChunks?: number;
+        
+        /**
+         * Enforce creation of this group even if it would be empty.
+         * @default false
+         */
+        enforce?: boolean;
+      }>;
+    };
 
     // treeshaking?: boolean;
 

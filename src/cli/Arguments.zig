@@ -150,6 +150,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".") catch unreachable,
     clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
+    clap.parseParam("--preserve-entry-signatures <STR>  Control if entry chunks can be extended. Options: \"strict\", \"allow-extension\", \"exports-only\", \"false\". Default: \"allow-extension\"") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
@@ -936,6 +937,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.flag("--splitting")) {
             ctx.bundler_options.code_splitting = true;
+        }
+
+        if (args.option("--preserve-entry-signatures")) |preserve| {
+            if (strings.eqlComptime(preserve, "strict")) {
+                ctx.bundler_options.preserve_entry_signatures = .strict;
+            } else if (strings.eqlComptime(preserve, "allow-extension")) {
+                ctx.bundler_options.preserve_entry_signatures = .allow_extension;
+            } else if (strings.eqlComptime(preserve, "exports-only")) {
+                ctx.bundler_options.preserve_entry_signatures = .exports_only;
+            } else if (strings.eqlComptime(preserve, "false")) {
+                ctx.bundler_options.preserve_entry_signatures = .@"false";
+            } else {
+                Output.prettyErrorln("<r><red>error<r>: Invalid preserve-entry-signatures setting: \"{s}\"", .{preserve});
+                Global.crash();
+            }
         }
 
         if (args.option("--entry-naming")) |entry_naming| {

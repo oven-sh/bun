@@ -56,6 +56,7 @@ pub fn findImportedPartsInJSOrder(
         c: *LinkerContext,
         entry_point: Chunk.EntryPoint,
         chunk_index: u32,
+        chunk: *Chunk,
 
         fn appendOrExtendRange(
             ranges: *std.ArrayList(PartRange),
@@ -91,7 +92,9 @@ pub fn findImportedPartsInJSOrder(
 
             var is_file_in_chunk = if (with_code_splitting and v.c.graph.ast.items(.css)[source_index] == null)
                 // when code splitting, include the file in the chunk if ALL of the entry points overlap
-                v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index])
+                // OR if the file was explicitly added to this chunk (via chunk extension optimization)
+                v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index]) or
+                v.chunk.files_with_parts_in_chunk.contains(source_index)
             else
                 // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
                 v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
@@ -175,6 +178,7 @@ pub fn findImportedPartsInJSOrder(
         .c = this,
         .entry_point = chunk.entry_point,
         .chunk_index = chunk_index,
+        .chunk = chunk,
     };
     defer {
         part_ranges_shared.* = visitor.part_ranges;

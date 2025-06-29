@@ -1975,6 +1975,153 @@ pub const Api = struct {
         }
     };
 
+    pub const PreserveEntrySignatures = enum(u8) {
+        /// Entry exports are always preserved
+        strict,
+
+        /// Allow adding additional modules to entry chunks (default)
+        allow_extension,
+
+        /// Only the specific exports from the entry module are preserved
+        exports_only,
+
+        /// Entry exports are not preserved, allows maximum optimization
+        @"false",
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const AdvancedChunksOptions = struct {
+        /// Minimum number of entry points that must share a module for it to be in a common chunk
+        min_share_count: ?u32 = null,
+
+        /// Minimum size for a chunk in bytes
+        min_size: ?f64 = null,
+
+        /// Maximum size for a chunk in bytes
+        max_size: ?f64 = null,
+
+        /// Minimum size for a module to be considered for chunking
+        min_module_size: ?f64 = null,
+
+        /// Maximum size for a module to be included in a chunk
+        max_module_size: ?f64 = null,
+
+        /// Custom grouping rules
+        groups: ?[]const MatchGroup = null,
+
+        pub fn decode(reader: anytype) anyerror!AdvancedChunksOptions {
+            var this = std.mem.zeroes(AdvancedChunksOptions);
+            this.min_share_count = try reader.readValue(?u32);
+            this.min_size = try reader.readValue(?f64);
+            this.max_size = try reader.readValue(?f64);
+            this.min_module_size = try reader.readValue(?f64);
+            this.max_module_size = try reader.readValue(?f64);
+            if (try reader.readValue(bool)) {
+                this.groups = try reader.readArray(MatchGroup);
+            }
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.min_share_count), this.min_share_count);
+            try writer.writeValue(@TypeOf(this.min_size), this.min_size);
+            try writer.writeValue(@TypeOf(this.max_size), this.max_size);
+            try writer.writeValue(@TypeOf(this.min_module_size), this.min_module_size);
+            try writer.writeValue(@TypeOf(this.max_module_size), this.max_module_size);
+            try writer.writeValue(bool, this.groups != null);
+            if (this.groups) |groups| {
+                try writer.writeArray(MatchGroup, groups);
+            }
+        }
+    };
+
+    pub const MatchGroup = struct {
+        /// Name of the group
+        name: []const u8,
+
+        /// Test pattern (regex or function)
+        test_pattern: ?[]const u8 = null,
+
+        /// Priority for group matching (higher priority groups are matched first)
+        priority: ?u32 = null,
+
+        /// Type of modules to include
+        type_: ?MatchGroupModuleType = null,
+
+        /// Minimum size for the group
+        min_size: ?f64 = null,
+
+        /// Maximum size for the group
+        max_size: ?f64 = null,
+
+        /// Minimum number of modules in the group
+        min_chunks: ?u32 = null,
+
+        /// Maximum number of modules in the group
+        max_chunks: ?u32 = null,
+
+        /// Enforce creation of this group even if it would be empty
+        enforce: bool = false,
+
+        pub fn decode(reader: anytype) anyerror!MatchGroup {
+            var this = std.mem.zeroes(MatchGroup);
+            this.name = try reader.readValue([]const u8);
+            if (try reader.readValue(bool)) {
+                this.test_pattern = try reader.readValue([]const u8);
+            }
+            this.priority = try reader.readValue(?u32);
+            if (try reader.readValue(bool)) {
+                this.type_ = try reader.readEnum(MatchGroupModuleType);
+            }
+            this.min_size = try reader.readValue(?f64);
+            this.max_size = try reader.readValue(?f64);
+            this.min_chunks = try reader.readValue(?u32);
+            this.max_chunks = try reader.readValue(?u32);
+            this.enforce = try reader.readValue(bool);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.name), this.name);
+            try writer.writeValue(bool, this.test_pattern != null);
+            if (this.test_pattern) |test_val| {
+                try writer.writeValue(@TypeOf(test_val), test_val);
+            }
+            try writer.writeValue(@TypeOf(this.priority), this.priority);
+            try writer.writeValue(bool, this.type_ != null);
+            if (this.type_) |type_| {
+                try writer.writeInt(@intFromEnum(type_));
+            }
+            try writer.writeValue(@TypeOf(this.min_size), this.min_size);
+            try writer.writeValue(@TypeOf(this.max_size), this.max_size);
+            try writer.writeValue(@TypeOf(this.min_chunks), this.min_chunks);
+            try writer.writeValue(@TypeOf(this.max_chunks), this.max_chunks);
+            try writer.writeValue(@TypeOf(this.enforce), this.enforce);
+        }
+    };
+
+    pub const MatchGroupModuleType = enum(u8) {
+        /// Match only JavaScript modules
+        javascript,
+        /// Match only CSS modules
+        css,
+        /// Match only asset modules
+        asset,
+        /// Match all module types
+        all,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
     pub const FileHandle = struct {
         /// path
         path: []const u8,

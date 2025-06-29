@@ -28,6 +28,9 @@ pub const Chunk = struct {
     is_executable: bool = false,
     has_html_chunk: bool = false,
     is_browser_chunk_from_server_build: bool = false,
+    
+    /// Controls how exports are generated for entry chunks (Rolldown optimization)
+    preserve_entry_signature: ?options.PreserveEntrySignatures = null,
 
     output_source_map: sourcemap.SourceMapPieces,
 

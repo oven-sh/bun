@@ -22,6 +22,145 @@ const Index = @import("../../ast/base.zig").Index;
 
 const debug = bun.Output.scoped(.Transpiler, false);
 
+fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue, allocator: std.mem.Allocator) !options.AdvancedChunksOptions {
+    var opts = options.AdvancedChunksOptions{};
+    
+    if (try obj.get(globalThis, "minShareCount")) |val| {
+        if (!val.isUndefinedOrNull() and val.isNumber()) {
+            const num = val.asNumber();
+            if (num >= 0 and num <= std.math.maxInt(u32)) {
+                opts.min_share_count = @intFromFloat(num);
+            }
+        }
+    }
+    
+    if (try obj.get(globalThis, "minSize")) |val| {
+        if (!val.isUndefinedOrNull() and val.isNumber()) {
+            opts.min_size = val.asNumber();
+        }
+    }
+    
+    if (try obj.get(globalThis, "maxSize")) |val| {
+        if (!val.isUndefinedOrNull() and val.isNumber()) {
+            opts.max_size = val.asNumber();
+        }
+    }
+    
+    if (try obj.get(globalThis, "minModuleSize")) |val| {
+        if (!val.isUndefinedOrNull() and val.isNumber()) {
+            opts.min_module_size = val.asNumber();
+        }
+    }
+    
+    if (try obj.get(globalThis, "maxModuleSize")) |val| {
+        if (!val.isUndefinedOrNull() and val.isNumber()) {
+            opts.max_module_size = val.asNumber();
+        }
+    }
+    
+    if (try obj.getArray(globalThis, "groups")) |groups_array| {
+        const groups_len = try groups_array.getLength(globalThis);
+        if (groups_len > 0) {
+            var groups = try allocator.alloc(options.MatchGroup, groups_len);
+            
+            for (0..groups_len) |i| {
+                const group_val = try groups_array.getIndex(globalThis, @intCast(i));
+                if (!group_val.isObject()) {
+                    return globalThis.throwInvalidArguments("advancedChunks.groups[{}] must be an object", .{i});
+                }
+                
+                var group = options.MatchGroup{ .name = "", .enforce = false };
+                
+                if (try group_val.get(globalThis, "name")) |name_val| {
+                    if (name_val.isString()) {
+                        const slice = try name_val.toSlice(globalThis, allocator);
+                        defer slice.deinit();
+                        group.name = try allocator.dupe(u8, slice.slice());
+                    } else {
+                        return globalThis.throwInvalidArguments("advancedChunks.groups[{}].name must be a string", .{i});
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "test")) |test_val| {
+                    if (test_val.isString()) {
+                        const slice = try test_val.toSlice(globalThis, allocator);
+                        defer slice.deinit();
+                        group.test_pattern = try allocator.dupe(u8, slice.slice());
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "priority")) |priority_val| {
+                    if (priority_val.isNumber()) {
+                        const num = priority_val.asNumber();
+                        if (num >= 0 and num <= std.math.maxInt(u32)) {
+                            group.priority = @intFromFloat(num);
+                        }
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "type")) |type_val| {
+                    if (type_val.isString()) {
+                        const slice = try type_val.toSlice(globalThis, allocator);
+                        defer slice.deinit();
+                        const type_str = slice.slice();
+                        if (strings.eqlComptime(type_str, "javascript")) {
+                            group.type_ = .javascript;
+                        } else if (strings.eqlComptime(type_str, "css")) {
+                            group.type_ = .css;
+                        } else if (strings.eqlComptime(type_str, "asset")) {
+                            group.type_ = .asset;
+                        } else if (strings.eqlComptime(type_str, "all")) {
+                            group.type_ = .all;
+                        }
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "minSize")) |min_size_val| {
+                    if (min_size_val.isNumber()) {
+                        group.min_size = min_size_val.asNumber();
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "maxSize")) |max_size_val| {
+                    if (max_size_val.isNumber()) {
+                        group.max_size = max_size_val.asNumber();
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "minChunks")) |min_chunks_val| {
+                    if (min_chunks_val.isNumber()) {
+                        const num = min_chunks_val.asNumber();
+                        if (num >= 0 and num <= std.math.maxInt(u32)) {
+                            group.min_chunks = @intFromFloat(num);
+                        }
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "maxChunks")) |max_chunks_val| {
+                    if (max_chunks_val.isNumber()) {
+                        const num = max_chunks_val.asNumber();
+                        if (num >= 0 and num <= std.math.maxInt(u32)) {
+                            group.max_chunks = @intFromFloat(num);
+                        }
+                    }
+                }
+                
+                if (try group_val.get(globalThis, "enforce")) |enforce_val| {
+                    if (enforce_val.isBoolean()) {
+                        group.enforce = enforce_val.toBoolean();
+                    }
+                }
+                
+                groups[i] = group;
+            }
+            
+            opts.groups = groups;
+        }
+    }
+    
+    return opts;
+}
+
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
@@ -38,6 +177,8 @@ pub const JSBundler = struct {
         jsx: options.JSX.Pragma = .{},
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
+        preserve_entry_signatures: options.PreserveEntrySignatures = .allow_extension,
+        advanced_chunks: ?options.AdvancedChunksOptions = null,
         minify: Minify = .{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
@@ -233,6 +374,10 @@ pub const JSBundler = struct {
                 this.packages = packages;
             }
 
+            if (try config.getOptionalEnum(globalThis, "preserveEntrySignatures", options.PreserveEntrySignatures)) |preserve| {
+                this.preserve_entry_signatures = preserve;
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
@@ -243,6 +388,16 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
                 this.code_splitting = hot;
+            }
+
+            if (try config.getOptionalEnum(globalThis, "preserveEntrySignatures", options.PreserveEntrySignatures)) |preserve| {
+                this.preserve_entry_signatures = preserve;
+            }
+
+            if (try config.get(globalThis, "advancedChunks")) |advanced| {
+                if (!advanced.isUndefinedOrNull()) {
+                    this.advanced_chunks = try parseAdvancedChunksOptions(globalThis, advanced, allocator);
+                }
             }
 
             if (try config.getTruthy(globalThis, "minify")) |minify| {
@@ -496,6 +651,9 @@ pub const JSBundler = struct {
             syntax: bool = false,
         };
 
+        // TODO: Implement AdvancedChunksOptions
+        pub const AdvancedChunksOptions = options.AdvancedChunksOptions;
+
         pub const Serve = struct {
             handler_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -527,6 +685,9 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+            if (self.advanced_chunks) |*chunks| {
+                chunks.deinit(allocator);
+            }
             self.env_prefix.deinit();
             self.footer.deinit();
         }

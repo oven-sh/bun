@@ -93,6 +93,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.preserve_entry_signatures = ctx.bundler_options.preserve_entry_signatures;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;

@@ -290,6 +290,8 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
     // Generate cross-chunk exports. These must be computed before cross-chunk
     // imports because of export alias renaming, which must consider all export
     // aliases simultaneously to avoid collisions.
+    // 
+    // This is similar to Rolldown's deconflictExportedNames pass
     {
         bun.assert(chunk_metas.len == chunks.len);
         var r = renamer.ExportRenamer.init(c.allocator);

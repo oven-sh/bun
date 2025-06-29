@@ -8,7 +8,7 @@ void init(v8::Local<v8::Object> exports, v8::Local<v8::Value> module,
 
 extern "C" {
 static node::node_module _module = {
-    // bun expects 127
+    // bun expects 137 (Node.js 24.3.0)
     42,                           // nm_version
     0,                            // nm_flags
     nullptr,                      // nm_dso_handle

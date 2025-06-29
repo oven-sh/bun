@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 expect.extend({
@@ -1130,4 +1130,25 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
     "",
     1,
   ]).toRunInlineFixture();
+});
+
+it("process.versions", () => {
+  expect(process.versions.node).toEqual("24.3.0");
+  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.napi).toEqual("10");
+  expect(process.versions.modules).toEqual("137");
+});
+
+it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
+  const subprocess = Bun.spawn({
+    cmd: ["node", "--version"],
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
+  expect(out.trim()).toEqual("v24.3.0");
+  expect(exited).toBe(0);
 });

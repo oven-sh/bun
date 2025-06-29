@@ -497,3 +497,23 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });
+
+it("should handle package that requires node 24", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+  expect(err).not.toContain("error:");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});

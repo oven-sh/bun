@@ -7,6 +7,21 @@ namespace v8 {
 
 class FunctionTemplate;
 
+template<typename T>
+class Local;
+class Value;
+
+template<typename T>
+class Local;
+class Data;
+
+class Isolate;
+
+namespace api_internal {
+// Forward declaration - defined in v8_api_internal.cpp
+Local<Value> GetFunctionTemplateData(Isolate* isolate, Local<Data> target);
+}
+
 namespace shim {
 
 class FunctionTemplate : public JSC::InternalFunction {
@@ -34,6 +49,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
+    friend v8::Local<v8::Value> api_internal::GetFunctionTemplateData(v8::Isolate* isolate, v8::Local<v8::Data> target);
 
 private:
     FunctionCallback m_callback;

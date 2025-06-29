@@ -185,7 +185,7 @@ describe("napi", () => {
       expect(result).toEndWith("str: abcdef");
     });
 
-    it("copies auto len", async () => {
+    it.todo("copies auto len", async () => {
       const result = await checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str:");
     });

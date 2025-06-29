@@ -240,11 +240,11 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Package nodejs -Command node -Version "22.9.0"
+  Install-Package nodejs -Command node -Version "24.3.0"
 }
 
 function Install-Bun {
-  Install-Package bun -Version "1.1.30"
+  Install-Package bun -Version "1.2.17"
 }
 
 function Install-Cygwin {
@@ -302,6 +302,9 @@ function Install-Visual-Studio {
     "--force",
     "--locale en-US",
     "--add Microsoft.VisualStudio.Workload.NativeDesktop",
+    "--add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang",
+    "--add Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+    "--add Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset",
     "--includeRecommended"
   )
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo

@@ -2,7 +2,7 @@
 
 extern "C" {
 static node::node_module _module = {
-    127,                 // nm_version
+    137,                 // nm_version (Node.js 24.3.0)
     0,                   // nm_flags
     nullptr,             // nm_dso_handle
     "no_entrypoint.cpp", // nm_filename

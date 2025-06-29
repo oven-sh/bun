@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/default/style.css 1`] = `
 "/* 001/default/a.css */

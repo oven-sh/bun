@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`junit reporter 1`] = `
 "<?xml version="1.0" encoding="UTF-8"?>

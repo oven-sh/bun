@@ -947,7 +947,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             } else if (strings.eqlComptime(preserve, "exports-only")) {
                 ctx.bundler_options.preserve_entry_signatures = .exports_only;
             } else if (strings.eqlComptime(preserve, "false")) {
-                ctx.bundler_options.preserve_entry_signatures = .@"false";
+                ctx.bundler_options.preserve_entry_signatures = .false;
             } else {
                 Output.prettyErrorln("<r><red>error<r>: Invalid preserve-entry-signatures setting: \"{s}\"", .{preserve});
                 Global.crash();

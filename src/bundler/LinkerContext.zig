@@ -1451,7 +1451,7 @@ pub const LinkerContext = struct {
         if (!bits.isSet(entry_points_count)) {
             c.graph.files.items(.share_count)[source_index] += 1;
         }
-        
+
         bits.set(entry_points_count);
 
         if (comptime bun.Environment.enable_logs)

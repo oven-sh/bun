@@ -200,7 +200,7 @@ pub noinline fn computeChunks(
                 bun.assert(!c.module_to_assigned.isSet(c.source_id));
                 c.module_to_assigned.set(c.source_id);
             }
-            
+
             _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
         }
     };
@@ -209,7 +209,7 @@ pub noinline fn computeChunks(
 
     // Check if we can extend entry chunks (Rolldown optimization)
     const allow_extension_optimize = this.options.preserve_entry_signatures != .strict;
-    
+
     // Map to hold modules that might be merged into existing chunks
     var pending_common_chunks = bun.StringArrayHashMap(BabyList(Index.Int)).init(temp_allocator);
     defer pending_common_chunks.deinit();
@@ -224,7 +224,7 @@ pub noinline fn computeChunks(
 
                     if (this.graph.code_splitting) {
                         const js_chunk_key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
-                        
+
                         // Check if a chunk already exists for this BitSet pattern
                         if (js_chunks.getPtr(js_chunk_key)) |existing_chunk| {
                             // Ensure module hasn't been assigned already (Rolldown optimization)
@@ -232,7 +232,7 @@ pub noinline fn computeChunks(
                                 bun.assert(!module_to_assigned.isSet(source_index.get()));
                                 module_to_assigned.set(source_index.get());
                             }
-                            
+
                             _ = existing_chunk.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
                         } else if (allow_extension_optimize and this.graph.files.items(.share_count)[source_index.get()] > 1) {
                             // Defer creation - might be able to add to existing chunk
@@ -262,7 +262,7 @@ pub noinline fn computeChunks(
                                 bun.assert(!module_to_assigned.isSet(source_index.get()));
                                 module_to_assigned.set(source_index.get());
                             }
-                            
+
                             _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
                         }
                     } else {
@@ -472,39 +472,39 @@ fn tryInsertCommonModulesToExistingChunk(
     while (pending_iter.next()) |entry| {
         const js_chunk_key = entry.key_ptr.*;
         const modules = entry.value_ptr.*;
-        
+
         // First, try to find an existing entry chunk that can host these modules
         var chunk_extended = false;
         if (this.options.preserve_entry_signatures != .strict) {
             // Get the BitSet for these modules (they all share the same one)
             const module_bits = &file_entry_bits[modules.slice()[0]];
-            
+
             // Try to find a suitable entry chunk to extend
             // The best candidate is one that:
             // 1. Is an entry point chunk (not a common chunk)
             // 2. Has its entry bit set in the module's BitSet (can reach the module)
             // 3. Allows extension (preserve_entry_signature != strict)
             // 4. Preferably is already importing some of these modules (minimize size increase)
-            
+
             var best_chunk_index: ?usize = null;
             var best_score: u32 = 0;
-            
+
             var chunks_iter = js_chunks.iterator();
             while (chunks_iter.next()) |chunk_entry| {
                 const chunk = chunk_entry.value_ptr.*;
-                
+
                 // Skip non-entry chunks
                 if (!chunk.entry_point.is_entry_point) {
                     continue;
                 }
-                
+
                 // Check if this chunk's preserve_entry_signature allows extension
                 if (chunk.preserve_entry_signature) |preserve| {
                     if (preserve == .strict) {
                         continue; // This chunk doesn't allow extension
                     }
                 }
-                
+
                 // Check if this entry chunk can reach all the modules
                 // by checking if its entry bit is set in the module's BitSet
                 const entry_id = chunk.entry_point.entry_point_id;
@@ -531,25 +531,25 @@ fn tryInsertCommonModulesToExistingChunk(
                             }
                         }
                     }
-                    
+
                     // Also prefer smaller chunks to balance sizes
                     const chunk_size = chunk.files_with_parts_in_chunk.count();
                     if (chunk_size < 50) {
                         score += 5;
                     }
-                    
+
                     if (best_chunk_index == null or score > best_score) {
                         best_chunk_index = js_chunks.getIndex(chunk_entry.key_ptr.*);
                         best_score = score;
                     }
                 }
             }
-            
+
             if (best_chunk_index) |chunk_idx| {
                 // Get the chunk by index
                 const chunk_values = js_chunks.values();
                 var best_chunk = &chunk_values[chunk_idx];
-                
+
                 // Add all modules to the best matching chunk
                 for (modules.slice()) |module_index| {
                     // Ensure module hasn't been assigned already
@@ -557,14 +557,14 @@ fn tryInsertCommonModulesToExistingChunk(
                         bun.assert(!module_to_assigned.isSet(module_index));
                         module_to_assigned.set(module_index);
                     }
-                    
+
                     _ = best_chunk.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(module_index))) catch unreachable;
                 }
-                
+
                 chunk_extended = true;
             }
         }
-        
+
         // If we couldn't extend an existing chunk, create a new common chunk
         if (!chunk_extended) {
             var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
@@ -572,7 +572,7 @@ fn tryInsertCommonModulesToExistingChunk(
                 // Use the first module's entry_bits for the chunk
                 const first_module_bits = &file_entry_bits[modules.slice()[0]];
                 const is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[modules.slice()[0]] == .browser;
-                
+
                 js_chunk_entry.value_ptr.* = .{
                     .entry_bits = first_module_bits.*,
                     .entry_point = .{
@@ -585,7 +585,7 @@ fn tryInsertCommonModulesToExistingChunk(
                     .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
                 };
             }
-            
+
             // Add all modules to the chunk
             for (modules.slice()) |module_index| {
                 // Ensure module hasn't been assigned already
@@ -593,7 +593,7 @@ fn tryInsertCommonModulesToExistingChunk(
                     bun.assert(!module_to_assigned.isSet(module_index));
                     module_to_assigned.set(module_index);
                 }
-                
+
                 _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(module_index))) catch unreachable;
             }
         }
@@ -613,11 +613,11 @@ fn applyAdvancedChunks(
     if (advanced_opts.min_size) |min_size| {
         try applyMinSizeConstraint(js_chunks, min_size);
     }
-    
+
     if (advanced_opts.max_size) |max_size| {
         try applyMaxSizeConstraint(js_chunks, max_size, temp_allocator);
     }
-    
+
     // 2. Apply module grouping based on custom rules
     if (advanced_opts.groups) |groups| {
         try applyModuleGrouping(
@@ -630,7 +630,7 @@ fn applyAdvancedChunks(
             temp_allocator,
         );
     }
-    
+
     // 3. Apply share count filtering if specified
     if (advanced_opts.min_share_count) |min_count| {
         try applyShareCountFiltering(js_chunks, min_count, this.graph.files.items(.share_count));
@@ -671,10 +671,10 @@ fn applyModuleGrouping(
     // Sort groups by priority (higher priority first)
     var sorted_groups = try temp_allocator.alloc(options.MatchGroup, groups.len);
     @memcpy(sorted_groups, groups);
-    
+
     // Simple priority-based sorting
     for (sorted_groups, 0..) |_, i| {
-        for (sorted_groups[i + 1..], i + 1..) |other_group, j| {
+        for (sorted_groups[i + 1 ..], i + 1..) |other_group, j| {
             const priority_i = sorted_groups[i].priority orelse 0;
             const priority_j = other_group.priority orelse 0;
             if (priority_j > priority_i) {
@@ -685,7 +685,7 @@ fn applyModuleGrouping(
             }
         }
     }
-    
+
     // Apply each group in priority order
     for (sorted_groups) |group| {
         try applyGroupRule(
@@ -715,11 +715,11 @@ fn applyGroupRule(
     _ = ast_targets;
     _ = module_to_assigned;
     _ = temp_allocator;
-    
+
     if (group.name.len == 0) {
         return;
     }
-    
+
     if (group.test_pattern) |_| {}
     if (group.type_) |group_type| {
         switch (group_type) {

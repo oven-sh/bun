@@ -24,7 +24,7 @@ const debug = bun.Output.scoped(.Transpiler, false);
 
 fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue, allocator: std.mem.Allocator) !options.AdvancedChunksOptions {
     var opts = options.AdvancedChunksOptions{};
-    
+
     if (try obj.get(globalThis, "minShareCount")) |val| {
         if (!val.isUndefinedOrNull() and val.isNumber()) {
             const num = val.asNumber();
@@ -33,44 +33,44 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
             }
         }
     }
-    
+
     if (try obj.get(globalThis, "minSize")) |val| {
         if (!val.isUndefinedOrNull() and val.isNumber()) {
             opts.min_size = val.asNumber();
         }
     }
-    
+
     if (try obj.get(globalThis, "maxSize")) |val| {
         if (!val.isUndefinedOrNull() and val.isNumber()) {
             opts.max_size = val.asNumber();
         }
     }
-    
+
     if (try obj.get(globalThis, "minModuleSize")) |val| {
         if (!val.isUndefinedOrNull() and val.isNumber()) {
             opts.min_module_size = val.asNumber();
         }
     }
-    
+
     if (try obj.get(globalThis, "maxModuleSize")) |val| {
         if (!val.isUndefinedOrNull() and val.isNumber()) {
             opts.max_module_size = val.asNumber();
         }
     }
-    
+
     if (try obj.getArray(globalThis, "groups")) |groups_array| {
         const groups_len = try groups_array.getLength(globalThis);
         if (groups_len > 0) {
             var groups = try allocator.alloc(options.MatchGroup, groups_len);
-            
+
             for (0..groups_len) |i| {
                 const group_val = try groups_array.getIndex(globalThis, @intCast(i));
                 if (!group_val.isObject()) {
                     return globalThis.throwInvalidArguments("advancedChunks.groups[{}] must be an object", .{i});
                 }
-                
+
                 var group = options.MatchGroup{ .name = "", .enforce = false };
-                
+
                 if (try group_val.get(globalThis, "name")) |name_val| {
                     if (name_val.isString()) {
                         const slice = try name_val.toSlice(globalThis, allocator);
@@ -80,7 +80,7 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         return globalThis.throwInvalidArguments("advancedChunks.groups[{}].name must be a string", .{i});
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "test")) |test_val| {
                     if (test_val.isString()) {
                         const slice = try test_val.toSlice(globalThis, allocator);
@@ -88,7 +88,7 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         group.test_pattern = try allocator.dupe(u8, slice.slice());
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "priority")) |priority_val| {
                     if (priority_val.isNumber()) {
                         const num = priority_val.asNumber();
@@ -97,7 +97,7 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         }
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "type")) |type_val| {
                     if (type_val.isString()) {
                         const slice = try type_val.toSlice(globalThis, allocator);
@@ -114,19 +114,19 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         }
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "minSize")) |min_size_val| {
                     if (min_size_val.isNumber()) {
                         group.min_size = min_size_val.asNumber();
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "maxSize")) |max_size_val| {
                     if (max_size_val.isNumber()) {
                         group.max_size = max_size_val.asNumber();
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "minChunks")) |min_chunks_val| {
                     if (min_chunks_val.isNumber()) {
                         const num = min_chunks_val.asNumber();
@@ -135,7 +135,7 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         }
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "maxChunks")) |max_chunks_val| {
                     if (max_chunks_val.isNumber()) {
                         const num = max_chunks_val.asNumber();
@@ -144,20 +144,20 @@ fn parseAdvancedChunksOptions(globalThis: *JSC.JSGlobalObject, obj: JSC.JSValue,
                         }
                     }
                 }
-                
+
                 if (try group_val.get(globalThis, "enforce")) |enforce_val| {
                     if (enforce_val.isBoolean()) {
                         group.enforce = enforce_val.toBoolean();
                     }
                 }
-                
+
                 groups[i] = group;
             }
-            
+
             opts.groups = groups;
         }
     }
-    
+
     return opts;
 }
 

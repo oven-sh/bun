@@ -1676,19 +1676,19 @@ pub const PackagesOption = enum {
 pub const PreserveEntrySignatures = enum {
     /// Entry exports are always preserved (rolldown "strict")
     strict,
-    /// Allow adding additional modules to entry chunks (rolldown "allow-extension") 
+    /// Allow adding additional modules to entry chunks (rolldown "allow-extension")
     allow_extension,
     /// Only the specific exports from the entry module are preserved (rolldown "exports-only")
     exports_only,
     /// Entry exports are not preserved, allows maximum optimization (rolldown "false")
-    @"false",
+    false,
 
     pub fn fromApi(preserve: ?Api.PreserveEntrySignatures) PreserveEntrySignatures {
         return switch (preserve orelse .allow_extension) {
             .strict => .strict,
             .allow_extension => .allow_extension,
             .exports_only => .exports_only,
-            .@"false" => .@"false",
+            .false => .false,
             else => .allow_extension,
         };
     }
@@ -1698,7 +1698,7 @@ pub const PreserveEntrySignatures = enum {
             .strict => .strict,
             .allow_extension => .allow_extension,
             .exports_only => .exports_only,
-            .@"false" => .@"false",
+            .false => .false,
         };
     }
 
@@ -1706,26 +1706,26 @@ pub const PreserveEntrySignatures = enum {
         .{ "strict", .strict },
         .{ "allow-extension", .allow_extension },
         .{ "exports-only", .exports_only },
-        .{ "false", .@"false" },
+        .{ "false", .false },
     });
 };
 
 pub const AdvancedChunksOptions = struct {
     /// Minimum number of entry points that must share a module for it to be in a common chunk
     min_share_count: ?u32 = null,
-    
+
     /// Minimum size for a chunk in bytes
     min_size: ?f64 = null,
-    
+
     /// Maximum size for a chunk in bytes
     max_size: ?f64 = null,
-    
+
     /// Minimum size for a module to be considered for chunking
     min_module_size: ?f64 = null,
-    
+
     /// Maximum size for a module to be included in a chunk
     max_module_size: ?f64 = null,
-    
+
     /// Custom grouping rules
     groups: ?[]const MatchGroup = null,
 
@@ -1758,28 +1758,28 @@ pub const AdvancedChunksOptions = struct {
 pub const MatchGroup = struct {
     /// Name of the group
     name: []const u8,
-    
+
     /// Test pattern (regex or function)
     test_pattern: ?[]const u8 = null,
-    
+
     /// Priority for group matching (higher priority groups are matched first)
     priority: ?u32 = null,
-    
+
     /// Type of modules to include
     type_: ?MatchGroupModuleType = null,
-    
+
     /// Minimum size for the group
     min_size: ?f64 = null,
-    
+
     /// Maximum size for the group
     max_size: ?f64 = null,
-    
+
     /// Minimum number of modules in the group
     min_chunks: ?u32 = null,
-    
+
     /// Maximum number of modules in the group
     max_chunks: ?u32 = null,
-    
+
     /// Enforce creation of this group even if it would be empty
     enforce: bool = false,
 

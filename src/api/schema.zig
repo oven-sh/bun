@@ -1986,7 +1986,7 @@ pub const Api = struct {
         exports_only,
 
         /// Entry exports are not preserved, allows maximum optimization
-        @"false",
+        false,
 
         _,
 

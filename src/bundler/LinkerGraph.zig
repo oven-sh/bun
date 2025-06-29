@@ -407,7 +407,7 @@ pub fn load(
 
 pub const File = struct {
     entry_bits: AutoBitSet = undefined,
-    
+
     /// Number of entry points that can reach this module (Rolldown optimization)
     share_count: u32 = 0,
 

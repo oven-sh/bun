@@ -859,6 +859,8 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.preserve_entry_signatures = transpiler.options.preserve_entry_signatures;
+        this.linker.options.advanced_chunks = transpiler.options.advanced_chunks;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1740,6 +1742,7 @@ pub const BundleV2 = struct {
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;
             transpiler.options.code_splitting = config.code_splitting;
+            transpiler.options.preserve_entry_signatures = config.preserve_entry_signatures;
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;

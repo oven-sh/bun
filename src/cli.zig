@@ -424,6 +424,7 @@ pub const Command = struct {
             server_components: bool = false,
             react_fast_refresh: bool = false,
             code_splitting: bool = false,
+            preserve_entry_signatures: options.PreserveEntrySignatures = .allow_extension,
             transform_only: bool = false,
             inline_entrypoint_import_meta_main: bool = false,
             minify_syntax: bool = false,

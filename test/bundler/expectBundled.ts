@@ -196,6 +196,7 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  preserveEntrySignatures?: "strict" | "allow-extension" | "exports-only" | "false";
   serverComponents?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
@@ -462,6 +463,7 @@ function expectBundled(
     snapshotSourceMap,
     sourceMap,
     splitting,
+    preserveEntrySignatures,
     target,
     todo: notImplemented,
     treeShaking,
@@ -1029,6 +1031,7 @@ function expectBundled(
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
+          preserveEntrySignatures,
           target,
           bytecode,
           publicPath,

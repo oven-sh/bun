@@ -661,7 +661,8 @@ describe("bun test", () => {
         `,
       });
       numbers.forEach(numbers => {
-        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        expect(stderr).toContain(`(skip) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
     test("should allow tests run with test.each to be matched", () => {
@@ -683,9 +684,10 @@ describe("bun test", () => {
       });
       numbers.forEach(numbers => {
         if (numbers[0] === 1) {
-          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         } else {
-          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).not.toContain(`(pass) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+          expect(stderr).toContain(`(skip) ${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
         }
       });
     });

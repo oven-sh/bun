@@ -181,23 +181,27 @@ pub const TestRunner = struct {
         onTestTodo: OnTestUpdate,
     };
 
-    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .pass;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .fail;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
     }
 
-    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
     }
 
-    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .todo;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
     }
 
@@ -239,6 +243,7 @@ pub const TestRunner = struct {
 
     pub const Test = struct {
         status: Status = Status.pending,
+        line_number: u32 = 0,
 
         pub const ID = u32;
         pub const null_id: ID = std.math.maxInt(Test.ID);
@@ -528,6 +533,7 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
+    line_number: u32 = 0,
 
     // null if the test does not set a timeout
     timeout_millis: u32 = std.math.maxInt(u32),
@@ -809,6 +815,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    line_number: u32 = 0,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1131,7 +1138,7 @@ pub const DescribeScope = struct {
             if (this.runCallback(globalObject, .beforeAll)) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this, tests[i].line_number);
                     i += 1;
                 }
                 this.deinit(globalObject);
@@ -1385,7 +1392,7 @@ pub const TestRunnerTask = struct {
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe, test_.line_number);
                 return false;
             }
         }
@@ -1564,6 +1571,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
                 test_id,
@@ -1572,6 +1580,7 @@ pub const TestRunnerTask = struct {
                 count,
                 elapsed,
                 describe,
+                test_.line_number,
             ),
             .fail_because_failing_test_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works", .{});
@@ -1582,6 +1591,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_has_assertions => {
@@ -1594,6 +1604,7 @@ pub const TestRunnerTask = struct {
                     0,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .fail_because_expected_assertion_count => |counter| {
@@ -1609,10 +1620,11 @@ pub const TestRunnerTask = struct {
                     counter.actual,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
-            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
-            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe, test_.line_number),
+            .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe, test_.line_number),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
@@ -1622,6 +1634,7 @@ pub const TestRunnerTask = struct {
                     count,
                     elapsed,
                     describe,
+                    test_.line_number,
                 );
             },
             .pending => @panic("Unexpected pending test"),
@@ -1852,6 +1865,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .line_number = captureTestLineNumber(callframe, globalThis),
             .test_id_for_debugger = brk: {
                 if (!is_skip) {
                     const vm = globalThis.bunVM();
@@ -1875,6 +1889,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .line_number = captureTestLineNumber(callframe, globalThis),
         };
 
         return scope.run(globalThis, function, &.{});
@@ -2001,7 +2016,11 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     return list.toOwnedSlice(allocator);
 }
 
-pub const EachData = struct { strong: JSC.Strong.Optional, is_test: bool };
+pub const EachData = struct {
+    strong: JSC.Strong.Optional,
+    is_test: bool,
+    line_number: u32 = 0,
+};
 
 fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
     const signature = "eachBind";
@@ -2123,33 +2142,51 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
                 (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
+            var tag_to_use = tag;
+            if (!is_skip) {
+                if (Jest.runner.?.filter_regex) |regex| {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const str = bun.String.fromBytes(buffer.slice());
+                    is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skip;
+                    }
+                }
             }
 
             if (is_skip) {
                 parent.skip_count += 1;
                 function.unprotect();
-                // lets free the formatted label
-                allocator.free(formattedLabel);
-            } else if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only) {
-                    return .js_undefined;
+            }
+
+            if (each_data.is_test) {
+                if (Jest.runner.?.only and tag != .only and tag_to_use != .skip) {
+                    allocator.free(formattedLabel);
+                    for (function_args) |arg| {
+                        if (arg != .zero) arg.unprotect();
+                    }
+                    allocator.free(function_args);
                 } else {
-                    function.protect();
+                    if (!is_skip) {
+                        function.protect();
+                    } else {
+                        for (function_args) |arg| {
+                            if (arg != .zero) arg.unprotect();
+                        }
+                        allocator.free(function_args);
+                    }
                     parent.tests.append(allocator, TestScope{
                         .label = formattedLabel,
                         .parent = parent,
-                        .tag = tag,
-                        .func = function,
-                        .func_arg = function_args,
+                        .tag = tag_to_use,
+                        .func = if (is_skip) .zero else function,
+                        .func_arg = if (is_skip) &.{} else function_args,
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
+                        .line_number = each_data.line_number,
                     }) catch unreachable;
                 }
             } else {
@@ -2198,6 +2235,7 @@ inline fn createEach(
     each_data.* = EachData{
         .strong = strong,
         .is_test = is_test,
+        .line_number = captureTestLineNumber(callframe, globalThis),
     };
 
     return JSC.host_fn.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
@@ -2212,3 +2250,14 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
 }
 
 const assert = bun.assert;
+
+extern fn Bun__CallFrame__getLineNumber(callframe: *JSC.CallFrame, globalObject: *JSC.JSGlobalObject) u32;
+
+fn captureTestLineNumber(callframe: *JSC.CallFrame, globalThis: *JSGlobalObject) u32 {
+    if (Jest.runner) |runner| {
+        if (runner.test_options.file_reporter == .junit) {
+            return Bun__CallFrame__getLineNumber(callframe, globalThis);
+        }
+    }
+    return 0;
+}

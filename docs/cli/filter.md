@@ -28,7 +28,7 @@ $ bun install --filter '!pkg-c'
 $ bun install --filter './packages/*'
 
 # Save as above, but exclude the root package.json
-$ bun install --filter --filter '!./' --filter './packages/*'
+$ bun install --filter '!./' --filter './packages/*'
 ```
 
 Similarly, `bun outdated` will display outdated dependencies for all packages in the monorepo, and `--filter` can be used to restrict the command to a subset of the packages:

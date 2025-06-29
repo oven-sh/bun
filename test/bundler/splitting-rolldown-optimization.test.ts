@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
 import { readdirSync, readFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // Comprehensive test suite for the Rolldown chunk extension optimization
@@ -21,7 +21,16 @@ describe("bundler", () => {
 
       const outDir = join(dir, "out");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "entry-a.js", "entry-b.js", "--outdir", outDir, "--splitting", "--preserve-entry-signatures=strict"],
+        cmd: [
+          bunExe(),
+          "build",
+          "entry-a.js",
+          "entry-b.js",
+          "--outdir",
+          outDir,
+          "--splitting",
+          "--preserve-entry-signatures=strict",
+        ],
         env: bunEnv,
         cwd: dir,
       });
@@ -46,7 +55,16 @@ describe("bundler", () => {
 
       const outDir = join(dir, "out");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "entry-a.js", "entry-b.js", "--outdir", outDir, "--splitting", "--preserve-entry-signatures=allow-extension"],
+        cmd: [
+          bunExe(),
+          "build",
+          "entry-a.js",
+          "entry-b.js",
+          "--outdir",
+          outDir,
+          "--splitting",
+          "--preserve-entry-signatures=allow-extension",
+        ],
         env: bunEnv,
         cwd: dir,
       });
@@ -54,11 +72,11 @@ describe("bundler", () => {
       expect(await proc.exited).toBe(0);
       const files = readdirSync(outDir);
       expect(files.length).toBe(2); // Optimization merged shared into an entry
-      
+
       // Verify cross-imports
       const entryA = readFileSync(join(outDir, "entry-a.js"), "utf-8");
       const entryB = readFileSync(join(outDir, "entry-b.js"), "utf-8");
-      
+
       // One should have the shared code, other should import
       const hasShared = (content: string) => content.includes("shared-value");
       expect(hasShared(entryA) !== hasShared(entryB)).toBe(true);
@@ -85,7 +103,16 @@ describe("bundler", () => {
 
       const outDir = join(dir, "out");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "entry-a.js", "entry-b.js", "--outdir", outDir, "--splitting", "--preserve-entry-signatures=allow-extension"],
+        cmd: [
+          bunExe(),
+          "build",
+          "entry-a.js",
+          "entry-b.js",
+          "--outdir",
+          outDir,
+          "--splitting",
+          "--preserve-entry-signatures=allow-extension",
+        ],
         env: bunEnv,
         cwd: dir,
       });
@@ -119,7 +146,17 @@ describe("bundler", () => {
 
       const outDir = join(dir, "out");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "entry-a.js", "entry-b.js", "entry-c.js", "--outdir", outDir, "--splitting", "--preserve-entry-signatures=allow-extension"],
+        cmd: [
+          bunExe(),
+          "build",
+          "entry-a.js",
+          "entry-b.js",
+          "entry-c.js",
+          "--outdir",
+          outDir,
+          "--splitting",
+          "--preserve-entry-signatures=allow-extension",
+        ],
         env: bunEnv,
         cwd: dir,
       });
@@ -127,16 +164,16 @@ describe("bundler", () => {
       expect(await proc.exited).toBe(0);
       const files = readdirSync(outDir);
       expect(files.length).toBe(3); // Each entry has its unique module
-      
+
       // Verify shared module is in one of entry-a or entry-b
       const entryA = readFileSync(join(outDir, "entry-a.js"), "utf-8");
       const entryB = readFileSync(join(outDir, "entry-b.js"), "utf-8");
       const entryC = readFileSync(join(outDir, "entry-c.js"), "utf-8");
-      
+
       const sharedInA = entryA.includes('shared = "shared"');
       const sharedInB = entryB.includes('shared = "shared"');
       const sharedInC = entryC.includes('shared = "shared"');
-      
+
       expect(sharedInC).toBe(false); // C doesn't use shared
       expect(sharedInA !== sharedInB).toBe(true); // Exactly one of A or B has it
     });
@@ -166,29 +203,41 @@ describe("bundler", () => {
 
       const outDir = join(dir, "out");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "entry-a.js", "entry-b.js", "entry-c.js", "--outdir", outDir, "--splitting", "--preserve-entry-signatures=allow-extension"],
+        cmd: [
+          bunExe(),
+          "build",
+          "entry-a.js",
+          "entry-b.js",
+          "entry-c.js",
+          "--outdir",
+          outDir,
+          "--splitting",
+          "--preserve-entry-signatures=allow-extension",
+        ],
         env: bunEnv,
         cwd: dir,
       });
 
       expect(await proc.exited).toBe(0);
       const files = readdirSync(outDir);
-      
+
       // With optimization, shared modules should be consolidated
       expect(files.length).toBeLessThan(6); // Less than 3 entries + 3 shared
       expect(files).toContain("entry-a.js");
       expect(files).toContain("entry-b.js");
       expect(files).toContain("entry-c.js");
-      
+
       // Count how many files contain each shared module
-      let abCount = 0, bcCount = 0, abcCount = 0;
+      let abCount = 0,
+        bcCount = 0,
+        abcCount = 0;
       for (const file of files) {
         const content = readFileSync(join(outDir, file), "utf-8");
         if (content.includes("shared-by-ab")) abCount++;
         if (content.includes("shared-by-bc")) bcCount++;
         if (content.includes("shared-by-all")) abcCount++;
       }
-      
+
       // Each shared module should appear exactly once
       expect(abCount).toBe(1);
       expect(bcCount).toBe(1);
@@ -211,7 +260,16 @@ describe("bundler", () => {
 
         const outDir = join(dir, "out");
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "entry.js", "other.js", "--outdir", outDir, "--splitting", `--preserve-entry-signatures=${mode}`],
+          cmd: [
+            bunExe(),
+            "build",
+            "entry.js",
+            "other.js",
+            "--outdir",
+            outDir,
+            "--splitting",
+            `--preserve-entry-signatures=${mode}`,
+          ],
           env: bunEnv,
           cwd: dir,
         });

@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("Advanced Chunks", () => {
   test("should accept advancedChunks config option", async () => {

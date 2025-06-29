@@ -151,7 +151,10 @@ describe("bundler", () => {
       run: [
         { file: "/out/entry-a.js", stdout: "Shared loaded\nEntry A loaded" },
         { file: "/out/entry-b.js", stdout: "Shared loaded\nEntry B: shared-value" },
-        { file: "/test.js", stdout: "Shared loaded\nEntry A loaded\nImported a: entry-a\nShared via function: shared-value" },
+        {
+          file: "/test.js",
+          stdout: "Shared loaded\nEntry A loaded\nImported a: entry-a\nShared via function: shared-value",
+        },
       ],
     });
 

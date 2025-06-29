@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
 import { readdirSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("bundler", () => {
@@ -27,9 +27,10 @@ describe("bundler", () => {
           "build",
           join(dir, "entry-a.js"),
           join(dir, "entry-b.js"),
-          "--outdir", outDir,
+          "--outdir",
+          outDir,
           "--splitting",
-          "--preserve-entry-signatures=strict"
+          "--preserve-entry-signatures=strict",
         ],
         env: bunEnv,
         cwd: dir,
@@ -82,9 +83,10 @@ describe("bundler", () => {
           "build",
           join(dir, "entry-a.js"),
           join(dir, "entry-b.js"),
-          "--outdir", outDir,
+          "--outdir",
+          outDir,
           "--splitting",
-          "--preserve-entry-signatures=allow-extension"
+          "--preserve-entry-signatures=allow-extension",
         ],
         env: bunEnv,
         cwd: dir,
@@ -112,7 +114,7 @@ describe("bundler", () => {
       const entryB = await Bun.file(join(outDir, "entry-b.js")).text();
       const utilInA = entryA.includes('util = "util"');
       const utilInB = entryB.includes('util = "util"');
-      
+
       expect(utilInA !== utilInB).toBe(true); // Exactly one has util
     });
   });

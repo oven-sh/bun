@@ -2175,7 +2175,7 @@ declare module "bun" {
     root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
     /**
-     * Controls how entry point signatures are preserved. 
+     * Controls how entry point signatures are preserved.
      * - `"strict"`: Entry chunks contain only their direct code
      * - `"allow-extension"`: Shared modules can be merged into entry chunks (default)
      * - `"exports-only"`: Only explicitly exported symbols are preserved
@@ -2270,7 +2270,7 @@ declare module "bun" {
 
     /**
      * Advanced chunking options for custom module grouping and size constraints.
-     * 
+     *
      * @example
      * ```ts
      * Bun.build({
@@ -2297,31 +2297,31 @@ declare module "bun" {
        * @default undefined
        */
       minShareCount?: number;
-      
+
       /**
        * Minimum size for a chunk in bytes.
        * @default undefined
        */
       minSize?: number;
-      
+
       /**
        * Maximum size for a chunk in bytes.
        * @default undefined
        */
       maxSize?: number;
-      
+
       /**
        * Minimum size for a module to be considered for chunking.
        * @default undefined
        */
       minModuleSize?: number;
-      
+
       /**
        * Maximum size for a module to be included in a chunk.
        * @default undefined
        */
       maxModuleSize?: number;
-      
+
       /**
        * Custom grouping rules for modules.
        */
@@ -2330,44 +2330,44 @@ declare module "bun" {
          * Name of the group.
          */
         name: string;
-        
+
         /**
          * Test pattern for matching modules (string will be treated as regex).
          */
         test?: string | RegExp;
-        
+
         /**
          * Priority for group matching (higher priority groups are matched first).
          * @default 0
          */
         priority?: number;
-        
+
         /**
          * Type of modules to include.
          * @default "all"
          */
         type?: "javascript" | "css" | "asset" | "all";
-        
+
         /**
          * Minimum size for the group.
          */
         minSize?: number;
-        
+
         /**
          * Maximum size for the group.
          */
         maxSize?: number;
-        
+
         /**
          * Minimum number of modules in the group.
          */
         minChunks?: number;
-        
+
         /**
          * Maximum number of modules in the group.
          */
         maxChunks?: number;
-        
+
         /**
          * Enforce creation of this group even if it would be empty.
          * @default false

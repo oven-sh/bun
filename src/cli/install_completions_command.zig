@@ -178,7 +178,7 @@ pub const InstallCompletionsCommand = struct {
 
         switch (shell) {
             .unknown => {
-                Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.", .{});
+                Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, bash, or nu.", .{});
                 Output.note("To manually output completions, run 'bun getcompletes'", .{});
                 Global.exit(fail_exit_code);
             },
@@ -386,6 +386,43 @@ pub const InstallCompletionsCommand = struct {
                         break :found std.fs.openDirAbsolute(dir, .{}) catch continue;
                     }
                 },
+                .nu => {
+                    if (bun.getenvZ("XDG_CONFIG_HOME")) |config_dir| {
+                        outer: {
+                            var paths = [_]string{ config_dir, "./nushell/completions" };
+                            completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                            break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
+                                break :outer;
+                        }
+                    }
+
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                        // Try macOS-specific location first
+                        if (Environment.isMac) {
+                            outer: {
+                                var paths = [_]string{ home_dir, "./Library/Application Support/nushell/completions" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                break :found std.fs.openDirAbsolute(completions_dir, .{}) catch {
+                                    // Try to create the directory if it doesn't exist
+                                    std.fs.makeDirAbsolute(completions_dir) catch break :outer;
+                                    break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
+                                        break :outer;
+                                };
+                            }
+                        }
+
+                        outer: {
+                            var paths = [_]string{ home_dir, "./.config/nushell/completions" };
+                            completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                            break :found std.fs.openDirAbsolute(completions_dir, .{}) catch {
+                                // Try to create the directory if it doesn't exist
+                                std.fs.makeDirAbsolute(completions_dir) catch break :outer;
+                                break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
+                                    break :outer;
+                            };
+                        }
+                    }
+                },
                 else => unreachable,
             }
 
@@ -412,6 +449,7 @@ pub const InstallCompletionsCommand = struct {
             .fish => "bun.fish",
             .zsh => "_bun",
             .bash => "bun.completion.bash",
+            .nu => "bun.nu",
             else => unreachable,
         };
 
@@ -532,6 +570,90 @@ pub const InstallCompletionsCommand = struct {
             if (needs_to_tell_them_to_add_completions_file) {
                 Output.prettyErrorln("<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
                     completions_path,
+                    completions_path,
+                });
+            }
+        }
+
+        // Check if they need to load the nu completions file into their config.nu
+        if (shell == .nu) {
+            var completions_absolute_path_buf: bun.PathBuffer = undefined;
+            const completions_path = bun.getFdPath(.fromStdFile(output_file), &completions_absolute_path_buf) catch unreachable;
+            var nu_config_filepath: bun.PathBuffer = undefined;
+            const needs_to_tell_them_to_add_completions_file = brk: {
+                var config_nu: std.fs.File = config: {
+                    // Try XDG_CONFIG_HOME first
+                    if (bun.getenvZ("XDG_CONFIG_HOME")) |config_dir| {
+                        first: {
+                            bun.copy(u8, &nu_config_filepath, config_dir);
+                            bun.copy(u8, nu_config_filepath[config_dir.len..], "/nushell/config.nu");
+                            nu_config_filepath[config_dir.len + "/nushell/config.nu".len] = 0;
+                            const filepath = nu_config_filepath[0 .. config_dir.len + "/nushell/config.nu".len :0];
+                            break :config std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                        }
+                    }
+
+                    // Try standard config location
+                    if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+                        // Try macOS location first
+                        if (Environment.isMac) {
+                            first: {
+                                bun.copy(u8, &nu_config_filepath, home_dir);
+                                bun.copy(u8, nu_config_filepath[home_dir.len..], "/Library/Application Support/nushell/config.nu");
+                                nu_config_filepath[home_dir.len + "/Library/Application Support/nushell/config.nu".len] = 0;
+                                const filepath = nu_config_filepath[0 .. home_dir.len + "/Library/Application Support/nushell/config.nu".len :0];
+                                break :config std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
+                            }
+                        }
+
+                        // Try standard location
+                        second: {
+                            bun.copy(u8, &nu_config_filepath, home_dir);
+                            bun.copy(u8, nu_config_filepath[home_dir.len..], "/.config/nushell/config.nu");
+                            nu_config_filepath[home_dir.len + "/.config/nushell/config.nu".len] = 0;
+                            const filepath = nu_config_filepath[0 .. home_dir.len + "/.config/nushell/config.nu".len :0];
+                            break :config std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
+                        }
+                    }
+
+                    break :brk true;
+                };
+
+                const input_size = @max(config_nu.getEndPos() catch break :brk true, 64 * 1024);
+                defer config_nu.close();
+
+                var buf = allocator.alloc(
+                    u8,
+                    input_size + completions_path.len * 2 + 96,
+                ) catch break :brk true;
+
+                const read = config_nu.preadAll(buf, 0) catch break :brk true;
+
+                if (comptime Environment.isWindows) {
+                    try config_nu.seekTo(0);
+                }
+
+                const contents = buf[0..read];
+
+                // Do they possibly have it in the file already?
+                if (strings.contains(contents, completions_path) or strings.contains(contents, "# bun completions\n")) {
+                    break :brk false;
+                }
+
+                // We need to add it to the end of the file
+                const remaining = buf[read..];
+                const extra = std.fmt.bufPrint(remaining, "\n# bun completions\nsource \"{s}\"\n", .{
+                    completions_path,
+                }) catch unreachable;
+
+                config_nu.pwriteAll(extra, read) catch break :brk true;
+
+                Output.prettyErrorln("<r><d>Enabled loading bun's completions in config.nu<r>", .{});
+                break :brk false;
+            };
+
+            if (needs_to_tell_them_to_add_completions_file) {
+                Output.prettyErrorln("<r>To enable completions, add this to your config.nu:\n      <b>source \"{s}\"", .{
                     completions_path,
                 });
             }

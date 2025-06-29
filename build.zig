@@ -756,6 +756,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
         .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
+        .{ .import = "completions-nu", .file = b.path("completions/bun.nu") },
     }) |entry| {
         mod.addAnonymousImport(entry.import, .{
             .root_source_file = entry.file,

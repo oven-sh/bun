@@ -39,6 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
+    std::unique_lock root_extra_cert_instances_lock{us_get_root_extra_cert_instances_mutex};
     STACK_OF(X509)* root_extra_cert_instances = us_get_root_extra_cert_instances();
 
     auto size = sk_X509_num(root_extra_cert_instances);

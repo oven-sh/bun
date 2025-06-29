@@ -341,6 +341,8 @@ function getZigAgent(platform, options) {
 }
 
 /**
+ * Get the instance type to use for running tests. Keep synced with ci-ec2.sh.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Agent}

@@ -251,6 +251,14 @@ check_features() {
 			gcc_version="13"
 			print "GCC 13: enabled"
 			;;
+		*--clone*)
+			clone_bun=1
+			print "Clone Bun: enabled"
+			;;
+		*--xterm-256color*)
+			xterm_256color=1
+			print "Set TERM=xterm-256color: enabled"
+			;;
 		esac
 	done
 }
@@ -1345,6 +1353,24 @@ clean_system() {
 	done
 }
 
+clone_bun() {
+	if ! [ "$clone_bun" = "1" ]; then
+		return
+	fi
+
+	print "Cloning Bun..."
+	execute_as_user sh -c "cd && git clone https://github.com/oven-sh/bun.git"
+}
+
+set_term() {
+	if ! [ "$xterm_256color" = "1" ]; then
+		return
+	fi
+
+	print "Setting TERM=xterm-256color..."
+	append_to_profile "export TERM=xterm-256color"
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1357,6 +1383,8 @@ main() {
 	install_build_essentials
 	install_chromium
 	install_fuse_python
+	clone_bun
+	set_term
 	clean_system
 }
 

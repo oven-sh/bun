@@ -8,17 +8,20 @@ pub const Shell = enum {
     bash,
     zsh,
     fish,
+    nu,
     pwsh,
 
     const bash_completions = @embedFile("completions-bash");
     const zsh_completions = @embedFile("completions-zsh");
     const fish_completions = @embedFile("completions-fish");
+    const nu_completions = @embedFile("completions-nu");
 
     pub fn completions(this: Shell) []const u8 {
         return switch (this) {
             .bash => bash_completions,
             .zsh => zsh_completions,
             .fish => fish_completions,
+            .nu => nu_completions,
             else => "",
         };
     }
@@ -31,6 +34,8 @@ pub const Shell = enum {
             return .zsh;
         } else if (strings.eqlComptime(basename, "fish")) {
             return .fish;
+        } else if (strings.eqlComptime(basename, "nu")) {
+            return .nu;
         } else if (strings.eqlComptime(basename, "pwsh") or
             strings.eqlComptime(basename, "powershell"))
         {

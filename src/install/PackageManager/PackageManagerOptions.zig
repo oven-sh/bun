@@ -57,6 +57,13 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
+// `bun pm version` command options
+git_tag_version: bool = true,
+allow_same_version: bool = false,
+preid: string = "",
+message: ?string = null,
+force: bool = false,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -584,6 +591,13 @@ pub fn load(
         if (cli.ca_file_name.len > 0) {
             this.ca_file_name = cli.ca_file_name;
         }
+
+        // `bun pm version` command options
+        this.git_tag_version = cli.git_tag_version;
+        this.allow_same_version = cli.allow_same_version;
+        this.preid = cli.preid;
+        this.message = cli.message;
+        this.force = cli.force;
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

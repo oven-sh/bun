@@ -997,30 +997,8 @@ pub export fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: ?*bool)
 }
 pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status;
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: napi_ref) napi_status;
-pub export fn napi_create_bigint_int64(env_: napi_env, value: i64, result_: ?*napi_value) napi_status {
-    log("napi_create_bigint_int64", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    env.checkGC();
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    result.set(env, JSC.JSValue.fromInt64NoTruncate(env.toJS(), value));
-    return env.ok();
-}
-pub export fn napi_create_bigint_uint64(env_: napi_env, value: u64, result_: ?*napi_value) napi_status {
-    log("napi_create_bigint_uint64", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    env.checkGC();
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    result.set(env, JSC.JSValue.fromUInt64NoTruncate(env.toJS(), value));
-    return env.ok();
-}
+pub extern fn napi_create_bigint_int64(env: napi_env, value: i64, result_: ?*napi_value) napi_status;
+pub extern fn napi_create_bigint_uint64(env: napi_env, value: u64, result_: ?*napi_value) napi_status;
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
 pub extern fn napi_get_value_bigint_int64(_: napi_env, value_: napi_value, result_: ?*i64, _: *bool) napi_status;
 pub extern fn napi_get_value_bigint_uint64(_: napi_env, value_: napi_value, result_: ?*u64, _: *bool) napi_status;
@@ -1197,20 +1175,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     bun.Output.panic("napi: {s}", .{message});
 }
-pub export fn napi_create_buffer(env_: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
-    log("napi_create_buffer: {d}", .{length});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    var buffer = JSC.JSValue.createBufferFromLength(env.toJS(), length);
-    if (length > 0) {
-        if (data) |ptr| {
-            ptr.* = buffer.asArrayBuffer(env.toJS()).?.ptr;
-        }
-    }
-    result.set(env, buffer);
-    return env.ok();
-}
+pub extern fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result_: ?*napi_value) napi_status {
     log("napi_create_buffer_copy: {d}", .{length});

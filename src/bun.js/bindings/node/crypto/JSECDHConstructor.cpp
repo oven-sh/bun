@@ -125,7 +125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     WTF::Vector<uint8_t> buf;
     if (!buf.tryGrow(size)) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return JSValue::encode({});
+        return {};
     }
 
     if (!EC_POINT_point2oct(group, point, form, buf.begin(), buf.size(), nullptr)) {

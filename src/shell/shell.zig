@@ -14,6 +14,8 @@ const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
+pub const AllocScope = @import("./AllocScope.zig");
+
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = interpret.Interpreter;
@@ -197,7 +199,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn throwError(this: @This(), err: bun.sys.Error) void {
-        this.globalThis.throwValue(err.toJSC(this.globalThis));
+        this.globalThis.throwValue(err.toJS(this.globalThis));
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {

@@ -767,7 +767,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
-                    const v = opt.coerce(f64, globalThis);
+                    const v = try opt.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -795,7 +795,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
-                    const v = depthArg.coerce(f64, globalThis);
+                    const v = try depthArg.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -803,10 +803,7 @@ pub const FormatOptions = struct {
                     }
                 }
                 if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
-                    formatOptions.enable_colors = arguments[1].coerce(bool, globalThis);
-                    if (globalThis.hasException()) {
-                        return error.JSError;
-                    }
+                    formatOptions.enable_colors = arguments[1].toBoolean();
                 }
             }
         }
@@ -2047,7 +2044,6 @@ pub const Formatter = struct {
         depth: u32,
         max_depth: u32,
         colors: bool,
-        is_exception: *bool,
     ) JSValue;
 
     pub fn printAs(
@@ -2179,7 +2175,7 @@ pub const Formatter = struct {
                 }
             },
             .Integer => {
-                const int = value.coerce(i64, this.globalThis);
+                const int = try value.coerce(i64, this.globalThis);
                 if (int < std.math.maxInt(u32)) {
                     var i = int;
                     const is_negative = i < 0;
@@ -2254,21 +2250,16 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
             },
             .CustomFormattedObject => {
-                var is_exception = false;
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
-                const result = JSC__JSValue__callCustomInspectFunction(
+                const result = try bun.jsc.fromJSHostCall(this.globalThis, @src(), JSC__JSValue__callCustomInspectFunction, .{
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
                     this.max_depth -| this.depth,
                     this.max_depth,
                     enable_ansi_colors,
-                    &is_exception,
-                );
-                if (is_exception) {
-                    return error.JSError;
-                }
+                });
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});

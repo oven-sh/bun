@@ -57,7 +57,16 @@ pub const Result = union(enum) {
         done: bool = false,
     },
 
-    pub fn pushResultSlice(this: *Result, buf: [:0]const u8) void {
+    const PushAction = enum {
+        /// We just copied the buf into the result, caller can just do
+        /// `.clearRetainingCapacity()`
+        copied,
+        /// We took ownershipo of the result and placed the pointer in the buf,
+        /// caller should remove any references to the underlying data.
+        moved,
+    };
+
+    pub fn pushResultSliceOwned(this: *Result, buf: [:0]const u8) PushAction {
         if (comptime bun.Environment.allow_assert) {
             assert(buf[buf.len] == 0);
         }
@@ -65,19 +74,22 @@ pub const Result = union(enum) {
         switch (this.*) {
             .array_of_slice => {
                 this.array_of_slice.append(buf) catch bun.outOfMemory();
+                return .moved;
             },
             .array_of_ptr => {
                 this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.ptr))) catch bun.outOfMemory();
+                return .moved;
             },
             .single => {
-                if (this.single.done) return;
+                if (this.single.done) return .copied;
                 this.single.list.appendSlice(buf[0 .. buf.len + 1]) catch bun.outOfMemory();
                 this.single.done = true;
+                return .copied;
             },
         }
     }
 
-    pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) void {
+    pub fn pushResult(this: *Result, buf: *std.ArrayList(u8)) PushAction {
         if (comptime bun.Environment.allow_assert) {
             assert(buf.items[buf.items.len - 1] == 0);
         }
@@ -85,13 +97,16 @@ pub const Result = union(enum) {
         switch (this.*) {
             .array_of_slice => {
                 this.array_of_slice.append(buf.items[0 .. buf.items.len - 1 :0]) catch bun.outOfMemory();
+                return .moved;
             },
             .array_of_ptr => {
                 this.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
+                return .moved;
             },
             .single => {
-                if (this.single.done) return;
+                if (this.single.done) return .copied;
                 this.single.list.appendSlice(buf.items[0..]) catch bun.outOfMemory();
+                return .copied;
             },
         }
     }
@@ -101,9 +116,13 @@ pub fn format(this: *const Expansion, comptime _: []const u8, _: std.fmt.FormatO
     try writer.print("Expansion(0x{x})", .{@intFromPtr(this)});
 }
 
+pub fn allocator(this: *Expansion) std.mem.Allocator {
+    return this.base.allocator();
+}
+
 pub fn init(
     interpreter: *Interpreter,
-    shell_state: *ShellState,
+    shell_state: *ShellExecEnv,
     expansion: *Expansion,
     node: *const ast.Atom,
     parent: ParentPtr,
@@ -113,11 +132,7 @@ pub fn init(
     log("Expansion(0x{x}) init", .{@intFromPtr(expansion)});
     expansion.* = .{
         .node = node,
-        .base = .{
-            .kind = .expansion,
-            .interpreter = interpreter,
-            .shell = shell_state,
-        },
+        .base = State.initBorrowedAllocScope(.expansion, interpreter, shell_state, parent.scopedAllocator()),
         .parent = parent,
 
         .word_idx = 0,
@@ -125,16 +140,17 @@ pub fn init(
         .child_state = .idle,
         .out = out_result,
         .out_idx = 0,
-        .current_out = std.ArrayList(u8).init(interpreter.allocator),
+        .current_out = undefined,
         .io = io,
     };
-    // var expansion = interpreter.allocator.create(Expansion) catch bun.outOfMemory();
+    expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
 }
 
 pub fn deinit(expansion: *Expansion) void {
     log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
     expansion.current_out.deinit();
     expansion.io.deinit();
+    expansion.base.endScope();
 }
 
 pub fn start(this: *Expansion) Yield {
@@ -203,7 +219,7 @@ pub fn next(this: *Expansion) Yield {
                 return .suspended;
             },
             .braces => {
-                var arena = Arena.init(this.base.interpreter.allocator);
+                var arena = Arena.init(this.base.allocator());
                 defer arena.deinit();
                 const arena_allocator = arena.allocator();
                 const brace_str = this.current_out.items[0..];
@@ -211,18 +227,16 @@ pub fn next(this: *Expansion) Yield {
                 var lexer_output = Braces.Lexer.tokenize(arena_allocator, brace_str) catch |e| OOM(e);
                 const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |e| OOM(e);
 
-                var expanded_strings = brk: {
-                    const stack_max = comptime 16;
-                    comptime {
-                        assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
-                    }
-                    var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, this.base.interpreter.allocator);
-                    const expanded_strings = maybe_stack_alloc.get().alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
-                    break :brk expanded_strings;
-                };
+                const stack_max = comptime 16;
+                comptime {
+                    assert(@sizeOf([]std.ArrayList(u8)) * stack_max <= 256);
+                }
+                var maybe_stack_alloc = std.heap.stackFallback(@sizeOf([]std.ArrayList(u8)) * stack_max, arena_allocator);
+                const stack_alloc = maybe_stack_alloc.get();
+                const expanded_strings = stack_alloc.alloc(std.ArrayList(u8), expansion_count) catch bun.outOfMemory();
 
                 for (0..expansion_count) |i| {
-                    expanded_strings[i] = std.ArrayList(u8).init(this.base.interpreter.allocator);
+                    expanded_strings[i] = std.ArrayList(u8).init(this.base.allocator());
                 }
 
                 Braces.expand(
@@ -237,7 +251,14 @@ pub fn next(this: *Expansion) Yield {
                 // Add sentinel values
                 for (0..expansion_count) |i| {
                     expanded_strings[i].append(0) catch bun.outOfMemory();
-                    this.pushResult(&expanded_strings[i]);
+                    switch (this.out.pushResult(&expanded_strings[i])) {
+                        .copied => {
+                            expanded_strings[i].deinit();
+                        },
+                        .moved => {
+                            expanded_strings[i].clearRetainingCapacity();
+                        },
+                    }
                 }
 
                 if (this.node.has_glob_expansion()) {
@@ -266,7 +287,7 @@ pub fn next(this: *Expansion) Yield {
 }
 
 fn transitionToGlobState(this: *Expansion) Yield {
-    var arena = Arena.init(this.base.interpreter.allocator);
+    var arena = Arena.init(this.base.allocator());
     this.child_state = .{ .glob = .{ .walker = .{} } };
     const pattern = this.current_out.items[0..];
 
@@ -290,7 +311,7 @@ fn transitionToGlobState(this: *Expansion) Yield {
         },
     }
 
-    var task = ShellGlobTask.createOnMainThread(this.base.interpreter.allocator, &this.child_state.glob.walker, this);
+    var task = ShellGlobTask.createOnMainThread(&this.child_state.glob.walker, this);
     task.schedule();
     return .suspended;
 }
@@ -305,7 +326,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                     .stdout = .pipe,
                     .stderr = this.base.rootIO().stderr.ref(),
                 };
-                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
+                const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                     .result => |s| s,
                     .err => |e| {
                         this.base.throw(&bun.shell.ShellErr.newSys(e));
@@ -337,7 +358,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                         .stdout = .pipe,
                         .stderr = this.base.rootIO().stderr.ref(),
                     };
-                    const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
+                    const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                         .result => |s| s,
                         .err => |e| {
                             this.base.throw(&bun.shell.ShellErr.newSys(e));
@@ -504,7 +525,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
             },
             .unknown => |errtag| {
                 this.base.throw(&.{
-                    .custom = bun.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
+                    .custom = this.base.allocator().dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
                 });
             },
         }
@@ -520,7 +541,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
             return .{ .expansion = this };
         }
 
-        const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
+        const msg = std.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
         this.state = .{
             .err = bun.shell.ShellErr{
                 .custom = msg,
@@ -533,8 +554,13 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 
     for (task.result.items) |sentinel_str| {
         // The string is allocated in the glob walker arena and will be freed, so needs to be duped here
-        const duped = this.base.interpreter.allocator.dupeZ(u8, sentinel_str[0..sentinel_str.len]) catch bun.outOfMemory();
-        this.pushResultSlice(duped);
+        const duped = this.base.allocator().dupeZ(u8, sentinel_str[0..sentinel_str.len]) catch bun.outOfMemory();
+        switch (this.out.pushResultSliceOwned(duped)) {
+            .copied => {
+                this.base.allocator().free(duped);
+            },
+            .moved => {},
+        }
     }
 
     this.word_idx += 1;
@@ -593,19 +619,17 @@ pub fn appendSlice(this: *Expansion, buf: *std.ArrayList(u8), slice: []const u8)
     buf.appendSlice(slice) catch bun.outOfMemory();
 }
 
-pub fn pushResultSlice(this: *Expansion, buf: [:0]const u8) void {
-    this.out.pushResultSlice(buf);
-}
-
 pub fn pushCurrentOut(this: *Expansion) void {
     if (this.current_out.items.len == 0) return;
     if (this.current_out.items[this.current_out.items.len - 1] != 0) this.current_out.append(0) catch bun.outOfMemory();
-    this.pushResult(&this.current_out);
-    this.current_out = std.ArrayList(u8).init(this.base.interpreter.allocator);
-}
-
-pub fn pushResult(this: *Expansion, buf: *std.ArrayList(u8)) void {
-    this.out.pushResult(buf);
+    switch (this.out.pushResult(&this.current_out)) {
+        .copied => {
+            this.current_out.clearRetainingCapacity();
+        },
+        .moved => {
+            this.current_out = std.ArrayList(u8).init(this.base.allocator());
+        },
+    }
 }
 
 fn expandVar(this: *const Expansion, label: []const u8) []const u8 {
@@ -719,12 +743,12 @@ pub const ShellGlobTask = struct {
     walker: *GlobWalker,
 
     result: std.ArrayList([:0]const u8),
-    allocator: Allocator,
     event_loop: JSC.EventLoopHandle,
     concurrent_task: JSC.EventLoopTask,
     // This is a poll because we want it to enter the uSockets loop
     ref: bun.Async.KeepAlive = .{},
     err: ?Err = null,
+    alloc_scope: bun.AllocationScope,
 
     const This = @This();
 
@@ -732,24 +756,25 @@ pub const ShellGlobTask = struct {
         syscall: Syscall.Error,
         unknown: anyerror,
 
-        pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
+                .syscall => |err| err.toJS(globalThis),
                 .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
 
-    pub fn createOnMainThread(allocator: Allocator, walker: *GlobWalker, expansion: *Expansion) *This {
+    pub fn createOnMainThread(walker: *GlobWalker, expansion: *Expansion) *This {
         debug("createOnMainThread", .{});
-        var this = allocator.create(This) catch bun.outOfMemory();
+        var alloc_scope = bun.AllocationScope.init(bun.default_allocator);
+        var this = alloc_scope.allocator().create(This) catch bun.outOfMemory();
         this.* = .{
+            .alloc_scope = alloc_scope,
             .event_loop = expansion.base.eventLoop(),
             .concurrent_task = JSC.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
             .walker = walker,
-            .allocator = allocator,
             .expansion = expansion,
-            .result = std.ArrayList([:0]const u8).init(allocator),
+            .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
         };
 
         this.ref.ref(this.event_loop);
@@ -816,7 +841,9 @@ pub const ShellGlobTask = struct {
     pub fn deinit(this: *This) void {
         debug("deinit", .{});
         this.result.deinit();
-        this.allocator.destroy(this);
+        var alloc_scope = this.alloc_scope;
+        alloc_scope.allocator().destroy(this);
+        alloc_scope.deinit();
     }
 };
 
@@ -831,7 +858,7 @@ const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
 const ast = bun.shell.AST;
 const ExitCode = bun.shell.ExitCode;
 const GlobWalker = bun.shell.interpret.GlobWalker;
-const ShellState = Interpreter.ShellState;
+const ShellExecEnv = Interpreter.ShellExecEnv;
 const State = bun.shell.Interpreter.State;
 const IO = bun.shell.Interpreter.IO;
 const log = bun.shell.interpret.log;

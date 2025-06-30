@@ -34,8 +34,10 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSValue newTarget;
 
     if constexpr (ConstructCall) {
-        NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
+        // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
+        auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, {});
+        NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(prototypeValue);
 
         if (!prototype) {
             JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
@@ -43,9 +45,21 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         }
 
         newTarget = callFrame->newTarget();
-        auto* subclass = prototype->subclass(globalObject, asObject(newTarget));
+        JSObject* thisValue;
+        // Match the behavior from
+        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/ObjectConstructor.cpp#L118-L145
+        if (newTarget && newTarget != napi) {
+            JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
+            RETURN_IF_EXCEPTION(scope, {});
+            Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
+            Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
+            RETURN_IF_EXCEPTION(scope, {});
+            thisValue = constructEmptyObject(vm, objectStructure);
+        } else {
+            thisValue = prototype->subclass(globalObject, asObject(newTarget));
+        }
         RETURN_IF_EXCEPTION(scope, {});
-        callFrame->setThisValue(subclass);
+        callFrame->setThisValue(thisValue);
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);

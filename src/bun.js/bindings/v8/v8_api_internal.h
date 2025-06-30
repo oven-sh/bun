@@ -8,17 +8,8 @@ namespace v8 {
 class Isolate;
 template<typename T>
 class Local;
-
-template<typename T>
-class Local;
 class Value;
-
-template<typename T>
-class Local;
 class Data;
-
-template<typename T>
-class Handle;
 
 namespace api_internal {
 

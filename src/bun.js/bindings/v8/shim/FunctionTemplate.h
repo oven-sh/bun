@@ -10,9 +10,6 @@ class FunctionTemplate;
 template<typename T>
 class Local;
 class Value;
-
-template<typename T>
-class Local;
 class Data;
 
 class Isolate;

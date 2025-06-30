@@ -1,4 +1,4 @@
-# Version: 8
+# Version: 9
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -302,7 +302,6 @@ function Install-Visual-Studio {
     "--force",
     "--locale en-US",
     "--add Microsoft.VisualStudio.Workload.NativeDesktop",
-    "--add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang",
     "--add Microsoft.VisualStudio.Component.VC.Llvm.Clang",
     "--add Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset",
     "--includeRecommended"
@@ -318,6 +317,9 @@ function Install-Visual-Studio {
   if ($process.ExitCode -ne 0) {
     throw "Failed to install Visual Studio: code $($process.ExitCode)"
   }
+
+  Set-Env -Name "CL" -Value "/GL-"
+  Set-Env -Name "LINK" -Value "/LTCG:OFF"
 }
 
 function Install-Rust {

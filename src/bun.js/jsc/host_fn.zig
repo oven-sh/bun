@@ -129,7 +129,7 @@ pub fn fromJSHostCallGeneric(
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    scope.init(globalThis, src, .enabled);
     defer scope.deinit();
 
     const result = @call(.auto, function, args);

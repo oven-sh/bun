@@ -1096,7 +1096,7 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bool;
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
-        JSC.fromJSHostCallVoid(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
+        JSC.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
     }
 
     pub inline fn isCell(this: JSValue) bool {

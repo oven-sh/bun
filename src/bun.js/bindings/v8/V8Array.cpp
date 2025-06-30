@@ -1,4 +1,4 @@
-#include "V8Array.h"
+THIS SHOULD BE A LINTER ERROR#include "V8Array.h"
 
 #include "V8HandleScope.h"
 #include "V8Context.h"
@@ -8,6 +8,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
+#include "JavaScriptCore/IteratorOperations.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Array)
 
@@ -103,7 +104,7 @@ void Array::CheckCast(Value* obj)
     }
 }
 
-// Iterate implementation - simplified version
+// Iterate implementation using forEachInIterable
 Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
 {
     JSArray* jsArray = localToObjectPointer<JSArray>();
@@ -111,31 +112,35 @@ Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, v
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     
-    uint32_t length = static_cast<uint32_t>(jsArray->length());
+    CallbackResult finalResult = CallbackResult::kContinue;
+    uint32_t index = 0;
     
-    for (uint32_t i = 0; i < length; i++) {
-        JSValue element = jsArray->getDirectIndex(globalObject, i);
-        RETURN_IF_EXCEPTION(scope, Nothing<void>());
-        
-        if (element.isEmpty()) {
-            element = JSC::jsUndefined();
-        }
-        
+    // Use JSC's forEachInIterable for proper array iteration
+    JSC::forEachInIterable(globalObject, jsArray, [&](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue element) -> void {
         Local<Value> localElement = context->GetIsolate()->currentHandleScope()->createLocal<Value>(vm, element);
         
-        CallbackResult result = callback(i, localElement, callback_data);
+        CallbackResult result = callback(index++, localElement, callback_data);
         
         switch (result) {
             case CallbackResult::kException:
-                return Nothing<void>();
             case CallbackResult::kBreak:
-                return JustVoid();
+                finalResult = result;
+                return; // Break out of iteration
             case CallbackResult::kContinue:
-                continue;
+                break;
         }
+    });
+    
+    RETURN_IF_EXCEPTION(scope, Nothing<void>());
+    
+    // Check if we should return an exception or success
+    if (finalResult == CallbackResult::kException) {
+        return Nothing<void>();
     }
     
-    return JustVoid();
+    Maybe<void> result;
+    result.m_hasValue = true;
+    return result;
 }
 
 } // namespace v8

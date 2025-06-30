@@ -10,10 +10,9 @@ const server = dgram.createSocket('udp4');
 const resolver = new dns.Resolver({ timeout: 100, tries: 1 });
 const resolverPromises = new dnsPromises.Resolver({ timeout: 100, tries: 1 });
 
-server.on('message', common.mustCallAtLeast((msg, { address, port }) => {
+server.on('message', common.mustCall((msg, { address, port }) => {
   const parsed = dnstools.parseDNSPacket(msg);
   const domain = parsed.questions[0].domain;
-
   assert.strictEqual(domain, 'example.org');
 
   const buf = dnstools.writeDNSPacket({

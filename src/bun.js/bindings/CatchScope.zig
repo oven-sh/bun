@@ -51,7 +51,7 @@ pub fn init(
 ) void {
     const enabled = comptime switch (enable_condition) {
         .enabled => true,
-        .assertions_only => Environment.ci_assert,
+        .assertions_only => Environment.allow_assert,
     };
     if (comptime enabled) {
         CatchScope__construct(

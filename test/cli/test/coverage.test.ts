@@ -77,3 +77,46 @@ test("coverage excludes node_modules directory", () => {
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });
+
+test("--coverage-reporter enables coverage", () => {
+  const dir = tempDirWithFiles("cov", {
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+
+export function add(a, b) {
+  return a + b;
+}
+
+export function multiply(a, b) {
+  return a * b;
+}
+
+test("add", () => {
+  expect(add(1, 2)).toBe(3);
+});
+
+// Call add but not multiply to have partial coverage
+add(5, 10);
+    `,
+  });
+  
+  // Use --coverage-reporter without --coverage
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage-reporter", "text"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  
+  const stderr = result.stderr.toString("utf-8");
+  
+  // Check that coverage reporting actually happened
+  expect(stderr).toContain("File");
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("% Lines");
+  expect(stderr).toContain("demo.test.ts");
+  
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});

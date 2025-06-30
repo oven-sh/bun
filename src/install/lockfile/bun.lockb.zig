@@ -527,6 +527,8 @@ pub fn load(
     }
 
     {
+        lockfile.node_linker = .auto;
+
         const remaining_in_buffer = total_buffer_size -| stream.pos;
 
         if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {

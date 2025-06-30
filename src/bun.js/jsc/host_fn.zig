@@ -90,8 +90,8 @@ pub fn toJSHostCall(
     // runtime tuple values
     args: anytype,
 ) JSValue {
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
@@ -115,8 +115,8 @@ pub fn fromJSHostCall(
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!JSValue {
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const value = @call(.auto, function, args);
@@ -132,7 +132,7 @@ pub fn fromJSHostCallGeneric(
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .enabled);
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const result = @call(.auto, function, args);

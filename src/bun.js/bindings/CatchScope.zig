@@ -1,151 +1,183 @@
-//! Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
-//! JSC's exception checking and Zig's. Make sure not to move it after creation. For instance, for
-//! a function which returns an empty JSValue for exceptions:
-//!
-//! ```zig
-//! // Declare a CatchScope surrounding the call that may throw an exception
-//! var scope: CatchScope = undefined;
-//! scope.init(global, @src(), .assertions_only);
-//! defer scope.deinit();
-//!
-//! const value = external_call(vm, foo, bar, baz);
-//! // Calling hasException() suffices to prove that we checked for an exception.
-//! // This function's caller does not need to use a CatchScope or ThrowScope
-//! // because it can use Zig error unions.
-//! if (Environment.allow_assert) assert((value == .zero) == scope.hasException());
-//! return if (value == .zero) error.JSError else value;
-//! ```
-
-const CatchScope = @This();
-
-/// TODO determine size and alignment automatically
+// TODO determine size and alignment automatically
 const size = 56;
 const alignment = 8;
 
-bytes: [size]u8 align(alignment),
-/// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
-location: if (Environment.ci_assert) *u8 else void,
-enabled: bool,
+/// Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
+/// JSC's exception checking and Zig's. Make sure not to move it after creation. Use this if you are
+/// making an external call that has no other way to indicate an exception.
+///
+/// ```zig
+/// // Declare a CatchScope surrounding the call that may throw an exception
+/// var scope: CatchScope = undefined;
+/// scope.init(global, @src());
+/// defer scope.deinit();
+///
+/// const value: i32 = external_call(vm, foo, bar, baz);
+/// // Calling returnIfException() suffices to prove that we checked for an exception.
+/// // This function's caller does not need to use a CatchScope or ThrowScope
+/// // because it can use Zig error unions.
+/// try scope.returnIfException();
+/// return value;
+/// ```
+pub const CatchScope = struct {
+    bytes: [size]u8 align(alignment),
+    /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
+    location: if (Environment.ci_assert) *u8 else void,
 
-pub const Enable = enum {
-    /// You are using the CatchScope to check for exceptions.
-    enabled,
-    /// You have another way to detect exceptions and are only using the CatchScope to prove that
-    /// exceptions are checked.
-    ///
-    /// This CatchScope will only do anything when assertions are enabled. Otherwise, init and
-    /// deinit do nothing and it always reports there is no exception.
-    assertions_only,
-};
-
-pub fn init(
-    self: *CatchScope,
-    global: *jsc.JSGlobalObject,
-    src: std.builtin.SourceLocation,
-    /// If not enabled, the scope does nothing (it never has an exception).
-    /// If you need to use the CatchScope to check for exceptions, leave enabled.
-    /// If you are only using the scope to prove you handle exceptions correctly, because you have
-    /// a different way (like a return value) to check for exceptions, pass `.assertions_only` and
-    /// call `assertExceptionPresenceMatches`
-    comptime enable_condition: Enable,
-) void {
-    const enabled = comptime switch (enable_condition) {
-        .enabled => true,
-        .assertions_only => Environment.allow_assert,
-    };
-    if (comptime enabled) {
+    pub fn init(
+        self: *CatchScope,
+        global: *jsc.JSGlobalObject,
+        src: std.builtin.SourceLocation,
+    ) void {
         CatchScope__construct(
             &self.bytes,
             global,
             src.fn_name,
             src.file,
             src.line,
-            @sizeOf(@TypeOf(self.bytes)),
-            @typeInfo(CatchScope).@"struct".fields[0].alignment,
+            size,
+            alignment,
         );
+
+        self.* = .{
+            .bytes = self.bytes,
+            .location = if (Environment.ci_assert) &self.bytes[0],
+        };
     }
-    self.* = .{
-        .bytes = self.bytes,
-        .location = if (Environment.ci_assert) &self.bytes[0],
-        .enabled = enabled,
-    };
-}
 
-/// Generate a useful message including where the exception was thrown.
-/// Only intended to be called when there is a pending exception.
-fn assertionFailure(self: *CatchScope, proof: *jsc.Exception) noreturn {
-    _ = proof;
-    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
-    CatchScope__assertNoException(&self.bytes);
-    @panic("assertionFailure called without a pending exception");
-}
-
-pub fn hasException(self: *CatchScope) bool {
-    return self.exception() != null;
-}
-
-/// Get the thrown exception if it exists (like scope.exception() in C++)
-pub fn exception(self: *CatchScope) ?*jsc.Exception {
-    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
-    if (!self.enabled) return null;
-    return CatchScope__pureException(&self.bytes);
-}
-
-/// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
-pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
-    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
-    if (!self.enabled) return null;
-    return CatchScope__exceptionIncludingTraps(&self.bytes);
-}
-
-/// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
-/// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
-pub fn returnIfException(self: *CatchScope) bun.JSError!void {
-    if (self.exceptionIncludingTraps() != null) return error.JSError;
-}
-
-/// Asserts there has not been any exception thrown.
-pub fn assertNoException(self: *CatchScope) void {
-    if (comptime Environment.ci_assert) {
-        if (self.exception()) |e| self.assertionFailure(e);
+    /// Generate a useful message including where the exception was thrown.
+    /// Only intended to be called when there is a pending exception.
+    fn assertionFailure(self: *CatchScope, proof: *jsc.Exception) noreturn {
+        _ = proof;
+        bun.assert(self.location == &self.bytes[0]);
+        CatchScope__assertNoException(&self.bytes);
+        @panic("assertionFailure called without a pending exception");
     }
-}
 
-/// Asserts that there is or is not an exception according to the value of `should_have_exception`.
-/// Prefer over `assert(scope.hasException() == ...)` because if there is an unexpected exception,
-/// this function prints a trace of where it was thrown.
-pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
-    if (comptime Environment.ci_assert) {
-        // paranoid; will only fail if you manually changed enabled to false
-        bun.assert(self.enabled);
-        if (should_have_exception) {
-            bun.assertf(self.hasException(), "Expected an exception to be thrown", .{});
-        } else {
-            self.assertNoException();
+    pub fn hasException(self: *CatchScope) bool {
+        return self.exception() != null;
+    }
+
+    /// Get the thrown exception if it exists (like scope.exception() in C++)
+    pub fn exception(self: *CatchScope) ?*jsc.Exception {
+        if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
+        return CatchScope__pureException(&self.bytes);
+    }
+
+    /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
+    pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
+        if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
+        return CatchScope__exceptionIncludingTraps(&self.bytes);
+    }
+
+    /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
+    /// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
+    pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+        if (self.exceptionIncludingTraps() != null) return error.JSError;
+    }
+
+    /// Asserts there has not been any exception thrown.
+    pub fn assertNoException(self: *CatchScope) void {
+        if (comptime Environment.ci_assert) {
+            if (self.exception()) |e| self.assertionFailure(e);
         }
     }
-}
 
-/// If no exception, returns.
-/// If termination exception, returns JSExecutionTerminated (so you can `try`)
-/// If non-termination exception, assertion failure.
-pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
-    bun.assert(self.enabled);
-    if (self.exception()) |e| {
-        if (jsc.JSValue.fromCell(e).isTerminationException())
-            return error.JSExecutionTerminated
-        else if (comptime Environment.ci_assert)
-            self.assertionFailure(e);
-        // Unconditionally panicing here is worse for our users.
+    /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
+    /// Prefer over `assert(scope.hasException() == ...)` because if there is an unexpected exception,
+    /// this function prints a trace of where it was thrown.
+    pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
+        if (comptime Environment.ci_assert) {
+            if (should_have_exception) {
+                bun.assertf(self.hasException(), "Expected an exception to be thrown", .{});
+            } else {
+                self.assertNoException();
+            }
+        }
     }
-}
 
-pub fn deinit(self: *CatchScope) void {
-    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
-    if (!self.enabled) return;
-    CatchScope__destruct(&self.bytes);
-    self.bytes = undefined;
-}
+    /// If no exception, returns.
+    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If non-termination exception, assertion failure.
+    pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
+        if (self.exception()) |e| {
+            if (jsc.JSValue.fromCell(e).isTerminationException())
+                return error.JSExecutionTerminated
+            else if (comptime Environment.ci_assert)
+                self.assertionFailure(e);
+            // Unconditionally panicking here is worse for our users.
+        }
+    }
+
+    pub fn deinit(self: *CatchScope) void {
+        if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
+        CatchScope__destruct(&self.bytes);
+        self.bytes = undefined;
+    }
+};
+
+/// Limited subset of CatchScope functionality, for when you have a different way to detect
+/// exceptions and you only need a CatchScope to prove that you are checking exceptions correctly.
+/// Gated by `Environment.ci_assert`.
+///
+/// ```zig
+/// var scope: ExceptionValidationScope = undefined;
+/// // these do nothing when ci_assert == false
+/// scope.init(global, @src());
+/// defer scope.deinit();
+///
+/// const maybe_empty: JSValue = externalFunction(global, foo, bar, baz);
+/// // does nothing when ci_assert == false
+/// // with assertions on, this call serves as proof that you checked for an exception
+/// scope.assertExceptionPresenceMatches(maybe_empty == .zero);
+/// // you decide whether to return JSError using the return value instead of the scope
+/// return if (value == .zero) error.JSError else value;
+/// ```
+pub const ExceptionValidationScope = struct {
+    scope: if (Environment.ci_assert) CatchScope else void,
+
+    pub fn init(
+        self: *ExceptionValidationScope,
+        global: *jsc.JSGlobalObject,
+        src: std.builtin.SourceLocation,
+    ) void {
+        if (Environment.ci_assert) self.scope.init(global, src);
+    }
+
+    /// Asserts there has not been any exception thrown.
+    pub fn assertNoException(self: *ExceptionValidationScope) void {
+        if (Environment.ci_assert) {
+            self.scope.assertNoException();
+        }
+    }
+
+    /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
+    /// Prefer over `assert(scope.hasException() == ...)` because if there is an unexpected exception,
+    /// this function prints a trace of where it was thrown.
+    pub fn assertExceptionPresenceMatches(self: *ExceptionValidationScope, should_have_exception: bool) void {
+        if (Environment.ci_assert) {
+            self.scope.assertExceptionPresenceMatches(should_have_exception);
+        }
+    }
+
+    /// If no exception, returns.
+    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If non-termination exception, assertion failure.
+    pub fn assertNoExceptionExceptTermination(self: *ExceptionValidationScope) bun.JSExecutionTerminated!void {
+        if (Environment.ci_assert) {
+            return self.scope.assertNoExceptionExceptTermination();
+        }
+    }
+
+    /// Inconveniently named on purpose; this is only needed for some weird edge cases
+    pub fn hasExceptionOrFalseWhenAssertionsAreDisabled(self: *ExceptionValidationScope) bool {
+        return if (Environment.ci_assert) self.scope.hasException() else false;
+    }
+
+    pub fn deinit(self: *ExceptionValidationScope) void {
+        if (Environment.ci_assert) self.scope.deinit();
+    }
+};
 
 extern fn CatchScope__construct(
     ptr: *align(alignment) [size]u8,

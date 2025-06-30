@@ -419,11 +419,3 @@ await Bun.write(outputFile, outputContent);
 
 console.log(`\nTotal functions found: ${totalFunctions}`);
 console.log(`Generated Zig bindings written to: ${outputFile}`);
-
-/*
-TODO:
-- evaluate if @src() is allowed
-- use zls commit 46ca66f933693c0e5acb959ade9bc53354646f1b, it adds parseSourceLocation
-- we need to reduce `.exception()` calls in zig. ZIG_EXPORT_CHECKEXCEPTION_SLOW should be removed,
-  we should be signaling exceptions in the return type (or even through some kind of errno value)
-*/

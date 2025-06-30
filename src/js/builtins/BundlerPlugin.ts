@@ -1,4 +1,4 @@
-// Types from bun are global in this environment – no explicit import needed
+/// <reference types="bun-types" />
 
 /**
  * @see `JSBundlerPlugin.h`

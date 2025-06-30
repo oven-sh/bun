@@ -12,6 +12,21 @@
 declare var process: any;
 declare function require(path: string): any;
 
+import type {
+  BuildConfig,
+  BunPlugin,
+  PluginBuilder,
+  PluginConstraints,
+  OnLoadCallback,
+  OnResolveCallback,
+} from "bun";
+
+// Globals provided at runtime (not in lib.dom)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare var process: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare function require(path: string): any;
+
 type AnyFunction = (...args: any[]) => any;
 
 interface BuildConfigExt extends BuildConfig {
@@ -61,10 +76,6 @@ type MinifyObj = {
   whitespace?: boolean;
   syntax?: boolean;
 };
-
-// Node-style globals used inside built-in modules
-declare function require(id: string): any;
-declare const process: { platform: string } & any;
 
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;

@@ -680,19 +680,20 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-extern "C" void napi_module_register(napi_module* mod)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject();
-    napi_env env = globalObject->makeNapiEnv(*mod);
     JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(globalObject->m_hasPendingNapiModule);
+
+    auto* mod = &globalObject->m_pendingNapiModule;
+    napi_env env = globalObject->makeNapiEnv(*mod);
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
-    globalObject->napiModuleRegisterCallCount++;
-    Bun__napi_module_register_count++;
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::Strong<JSC::JSObject> strongExportsObject;
 
     if (!object) {
@@ -755,6 +756,24 @@ extern "C" void napi_module_register(napi_module* mod)
     }
 
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
+}
+
+extern "C" void napi_module_register(napi_module* mod)
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject();
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    // Store the entire module struct to be processed after dlopen completes
+    if (mod && mod->nm_register_func) {
+        globalObject->m_pendingNapiModule = *mod;
+        globalObject->m_hasPendingNapiModule = true;
+        // Increment the counter to signal that a module registered itself
+        globalObject->napiModuleRegisterCallCount++;
+        Bun__napi_module_register_count++;
+    } else {
+        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+    }
 }
 
 static void wrap_cleanup(napi_env env, void* data, void* hint)

@@ -313,6 +313,7 @@ class JSSourceCode;
 }
 
 namespace Napi {
+
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
@@ -338,6 +339,11 @@ public:
         return jscWeakValueHandleOwner;
     }
 };
+
+// If a module registered itself by calling napi_module_register in a static constructor, run this
+// to run the module's entrypoint.
+void executePendingNapiModule(Zig::GlobalObject* globalObject);
+
 }
 
 namespace Zig {

@@ -1,4 +1,11 @@
-import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
+import type {
+  BuildConfig,
+  BunPlugin,
+  OnLoadCallback,
+  OnResolveCallback,
+  PluginBuilder,
+  PluginConstraints,
+} from "bun";
 type AnyFunction = (...args: any[]) => any;
 
 /**
@@ -56,10 +63,10 @@ export function loadAndResolvePluginsForServe(
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  let config: Partial<BuildConfigExt> = {
-    target: "browser",
+  let config = {
     root: bunfig_folder,
-  };
+    plugins: [] as BunPlugin[],
+  } as BuildConfigExt;
 
   class InvalidBundlerPluginError extends TypeError {
     pluginName: string;

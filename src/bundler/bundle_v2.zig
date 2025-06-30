@@ -1974,6 +1974,7 @@ pub const BundleV2 = struct {
                 this.graph.input_files.items(.is_plugin_file)[load.source_index.get()] = true;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
+                parse_task.input_sourcemap = code.sourcemap;
                 if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
@@ -2132,6 +2133,7 @@ pub const BundleV2 = struct {
                                     .file = bun.invalid_fd,
                                 },
                             },
+                            .input_sourcemap = null,
                             .side_effects = .has_side_effects,
                             .jsx = this.transpilerForTarget(resolve.import_record.original_target).options.jsx,
                             .source_index = source_index,

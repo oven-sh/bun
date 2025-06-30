@@ -13,6 +13,8 @@ pub const ParseTask = @This();
 path: Fs.Path,
 secondary_path_for_commonjs_interop: ?Fs.Path = null,
 contents_or_fd: ContentsOrFd,
+/// Optional raw sourcemap string provided by an onLoad plugin
+input_sourcemap: ?[]const u8 = null,
 external_free_function: CacheEntry.ExternalFreeFunction = .none,
 side_effects: _resolver.SideEffects,
 loader: ?Loader = null,
@@ -118,6 +120,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
             },
         },
         .side_effects = resolve_result.primary_side_effects_data,
+        .input_sourcemap = null,
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
@@ -258,6 +261,7 @@ fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         .contents_or_fd = .{
             .contents = runtime_code,
         },
+        .input_sourcemap = null,
         .source_index = Index.runtime,
         .loader = .js,
         .known_target = target,

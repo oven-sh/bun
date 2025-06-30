@@ -740,9 +740,7 @@ pub const JSBundler = struct {
                 switch (this.*) {
                     .success => |success| {
                         bun.default_allocator.free(success.source_code);
-                        if (success.sourcemap) |sm| {
-                            bun.default_allocator.free(sm);
-                        }
+                        // sourcemap memory is managed later after parsing
                     },
                     .err => |*err| {
                         err.deinit(bun.default_allocator);

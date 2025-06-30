@@ -38,35 +38,14 @@ interface BundlerPlugin {
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
 
-// Local fallback typings. Replace with real bun-types once the package resolution is fixed.
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-type BunPlugin = {
-  name: string;
-  setup: (builder: any) => void | Promise<void>;
-};
-
-type PluginBuilder = any;
-
-interface PluginConstraints {
-  filter: RegExp;
-  namespace?: string;
-}
-
-type OnLoadCallback = (...args: any[]) => unknown;
-type OnResolveCallback = (...args: any[]) => unknown;
+// Node-style globals used inside built-in modules
+declare function require(id: string): any;
+declare const process: { platform: string } & any;
 
 type AnyFunction = (...args: any[]) => any;
 
-interface BuildConfig {
-  target?: string;
-  root?: string;
-  plugins?: BunPlugin[];
-  entryPoints?: string[];
-  entrypoints?: string[];
-  minify?: boolean | { identifiers?: boolean; syntax?: boolean; whitespace?: boolean };
-}
-
 interface BuildConfigExt extends BuildConfig {
+  root?: string;
   /** esbuild-style alias */
   entryPoints?: string[];
   /** legacy lowercase alias */

@@ -62,6 +62,24 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     return Just(true);
 }
 
+Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> value)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    JSValue v = value->localToJSValue();
+    auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    
+    bool success = object->putByIndex(object, globalObject, index, v, false);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return Nothing<bool>();
+    }
+
+    return Just(success);
+}
+
 MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
 {
     Zig::GlobalObject* globalObject = context->globalObject();

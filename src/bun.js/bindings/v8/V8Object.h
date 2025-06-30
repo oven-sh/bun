@@ -15,6 +15,7 @@ class Object : public Value {
 public:
     BUN_EXPORT static Local<Object> New(Isolate* isolate);
     BUN_EXPORT Maybe<bool> Set(Local<Context> context, Local<Value> key, Local<Value> value);
+    BUN_EXPORT Maybe<bool> Set(Local<Context> context, uint32_t index, Local<Value> value);
     
     // Get property by key
     BUN_EXPORT MaybeLocal<Value> Get(Local<Context> context, Local<Value> key);

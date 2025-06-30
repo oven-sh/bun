@@ -26,6 +26,7 @@
     __ZN2v86Object3GetENS_5LocalINS_7ContextEEEj;
     __ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE;
     __ZN2v86Object3NewEPNS_7IsolateE;
+    __ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE;
     __ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_;
     __ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi;
     __ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi;

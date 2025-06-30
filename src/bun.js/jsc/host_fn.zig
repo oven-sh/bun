@@ -136,6 +136,16 @@ pub fn fromJSHostCallGeneric(
     defer scope.deinit();
 
     const result = @call(.auto, function, args);
+    // supporting JSValue would make it too easy to mix up this function with fromJSHostCall
+    // fromJSHostCall has the benefit of checking that the function is correctly returning an empty
+    // value if and only if it has thrown.
+    // fromJSHostCallGeneric is only for functions where the return value tells you nothing about
+    // whether an exception was thrown.
+    //
+    // alternatively, we could consider something like `comptime exception_sentinel: ?T`
+    // to generically support using a value of any type to signal exceptions (INT_MAX, infinity,
+    // nullptr...?) but it's unclear how often that would be useful
+    if (@TypeOf(result) == JSValue) @compileError("fromJSHostCallGeneric does not support JSValue");
     try scope.returnIfException();
     return result;
 }

@@ -70,7 +70,7 @@ Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> val
     auto& vm = JSC::getVM(globalObject);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    
+
     bool success = object->putByIndex(object, globalObject, index, v, false);
     if (scope.exception()) [[unlikely]] {
         scope.clearException();
@@ -88,7 +88,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
     auto& vm = JSC::getVM(globalObject);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    
+
     Identifier identifier = k.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
@@ -109,7 +109,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
     auto& vm = JSC::getVM(globalObject);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    
+
     JSValue result = object->get(globalObject, index);
     if (scope.exception()) [[unlikely]] {
         scope.clearException();

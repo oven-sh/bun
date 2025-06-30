@@ -15,8 +15,8 @@ ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Array)
 
 using JSC::ArrayAllocationProfile;
 using JSC::JSArray;
-using JSC::JSValue;
 using JSC::JSGlobalObject;
+using JSC::JSValue;
 using JSC::MarkedArgumentBuffer;
 
 namespace v8 {
@@ -26,26 +26,26 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
-    
+
     if (length == 0) {
         JSArray* array = JSC::constructEmptyArray(globalObject, nullptr);
         return isolate->currentHandleScope()->createLocal<Array>(vm, array);
     }
-    
+
     // Use MarkedArgumentsBuffer as suggested
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer args;
-    
+
     // Add each element to the arguments buffer
     for (size_t i = 0; i < length; i++) {
         JSValue elementValue = elements[i]->localToJSValue();
         args.append(elementValue);
     }
-    
+
     // Construct array using the buffer
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
     RETURN_IF_EXCEPTION(scope, Local<Array>());
-    
+
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
 
@@ -54,24 +54,24 @@ Local<Array> Array::New(Isolate* isolate, int length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
-    
+
     int realLength = length > 0 ? length : 0;
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(realLength));
-    
+
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
 
 // Array::New with callback
 MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
-                            std::function<MaybeLocal<v8::Value>()> next_value_callback)
+    std::function<MaybeLocal<v8::Value>()> next_value_callback)
 {
     Isolate* isolate = context->GetIsolate();
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = isolate->vm();
-    
+
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer args;
-    
+
     // Fill array using callback
     for (size_t i = 0; i < length; i++) {
         MaybeLocal<v8::Value> maybeValue = next_value_callback();
@@ -80,15 +80,15 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
             // Callback signaled error/exception
             return MaybeLocal<Array>();
         }
-        
+
         JSValue elementValue = value->localToJSValue();
         args.append(elementValue);
     }
-    
+
     // Construct array using the buffer
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
-    
+
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
 
@@ -119,33 +119,33 @@ Maybe<bool> Array::Iterate(Local<Context> context, IterationCallback callback, v
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     CallbackResult finalResult = CallbackResult::kContinue;
     uint32_t index = 0;
-    
+
     // Use JSC's forEachInIterable for proper array iteration
     JSC::forEachInIterable(globalObject, jsArray, [&](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue element) -> void {
         Local<Value> localElement = context->GetIsolate()->currentHandleScope()->createLocal<Value>(vm, element);
-        
+
         CallbackResult result = callback(index++, localElement, callback_data);
-        
+
         switch (result) {
-            case CallbackResult::kException:
-            case CallbackResult::kBreak:
-                finalResult = result;
-                return; // Break out of iteration
-            case CallbackResult::kContinue:
-                break;
+        case CallbackResult::kException:
+        case CallbackResult::kBreak:
+            finalResult = result;
+            return; // Break out of iteration
+        case CallbackResult::kContinue:
+            break;
         }
     });
-    
+
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
-    
+
     // Check if we should return an exception or success
     if (finalResult == CallbackResult::kException) {
         return Nothing<bool>();
     }
-    
+
     return Just(true);
 }
 

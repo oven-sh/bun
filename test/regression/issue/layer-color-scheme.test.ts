@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("@layer color-scheme should inject CSS variables within layer context", async () => {
@@ -33,11 +33,11 @@ test("@layer color-scheme should inject CSS variables within layer context", asy
   expect(stdout).toContain("@layer shm.colors");
   expect(stdout).toContain("--buncss-light:");
   expect(stdout).toContain("--buncss-dark:");
-  
+
   // Verify that the CSS variables are within the layer context, not outside
   const layerMatch = stdout.match(/@layer\s+shm\.colors\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/);
   expect(layerMatch).toBeTruthy();
-  
+
   if (layerMatch) {
     const layerContent = layerMatch[1];
     expect(layerContent).toContain("--buncss-light:");
@@ -75,12 +75,14 @@ test("@layer color-scheme should handle light dark scheme with media query in la
   expect(stdout).toContain("@layer theme");
   expect(stdout).toContain("--buncss-light:initial");
   expect(stdout).toContain("--buncss-dark:");
-  
+
   // Should also contain a separate layer block with dark theme media query
   expect(stdout).toContain("@media (prefers-color-scheme:dark)");
-  
+
   // The dark theme media query should also be wrapped in the same layer
-  const mediaQueryMatch = stdout.match(/@layer\s+theme\s*\{[^}]*@media\s*\([^)]*prefers-color-scheme\s*:\s*dark[^)]*\)/);
+  const mediaQueryMatch = stdout.match(
+    /@layer\s+theme\s*\{[^}]*@media\s*\([^)]*prefers-color-scheme\s*:\s*dark[^)]*\)/,
+  );
   expect(mediaQueryMatch).toBeTruthy();
 });
 

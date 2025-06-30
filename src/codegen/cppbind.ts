@@ -1,6 +1,7 @@
 import * as lezerCpp from "@lezer/cpp";
 import { readdir } from "fs/promises";
 import { join } from "path";
+import { sharedTypes } from "./shared-types";
 
 const allSourceFiles = await readdir("src", { recursive: true });
 const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp"));
@@ -15,47 +16,13 @@ const outputRawBindings: Zig[] = [];
 const outputBindings: Zig[] = [];
 const addedTypes: Set<string> = new Set();
 
-// Map C++ types to Zig types
-const typeMap: Record<string, string> = {
-  // Basic types
-  "void": "void",
-  "bool": "bool",
-  "char": "u8",
-  "unsigned char": "u8",
-  "signed char": "i8",
-  "short": "i16",
-  "unsigned short": "u16",
-  "int": "c_int",
-  "unsigned int": "c_uint",
-  "long": "c_long",
-  "unsigned long": "c_ulong",
-  "long long": "i64",
-  "unsigned long long": "u64",
-  "float": "f32",
-  "double": "f64",
-  "size_t": "usize",
-  "ssize_t": "isize",
-  "int8_t": "i8",
-  "uint8_t": "u8",
-  "int16_t": "i16",
-  "uint16_t": "u16",
-  "int32_t": "i32",
-  "uint32_t": "u32",
-  "int64_t": "i64",
-  "uint64_t": "u64",
-
-  // Common Bun types
-  "BunString": "BunString",
-  "JSC::EncodedJSValue": "JSC.JSValue",
-  "JSC::JSGlobalObject": "JSC.JSGlobalObject",
-};
-
 interface FunctionParam {
   type: string;
   name: string;
   isPointer: boolean;
   isConst: boolean;
   isReference: boolean;
+  srcloc: Srcloc;
 }
 
 interface FunctionSignature {
@@ -70,8 +37,27 @@ interface FunctionSignature {
   column: number;
 }
 
+type Srcloc = {
+  file: string;
+  line: number;
+  column: number;
+};
+
+type ReportedError = {
+  message: string;
+  srcloc: Srcloc;
+};
+
+const allErrors: ReportedError[] = [];
+
 // Helper to convert C++ type to Zig type
-function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isReference: boolean): string {
+function cppTypeToZig(
+  cppType: string,
+  srcloc: Srcloc,
+  isPointer: boolean,
+  isConst: boolean,
+  isReference: boolean,
+): string {
   // Clean up the type
   let cleanType = cppType.trim();
 
@@ -81,10 +67,10 @@ function cppTypeToZig(cppType: string, isPointer: boolean, isConst: boolean, isR
   }
 
   // Check if it's in our type map
-  let zigType = typeMap[cleanType];
+  let zigType = sharedTypes[cleanType];
 
   if (!zigType) {
-    // If not mapped, assume it's an opaque type that needs to be defined
+    // If not mapped, report an error
     zigType = `types.${cleanType}`;
 
     // Add to types if it looks like a class/struct
@@ -222,6 +208,11 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
                       isPointer: false,
                       isConst: false,
                       isReference: false,
+                      srcloc: {
+                        file: filePath,
+                        line,
+                        column,
+                      },
                     };
 
                     // Parse parameter
@@ -306,21 +297,32 @@ for (const cppFile of allCppFiles) {
       functions.forEach(func => {
         const params = func.params
           .map(param => {
-            const zigType = cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference);
+            const zigType = cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference);
             return `${param.name}: ${zigType}`;
           })
           .join(", ");
 
-        const returnType = cppTypeToZig(func.returnType, false, false, false);
+        const returnType = cppTypeToZig(
+          func.returnType,
+          {
+            file: filePath,
+            line: func.line,
+            column: func.column,
+          },
+          false,
+          false,
+          false,
+        );
 
         if (func.isExceptionJSValue) {
-          outputRawBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
+          outputRawBindings.push(`    /// Source: ../../../${filePath}:${func.line}:${func.column}\n`);
           outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
 
           // Generate wrapper function for exception handling
           const wrapperParams = func.params
             .map(
-              param => `${param.name}: ${cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference)}`,
+              param =>
+                `${param.name}: ${cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference)}`,
             )
             .join(", ");
 
@@ -345,7 +347,8 @@ for (const cppFile of allCppFiles) {
           // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION_SLOW
           const wrapperParams = func.params
             .map(
-              param => `${param.name}: ${cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference)}`,
+              param =>
+                `${param.name}: ${cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference)}`,
             )
             .join(", ");
 

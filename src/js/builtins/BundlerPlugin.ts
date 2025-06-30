@@ -1,13 +1,14 @@
 /// <reference types="bun-types" />
 
-import type {
-  BuildConfig,
-  BunPlugin,
-  PluginBuilder,
-  PluginConstraints,
-  OnLoadCallback,
-  OnResolveCallback,
-} from "bun-types";
+import type {} from "../../../packages/bun-types";
+
+// Globals provided by Bun at runtime but unknown to TypeScript DOM libs
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const Bun: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const process: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare function require(id: string): any;
 
 /**
  * @see `JSBundlerPlugin.h`
@@ -36,7 +37,11 @@ interface BundlerPlugin {
 
 // Extra types
 type Setup = BunPlugin["setup"];
-type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
+type MinifyObj = {
+  identifiers?: boolean;
+  whitespace?: boolean;
+  syntax?: boolean;
+};
 
 // Node-style globals used inside built-in modules
 declare function require(id: string): any;
@@ -44,14 +49,13 @@ declare const process: { platform: string } & any;
 
 type AnyFunction = (...args: any[]) => any;
 
-interface BuildConfigExt extends BuildConfig {
+interface BuildConfigExt {
   root?: string;
-  /** esbuild-style alias */
-  entryPoints?: string[];
-  /** legacy lowercase alias */
-  entrypoints?: string[];
-  /** Non-null plugin list */
+  target?: "browser" | "bun" | "node";
   plugins: BunPlugin[];
+  entryPoints?: string[];
+  entrypoints?: string[];
+  minify?: boolean | MinifyObj;
 }
 
 interface PluginBuilderExt extends PluginBuilder {

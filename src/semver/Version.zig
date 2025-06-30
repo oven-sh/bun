@@ -277,6 +277,130 @@ pub const Version = extern struct {
         }
     };
 
+    pub const ReleaseType = enum {
+        major,
+        premajor,
+        minor,
+        preminor,
+        patch,
+        prepatch,
+        prerelease,
+        release,
+
+        pub fn fromString(s: []const u8) ?ReleaseType {
+            return std.meta.stringToEnum(ReleaseType, s);
+        }
+    };
+
+    pub fn bump(
+        self: Version,
+        allocator: std.mem.Allocator,
+        release_type: ReleaseType,
+        identifier: ?[]const u8,
+        original_buf: []const u8,
+    ) ![]const u8 {
+        var new_version = self;
+        new_version.tag.build = .{}; // Build metadata is always removed
+
+        // We'll need to allocate new strings for prerelease tags
+        var pre_strings = std.ArrayList(u8).init(allocator);
+        defer pre_strings.deinit();
+
+        switch (release_type) {
+            .major => {
+                new_version.major +|= 1;
+                new_version.minor = 0;
+                new_version.patch = 0;
+                new_version.tag.pre = .{};
+            },
+            .minor => {
+                new_version.minor +|= 1;
+                new_version.patch = 0;
+                new_version.tag.pre = .{};
+            },
+            .patch => {
+                new_version.patch +|= 1;
+                new_version.tag.pre = .{};
+            },
+            .premajor => {
+                new_version.major +|= 1;
+                new_version.minor = 0;
+                new_version.patch = 0;
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
+                new_version.tag.pre = ExternalString.from(pre_strings.items);
+            },
+            .preminor => {
+                new_version.minor +|= 1;
+                new_version.patch = 0;
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
+                new_version.tag.pre = ExternalString.from(pre_strings.items);
+            },
+            .prepatch => {
+                new_version.patch +|= 1;
+                const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                try pre_strings.writer().print("{s}.0", .{id});
+                new_version.tag.pre = ExternalString.from(pre_strings.items);
+            },
+            .release => {
+                new_version.tag.pre = .{};
+            },
+            .prerelease => {
+                if (!new_version.tag.hasPre()) {
+                    // Same as prepatch
+                    new_version.patch +|= 1;
+                    const id = if (identifier) |i| if (i.len > 0) i else "0" else "0";
+                    try pre_strings.writer().print("{s}.0", .{id});
+                    new_version.tag.pre = ExternalString.from(pre_strings.items);
+                } else {
+                    // Increment existing prerelease
+                    const existing_pre = self.tag.pre.slice(original_buf);
+
+                    // Find last numeric component
+                    var last_dot: ?usize = null;
+                    var i: usize = existing_pre.len;
+                    while (i > 0) : (i -= 1) {
+                        if (existing_pre[i - 1] == '.') {
+                            last_dot = i - 1;
+                            break;
+                        }
+                    }
+
+                    if (last_dot) |dot_pos| {
+                        const last_part = existing_pre[dot_pos + 1 ..];
+                        if (std.fmt.parseUnsigned(u64, last_part, 10) catch null) |num| {
+                            try pre_strings.writer().print("{s}.{d}", .{ existing_pre[0..dot_pos], num + 1 });
+                        } else {
+                            try pre_strings.writer().print("{s}.0", .{existing_pre});
+                        }
+                    } else {
+                        // No dots, check if the whole thing is numeric
+                        if (std.fmt.parseUnsigned(u64, existing_pre, 10) catch null) |num| {
+                            try pre_strings.writer().print("{d}", .{num + 1});
+                        } else {
+                            try pre_strings.writer().print("{s}.0", .{existing_pre});
+                        }
+                    }
+                    new_version.tag.pre = ExternalString.from(pre_strings.items);
+                }
+            },
+        }
+
+        // Build the final version string
+        var output = std.ArrayList(u8).init(allocator);
+        errdefer output.deinit();
+
+        try output.writer().print("{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
+
+        if (new_version.tag.hasPre()) {
+            try output.append('-');
+            try output.appendSlice(new_version.tag.pre.slice(pre_strings.items));
+        }
+
+        return output.toOwnedSlice();
+    }
+
     pub const PinnedVersion = enum {
         major, // ^
         minor, // ~
@@ -610,6 +734,33 @@ pub const Version = extern struct {
 
         pub inline fn hasBuild(this: Tag) bool {
             return !this.build.isEmpty();
+        }
+
+        pub fn toComponentsArray(
+            self: Tag,
+            is_pre: bool,
+            globalThis: *JSC.JSGlobalObject,
+            buf: []const u8,
+        ) bun.JSError!JSC.JSValue {
+            const tag_str = if (is_pre) self.pre.slice(buf) else self.build.slice(buf);
+            if (tag_str.len == 0) {
+                return JSC.JSValue.null;
+            }
+
+            const array = try JSC.JSValue.createEmptyArray(globalThis, 0);
+
+            var it = strings.split(tag_str, ".");
+            var i: u32 = 0;
+            while (it.next()) |part| {
+                if (std.fmt.parseUnsigned(u64, part, 10) catch null) |num| {
+                    array.putIndex(globalThis, @intCast(i), JSC.jsNumber(@as(f64, @floatFromInt(num))));
+                } else {
+                    array.putIndex(globalThis, @intCast(i), bun.String.createUTF8ForJS(globalThis, part));
+                }
+                i += 1;
+            }
+
+            return array;
         }
 
         pub fn eql(lhs: Tag, rhs: Tag) bool {
@@ -998,3 +1149,4 @@ const String = bun.Semver.String;
 
 const Query = bun.Semver.Query;
 const assert = bun.assert;
+const JSC = bun.JSC;

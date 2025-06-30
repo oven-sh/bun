@@ -5287,10 +5287,13 @@ void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
     watchdog.setTimeLimit(WTF::Seconds { limit });
 }
 
-bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
+bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 {
     JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(JSC::JSValue::decode(JSValue0));
-    return exception != NULL && arg1->isTerminationException(exception);
+    if (exception == nullptr)
+        return false;
+
+    return exception->vm().isTerminationException(exception);
 }
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)

@@ -30,7 +30,7 @@ $ bun add @prisma/client
 We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
 
 ```bash
-$ bunx prisma init --datasource-provider sqlite
+$ bunx --bun prisma init --datasource-provider sqlite
 ```
 
 ---

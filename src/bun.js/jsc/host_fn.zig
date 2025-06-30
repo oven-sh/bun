@@ -105,6 +105,9 @@ pub fn toJSHostCall(
 
 /// Convert the return value of a function returning a maybe-empty JSValue into an error union.
 /// The wrapped function must return an empty JSValue if and only if it has thrown an exception.
+/// If your function does not follow this pattern (if it can return empty without an exception, or
+/// throw an exception and return non-empty), either fix the function or write a custom wrapper with
+/// CatchScope.
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions

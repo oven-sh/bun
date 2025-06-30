@@ -1702,6 +1702,22 @@ pub const Store = struct {
                             if (scripts_list) |list| {
                                 entry_scripts[this.entry_id.get()] = bun.create(bun.default_allocator, Package.Scripts.List, list);
 
+                                if (is_trusted_through_update_request) {
+                                    const trusted_dep_to_add = try installer.manager.allocator.dupe(u8, dep.name.slice(string_buf));
+
+                                    installer.trusted_dependencies_mutex.lock();
+                                    defer installer.trusted_dependencies_mutex.unlock();
+
+                                    try installer.manager.trusted_deps_to_add_to_package_json.append(
+                                        installer.manager.allocator,
+                                        trusted_dep_to_add,
+                                    );
+                                    if (installer.lockfile.trusted_dependencies == null) {
+                                        installer.lockfile.trusted_dependencies = .{};
+                                    }
+                                    try installer.lockfile.trusted_dependencies.?.put(installer.manager.allocator, truncated_dep_name_hash, {});
+                                }
+
                                 if (list.first_index != 0) {
                                     // has scripts but not a preinstall
                                     continue :next_step this.nextStep();
@@ -1719,22 +1735,6 @@ pub const Store = struct {
                                 ) catch {
                                     @panic("ooops!");
                                 };
-
-                                if (is_trusted_through_update_request) {
-                                    const trusted_dep_to_add = try installer.manager.allocator.dupe(u8, dep.name.slice(string_buf));
-
-                                    installer.trusted_dependencies_mutex.lock();
-                                    defer installer.trusted_dependencies_mutex.unlock();
-
-                                    try installer.manager.trusted_deps_to_add_to_package_json.append(
-                                        installer.manager.allocator,
-                                        trusted_dep_to_add,
-                                    );
-                                    if (installer.lockfile.trusted_dependencies == null) {
-                                        installer.lockfile.trusted_dependencies = .{};
-                                    }
-                                    try installer.lockfile.trusted_dependencies.?.put(installer.manager.allocator, truncated_dep_name_hash, {});
-                                }
 
                                 this.pause();
                                 return;
@@ -1830,7 +1830,8 @@ pub const Store = struct {
                             @panic("ooops!");
                         };
 
-                        continue :next_step this.nextStep();
+                        this.pause();
+                        return;
                     },
 
                     .done => {

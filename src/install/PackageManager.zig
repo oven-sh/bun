@@ -305,59 +305,68 @@ pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
     return false;
 }
 
-pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !*transpiler.Transpiler {
-    if (this.env_configure) |*env_configure| {
-        return &env_configure.transpiler;
-    }
-
-    // We need to figure out the PATH and other environment variables
-    // to do that, we re-use the code from bun run
-    // this is expensive, it traverses the entire directory tree going up to the root
-    // so we really only want to do it when strictly necessary
-    this.env_configure = .{
-        .root_dir_info = undefined,
-        .transpiler = undefined,
-    };
-    const this_transpiler: *transpiler.Transpiler = &this.env_configure.?.transpiler;
-
-    const root_dir_info = try RunCommand.configureEnvForRun(
-        ctx,
-        this_transpiler,
-        this.env,
-        log_level != .silent,
-        false,
-    );
-
-    const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
-    if (!init_cwd_entry.found_existing) {
-        init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
-        init_cwd_entry.value_ptr.* = .{
-            .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
-            .conditional = false,
-        };
-    }
-
-    this.env.loadCCachePath(this_transpiler.fs);
-
-    {
-        var node_path: bun.PathBuffer = undefined;
-        if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
-        } else brk: {
-            const current_path = this.env.get("PATH") orelse "";
-            var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
-            try PATH.appendSlice(current_path);
-            var bun_path: string = "";
-            RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
-            try this.env.map.put("PATH", PATH.items);
-            _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
-        }
-    }
-
-    this.env_configure.?.root_dir_info = root_dir_info;
-
-    return this_transpiler;
+pub fn configureEnvForScripts(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+    return configureEnvForScriptsOnce.call(.{ this, ctx, log_level });
 }
+
+pub var configureEnvForScriptsOnce = bun.once(struct {
+    pub fn run(this: *PackageManager, ctx: Command.Context, log_level: Options.LogLevel) !transpiler.Transpiler {
+
+        // We need to figure out the PATH and other environment variables
+        // to do that, we re-use the code from bun run
+        // this is expensive, it traverses the entire directory tree going up to the root
+        // so we really only want to do it when strictly necessary
+        var this_transpiler: transpiler.Transpiler = undefined;
+        _ = try RunCommand.configureEnvForRun(
+            ctx,
+            &this_transpiler,
+            this.env,
+            log_level != .silent,
+            false,
+        );
+
+        const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
+        if (!init_cwd_entry.found_existing) {
+            init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
+            init_cwd_entry.value_ptr.* = .{
+                .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
+                .conditional = false,
+            };
+        }
+
+        this.env.loadCCachePath(this_transpiler.fs);
+
+        {
+            // Run node-gyp jobs in parallel.
+            // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
+            const thread_count = bun.getThreadCount();
+            if (thread_count > 2) {
+                if (!this_transpiler.env.has("JOBS")) {
+                    var int_buf: [10]u8 = undefined;
+                    const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
+                    this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+                }
+            }
+        }
+
+        {
+            var node_path: bun.PathBuffer = undefined;
+            if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
+            } else brk: {
+                const current_path = this.env.get("PATH") orelse "";
+                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                try PATH.appendSlice(current_path);
+                var bun_path: string = "";
+                RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
+                try this.env.map.put("PATH", PATH.items);
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
+            }
+        }
+
+        return this_transpiler;
+    }
+}.run);
 
 pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
     return this.env.getHttpProxyFor(url);

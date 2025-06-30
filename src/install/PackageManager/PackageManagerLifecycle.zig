@@ -271,50 +271,34 @@ pub fn spawnPackageLifecycleScripts(
     try this.ensureTempNodeGypScript();
 
     const cwd = list.cwd;
-    const this_transpiler = try this.configureEnvForScripts(ctx, log_level);
-    const original_path = this_transpiler.env.get("PATH") orelse "";
+    var this_transpiler = try this.configureEnvForScripts(ctx, log_level);
 
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-    var current_dir: ?*DirInfo = this_transpiler.resolver.readDirInfo(cwd) catch null;
-    bun.assert(current_dir != null);
-    while (current_dir) |dir| {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
-        }
-        try PATH.appendSlice(strings.withoutTrailingSlash(dir.abs_path));
-        if (!(dir.abs_path.len == 1 and dir.abs_path[0] == std.fs.path.sep)) {
-            try PATH.append(std.fs.path.sep);
-        }
-        try PATH.appendSlice(this.options.bin_path);
-        current_dir = dir.getParent();
+    var script_env = try this_transpiler.env.map.cloneWithAllocator(bun.default_allocator);
+    defer script_env.map.deinit();
+
+    const original_path = script_env.get("PATH") orelse "";
+
+    var PATH: bun.EnvPath(.{}) = try .initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+    defer PATH.deinit();
+
+    var parent: ?string = cwd;
+
+    while (parent) |dir| {
+        var builder = PATH.pathComponentBuilder();
+        builder.append(dir);
+        builder.append("node_modules/.bin");
+        try builder.apply();
+
+        parent = std.fs.path.dirname(dir);
     }
 
-    if (original_path.len > 0) {
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
-            try PATH.append(std.fs.path.delimiter);
-        }
+    try PATH.append(original_path);
+    try script_env.put("PATH", PATH.slice());
 
-        try PATH.appendSlice(original_path);
-    }
+    const envp = try script_env.createNullDelimitedEnvMap(this.allocator);
+    const shell_bin = if (Environment.isWindows) null else bun.CLI.RunCommand.findShell(this.env.get("PATH") orelse "", cwd) orelse null;
 
-    this_transpiler.env.map.put("PATH", PATH.items) catch unreachable;
-
-    // Run node-gyp jobs in parallel.
-    // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
-    const thread_count = bun.getThreadCount();
-    if (thread_count > 2) {
-        if (!this_transpiler.env.has("JOBS")) {
-            var int_buf: [10]u8 = undefined;
-            const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
-            this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
-        }
-    }
-
-    const envp = try this_transpiler.env.map.createNullDelimitedEnvMap(this.allocator);
-    try this_transpiler.env.map.put("PATH", original_path);
-    PATH.deinit();
-
-    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground, install_ctx);
+    try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, shell_bin, optional, log_level, foreground, install_ctx);
 }
 
 pub fn findTrustedDependenciesFromUpdateRequests(this: *PackageManager) std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) {

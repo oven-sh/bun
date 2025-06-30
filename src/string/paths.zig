@@ -447,6 +447,43 @@ pub fn removeLeadingDotSlash(slice: []const u8) callconv(bun.callconv_inline) []
     return slice;
 }
 
+pub fn trimLeadingPathSeparators(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and switch (trimmed[0]) {
+        '/', '\\' => true,
+        else => false,
+    }) {
+        trimmed = trimmed[1..];
+    }
+    return trimmed;
+}
+
+pub fn trimTrailingPathSeparators(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and switch (trimmed[trimmed.len - 1]) {
+        '/', '\\' => true,
+        else => false,
+    }) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
+pub fn trimPathSeparators(input: string) string {
+    return trimLeadingPathSeparators(trimTrailingPathSeparators(input));
+}
+
+pub fn trimPathDelimiters(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and trimmed[0] == std.fs.path.delimiter) {
+        trimmed = trimmed[1..];
+    }
+    while (trimmed.len > 0 and trimmed[trimmed.len - 1] == std.fs.path.delimiter) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
 const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;

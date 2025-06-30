@@ -262,8 +262,10 @@ pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
 pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 
-pub const RelPath = @import("paths.zig").RelPath;
-pub const AbsPath = @import("paths.zig").AbsPath;
+pub const paths = @import("./paths.zig");
+pub const AbsPath = paths.AbsPath;
+pub const RelPath = paths.RelPath;
+pub const EnvPath = paths.EnvPath;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {

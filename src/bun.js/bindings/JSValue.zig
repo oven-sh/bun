@@ -1094,7 +1094,7 @@ pub const JSValue = enum(i64) {
         return ret;
     }
 
-    extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bool;
+    extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
         try JSC.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
     }

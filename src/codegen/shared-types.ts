@@ -1,3 +1,9 @@
+export const typeDeclarations = `
+const bun = @import("bun");
+const JSC = bun.JSC;
+const HTTPServerAgent = bun.jsc.Debugger.HTTPServerAgent;
+`;
+
 export const sharedTypes: Record<string, string> = {
   // Basic types
   "void": "void",
@@ -27,7 +33,10 @@ export const sharedTypes: Record<string, string> = {
   "uint64_t": "u64",
 
   // Common Bun types
-  "BunString": "BunString",
+  "BunString": "bun.String",
   "JSC::EncodedJSValue": "JSC.JSValue",
   "JSC::JSGlobalObject": "JSC.JSGlobalObject",
+  "ZigException": "bun.JSC.ZigException",
+  "Inspector::InspectorHTTPServerAgent": "HTTPServerAgent.InspectorHTTPServerAgent",
+  "HotReloadId": "HTTPServerAgent.HotReloadId",
 };

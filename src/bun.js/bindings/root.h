@@ -98,10 +98,4 @@
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
 
-#define ZIG_EXPORT_NOTHROW
-#define ZIG_EXPORT_ZEROISTHROW
-#define ZIG_EXPORT_FALSEISTHROW
-// avoid using this, prefer signaling exceptions in the return type
-#define ZIG_EXPORT_CHECKEXCEPTION_SLOW_SLOW
-
 #endif

@@ -1,355 +1,359 @@
-import * as lezerCpp from "@lezer/cpp";
-import type { SyntaxNodeRef } from "@lezer/common";
+import Parser, { Language, SyntaxNode } from "tree-sitter";
+import Cpp from "tree-sitter-cpp";
 import { readdir } from "fs/promises";
-import { join } from "path";
-import { sharedTypes } from "./shared-types";
+import { join, relative } from "path";
+import { sharedTypes, typeDeclarations } from "./shared-types";
 
-const allSourceFiles = await readdir("src", { recursive: true });
-const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp"));
-
-const parser = lezerCpp.parser;
-
-const outputFile = "build/debug/codegen/cpp.zig";
-
-type Zig = string | Zig[];
-const outputTypes: Zig[] = [];
-const outputRawBindings: Zig[] = [];
-const outputBindings: Zig[] = [];
-const addedTypes: Set<string> = new Set();
-
+type Point = {
+  line: number;
+  column: number;
+};
+type Srcloc = {
+  file: string;
+  start: Point;
+  end: Point;
+};
+type CppFn = {
+  name: string;
+  returnType: CppType;
+  parameters: CppParameter[];
+  position: Srcloc;
+};
+type CppParameter = {
+  type: CppType;
+  name: string;
+};
 type CppType =
   | {
       type: "pointer";
       child: CppType;
-      const: boolean;
+      position: Srcloc;
     }
   | {
       type: "reference";
       child: CppType;
-      const: boolean;
+      position: Srcloc;
     }
   | {
-      type: "type";
+      type: "named";
       name: string;
+      position: Srcloc;
     };
-type FunctionParam = {
-  type: CppType;
-  name: string;
-  srcloc: Srcloc;
-};
 
-interface FunctionSignature {
-  name: string;
-  returnType: CppType;
-  params: FunctionParam[];
-  isExceptionJSValue: boolean;
-  isCheckException: boolean;
-  srcloc: Srcloc;
-}
-
-type Srcloc = {
-  file: string;
-  line: number;
-  column: number;
-};
-
-type ReportedError = {
+type PositionedError = {
+  position: Srcloc;
   message: string;
-  srcloc: Srcloc;
+  notes: { position: Srcloc; message: string }[];
 };
-
-const allErrors: ReportedError[] = [];
-
-function getCppType(node: SyntaxNodeRef) {
-  throw new Error("TODO: implement");
+const errors: PositionedError[] = [];
+function appendError(position: Srcloc, message: string): PositionedError {
+  const error: PositionedError = { position, message, notes: [] };
+  errors.push(error);
+  return error;
+}
+function throwError(position: Srcloc, message: string): never {
+  throw new PositionedErrorClass(position, message);
+}
+function nodePosition(file: string, node: SyntaxNode): Srcloc {
+  return {
+    file,
+    start: { line: node.startPosition.row + 1, column: node.startPosition.column + 1 },
+    end: { line: node.endPosition.row + 1, column: node.endPosition.column + 1 },
+  };
+}
+function assertNever(value: never): never {
+  throw new Error("assertNever");
+}
+class PositionedErrorClass extends Error {
+  constructor(
+    public position: Srcloc,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
-// Helper to convert C++ type to Zig type
-function cppTypeToZig(
-  cppType: string,
-  srcloc: Srcloc,
-  isPointer: boolean,
-  isConst: boolean,
-  isReference: boolean,
-): string {
-  // Clean up the type
-  let cleanType = cppType.trim();
-
-  // Handle namespace prefixes
-  if (cleanType.startsWith("Inspector::")) {
-    cleanType = cleanType.substring("Inspector::".length);
-  }
-
-  // Check if it's in our type map
-  let zigType = sharedTypes[cleanType];
-
-  if (!zigType) {
-    // If not mapped, report an error
-    zigType = `types.${cleanType}`;
-
-    // Add to types if it looks like a class/struct
-    if (cleanType.match(/^[A-Z][a-zA-Z0-9_]*$/)) {
-      if (!addedTypes.has(cleanType)) {
-        addedTypes.add(cleanType);
-        outputTypes.push(`    pub const ${cleanType} = opaque {};\n`);
-      }
-    }
-  }
-
-  // Handle pointers and references
-  if (isPointer) {
-    // must use [*c] because we don't know if it is a single-item or many-item pointer
-    if (isConst) {
-      return `[*c]const ${zigType}`;
-    } else {
-      return `[*c]${zigType}`;
-    }
-  } else if (isReference) {
-    if (isConst) {
-      return `*const ${zigType}`;
-    } else {
-      return `*${zigType}`;
-    }
-  }
-
-  return zigType;
+function processRootmostType(file: string, types: SyntaxNode[]): CppType {
+  const type = types[0];
+  if (!type) throwError(nodePosition(file, types[0]), "no type found");
+  return { type: "named", name: type.text, position: nodePosition(file, type) };
 }
 
-// Process a single C++ file
-async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
-  const input = await Bun.file(filePath).text();
-  if (!input.includes("ZIG_EXPORT")) return []; // save time
-  const functions: FunctionSignature[] = [];
+function processDeclarator(
+  file: string,
+  declarators: SyntaxNode[],
+  rootmostType: CppType,
+): { type: CppType; final: SyntaxNode } {
+  // example: int* spiral() is:
+  // type: primitive_type[int], declarator: pointer_declarator[ declarator: function_declarator[ declarator: identifier[spiral], parameters: parame
 
-  // Find extern "C" blocks first
-  const externCBlocks: { start: number; end: number }[] = [];
-  let inExternC = false;
-  let externCStart = 0;
-
-  const tree = parser.parse(input);
-
-  tree.iterate({
-    enter(node) {
-      if (node.type.name === "LinkageSpecification") {
-        const specText = input.slice(node.from, node.to);
-        if (specText.includes('extern "C"')) {
-          inExternC = true;
-          externCStart = node.from;
-        }
-      }
-    },
-    leave(node) {
-      if (node.type.name === "LinkageSpecification" && inExternC) {
-        inExternC = false;
-        externCBlocks.push({ start: externCStart, end: node.to });
-      }
-    },
-  });
-
-  // Now parse function definitions
-  tree.iterate({
-    enter(node) {
-      if (node.type.name === "FunctionDefinition") {
-        const functionNode = node.node;
-        const funcStart = node.from;
-        const funcEnd = node.to;
-
-        // Check if this function is in an extern "C" block
-        const isExternC = externCBlocks.some(block => funcStart >= block.start && funcEnd <= block.end);
-
-        // Skip if not extern C
-        if (!isExternC) return;
-
-        // Check if this function has ZIG_EXPORT or ZIG_EXCEPTION_JSVALUE marker
-        // Look for markers in the line(s) immediately before the function
-        const searchStart = Math.max(0, funcStart - 200); // Look back up to 200 chars
-        const precedingText = input.slice(searchStart, funcStart);
-        const hasZigExport = precedingText.includes("ZIG_EXPORT");
-
-        // Skip if not marked with ZIG_EXPORT
-        if (!hasZigExport) return;
-
-        const exceptionType = precedingText.includes("ZIG_EXPORT_ZEROISTHROW")
-          ? "ZeroIsThrow"
-          : precedingText.includes("ZIG_EXPORT_CHECKEXCEPTION_SLOW")
-            ? "CheckException"
-            : precedingText.includes("ZIG_EXPORT_NOTHROW")
-              ? "NoThrow"
-              : "error";
-        if (exceptionType === "error") {
-          console.error(`Error: ${filePath}:${funcStart}:${funcEnd} has no exception type`);
-          process.exit(1);
-        }
-
-        // Calculate line and column from the function position
-        const linesBefore = input.slice(0, funcStart).split("\n");
-        const line = linesBefore.length;
-        const column = linesBefore[linesBefore.length - 1].length + 1;
-
-        let signature: FunctionSignature = {
-          name: "",
-          returnType: "void",
-          params: [],
-          srcloc: {
-            file: filePath,
-            line,
-            column,
-          },
-          isExceptionJSValue: exceptionType === "ZeroIsThrow",
-          isCheckException: exceptionType === "CheckException",
-        };
-
-        // TODO: parse the argument types and return type
-
-        // Add the function to our list
-        if (signature.name) {
-          functions.push(signature);
-        }
-      }
-    },
-  });
-
-  return functions;
+  const declarator = declarators[0];
+  if (!declarator) throwError(nodePosition(file, declarators[0]), "no declarator found");
+  if (declarator.type === "pointer_declarator") {
+    const children = declarator.childrenForFieldName("declarator");
+    return processDeclarator(file, children, {
+      type: "pointer",
+      child: rootmostType,
+      position: nodePosition(file, declarator),
+    });
+  }
+  if (declarator.type === "reference_declarator") {
+    const children = declarator.childrenForFieldName("declarator");
+    return processDeclarator(file, children, {
+      type: "reference",
+      child: rootmostType,
+      position: nodePosition(file, declarator),
+    });
+  }
+  return { type: rootmostType, final: declarator };
 }
 
-// Process all C++ files
-console.log(`Processing ${allCppFiles.length} C++ files...`);
+function processFunction(file: string, node: SyntaxNode): CppFn {
+  // void* spiral()
 
-let totalFunctions = 0;
+  const type: CppType = processRootmostType(file, node.childrenForFieldName("type"));
+  if (!type) throwError(nodePosition(file, node.childrenForFieldName("type")[0]), "no type found");
+  const declarator = processDeclarator(file, node.childrenForFieldName("declarator"), type);
+  if (!declarator) throwError(nodePosition(file, node.childrenForFieldName("declarator")[0]), "no declarator found");
+  const final = declarator.final;
+  if (final.type !== "function_declarator") {
+    const hasFunctionDeclarator = final.closest("function_declarator");
+    if (hasFunctionDeclarator) {
+      throwError(nodePosition(file, final), "final type is not a function_declarator (but it has one): " + final.type);
+    }
+    throwError(nodePosition(file, final), "no function_declarator found. final was: " + final.type);
+  }
+  const name = final.childrenForFieldName("declarator")[0];
+  if (!name) throwError(nodePosition(file, final.childrenForFieldName("declarator")[0]), "no name found");
+  const parameterList = final.childrenForFieldName("parameters")[0];
+  if (!parameterList || parameterList.type !== "parameter_list")
+    throwError(nodePosition(file, final.childrenForFieldName("parameters")[0]), "no parameter list found");
 
-for (const cppFile of allCppFiles) {
-  const filePath = join("src", cppFile);
+  const parameters: CppParameter[] = [];
+  for (const parameter of parameterList.children) {
+    if (parameter.type !== "parameter_declaration") continue;
 
-  try {
-    const functions = await processCppFile(filePath);
+    const type: CppType = processRootmostType(file, parameter.childrenForFieldName("type"));
+    if (!type) throwError(nodePosition(file, parameter.childrenForFieldName("type")[0]), "no type found for parameter");
+    const declarator = processDeclarator(file, parameter.childrenForFieldName("declarator"), type);
+    if (!declarator)
+      throwError(
+        nodePosition(file, parameter.childrenForFieldName("declarator")[0]),
+        "no declarator found for parameter",
+      );
+    const name = declarator.final;
+    if (!name) throwError(nodePosition(file, parameter), "no name found for parameter");
 
-    if (functions.length > 0) {
-      // Group functions by source file for organized output
-      const fileBindings: Zig[] = [];
+    parameters.push({ type, name: name.text });
+  }
 
-      // Generate Zig extern declarations
-      functions.forEach(func => {
-        const params = func.params
-          .map(param => {
-            const zigType = cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference);
-            return `${param.name}: ${zigType}`;
-          })
-          .join(", ");
+  return {
+    returnType: declarator.type,
+    name: name.text,
+    parameters,
+    position: nodePosition(file, name),
+  };
+}
 
-        const returnType = cppTypeToZig(
-          func.returnType,
-          {
-            file: filePath,
-            line: func.line,
-            column: func.column,
-          },
-          false,
-          false,
-          false,
-        );
+type ShouldExport = {
+  value?: {
+    tag: "check_slow" | "zero_is_throw" | "nothrow";
+    position: Srcloc;
+  };
+};
+function processNode(
+  file: string,
+  node: SyntaxNode,
+  allFunctions: CppFn[],
+  shouldExport: ShouldExport,
+  isInExternC: boolean,
+  usingNamespaces: string[],
+) {
+  if (node.type === "function_definition" && shouldExport.value) {
+    if (!isInExternC) {
+      appendError(nodePosition(file, node), "@zig-export-ed function is not in extern C");
+      return;
+    }
+    try {
+      const result = processFunction(file, node);
+      allFunctions.push(result);
+    } catch (e) {
+      if (e instanceof PositionedErrorClass) {
+        appendError(e.position, e.message);
+      } else {
+        appendError(nodePosition(file, node), "error processing function: " + (e as Error).message);
+      }
+    }
+    shouldExport.value = undefined;
+  } else {
+    if (node.type === "linkage_specification") {
+      const value = node.childrenForFieldName("value")[0];
+      if (value && value.type === "string_literal" && value.text === '"C"') {
+        isInExternC = true;
+      }
+    }
 
-        if (func.isExceptionJSValue) {
-          outputRawBindings.push(`    /// Source: ../../../${filePath}:${func.line}:${func.column}\n`);
-          outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+    for (const child of node.children) {
+      if (child.type === "using_declaration") {
+        const identifiers = child.descendantsOfType("identifier");
+        if (identifiers.length !== 1) continue;
+        usingNamespaces = [...usingNamespaces, identifiers[0].text];
+      }
+    }
 
-          // Generate wrapper function for exception handling
-          const wrapperParams = func.params
-            .map(
-              param =>
-                `${param.name}: ${cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference)}`,
-            )
-            .join(", ");
-
-          // Find the globalThis parameter name (should be first parameter of type JSGlobalObject)
-          const globalThisParam = func.params.find(
-            p => p.type === "JSC::JSGlobalObject" || p.type === "JSGlobalObject",
-          );
-          const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
-
-          fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !JSC.JSValue {\n`);
-          fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
-          fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
-          fileBindings.push(`        defer scope.deinit();\n`);
-          fileBindings.push(`        const value = raw.${func.name}(${func.params.map(p => p.name).join(", ")});\n`);
-          fileBindings.push(`        scope.assertExceptionPresenceMatches(value == .zero);\n`);
-          fileBindings.push(`        return if (value == .zero) error.JSError else value;\n`);
-          fileBindings.push(`    }\n`);
-        } else if (func.isCheckException) {
-          outputRawBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
-          outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
-
-          // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION_SLOW
-          const wrapperParams = func.params
-            .map(
-              param =>
-                `${param.name}: ${cppTypeToZig(param.type, param.srcloc, param.isPointer, param.isConst, param.isReference)}`,
-            )
-            .join(", ");
-
-          // Find the globalThis parameter name (should be first parameter of type JSGlobalObject)
-          const globalThisParam = func.params.find(
-            p => p.type === "JSC::JSGlobalObject" || p.type === "JSGlobalObject",
-          );
-          const globalThisName = globalThisParam ? globalThisParam.name : "globalThis";
-
-          fileBindings.push(`    pub fn ${func.name}(${wrapperParams}) !${returnType} {\n`);
-          fileBindings.push(`        var scope: bun.JSC.CatchScope = undefined;\n`);
-          fileBindings.push(`        scope.init(${globalThisName}, @src(), .assertions_only);\n`);
-          fileBindings.push(`        defer scope.deinit();\n`);
-          fileBindings.push(`        const result = raw.${func.name}(${func.params.map(p => p.name).join(", ")});\n`);
-          fileBindings.push(`        try scope.returnIfException();\n`);
-          fileBindings.push(`        return result;\n`);
-          fileBindings.push(`    }\n`);
+    const hadShouldExport = !!shouldExport.value;
+    for (const child of node.children) {
+      if (child.type === "comment" && child.text.includes("@zig-export")) {
+        const text = child.text;
+        if (shouldExport.value) appendError(nodePosition(file, child), "multiple @zig-export comments in a row");
+        if (text.includes("checkexception_slow")) {
+          shouldExport.value = { tag: "check_slow", position: nodePosition(file, child) };
+        } else if (text.includes("zero_is_throw")) {
+          shouldExport.value = { tag: "zero_is_throw", position: nodePosition(file, child) };
+        } else if (text.includes("nothrow")) {
+          shouldExport.value = { tag: "nothrow", position: nodePosition(file, child) };
         } else {
-          // Regular ZIG_EXPORT function
-          fileBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
-          fileBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
+          appendError(nodePosition(file, child), "unknown @zig-export comment: " + text);
         }
-      });
-
-      fileBindings.push("\n");
-
-      outputBindings.push(fileBindings);
-
-      totalFunctions += functions.length;
-      const exportCount = functions.filter(f => !f.isExceptionJSValue && !f.isCheckException).length;
-      const exceptionCount = functions.filter(f => f.isExceptionJSValue).length;
-      const checkExceptionCount = functions.filter(f => f.isCheckException).length;
-
-      const parts: Zig[] = [];
-      if (exportCount > 0) parts.push(`${exportCount} ZIG_EXPORT`);
-      if (exceptionCount > 0) parts.push(`${exceptionCount} ZIG_EXPORT_ZEROISTHROW`);
-      if (checkExceptionCount > 0) parts.push(`${checkExceptionCount} ZIG_EXPORT_CHECKEXCEPTION_SLOW`);
-
-      if (parts.length > 0) {
-        console.log(`  - ${cppFile}: ${parts.join(", ")} functions`);
+      } else {
+        processNode(file, child, allFunctions, shouldExport, isInExternC, usingNamespaces);
+        if (shouldExport.value && !hadShouldExport) {
+          appendError(shouldExport.value.position, "unused @zig-export comment");
+          shouldExport.value = undefined;
+        }
       }
     }
-  } catch (error) {
-    console.error(`Error processing ${filePath}: ${error}`);
+    if (shouldExport.value && !hadShouldExport) {
+      appendError(shouldExport.value.position, "unused @zig-export comment");
+      shouldExport.value = undefined;
+    }
   }
 }
 
-const output: Zig = [
-  "//! Generated by cppbind.ts\n",
-  "\n",
-  'const std = @import("std");\n',
-  'const bun = @import("bun");\n',
-  "const JSC = bun.JSC;\n",
-  "const BunString = bun.String;\n",
-  "\n",
-  "pub const types = struct {\n",
-  outputTypes,
-  "};\n",
-  "\n",
-  outputRawBindings.length > 0 ? ["pub const raw = struct {\n", outputRawBindings, "};\n", "\n"] : [],
-  "pub const bindings = struct {\n",
-  outputBindings,
-  "};\n",
-];
+const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
+const sharedTypesLines = sharedTypesText.split("\n");
+let sharedTypesLine = 0;
+let sharedTypesColumn = 0;
+let sharedTypesColumnEnd = 0;
+for (const line of sharedTypesLines) {
+  sharedTypesLine++;
+  if (line.includes("export const sharedTypes")) {
+    sharedTypesColumn = line.indexOf("sharedTypes") + 1;
+    sharedTypesColumnEnd = sharedTypesColumn + "sharedTypes".length;
+    break;
+  }
+}
 
-const outputContent = output.flat(Infinity as 0).join("");
-await Bun.write(outputFile, outputContent);
+const errorsForTypes: Map<string, PositionedError> = new Map();
+function generateZigType(type: CppType) {
+  if (type.type === "pointer") {
+    return `[*c]${generateZigType(type.child)}`;
+  }
+  if (type.type === "reference") {
+    return `*${generateZigType(type.child)}`;
+  }
+  if (type.type === "named") {
+    const sharedType = sharedTypes[type.name];
+    if (sharedType) return sharedType;
+    const error = errorsForTypes.has(type.name)
+      ? errorsForTypes.get(type.name)!
+      : appendError(
+          {
+            file: "src/codegen/shared-types.ts",
+            start: { line: sharedTypesLine, column: sharedTypesColumn },
+            end: { line: sharedTypesLine, column: sharedTypesColumnEnd },
+          },
+          "sharedTypes is missing type: " + JSON.stringify(type.name),
+        );
+    errorsForTypes.set(type.name, error);
+    error.notes.push({ position: type.position, message: "used in exported function here" });
+    return "anyopaque";
+  }
+  assertNever(type);
+}
+function formatZigName(name: string): string {
+  if (name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return name;
+  return "@" + JSON.stringify(name);
+}
+function generateZigExtern(dstDir: string, fn: CppFn, result: string[]) {
+  const parameters = fn.parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type)}`).join(", ");
+  result.push(
+    `    /// Source: ${relative(dstDir, fn.position.file)}:${fn.position.start.line}:${fn.position.start.column}`,
+  );
+  result.push(`    extern fn ${formatZigName(fn.name)}(${parameters}) ${generateZigType(fn.returnType)};`);
+}
 
-console.log(`\nTotal functions found: ${totalFunctions}`);
-console.log(`Generated Zig bindings written to: ${outputFile}`);
+async function processFile(parser: Parser, file: string, allFunctions: CppFn[]) {
+  const sourceCode = await Bun.file(file).text();
+  if (!sourceCode.includes("@zig-export")) return;
+  const tree = parser.parse(sourceCode);
+
+  processNode(file, tree.rootNode, allFunctions, {}, false, []);
+}
+
+async function renderError(position: Srcloc, message: string, label: string, color: string) {
+  const fileContent = await Bun.file(position.file).text();
+  const lines = fileContent.split("\n");
+  const line = lines[position.start.line - 1];
+
+  console.error(
+    `\x1b[m${position.file}:${position.start.line}:${position.start.column}: ${color}\x1b[1m${label}:\x1b[m ${message}`,
+  );
+  const before = `${position.start.column} |   ${line.substring(0, position.start.column - 1)}`;
+  const after = line.substring(position.start.column - 1);
+  console.error(`\x1b[90m${before}${after}\x1b[m`);
+  let length = position.start.line === position.end.line ? position.end.column - position.start.column : 1;
+  console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
+}
+
+async function main() {
+  const parser = new Parser();
+  parser.setLanguage(Cpp as unknown as Language);
+
+  const rootDir = "src";
+  const dstDir = "build/debug/codegen";
+  const allSourceFiles = await readdir(rootDir, { recursive: true });
+  const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp")).map(file => join(rootDir, file));
+
+  const allFunctions: CppFn[] = [];
+  for (const file of allCppFiles) {
+    await processFile(parser, file, allFunctions);
+  }
+
+  const resultRaw: string[] = [];
+  const resultBindings: string[] = [];
+  for (const fn of allFunctions) {
+    generateZigExtern(dstDir, fn, resultRaw);
+  }
+
+  for (const message of errors) {
+    await renderError(message.position, message.message, "error", "\x1b[31m");
+    for (const note of message.notes) {
+      await renderError(note.position, note.message, "note", "\x1b[36m");
+    }
+    console.error();
+  }
+
+  const resultFile = await Bun.file(join(dstDir, "cpp.zig"));
+  await resultFile.write(
+    typeDeclarations +
+      "\nconst raw = struct {\n" +
+      resultRaw.join("\n") +
+      "\n};\npub const bindings = struct {\n" +
+      resultBindings.join("\n") +
+      "\n};\n",
+  );
+
+  console.log(
+    (errors.length > 0 ? "✗" : "✓") +
+      " cppbind.ts generated bindings to " +
+      join(dstDir, "cpp.zig") +
+      (errors.length > 0 ? " with errors" : ""),
+  );
+  if (errors.length > 0) {
+    process.exit(1);
+  }
+}
+
+// Run the main function
+await main();

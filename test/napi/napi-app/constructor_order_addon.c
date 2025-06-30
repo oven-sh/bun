@@ -15,13 +15,18 @@ static napi_module mod = {1,
                           {NULL}};
 
 void call_register(void) {
+  // should be called first by dlopen
   printf("call_register\n");
   napi_module_register(&mod);
 }
 
-void init_static(void) { printf("init_static\n"); }
+void init_static(void) {
+  // should be called second by dlopen
+  printf("init_static\n");
+ }
 
 napi_value register_cb(napi_env env, napi_value exports) {
+  // should be called third, after dlopen returns and bun runs the callback passed to napi_module_register
   (void)env;
   printf("register_cb\n");
   return exports;

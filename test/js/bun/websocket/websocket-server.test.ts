@@ -302,6 +302,52 @@ describe("Server", () => {
       }));
       */
     it.todo("perMessageDeflate");
+
+    test("error handler receives ws and error when message throws", done => ({
+      open(ws) {
+        ws.send("trigger");
+      },
+      message() {
+        throw new Error("Test error");
+      },
+      error(ws, err) {
+        expect(ws).toBeDefined();
+        expect(ws).toHaveProperty("data", { id: 0 });
+        expect(err).toBeDefined();
+        expect(err.message).toBe("Test error");
+        done();
+      },
+    }));
+
+    test("error handler receives ws and error when open throws", done => ({
+      open() {
+        throw new Error("Open error");
+      },
+      error(ws, err) {
+        expect(ws).toBeDefined();
+        expect(err).toBeDefined();
+        expect(err.message).toBe("Open error");
+        done();
+      },
+    }));
+
+    test("connection stays open after error if not closed", done => ({
+      open(ws) {
+        ws.send("error");
+        ws.send("success");
+      },
+      message(ws, msg) {
+        if (msg === "error") {
+          throw new Error("Handler error");
+        }
+        if (msg === "success") {
+          done();
+        }
+      },
+      error(ws) {
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+      },
+    }));
   });
 });
 describe("ServerWebSocket", () => {

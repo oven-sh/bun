@@ -56,9 +56,7 @@ export function loadAndResolvePluginsForServe(
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  let config: BuildConfigExt = {
-    experimentalCss: true,
-    experimentalHtml: true,
+  let config: Partial<BuildConfigExt> = {
     target: "browser",
     root: bunfig_folder,
   };

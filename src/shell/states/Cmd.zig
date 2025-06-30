@@ -51,6 +51,7 @@ state: union(enum) {
     exec,
     done,
     waiting_write_err,
+    cancelled,
 },
 
 /// If a subprocess and its stdout/stderr exit immediately, we queue
@@ -86,6 +87,13 @@ pub const ShellAsyncSubprocessDone = struct {
     pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
         log("{} runFromMainThread", .{this});
         defer this.deinit();
+        
+        // Check if the interpreter has been cancelled
+        if (this.cmd.base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            return;
+        }
+        
         this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
     }
 
@@ -334,6 +342,7 @@ pub fn next(this: *Cmd) Yield {
                 bun.shell.unreachableState("Cmd.next", "exec");
             },
             .done => unreachable,
+            .cancelled => return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE),
         }
     }
 
@@ -697,35 +706,57 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
 pub fn cancel(this: *Cmd) Yield {
     log("Cmd(0x{x}) cancel", .{@intFromPtr(this)});
     
-    // If already done, nothing to do
-    if (this.state == .done) {
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
         return .suspended;
     }
     
-    // Set state to indicate cancellation
-    this.state = .done;
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .idle => {
+            // Nothing to clean up in idle state
+        },
+        .expanding_assigns => |*assigns| {
+            // Cancel the assigns expansion
+            _ = assigns.cancel();
+        },
+        .expanding_redirect => |*redirect| {
+            // Cancel the expansion
+            _ = redirect.expansion.cancel();
+        },
+        .expanding_args => |*args| {
+            // Cancel the expansion
+            _ = args.expansion.cancel();
+        },
+        .exec => {
+            // Cancel the underlying execution
+            switch (this.exec) {
+                .none => {},
+                .subproc => |*subproc| {
+                    // Try to kill the subprocess with SIGTERM
+                    _ = subproc.child.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
+                },
+                .bltn => |*builtin| {
+                    // Call cancel on the builtin
+                    builtin.cancel();
+                },
+            }
+        },
+        .waiting_write_err => {
+            // Cancel any pending IO chunks
+            if (this.io.stdout == .fd) {
+                this.io.stdout.fd.writer.cancelChunks(this);
+            }
+            if (this.io.stderr == .fd) {
+                this.io.stderr.fd.writer.cancelChunks(this);
+            }
+        },
+        .done, .cancelled => {},
+    }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     this.exit_code = bun.shell.interpret.CANCELLED_EXIT_CODE;
-    
-    // Cancel the underlying execution
-    switch (this.exec) {
-        .none => {},
-        .subproc => |*subproc| {
-            // Try to kill the subprocess with SIGTERM
-            _ = subproc.child.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
-        },
-        .bltn => |*builtin| {
-            // Call cancel on the builtin
-            builtin.cancel();
-        },
-    }
-    
-    // Cancel any pending IO chunks
-    if (this.io.stdout == .fd) {
-        this.io.stdout.fd.writer.cancelChunks(this);
-    }
-    if (this.io.stderr == .fd) {
-        this.io.stderr.fd.writer.cancelChunks(this);
-    }
     
     return .suspended;
 }

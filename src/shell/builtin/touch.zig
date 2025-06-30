@@ -213,6 +213,14 @@ pub const ShellTouchTask = struct {
 
     pub fn runFromMainThread(this: *@This()) void {
         debug("{} runFromJS", .{this});
+        
+        // Check if the interpreter has been cancelled
+        if (this.touch.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            this.deinit();
+            return;
+        }
+        
         this.touch.onShellTouchTaskDone(this);
     }
 

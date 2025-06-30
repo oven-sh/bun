@@ -13,6 +13,7 @@ state: union(enum) {
     exec,
     wait_write_err,
     done,
+    cancelled,
 } = .idle,
 redirection_file: std.ArrayList(u8),
 exit_code: ExitCode = 0,
@@ -123,6 +124,7 @@ pub fn next(this: *Subshell) Yield {
             },
             .wait_write_err, .exec => return .suspended,
             .done => @panic("This should not be possible."),
+            .cancelled => return .suspended,
         }
     }
 
@@ -173,13 +175,38 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
 pub fn cancel(this: *Subshell) Yield {
     log("Subshell(0x{x}) cancel", .{@intFromPtr(this)});
     
-    // Cancel any IO chunks
-    if (this.io.stdout == .fd) {
-        this.io.stdout.fd.writer.cancelChunks(this);
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
+        return .suspended;
     }
-    if (this.io.stderr == .fd) {
-        this.io.stderr.fd.writer.cancelChunks(this);
+    
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .idle => {
+            // Nothing to clean up in idle state
+        },
+        .expanding_redirect => |*redirect| {
+            // Cancel the expansion
+            _ = redirect.expansion.cancel();
+        },
+        .exec => {
+            // The Script child is running, it will be cancelled by the parent
+            // when it receives the cancellation
+        },
+        .wait_write_err => {
+            // Cancel any pending IO chunks
+            if (this.io.stdout == .fd) {
+                this.io.stdout.fd.writer.cancelChunks(this);
+            }
+            if (this.io.stderr == .fd) {
+                this.io.stderr.fd.writer.cancelChunks(this);
+            }
+        },
+        .done, .cancelled => {},
     }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     
     // Report cancellation to parent
     return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);

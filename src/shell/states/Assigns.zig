@@ -14,6 +14,7 @@ state: union(enum) {
     },
     err: bun.shell.ShellErr,
     done,
+    cancelled,
 },
 ctx: AssignCtx,
 owned: bool = true,
@@ -116,6 +117,7 @@ pub fn next(this: *Assigns) Yield {
             },
             .done => unreachable,
             .err => return this.parent.childDone(this, 1),
+            .cancelled => return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE),
         }
     }
 
@@ -124,6 +126,31 @@ pub fn next(this: *Assigns) Yield {
 
 pub fn cancel(this: *Assigns) Yield {
     log("Assigns(0x{x}) cancel", .{@intFromPtr(this)});
+    
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
+        return .suspended;
+    }
+    
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .idle => {
+            // Nothing to clean up in idle state
+        },
+        .expanding => |*expanding| {
+            // Cancel the expansion
+            _ = expanding.expansion.cancel();
+            // Clean up the result buffer
+            expanding.current_expansion_result.clearAndFree();
+        },
+        .err => {
+            // Already in error state
+        },
+        .done, .cancelled => {},
+    }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     
     // Report cancellation to parent
     return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);

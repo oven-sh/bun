@@ -55,6 +55,12 @@ pub const ShellMvCheckTargetTask = struct {
     }
 
     pub fn runFromMainThread(this: *@This()) void {
+        // Check if the interpreter has been cancelled
+        if (this.mv.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            return;
+        }
+        
         this.mv.checkTargetTaskDone(this);
     }
 
@@ -158,6 +164,12 @@ pub const ShellMvBatchedTask = struct {
     }
 
     pub fn runFromMainThread(this: *@This()) void {
+        // Check if the interpreter has been cancelled
+        if (this.mv.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            return;
+        }
+        
         this.mv.batchedMoveTaskDone(this);
     }
 

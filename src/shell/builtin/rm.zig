@@ -524,6 +524,14 @@ pub const ShellRmTask = struct {
 
         pub fn runFromMainThread(this: *DirTask) void {
             debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
+            
+            // Check if the interpreter has been cancelled
+            if (this.task_manager.rm.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+                // Don't process the result if cancelled
+                this.deinit();
+                return;
+            }
+            
             this.task_manager.rm.writeVerbose(this).run();
         }
 
@@ -1167,11 +1175,18 @@ pub const ShellRmTask = struct {
     }
 
     pub fn runFromMainThread(this: *ShellRmTask) void {
+        // Check if the interpreter has been cancelled
+        if (this.rm.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            this.deinit();
+            return;
+        }
+        
         this.rm.onShellRmTaskDone(this);
     }
 
     pub fn runFromMainThreadMini(this: *ShellRmTask, _: *void) void {
-        this.rm.onShellRmTaskDone(this);
+        this.runFromMainThread();
     }
 
     pub fn deinit(this: *ShellRmTask) void {

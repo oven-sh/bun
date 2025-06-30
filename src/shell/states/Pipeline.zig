@@ -21,6 +21,7 @@ state: union(enum) {
     done: struct {
         exit_code: ExitCode = 0,
     },
+    cancelled,
 } = .{ .starting_cmds = .{ .idx = 0 } },
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -188,6 +189,7 @@ pub fn next(this: *Pipeline) Yield {
         .pending => shell.unreachableState("Pipeline.next", "pending"),
         .waiting_write_err => shell.unreachableState("Pipeline.next", "waiting_write_err"),
         .done => return this.parent.childDone(this, this.state.done.exit_code),
+        .cancelled => return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE),
     }
 }
 
@@ -263,36 +265,70 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
 pub fn cancel(this: *Pipeline) Yield {
     log("Pipeline(0x{x}) cancel", .{@intFromPtr(this)});
     
-    // If already done, nothing to do
-    if (this.state == .done) {
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
         return .suspended;
     }
     
-    // Set state to done with cancelled exit code
-    this.state = .{ .done = .{ .exit_code = bun.shell.interpret.CANCELLED_EXIT_CODE } };
-    
-    // Close all pipes to unblock any processes stuck on I/O
-    if (this.pipes) |pipes| {
-        for (pipes) |*pipe| {
-            closefd(pipe[0]);
-            closefd(pipe[1]);
-        }
-    }
-    
-    // Cancel all running commands
-    if (this.cmds) |cmds| {
-        for (cmds) |*cmd_or_result| {
-            switch (cmd_or_result.*) {
-                .cmd => |cmd| {
-                    // Cancel the command
-                    _ = cmd.call("cancel", .{}, Yield);
-                },
-                .result => {
-                    // Already finished, nothing to do
-                },
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .starting_cmds => {
+            // We're still starting commands, need to clean up what we've started
+            // Close all pipes to unblock any processes stuck on I/O
+            if (this.pipes) |pipes| {
+                for (pipes) |*pipe| {
+                    closefd(pipe[0]);
+                    closefd(pipe[1]);
+                }
             }
-        }
+            
+            // Cancel all commands that have been started
+            if (this.cmds) |cmds| {
+                for (cmds[0..this.state.starting_cmds.idx]) |*cmd_or_result| {
+                    switch (cmd_or_result.*) {
+                        .cmd => |cmd| {
+                            // Cancel the command
+                            _ = cmd.call("cancel", .{}, Yield);
+                        },
+                        .result => {
+                            // Already finished, nothing to do
+                        },
+                    }
+                }
+            }
+        },
+        .pending => {
+            // All commands have been started, close pipes and cancel all commands
+            if (this.pipes) |pipes| {
+                for (pipes) |*pipe| {
+                    closefd(pipe[0]);
+                    closefd(pipe[1]);
+                }
+            }
+            
+            if (this.cmds) |cmds| {
+                for (cmds) |*cmd_or_result| {
+                    switch (cmd_or_result.*) {
+                        .cmd => |cmd| {
+                            // Cancel the command
+                            _ = cmd.call("cancel", .{}, Yield);
+                        },
+                        .result => {
+                            // Already finished, nothing to do
+                        },
+                    }
+                }
+            }
+        },
+        .waiting_write_err => {
+            // Cancel any pending write operations
+            // The IO writer chunks will be cancelled when we set the state
+        },
+        .done, .cancelled => {},
     }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     
     return .suspended;
 }

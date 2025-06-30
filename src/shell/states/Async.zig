@@ -165,6 +165,13 @@ pub fn actuallyDeinit(this: *Async) void {
 }
 
 pub fn runFromMainThread(this: *Async) void {
+    // Check if the interpreter has been cancelled
+    if (this.base.interpreter.is_cancelled.load(.monotonic)) {
+        // Don't process if cancelled
+        this.actuallyDeinit();
+        return;
+    }
+    
     this.next().run();
 }
 

@@ -419,6 +419,14 @@ pub const ShellCpTask = struct {
 
     pub fn runFromMainThread(this: *ShellCpTask) void {
         debug("runFromMainThread", .{});
+        
+        // Check if the interpreter has been cancelled
+        if (this.cp.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            this.deinit();
+            return;
+        }
+        
         this.cp.onShellCpTaskDone(this);
     }
 

@@ -20,6 +20,7 @@ state: union(enum) {
     glob,
     done,
     err: bun.shell.ShellErr,
+    cancelled,
 },
 child_state: union(enum) {
     idle,
@@ -149,26 +150,41 @@ pub fn init(
 pub fn cancel(this: *Expansion) Yield {
     log("Expansion(0x{x}) cancel", .{@intFromPtr(this)});
     
-    // If a command substitution is running, cancel the child Script
-    if (this.child_state == .cmd_subst) {
-        _ = this.child_state.cmd_subst.cmd.cancel();
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
+        return .suspended;
     }
     
-    // Clean up state
-    if (this.current_out.items.len > 0) {
-        switch (this.out) {
-            .array_of_ptr => {
-                for (this.current_out.items) |item| {
-                    _ = item; // Unused, we're cancelling
-                }
-            },
-            .array_of_slice => |buf| {
-                _ = buf; // Unused, we're cancelling
-            },
-            else => {},
-        }
-        this.current_out.clearAndFree();
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .normal => {
+            // If a command substitution is running, cancel it
+            if (this.child_state == .cmd_subst) {
+                _ = this.child_state.cmd_subst.cmd.cancel();
+            }
+            // Clean up current output buffer
+            this.current_out.clearAndFree();
+        },
+        .braces => {
+            // Clean up any brace expansion state
+            this.current_out.clearAndFree();
+        },
+        .glob => {
+            // Cancel glob walk if in progress
+            if (this.child_state == .glob) {
+                this.child_state.glob.walker.deinit(true);
+            }
+            this.current_out.clearAndFree();
+        },
+        .err => {
+            // Already in error state, just clean up
+            this.current_out.clearAndFree();
+        },
+        .done, .cancelled => {},
     }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     
     // Report cancellation to parent
     return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);
@@ -299,6 +315,7 @@ pub fn next(this: *Expansion) Yield {
                 return this.transitionToGlobState();
             },
             .done, .err => unreachable,
+            .cancelled => return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE),
         }
     }
 
@@ -844,6 +861,15 @@ pub const ShellGlobTask = struct {
 
     pub fn runFromMainThread(this: *This) void {
         debug("runFromJS", .{});
+        
+        // Check if the interpreter has been cancelled
+        if (this.expansion.base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            this.ref.unref(this.event_loop);
+            this.deinit();
+            return;
+        }
+        
         this.expansion.onGlobWalkDone(this).run();
         this.ref.unref(this.event_loop);
     }

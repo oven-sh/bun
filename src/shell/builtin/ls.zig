@@ -416,6 +416,14 @@ pub const ShellLsTask = struct {
 
     pub fn runFromMainThread(this: *@This()) void {
         debug("runFromMainThread", .{});
+        
+        // Check if the interpreter has been cancelled
+        if (this.ls.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            this.deinit();
+            return;
+        }
+        
         this.ls.onShellLsTaskDone(this);
     }
 

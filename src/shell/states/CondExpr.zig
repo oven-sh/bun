@@ -19,6 +19,7 @@ state: union(enum) {
     },
     waiting_write_err,
     done,
+    cancelled,
 } = .idle,
 args: std.ArrayList([:0]const u8),
 
@@ -35,6 +36,13 @@ pub const ShellCondExprStatTask = struct {
 
     pub fn runFromMainThread(this: *ShellCondExprStatTask) void {
         defer this.deinit();
+        
+        // Check if the interpreter has been cancelled
+        if (this.condexpr.base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process the result if cancelled
+            return;
+        }
+        
         const ret = this.result.?;
         this.result = null;
         this.condexpr.onStatTaskComplete(ret);
@@ -156,6 +164,7 @@ pub fn next(this: *CondExpr) Yield {
             },
             .waiting_write_err => return .suspended,
             .done => assert(false),
+            .cancelled => return .suspended,
         }
     }
 
@@ -213,13 +222,41 @@ fn doStat(this: *CondExpr) Yield {
 pub fn cancel(this: *CondExpr) Yield {
     log("CondExpr(0x{x}) cancel", .{@intFromPtr(this)});
     
-    // Cancel any IO chunks
-    if (this.io.stdout == .fd) {
-        this.io.stdout.fd.writer.cancelChunks(this);
+    // If already done or cancelled, nothing to do
+    if (this.state == .done or this.state == .cancelled) {
+        return .suspended;
     }
-    if (this.io.stderr == .fd) {
-        this.io.stderr.fd.writer.cancelChunks(this);
+    
+    // Handle cancellation based on current state
+    switch (this.state) {
+        .idle => {
+            // Nothing to clean up in idle state
+        },
+        .expanding_args => |*args| {
+            // Cancel the expansion
+            _ = args.expansion.cancel();
+        },
+        .waiting_stat => {
+            // Stat task is running in thread pool, can't cancel it directly
+            // It will check cancellation when it completes
+        },
+        .stat_complete => {
+            // Already have stat result, just need to clean up
+        },
+        .waiting_write_err => {
+            // Cancel any pending IO chunks
+            if (this.io.stdout == .fd) {
+                this.io.stdout.fd.writer.cancelChunks(this);
+            }
+            if (this.io.stderr == .fd) {
+                this.io.stderr.fd.writer.cancelChunks(this);
+            }
+        },
+        .done, .cancelled => {},
     }
+    
+    // Set state to cancelled
+    this.state = .cancelled;
     
     // Report cancellation to parent
     return this.parent.childDone(this, bun.shell.interpret.CANCELLED_EXIT_CODE);

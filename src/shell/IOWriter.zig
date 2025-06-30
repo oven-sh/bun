@@ -819,7 +819,10 @@ pub const AsyncDeinitWriter = struct {
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        this.writer().deinitOnMainThread();
+        const iowriter = this.writer();
+        // Always deinitialize the writer, even if cancelled
+        // This is a cleanup task that must run
+        iowriter.deinitOnMainThread();
     }
 
     pub fn runFromMainThreadMini(this: *@This(), _: *void) void {

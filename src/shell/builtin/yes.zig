@@ -81,6 +81,12 @@ pub const YesTask = struct {
     pub fn runFromMainThread(this: *@This()) void {
         const yes: *Yes = @fieldParentPtr("task", this);
 
+        // Check if the interpreter has been cancelled
+        if (yes.bltn().parentCmd().base.interpreter.is_cancelled.load(.monotonic)) {
+            // Don't process if cancelled
+            return;
+        }
+
         // Check if we should stop
         if (yes.state == .done or yes.state == .err) {
             return;

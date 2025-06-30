@@ -37,6 +37,35 @@ interface BundlerPlugin {
 // Extra types
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
+
+// Local fallback typings. Replace with real bun-types once the package resolution is fixed.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type BunPlugin = {
+  name: string;
+  setup: (builder: any) => void | Promise<void>;
+};
+
+type PluginBuilder = any;
+
+interface PluginConstraints {
+  filter: RegExp;
+  namespace?: string;
+}
+
+type OnLoadCallback = (...args: any[]) => unknown;
+type OnResolveCallback = (...args: any[]) => unknown;
+
+type AnyFunction = (...args: any[]) => any;
+
+interface BuildConfig {
+  target?: string;
+  root?: string;
+  plugins?: BunPlugin[];
+  entryPoints?: string[];
+  entrypoints?: string[];
+  minify?: boolean | { identifiers?: boolean; syntax?: boolean; whitespace?: boolean };
+}
+
 interface BuildConfigExt extends BuildConfig {
   /** esbuild-style alias */
   entryPoints?: string[];
@@ -45,6 +74,7 @@ interface BuildConfigExt extends BuildConfig {
   /** Non-null plugin list */
   plugins: BunPlugin[];
 }
+
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;
   onEnd: AnyFunction;
@@ -55,8 +85,6 @@ interface PluginBuilderExt extends PluginBuilder {
   // we set this to an empty object
   esbuild: any;
 }
-
-type AnyFunction = (...args: any[]) => any;
 
 /**
  * Used by Bun.serve() to resolve and load plugins.
@@ -144,10 +172,7 @@ export function runSetupFunction(
   function validate(
     filterObject: PluginConstraints,
     callback: OnLoadCallback | OnResolveCallback | unknown,
-    map:
-      | Map<string, [RegExp, OnLoadCallback][]>
-      | Map<string, [RegExp, OnResolveCallback][]>
-      | Map<string, any[]>,
+    map: Map<string, any[]>,
     symbol?: string,
     external?: unknown,
   ): void {

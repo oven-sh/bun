@@ -113,7 +113,7 @@
         },
         {
             "target_name": "constructor_order_addon",
-            "sources": ["constructor_order_addon.c"],
+            "sources": ["constructor_order_addon.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
             "libraries": [],
             "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],

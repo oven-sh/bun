@@ -652,18 +652,15 @@ pub const LinkerContext = struct {
 
         const sources = c.parse_graph.input_files.items(.source);
         const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
+        const input_source_maps = c.parse_graph.ast.items(.input_sourcemap);
 
-        // Entries in `results` do not 1:1 map to source files, the mapping
-        // is actually many to one, where a source file can have multiple chunks
-        // in the sourcemap.
-        //
-        // This hashmap is going to map:
-        //    `source_index` (per compilation) in a chunk
-        //   -->
-        //    Which source index in the generated sourcemap, referred to
-        //    as the "mapping source index" within this function to be distinct.
+        // Map from "intermediate" source_index -> base index in the final sources array
         var source_id_map = std.AutoArrayHashMap(u32, i32).init(worker.allocator);
         defer source_id_map.deinit();
+
+        // Collect the JSON-encoded strings we will emit in "sourcesContent"
+        var sources_content_values = std.ArrayList([]const u8).init(worker.allocator);
+        defer sources_content_values.deinit();
 
         const source_indices = results.items(.source_index);
 
@@ -672,41 +669,71 @@ pub const LinkerContext = struct {
             \\  "version": 3,
             \\  "sources": [
         );
-        if (source_indices.len > 0) {
-            {
-                const index = source_indices[0];
-                var path = sources[index].path;
-                try source_id_map.putNoClobber(index, 0);
 
+        var next_mapping_source_index: i32 = 0;
+        var is_first_source = true;
+
+        for (source_indices) |src_index| {
+            const gop = try source_id_map.getOrPut(src_index);
+            if (gop.found_existing) continue; // already processed this file
+
+            // Determine base index for this file in the aggregated sources array
+            gop.value_ptr.* = next_mapping_source_index;
+
+            // Check if the AST for this file had an input sourcemap
+            if (input_source_maps[src_index]) |sm_ptr| {
+                const sm = sm_ptr;
+
+                // Resolve the list of source names from the nested sourcemap
+                if (sm.external_source_names.len > 0) {
+                    // Use every external source name verbatim
+                    for (sm.external_source_names) |name| {
+                        if (!is_first_source) j.pushStatic(", ");
+                        var qb = try MutableString.init(worker.allocator, name.len + 2);
+                        qb = try js_printer.quoteForJSON(name, qb, false);
+                        j.pushStatic(qb.list.items);
+
+                        try sources_content_values.append("null");
+
+                        next_mapping_source_index += 1;
+                        is_first_source = false;
+                    }
+                } else {
+                    // No external names recorded – fall back to the original file name
+                    var path = sources[src_index].path;
+                    if (path.isFile()) {
+                        const rel = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                        path.pretty = rel;
+                    }
+
+                    if (!is_first_source) j.pushStatic(", ");
+                    var qb = try MutableString.init(worker.allocator, path.pretty.len + 2);
+                    qb = try js_printer.quoteForJSON(path.pretty, qb, false);
+                    j.pushStatic(qb.list.items);
+
+                    try sources_content_values.append("null");
+
+                    next_mapping_source_index += 1;
+                    is_first_source = false;
+                }
+            } else {
+                // No nested map – use the file's own path
+                var path = sources[src_index].path;
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
-                    path.pretty = rel_path;
+                    const rel = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    path.pretty = rel;
                 }
 
-                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
-            }
+                if (!is_first_source) j.pushStatic(", ");
+                var qb = try MutableString.init(worker.allocator, path.pretty.len + 2);
+                qb = try js_printer.quoteForJSON(path.pretty, qb, false);
+                j.pushStatic(qb.list.items);
 
-            var next_mapping_source_index: i32 = 1;
-            for (source_indices[1..]) |index| {
-                const gop = try source_id_map.getOrPut(index);
-                if (gop.found_existing) continue;
+                // Re-use the already-quoted contents we have for this source file
+                try sources_content_values.append(quoted_source_map_contents[src_index]);
 
-                gop.value_ptr.* = next_mapping_source_index;
                 next_mapping_source_index += 1;
-
-                var path = sources[index].path;
-
-                if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
-                    path.pretty = rel_path;
-                }
-
-                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
-                quote_buf.appendAssumeCapacity(", ");
-                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.pushStatic(quote_buf.list.items); // freed by arena
+                is_first_source = false;
             }
         }
 
@@ -715,16 +742,16 @@ pub const LinkerContext = struct {
             \\  "sourcesContent": [
         );
 
-        const source_indices_for_contents = source_id_map.keys();
-        if (source_indices_for_contents.len > 0) {
+        if (sources_content_values.items.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
+            j.pushStatic(sources_content_values.items[0]);
 
-            for (source_indices_for_contents[1..]) |index| {
+            for (sources_content_values.items[1..]) |val| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index]);
+                j.pushStatic(val);
             }
         }
+
         j.pushStatic(
             \\
             \\  ],

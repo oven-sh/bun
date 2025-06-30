@@ -353,7 +353,6 @@ fn addDependenciesToSet(
 
 // @sortImports
 
-const DirInfo = @import("../../resolver/dir_info.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -363,7 +362,6 @@ const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
 const string = bun.string;
-const strings = bun.strings;
 const Command = bun.CLI.Command;
 
 const Semver = bun.Semver;

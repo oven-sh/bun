@@ -674,7 +674,7 @@ fn NewPrinter(
 
         has_printed_bundled_import_statement: bool = false,
 
-        renamer: rename.Renamer,
+        renamer: bun.renamer.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
         source_map_builder: SourceMap.Chunk.Builder = undefined,
 
@@ -5807,6 +5807,8 @@ pub fn printAst(
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
+    printer.source_map_builder.input_source_map = ast.input_sourcemap;
+
     defer {
         if (comptime generate_source_map) {
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
@@ -6002,6 +6004,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    printer.source_map_builder.input_source_map = ast.input_sourcemap;
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -6083,6 +6086,7 @@ pub fn printCommonJS(
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
+    printer.source_map_builder.input_source_map = tree.input_sourcemap;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();

@@ -174,6 +174,22 @@ pub fn LayerBlockRule(comptime R: type) type {
             try dest.writeChar('}');
         }
 
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
+            // Save the current layer context
+            const saved_layer_name = context.handler_context.layer_name;
+            
+            // Set the layer context for rules within this layer
+            context.handler_context.setLayerContext(this.name);
+            
+            // Minify the rules within the layer
+            try this.rules.minify(context, parent_is_unused);
+            
+            // Restore the previous layer context
+            context.handler_context.layer_name = saved_layer_name;
+            
+            return this.rules.v.items.len == 0;
+        }
+
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
             return css.implementDeepClone(@This(), this, allocator);
         }

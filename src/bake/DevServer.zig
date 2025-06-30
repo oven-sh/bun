@@ -1565,6 +1565,7 @@ fn onFrameworkRequestWithBundle(
     } else url.byteSlice();
 
     // Create params JSValue
+    // TODO: lazy structure caching since we are making these objects a lot
     const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
         const global = dev.vm.global;
         const params_array = params.params.slice();

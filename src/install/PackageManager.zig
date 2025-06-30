@@ -507,14 +507,18 @@ pub fn init(
         var this_cwd: string = original_cwd;
         var created_package_json = false;
         const child_json = child: {
-            // if we are only doing `bun install` (no args), then we can open as read_only
-            // in all other cases we will need to write new data later.
-            // this is relevant because it allows us to succeed an install if package.json
+            // if we are only doing `bun install` (no args), `bun publish`, or `bun pack`, 
+            // then we can open as read_only. In all other cases we will need to write new data later.
+            // this is relevant because it allows us to succeed an install/publish/pack if package.json
             // is readable but not writable
             //
             // probably wont matter as if package.json isn't writable, it's likely that
             // the underlying directory and node_modules isn't either.
-            const need_write = subcommand != .install or cli.positionals.len > 1;
+            const need_write = switch (subcommand) {
+                .install => cli.positionals.len > 1, // bun install with packages to add needs write
+                .publish, .pack => false, // bun publish and bun pack only need to read package.json
+                else => true, // all other commands need write access
+            };
 
             while (true) {
                 var package_json_path_buf: bun.PathBuffer = undefined;

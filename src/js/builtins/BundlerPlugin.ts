@@ -1,14 +1,33 @@
 /// <reference types="bun-types" />
 
-import type {} from "../../../packages/bun-types";
+/*
+ * bun-types publishes only global declarations.  Importing the package as a
+ * module produces "is not a module" errors, so we just reference it above to
+ * pull the ambient names into scope.
+ */
 
-// Globals provided by Bun at runtime but unknown to TypeScript DOM libs
+// Globals used by this built-in that aren't part of the DOM lib
+// but are provided at runtime by Bun.  Declaring them here silences TS.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const Bun: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const process: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare function require(id: string): any;
+declare var process: any;
+declare function require(path: string): any;
+
+type AnyFunction = (...args: any[]) => any;
+
+interface BuildConfigExt extends BuildConfig {
+  /** project root passed from Bun */
+  root?: string;
+  /** compilation target */
+  target?: "browser" | "bun" | "node";
+  /** plugin array is never null inside bundler */
+  plugins: BunPlugin[];
+  /** esbuild-style alias */
+  entryPoints?: string[];
+  /** legacy lowercase alias */
+  entrypoints?: string[];
+  /** minify options forwarded from build api */
+  minify?: BuildConfig["minify"];
+}
 
 /**
  * @see `JSBundlerPlugin.h`
@@ -46,17 +65,6 @@ type MinifyObj = {
 // Node-style globals used inside built-in modules
 declare function require(id: string): any;
 declare const process: { platform: string } & any;
-
-type AnyFunction = (...args: any[]) => any;
-
-interface BuildConfigExt {
-  root?: string;
-  target?: "browser" | "bun" | "node";
-  plugins: BunPlugin[];
-  entryPoints?: string[];
-  entrypoints?: string[];
-  minify?: boolean | MinifyObj;
-}
 
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;
@@ -155,7 +163,7 @@ export function runSetupFunction(
   function validate(
     filterObject: PluginConstraints,
     callback: OnLoadCallback | OnResolveCallback | unknown,
-    map: Map<string, any[]>,
+    map: Map<string, any>,
     symbol?: string,
     external?: unknown,
   ): void {

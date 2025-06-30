@@ -99,7 +99,7 @@ test("add", () => {
 add(5, 10);
     `,
   });
-  
+
   // Use --coverage-reporter without --coverage
   const result = Bun.spawnSync([bunExe(), "test", "--coverage-reporter", "text"], {
     cwd: dir,
@@ -108,15 +108,15 @@ add(5, 10);
     },
     stdio: [null, null, "pipe"],
   });
-  
+
   const stderr = result.stderr.toString("utf-8");
-  
+
   // Check that coverage reporting actually happened
   expect(stderr).toContain("File");
   expect(stderr).toContain("% Funcs");
   expect(stderr).toContain("% Lines");
   expect(stderr).toContain("demo.test.ts");
-  
+
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });

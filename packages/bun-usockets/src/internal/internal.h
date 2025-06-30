@@ -421,10 +421,9 @@ struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     size_t pathlen, int options, int socket_ext_size);
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
-                                 const char *data, int length, int msg_more);
+                                 const char *data, int length);
 int us_internal_ssl_socket_raw_write(us_internal_ssl_socket_r s,
-                                     const char *data, int length,
-                                     int msg_more);
+                                     const char *data, int length);
 
 void us_internal_ssl_socket_timeout(us_internal_ssl_socket_r s,
                                     unsigned int seconds);

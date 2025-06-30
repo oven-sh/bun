@@ -586,10 +586,10 @@ pub const PostgresSQLQuery = struct {
         const bigint = js_bigint.isBoolean() and js_bigint.asBoolean();
         const simple = js_simple.isBoolean() and js_simple.asBoolean();
         if (simple) {
-            if (values.getLength(globalThis) > 0) {
+            if (try values.getLength(globalThis) > 0) {
                 return globalThis.throwInvalidArguments("simple query cannot have parameters", .{});
             }
-            if (query.getLength(globalThis) >= std.math.maxInt(i32)) {
+            if (try query.getLength(globalThis) >= std.math.maxInt(i32)) {
                 return globalThis.throwInvalidArguments("query is too long", .{});
             }
         }
@@ -641,7 +641,7 @@ pub const PostgresSQLQuery = struct {
             return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");
         }
 
-        const mode = js_mode.coerce(i32, globalObject);
+        const mode = try js_mode.coerce(i32, globalObject);
         this.flags.result_mode = std.meta.intToEnum(PostgresSQLQueryResultMode, mode) catch {
             return globalObject.throwInvalidArgumentTypeValue("mode", "Number", js_mode);
         };
@@ -866,7 +866,7 @@ pub const PostgresRequest = struct {
         // of parameters.
         try writer.short(len);
 
-        var iter = QueryBindingIterator.init(values_array, columns_value, globalObject);
+        var iter = try QueryBindingIterator.init(values_array, columns_value, globalObject);
         for (0..len) |i| {
             const parameter_field = parameter_fields[i];
             const is_custom_type = std.math.maxInt(short) < parameter_field;
@@ -874,7 +874,7 @@ pub const PostgresRequest = struct {
 
             const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
                 iter.to(@truncate(i));
-                if (iter.next()) |value| {
+                if (try iter.next()) |value| {
                     break :brk value.isString();
                 }
                 if (iter.anyFailed()) {
@@ -905,7 +905,7 @@ pub const PostgresRequest = struct {
         debug("Bind: {} ({d} args)", .{ bun.fmt.quote(name), len });
         iter.to(0);
         var i: usize = 0;
-        while (iter.next()) |value| : (i += 1) {
+        while (try iter.next()) |value| : (i += 1) {
             const tag: types.Tag = brk: {
                 if (i >= len) {
                     // parameter in array but not in parameter_fields
@@ -972,12 +972,12 @@ pub const PostgresRequest = struct {
                 },
                 .int4 => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .int4_array => {
                     const l = try writer.length();
-                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(try value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
                 .float8 => {
@@ -1543,7 +1543,7 @@ pub const PostgresSQLConnection = struct {
     pub fn flushData(this: *PostgresSQLConnection) void {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return;
-        const wrote = this.socket.write(chunk, false);
+        const wrote = this.socket.write(chunk);
         if (wrote > 0) {
             SocketMonitor.write(chunk[0..@intCast(wrote)]);
             this.write_buffer.consume(@intCast(wrote));
@@ -1623,7 +1623,7 @@ pub const PostgresSQLConnection = struct {
             0x04, 0xD2, 0x16, 0x2F, // SSL request code
         };
 
-        const written = socket.write(ssl_request[offset..], false);
+        const written = socket.write(ssl_request[offset..]);
         if (written > 0) {
             this.tls_status = .{
                 .message_sent = offset + @as(u8, @intCast(written)),
@@ -1801,7 +1801,7 @@ pub const PostgresSQLConnection = struct {
         const arguments = callframe.arguments_old(15).slice();
         const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
-        const port = arguments[1].coerce(i32, globalObject);
+        const port = try arguments[1].coerce(i32, globalObject);
 
         const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();
@@ -3050,9 +3050,9 @@ const QueryBindingIterator = union(enum) {
     array: JSC.JSArrayIterator,
     objects: ObjectIterator,
 
-    pub fn init(array: JSValue, columns: JSValue, globalObject: *JSC.JSGlobalObject) QueryBindingIterator {
+    pub fn init(array: JSValue, columns: JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!QueryBindingIterator {
         if (columns.isEmptyOrUndefinedOrNull()) {
-            return .{ .array = JSC.JSArrayIterator.init(array, globalObject) };
+            return .{ .array = try JSC.JSArrayIterator.init(array, globalObject) };
         }
 
         return .{
@@ -3060,8 +3060,8 @@ const QueryBindingIterator = union(enum) {
                 .array = array,
                 .columns = columns,
                 .globalObject = globalObject,
-                .columns_count = columns.getLength(globalObject),
-                .array_length = array.getLength(globalObject),
+                .columns_count = try columns.getLength(globalObject),
+                .array_length = try array.getLength(globalObject),
             },
         };
     }
@@ -3089,12 +3089,12 @@ const QueryBindingIterator = union(enum) {
             const globalObject = this.globalObject;
 
             if (this.current_row == .zero) {
-                this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i));
-                if (this.current_row.isEmptyOrUndefinedOrNull()) {
-                    if (!globalObject.hasException())
-                        return globalObject.throw("Expected a row to be returned at index {d}", .{row_i}) catch null;
+                this.current_row = JSC.JSObject.getIndex(this.array, globalObject, @intCast(row_i)) catch {
                     this.any_failed = true;
                     return null;
+                };
+                if (this.current_row.isEmptyOrUndefinedOrNull()) {
+                    return globalObject.throw("Expected a row to be returned at index {d}", .{row_i}) catch null;
                 }
             }
 
@@ -3106,12 +3106,12 @@ const QueryBindingIterator = union(enum) {
                 }
             }
 
-            const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i));
-            if (property == .zero or property.isUndefined()) {
-                if (!globalObject.hasException())
-                    return globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i }) catch null;
+            const property = JSC.JSObject.getIndex(this.columns, globalObject, @intCast(cell_i)) catch {
                 this.any_failed = true;
                 return null;
+            };
+            if (property.isUndefined()) {
+                return globalObject.throw("Expected a column at index {d} in row {d}", .{ cell_i, row_i }) catch null;
             }
 
             const value = this.current_row.getOwnByValue(globalObject, property);
@@ -3125,7 +3125,7 @@ const QueryBindingIterator = union(enum) {
         }
     };
 
-    pub fn next(this: *QueryBindingIterator) ?JSC.JSValue {
+    pub fn next(this: *QueryBindingIterator) bun.JSError!?JSC.JSValue {
         return switch (this.*) {
             .array => |*iter| iter.next(),
             .objects => |*iter| iter.next(),
@@ -3213,9 +3213,9 @@ const Signature = struct {
             name.deinit();
         }
 
-        var iter = QueryBindingIterator.init(array_value, columns, globalObject);
+        var iter = try QueryBindingIterator.init(array_value, columns, globalObject);
 
-        while (iter.next()) |value| {
+        while (try iter.next()) |value| {
             if (value.isEmptyOrUndefinedOrNull()) {
                 // Allow postgres to decide the type
                 try fields.append(0);

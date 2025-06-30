@@ -118,7 +118,121 @@ pub const AnyRoute = union(enum) {
         }
     }
 
-    pub fn htmlRouteFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext) ?AnyRoute {
+    fn bundledHTMLManifestItemFromJS(argument: JSC.JSValue, index_path: []const u8, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
+        if (!argument.isObject()) return null;
+
+        const path_string = try bun.String.fromJS(try argument.get(init_ctx.global, "path") orelse return null, init_ctx.global);
+        defer path_string.deref();
+        var path = JSC.Node.PathOrFileDescriptor{ .path = try JSC.Node.PathLike.fromBunString(init_ctx.global, path_string, false, bun.default_allocator) };
+        defer path.deinit();
+
+        // Construct the route by stripping paths above the root.
+        //
+        //    "./index-abc.js" -> "/index-abc.js"
+        //    "../index-abc.js" -> "/index-abc.js"
+        //    "/index-abc.js" -> "/index-abc.js"
+        //    "index-abc.js" -> "/index-abc.js"
+        //
+        const cwd = if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(path.path.slice()))
+            bun.StandaloneModuleGraph.targetBasePublicPath(bun.Environment.os, "root/")
+        else
+            bun.fs.FileSystem.instance.top_level_dir;
+
+        const abs_path = bun.fs.FileSystem.instance.abs(&[_][]const u8{path.path.slice()});
+        var relative_path = bun.fs.FileSystem.instance.relative(cwd, abs_path);
+
+        if (strings.hasPrefixComptime(relative_path, "./")) {
+            relative_path = relative_path[2..];
+        } else if (strings.hasPrefixComptime(relative_path, "../")) {
+            while (strings.hasPrefixComptime(relative_path, "../")) {
+                relative_path = relative_path[3..];
+            }
+        }
+        const is_index_route = bun.strings.eql(path.path.slice(), index_path);
+        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        defer builder.deinit();
+        if (!strings.hasPrefixComptime(relative_path, "/")) {
+            try builder.append('/');
+        }
+
+        try builder.appendSlice(relative_path);
+
+        const fetch_headers = JSC.WebCore.FetchHeaders.createFromJS(init_ctx.global, try argument.get(init_ctx.global, "headers") orelse return null);
+        defer if (fetch_headers) |headers| headers.deref();
+        if (init_ctx.global.hasException()) return error.JSError;
+
+        const route = try fromOptions(init_ctx.global, fetch_headers, &path);
+
+        if (is_index_route) {
+            return route;
+        }
+
+        var methods = HTTP.Method.Optional{ .method = .initEmpty() };
+        methods.insert(.GET);
+        methods.insert(.HEAD);
+
+        try init_ctx.user_routes.append(.{
+            .path = try builder.toOwnedSlice(),
+            .route = route,
+            .method = methods,
+        });
+        return null;
+    }
+
+    /// This is the JS representation of an HTMLImportManifest
+    ///
+    /// See ./src/bundler/HTMLImportManifest.zig
+    fn bundledHTMLManifestFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
+        if (!argument.isObject()) return null;
+
+        const index = try argument.getOptional(init_ctx.global, "index", ZigString.Slice) orelse return null;
+        defer index.deinit();
+
+        const files = try argument.getArray(init_ctx.global, "files") orelse return null;
+        var iter = try files.arrayIterator(init_ctx.global);
+        var html_route: ?AnyRoute = null;
+        while (try iter.next()) |file_entry| {
+            if (try bundledHTMLManifestItemFromJS(file_entry, index.slice(), init_ctx)) |item| {
+                html_route = item;
+            }
+        }
+
+        return html_route;
+    }
+
+    pub fn fromOptions(global: *JSC.JSGlobalObject, headers: ?*JSC.WebCore.FetchHeaders, path: *JSC.Node.PathOrFileDescriptor) !AnyRoute {
+        // The file/static route doesn't ref it.
+        var blob = Blob.findOrCreateFileFromPath(path, global, false);
+
+        if (blob.needsToReadFile()) {
+            // Throw a more helpful error upfront if the file does not exist.
+            //
+            // In production, you do NOT want to find out that all the assets
+            // are 404'ing when the user goes to the route. You want to find
+            // that out immediately so that the health check on startup fails
+            // and the process exits with a non-zero status code.
+            if (blob.store) |store| {
+                if (store.getPath()) |store_path| {
+                    switch (bun.sys.existsAtType(bun.FD.cwd(), store_path)) {
+                        .result => |file_type| {
+                            if (file_type == .directory) {
+                                return global.throwInvalidArguments("Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                            }
+                        },
+                        .err => {
+                            return global.throwInvalidArguments("Bundled file {} not found. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                        },
+                    }
+                }
+            }
+
+            return AnyRoute{ .file = FileRoute.initFromBlob(blob, .{ .server = null, .headers = headers }) };
+        }
+
+        return AnyRoute{ .static = StaticRoute.initFromAnyBlob(&.{ .Blob = blob }, .{ .server = null, .headers = headers }) };
+    }
+
+    pub fn htmlRouteFromJS(argument: JSC.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
             const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
             if (!entry.found_existing) {
@@ -129,6 +243,10 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (try bundledHTMLManifestFromJS(argument, init_ctx)) |html_route| {
+            return html_route;
+        }
+
         return null;
     }
 
@@ -136,7 +254,9 @@ pub const AnyRoute = union(enum) {
         arena: std.heap.ArenaAllocator,
         dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
         js_string_allocations: bun.bake.StringRefList,
+        global: *JSC.JSGlobalObject,
         framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
+        user_routes: *std.ArrayList(ServerConfig.StaticRouteEntry),
     };
 
     pub fn fromJS(
@@ -145,7 +265,7 @@ pub const AnyRoute = union(enum) {
         argument: JSC.JSValue,
         init_ctx: *ServerInitContext,
     ) bun.JSError!?AnyRoute {
-        if (AnyRoute.htmlRouteFromJS(argument, init_ctx)) |html_route| {
+        if (try AnyRoute.htmlRouteFromJS(argument, init_ctx)) |html_route| {
             return html_route;
         }
 
@@ -1695,7 +1815,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJSC(globalThis);
+                                error_instance = sys_err.toJS(globalThis);
                             },
                         }
                     },
@@ -1802,7 +1922,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            const result: JSValue = onNodeHTTPRequestFn(
+            const result: JSValue = bun.jsc.fromJSHostCall(globalThis, @src(), onNodeHTTPRequestFn, .{
                 @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
@@ -1815,7 +1935,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp,
                 upgrade_ctx,
                 &node_http_response,
-            );
+            }) catch globalThis.takeException(error.JSError);
 
             const HTTPResult = union(enum) {
                 rejection: JSC.JSValue,
@@ -2791,7 +2911,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 const error_code_value = JSValue.jsNumber(error_code);
-                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet);
+                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet) catch return; // TODO: properly propagate exception upwards
                 const loop = this.globalThis.bunVM().eventLoop();
                 loop.enter();
                 defer loop.exit();

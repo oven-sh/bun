@@ -1016,7 +1016,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedVa
         return JSValue::encode(mock->getCalls());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
 {
@@ -1025,7 +1025,7 @@ extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encoded
         return JSValue::encode(mock->getReturnValues());
     }
 
-    return JSValue::encode({});
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

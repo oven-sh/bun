@@ -108,7 +108,7 @@ pub const GetAddrInfo = struct {
                     if (!flags.isNumber())
                         return error.InvalidFlags;
 
-                    options.flags = flags.coerce(std.c.AI, globalObject);
+                    options.flags = try flags.coerce(std.c.AI, globalObject);
 
                     // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
                     const filter = ~@as(u32, @bitCast(std.c.AI{ .ALL = true, .ADDRCONFIG = true, .V4MAPPED = true }));
@@ -146,7 +146,7 @@ pub const GetAddrInfo = struct {
                 return .unspecified;
 
             if (value.isNumber()) {
-                return switch (value.coerce(i32, globalObject)) {
+                return switch (try value.coerce(i32, globalObject)) {
                     0 => .unspecified,
                     4 => .inet,
                     6 => .inet6,

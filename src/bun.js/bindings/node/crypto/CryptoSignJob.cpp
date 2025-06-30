@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
 
     if (!ctx->m_verifyResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsBoolean(*ctx->m_verifyResult));
@@ -60,7 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
 
     if (!ctx->m_signResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto& result = ctx->m_signResult.value();

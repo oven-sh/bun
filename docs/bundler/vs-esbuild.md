@@ -125,7 +125,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--target`
 - n/a
-- No supported. Bun's bundler performs no syntactic down-leveling at this time.
+- Not supported. Bun's bundler performs no syntactic down-leveling at this time.
 
 ---
 

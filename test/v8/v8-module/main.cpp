@@ -275,8 +275,8 @@ void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(set_status.IsJust());
   LOG_EXPR(set_status.FromJust());
 
-  // Local<Value> retval = obj->Get(context, key).ToLocalChecked();
-  // LOG_EXPR(describe(isolate, retval));
+  Local<Value> retval = obj->Get(context, key).ToLocalChecked();
+  LOG_EXPR(describe(isolate, retval));
 
   return ok(info);
 }

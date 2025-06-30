@@ -183,8 +183,7 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
   describe("Array", () => {
-    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-    it.skip("can create an array from a C array of Locals", async () => {
+    it("can create an array from a C array of Locals", async () => {
       await checkSameOutput("test_v8_array_new", []);
     });
   });

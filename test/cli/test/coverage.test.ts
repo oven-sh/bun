@@ -77,3 +77,54 @@ test("coverage excludes node_modules directory", () => {
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });
+
+test("--coverage-reporter automatically enables coverage", () => {
+  const dir = tempDirWithFiles("cov", {
+    "math.ts": `
+export function add(a: number, b: number): number {
+  return a + b;
+}
+
+export function multiply(a: number, b: number): number {
+  return a * b;
+}
+
+export function uncoveredFunction(): number {
+  return 42;
+}
+`,
+    "math.test.ts": `
+import { test, expect } from "bun:test";
+import { add, multiply } from "./math";
+
+test("math > add", () => {
+  expect(add(2, 3)).toBe(5);
+});
+
+test("math > multiply", () => {
+  expect(multiply(2, 3)).toBe(6);
+});
+`,
+  });
+  
+  // Run with only --coverage-reporter (no --coverage flag)
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage-reporter", "text"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  
+  const stderr = result.stderr.toString("utf-8");
+  
+  // Verify coverage output is generated
+  expect(stderr).toContain("All files");
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("% Lines");
+  expect(stderr).toContain("Uncovered Line #s");
+  expect(stderr).toContain("math.ts");
+  
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+});

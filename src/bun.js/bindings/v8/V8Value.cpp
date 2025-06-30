@@ -71,6 +71,13 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
     return Nothing<uint32_t>();
 }
 
+bool Value::StrictEquals(Local<Value> that) const
+{
+    JSC::JSValue thisValue = localToJSValue();
+    JSC::JSValue thatValue = that->localToJSValue();
+    return JSC::JSValue::strictEqual(nullptr, thisValue, thatValue);
+}
+
 bool Value::FullIsTrue() const
 {
     return localToJSValue().isTrue();

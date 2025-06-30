@@ -507,7 +507,7 @@ pub fn init(
         var this_cwd: string = original_cwd;
         var created_package_json = false;
         const child_json = child: {
-            // if we are only doing `bun install` (no args), `bun publish`, or `bun pack`, 
+            // if we are only doing `bun install` (no args), `bun publish`, or `bun pack`,
             // then we can open as read_only. In all other cases we will need to write new data later.
             // this is relevant because it allows us to succeed an install/publish/pack if package.json
             // is readable but not writable

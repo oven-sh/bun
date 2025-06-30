@@ -1,4 +1,5 @@
 import * as lezerCpp from "@lezer/cpp";
+import type { SyntaxNodeRef } from "@lezer/common";
 import { readdir } from "fs/promises";
 import { join } from "path";
 import { sharedTypes } from "./shared-types";
@@ -16,25 +17,34 @@ const outputRawBindings: Zig[] = [];
 const outputBindings: Zig[] = [];
 const addedTypes: Set<string> = new Set();
 
-interface FunctionParam {
-  type: string;
+type CppType =
+  | {
+      type: "pointer";
+      child: CppType;
+      const: boolean;
+    }
+  | {
+      type: "reference";
+      child: CppType;
+      const: boolean;
+    }
+  | {
+      type: "type";
+      name: string;
+    };
+type FunctionParam = {
+  type: CppType;
   name: string;
-  isPointer: boolean;
-  isConst: boolean;
-  isReference: boolean;
   srcloc: Srcloc;
-}
+};
 
 interface FunctionSignature {
   name: string;
-  returnType: string;
+  returnType: CppType;
   params: FunctionParam[];
-  isExternC: boolean;
-  sourceFile: string;
   isExceptionJSValue: boolean;
   isCheckException: boolean;
-  line: number;
-  column: number;
+  srcloc: Srcloc;
 }
 
 type Srcloc = {
@@ -49,6 +59,10 @@ type ReportedError = {
 };
 
 const allErrors: ReportedError[] = [];
+
+function getCppType(node: SyntaxNodeRef) {
+  throw new Error("TODO: implement");
+}
 
 // Helper to convert C++ type to Zig type
 function cppTypeToZig(
@@ -176,96 +190,16 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
           name: "",
           returnType: "void",
           params: [],
-          isExternC: true,
-          sourceFile: filePath,
+          srcloc: {
+            file: filePath,
+            line,
+            column,
+          },
           isExceptionJSValue: exceptionType === "ZeroIsThrow",
           isCheckException: exceptionType === "CheckException",
-          line: line,
-          column: column,
         };
 
-        // Parse the function
-        let cursor = functionNode.firstChild;
-        let returnTypeNodes: any[] = [];
-
-        while (cursor) {
-          if (cursor.type.name === "FunctionDeclarator") {
-            // Parse function name and parameters
-            let declaratorCursor = cursor.firstChild;
-
-            while (declaratorCursor) {
-              if (declaratorCursor.type.name === "Identifier") {
-                signature.name = input.slice(declaratorCursor.from, declaratorCursor.to);
-              } else if (declaratorCursor.type.name === "ParameterList") {
-                // Parse parameters
-                let paramCursor = declaratorCursor.firstChild;
-
-                while (paramCursor) {
-                  if (paramCursor.type.name === "ParameterDeclaration") {
-                    let param: FunctionParam = {
-                      type: "",
-                      name: "",
-                      isPointer: false,
-                      isConst: false,
-                      isReference: false,
-                      srcloc: {
-                        file: filePath,
-                        line,
-                        column,
-                      },
-                    };
-
-                    // Parse parameter
-                    const paramText = input.slice(paramCursor.from, paramCursor.to);
-
-                    // Simple parsing - this could be more sophisticated
-                    param.isConst = paramText.includes("const ");
-                    param.isPointer = paramText.includes("*");
-                    param.isReference = paramText.includes("&");
-
-                    // Extract type and name (simplified)
-                    let cleanParam = paramText
-                      .replace(/const\s+/g, "")
-                      .replace(/\*/g, "")
-                      .replace(/&/g, "")
-                      .trim();
-                    const parts = cleanParam.split(/\s+/);
-
-                    if (parts.length >= 2) {
-                      param.type = parts.slice(0, -1).join(" ");
-                      param.name = parts[parts.length - 1];
-                    } else if (parts.length === 1) {
-                      param.type = parts[0];
-                      param.name = `arg${signature.params.length}`;
-                    }
-
-                    if (param.type) {
-                      signature.params.push(param);
-                    }
-                  }
-                  paramCursor = paramCursor.nextSibling;
-                }
-              }
-              declaratorCursor = declaratorCursor.nextSibling;
-            }
-          } else if (cursor.type.name !== "CompoundStatement") {
-            // Collect return type nodes
-            returnTypeNodes.push(cursor);
-          }
-          cursor = cursor.nextSibling;
-        }
-
-        // Parse return type
-        if (returnTypeNodes.length > 0) {
-          const returnTypeText = returnTypeNodes
-            .map(node => input.slice(node.from, node.to))
-            .join(" ")
-            .trim();
-
-          if (returnTypeText && returnTypeText !== "void") {
-            signature.returnType = returnTypeText;
-          }
-        }
+        // TODO: parse the argument types and return type
 
         // Add the function to our list
         if (signature.name) {

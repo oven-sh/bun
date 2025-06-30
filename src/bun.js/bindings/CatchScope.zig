@@ -1,5 +1,6 @@
 //! Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
-//! JSC's exception checking and Zig's. Make sure not to move it after creation. For instance:
+//! JSC's exception checking and Zig's. Make sure not to move it after creation. For instance, for
+//! a function which returns an empty JSValue for exceptions:
 //!
 //! ```zig
 //! // Declare a CatchScope surrounding the call that may throw an exception
@@ -42,9 +43,10 @@ pub fn init(
     global: *jsc.JSGlobalObject,
     src: std.builtin.SourceLocation,
     /// If not enabled, the scope does nothing (it never has an exception).
-    /// If you need to do something different when there is an exception, leave enabled.
-    /// If you are only using the scope to prove you handle exceptions correctly, you can pass
-    /// `Environment.allow_assert` as `enabled`.
+    /// If you need to use the CatchScope to check for exceptions, leave enabled.
+    /// If you are only using the scope to prove you handle exceptions correctly, because you have
+    /// a different way (like a return value) to check for exceptions, pass `.assertions_only` and
+    /// call `assertExceptionPresenceMatches`
     comptime enable_condition: Enable,
 ) void {
     const enabled = comptime switch (enable_condition) {

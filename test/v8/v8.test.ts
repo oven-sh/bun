@@ -177,9 +177,21 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
+  describe("Value", () => {
+    it("can compare values using StrictEquals", async () => {
+      await checkSameOutput("test_v8_strict_equals", []);
+    });
+  });
+
   describe("Object", () => {
     it("can create an object and set properties", async () => {
       await checkSameOutput("test_v8_object", []);
+    });
+    it("can get properties by key using Object::Get(context, key)", async () => {
+      await checkSameOutput("test_v8_object_get_by_key", []);
+    });
+    it("can get array elements by index using Object::Get(context, index)", async () => {
+      await checkSameOutput("test_v8_object_get_by_index", []);
     });
   });
   describe("Array", () => {

@@ -26,6 +26,8 @@ exports_ref: Ref = Ref.None,
 module_ref: Ref = Ref.None,
 wrapper_ref: Ref = Ref.None,
 require_ref: Ref = Ref.None,
+/// Parsed input sourcemap from onLoad plugin, if provided
+input_sourcemap: ?*bun.sourcemap.ParsedSourceMap = null,
 top_level_await_keyword: logger.Range,
 tla_check: TlaCheck = .{},
 

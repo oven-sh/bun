@@ -1234,6 +1234,24 @@ fn runWithSourceCode(
         ),
     };
 
+    // Parse and attach plugin-provided sourcemap, if present
+    if (task.input_sourcemap) |smap_bytes| {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const parse_result = bun.sourcemap.parseJSON(
+            allocator,
+            arena.allocator(),
+            smap_bytes,
+            .{ .mappings_only = {} },
+        ) catch null;
+
+        if (parse_result) |pr| {
+            if (pr.map) |map_ptr| {
+                ast.input_sourcemap = map_ptr;
+            }
+        }
+    }
+
     ast.target = target;
     if (ast.parts.len <= 1 and ast.css == null and (task.loader == null or task.loader.? != .html)) {
         task.side_effects = .no_side_effects__empty_ast;

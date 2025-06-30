@@ -12,6 +12,7 @@ interface BundlerPlugin {
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
+    sourcemap: string | null,
   ): void;
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
@@ -458,7 +459,7 @@ export function runOnLoadPlugins(
   var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
-      this.onLoadAsync(internalID, null, null);
+      this.onLoadAsync(internalID, null, null, null);
       return null;
     }
 
@@ -490,7 +491,7 @@ export function runOnLoadPlugins(
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as any;
+        var { contents, loader = defaultLoader, sourcemap } = result as any;
         if ((loader as any) === "object") {
           if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
@@ -516,12 +517,12 @@ export function runOnLoadPlugins(
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader, sourcemap ?? null);
         return null;
       }
     }
 
-    this.onLoadAsync(internalID, null, null);
+    this.onLoadAsync(internalID, null, null, null);
     return null;
   })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 

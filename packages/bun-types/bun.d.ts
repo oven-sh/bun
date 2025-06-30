@@ -794,7 +794,6 @@ declare module "bun" {
     path?: string | undefined;
     syscall?: string | undefined;
   }
-
   /**
    * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
    *
@@ -1419,7 +1418,6 @@ declare module "bun" {
    * @param sql Function to execute SQL queries within the savepoint
    */
   type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
-
   /**
    * Main SQL client interface providing connection and transaction management
    */
@@ -2129,7 +2127,6 @@ declare module "bun" {
     path: string;
     kind: ImportKind;
   }
-
   /**
    * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
    */
@@ -2853,7 +2850,6 @@ declare module "bun" {
    * @link https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState
    */
   type WebSocketReadyState = 0 | 1 | 2 | 3;
-
   /**
    * A fast WebSocket designed for servers.
    *
@@ -3654,7 +3650,6 @@ declare module "bun" {
     errno?: number;
     syscall?: string;
   }
-
   /**
    * Options for TLS connections
    */
@@ -4437,7 +4432,6 @@ declare module "bun" {
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
    */
   function allocUnsafe(size: number): Uint8Array;
-
   /**
    * Options for `Bun.inspect`
    */
@@ -5222,7 +5216,6 @@ declare module "bun" {
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */
   function sleepSync(ms: number): void;
-
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
@@ -5549,6 +5542,10 @@ declare module "bun" {
      * The source code of the module
      */
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
+    /**
+     * Optional sourcemap (as a string) for the generated contents.
+     */
+    sourcemap?: string;
     /**
      * The loader to use for this file
      *
@@ -5883,7 +5880,6 @@ declare module "bun" {
   interface HTMLBundle {
     index: string;
   }
-
   /**
    * Represents a TCP or TLS socket connection used for network communication.
    * This interface provides methods for reading, writing, managing the connection state,
@@ -6625,7 +6621,6 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
-
   /**
    * @category HTTP & Networking
    */
@@ -7247,7 +7242,7 @@ declare module "bun" {
        *
        * @example
        * ```ts
-       * const subprocess = Bun.spawn(["echo", "hello"]);
+       * const subprocess = Bun.spawn({ cmd: ["echo", "hello"] });
        * ```
        */
       cmd: string[]; // to support dynamically constructed commands
@@ -7365,7 +7360,7 @@ declare module "bun" {
   type WritableSubprocess = Subprocess<"pipe", any, any>;
   /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
   type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
-  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
+  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar */
   type NullSubprocess = Subprocess<
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined,

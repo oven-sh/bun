@@ -1,5 +1,14 @@
 /// <reference types="bun-types" />
 
+import type {
+  BuildConfig,
+  BunPlugin,
+  PluginBuilder,
+  PluginConstraints,
+  OnLoadCallback,
+  OnResolveCallback,
+} from "bun-types";
+
 /**
  * @see `JSBundlerPlugin.h`
  */
@@ -31,9 +40,9 @@ type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
 interface BuildConfigExt extends BuildConfig {
   /** esbuild-style alias */
   entryPoints?: string[];
-  /** lowercase alias kept for back-compat */
+  /** legacy lowercase alias */
   entrypoints?: string[];
-  /** plugins is guaranteed non-null inside our helpers */
+  /** Non-null plugin list */
   plugins: BunPlugin[];
 }
 interface PluginBuilderExt extends PluginBuilder {
@@ -47,6 +56,8 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
+type AnyFunction = (...args: any[]) => any;
+
 /**
  * Used by Bun.serve() to resolve and load plugins.
  */
@@ -57,11 +68,11 @@ export function loadAndResolvePluginsForServe(
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  const config = {
+  const config: BuildConfigExt = {
     root: bunfig_folder,
     target: "browser",
     plugins: [],
-  } as BuildConfigExt;
+  };
 
   class InvalidBundlerPluginError extends TypeError {
     pluginName: string;
@@ -132,8 +143,11 @@ export function runSetupFunction(
 
   function validate(
     filterObject: PluginConstraints,
-    callback: any,
-    map: any,
+    callback: OnLoadCallback | OnResolveCallback | unknown,
+    map:
+      | Map<string, [RegExp, OnLoadCallback][]>
+      | Map<string, [RegExp, OnResolveCallback][]>
+      | Map<string, any[]>,
     symbol?: string,
     external?: unknown,
   ): void {

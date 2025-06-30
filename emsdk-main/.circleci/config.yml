@@ -1,0 +1,354 @@
+version: 2.1
+
+orbs:
+  win: circleci/windows@5.0
+
+executors:
+  ubuntu:
+    docker:
+      - image: buildpack-deps:focal
+  mac_arm64:
+    environment:
+      EMSDK_NOTTY: "1"
+      # Without this, any `brew install` command will result in self-update of
+      # brew itself which takes more than 4 minutes.
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    macos:
+      xcode: "13.4.1"
+    resource_class: macos.m1.medium.gen1
+  linux_arm64:
+    machine:
+      image: ubuntu-2004:2023.07.1
+    resource_class: arm.medium
+
+commands:
+  setup-macos:
+    steps:
+      - checkout
+      - run:
+          name: Install CMake
+          command: brew install cmake
+  test-macos:
+    steps:
+      - run:
+          name: test.sh
+          command: test/test.sh
+      - run:
+          name: test.py
+          command: |
+            source emsdk_env.sh
+            test/test.py
+  test-bazel-linux:
+    steps:
+      - checkout
+      - run:
+          name: install bazelisk
+          command: |
+            wget https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64
+            chmod +x bazelisk-linux-amd64
+            mv bazelisk-linux-amd64 /usr/local/bin/bazel
+      - run: test/test_bazel.sh
+  test-bazel-mac:
+    steps:
+      - checkout
+      - run:
+          name: install bazelisk
+          command: |
+            brew install bazelisk
+      - run: test/test_bazel_mac.sh
+  test-bazel-windows:
+    steps:
+      - checkout
+      - run:
+          name: Download Bazelisk
+          shell: powershell.exe
+          command: |
+            $ProgressPreference = "SilentlyContinue"
+            Invoke-WebRequest -Uri https://github.com/bazelbuild/bazelisk/releases/download/v1.10.1/bazelisk-windows-amd64.exe -OutFile ( New-Item -Path "temp\bazel\bazel.exe" -Force )
+      - run:
+          name: Run Tests
+          shell: powershell.exe
+          command: |
+            $env:Path += ";C:\Python27amd64;$pwd\temp\bazel"
+            .\test\test_bazel.ps1
+
+jobs:
+  flake8:
+    executor: ubuntu
+    steps:
+      - checkout
+      - run:
+          name: install pip
+          command: |
+            apt-get update -q
+            apt-get install -q -y python3-pip
+      - run: python3 -m pip install --upgrade pip
+      - run: python3 -m pip install flake8==7.1.1
+      - run: python3 -m flake8 --show-source --statistics --extend-exclude=./scripts
+
+  test-linux:
+    executor: ubuntu
+    environment:
+      EMSDK_NOTTY: "1"
+      # This is needed because the old gcc-7 that is installed on debian/bionic
+      # generates warnings about unused variables when doing C++17
+      # destructuring:
+      # https://github.com/WebAssembly/binaryen/issues/4353
+      CXXFLAGS: "-Wno-unused-variable"
+      # I don't know why circleci VMs pretent to have 36 cores but its a lie.
+      EMSDK_NUM_CORES: "4"
+    steps:
+      - checkout
+      - run:
+          name: Install debian packages
+          command: apt-get update -q && apt-get install -q -y cmake build-essential openjdk-8-jre-headless ksh zsh
+      - run: test/test_node_path.sh
+      - run: test/test.sh
+      - run: test/test_source_env.sh
+      - run:
+          name: test.py
+          command: |
+            source emsdk_env.sh
+            test/test.py
+  test-linux-arm64:
+    executor: linux_arm64
+    steps:
+      - checkout
+      - run:
+          name: Install debian packages
+          command: sudo apt-get update -q && sudo apt-get install -q cmake build-essential openjdk-8-jre-headless
+      - run: test/test.sh
+  test-mac-arm64:
+    executor: mac_arm64
+    steps:
+      - setup-macos
+      - test-macos
+  test-windows:
+    executor:
+      name: win/server-2019
+      shell: bash.exe
+    environment:
+      # We need python installed before we can test anytyhing.
+      # There seems to be undocument copy of python installed here. Hopefully
+      # if this disappears there will be another way of getting a re-installed
+      # version.
+      PYTHON_BIN: "C:\\Python27amd64"
+      PYTHONUNBUFFERED: "1"
+      EMSDK_NOTTY: "1"
+    steps:
+      - checkout
+      - run:
+          name: Add python to bash path
+          command: echo "export PATH=\"$PATH:/c/python27amd64/\"" >> $BASH_ENV
+      - run:
+          name: Install latest
+          shell: cmd.exe
+          command: test\test.bat
+      - run:
+          name: test.py
+          command: |
+            source emsdk_env.sh
+            python test/test.py
+
+      - run:
+          name: flagless (process/shell) test
+          shell: powershell.exe
+          command: |
+            test/test_activation.ps1
+
+      - run:
+          name: --permanent test
+          shell: powershell.exe
+          command: |
+            $env:PERMANENT_FLAG="--permanent"
+            test/test_activation.ps1
+
+      - run:
+          name: --system test
+          shell: powershell.exe
+          command: |
+            $env:SYSTEM_FLAG="--system"
+            test/test_activation.ps1
+
+      - run:
+          name: Process/Shell PATH preservation test
+          shell: powershell.exe
+          command: |
+            test/test_path_preservation.ps1
+
+      - run:
+          name: User PATH preservation test
+          shell: powershell.exe
+          command: |
+            $env:PERMANENT_FLAG="--permanent"
+            test/test_path_preservation.ps1
+
+      - run:
+          name: System PATH preservation test
+          shell: powershell.exe
+          command: |
+            $env:SYSTEM_FLAG="--system"
+            test/test_path_preservation.ps1
+
+  build-docker-image-x64:
+    executor: ubuntu
+    steps:
+      - checkout
+      - run:
+          name: install docker
+          command: |
+            apt-get update -q 
+            apt-get install -q -y ca-certificates curl gnupg lsb-release
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update -q
+            apt-get install -q -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+      - setup_remote_docker
+      # Build the `latest` version of EMSDK as docker image
+      - run:
+          name: build
+          command: make -C ./docker version=latest build
+      - run:
+          name: test
+          command: make -C ./docker version=latest test
+
+  publish-docker-image-x64:
+    executor: ubuntu
+    steps:
+      - checkout
+      - run:
+          name: install docker
+          command: |
+            apt-get update -q 
+            apt-get install -q -y ca-certificates curl gnupg lsb-release
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update -q
+            apt-get install -q -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+      - setup_remote_docker
+      - run:
+          name: build
+          command: make -C ./docker version=${CIRCLE_TAG} build
+      - run:
+          name: test
+          command: make -C ./docker version=${CIRCLE_TAG} test
+      - run:
+          name: push image
+          command: |
+            docker login -u "$DOCKER_USER" -p "$DOCKER_PASS"
+            make -C ./docker version=${CIRCLE_TAG} alias=latest push
+
+  publish-docker-image-arm64:
+    executor: linux_arm64
+    steps:
+      - checkout
+      - run:
+          name: build
+          command: make -C ./docker version=${CIRCLE_TAG} build
+      - run:
+          name: test
+          command: make -C ./docker version=${CIRCLE_TAG} test
+      - run:
+          name: push image
+          command: |
+            docker login -u "$DOCKER_USER" -p "$DOCKER_PASS"
+            make -C ./docker version=${CIRCLE_TAG} alias=${CIRCLE_TAG}-arm64 only_alias=true push
+
+  test-bazel7-linux:
+    executor: ubuntu
+    environment:
+      USE_BAZEL_VERSION: "7.x"
+    steps:
+      - test-bazel-linux
+
+  test-bazel-latest-linux:
+    executor: ubuntu
+    steps:
+      - test-bazel-linux
+
+  test-bazel7-mac-arm64:
+    executor: mac_arm64
+    environment:
+      USE_BAZEL_VERSION: "7.x"
+    steps:
+      - test-bazel-mac
+
+  test-bazel-latest-mac-arm64:
+    executor: mac_arm64
+    steps:
+      - test-bazel-mac
+
+  test-bazel7-windows:
+    executor:
+      name: win/server-2019
+      shell: powershell.exe -ExecutionPolicy Bypass
+    environment:
+      PYTHONUNBUFFERED: "1"
+      EMSDK_NOTTY: "1"
+      # For some reason version resolution with "7.x" does not work on Windows,
+      # so we have to specify a full version.
+      USE_BAZEL_VERSION: "7.6.1"
+    steps:
+      - test-bazel-windows
+
+  test-bazel-latest-windows:
+    executor:
+      name: win/server-2019
+      shell: powershell.exe -ExecutionPolicy Bypass
+    environment:
+      PYTHONUNBUFFERED: "1"
+      EMSDK_NOTTY: "1"
+    steps:
+      - test-bazel-windows
+
+workflows:
+  flake8:
+    jobs:
+      - flake8
+  test-linux:
+    jobs:
+      - test-linux
+  test-linux-arm64:
+    jobs:
+      - test-linux-arm64
+  test-mac-arm64:
+    jobs:
+      - test-mac-arm64
+  test-windows:
+    jobs:
+      - test-windows
+  build-docker-image:
+    jobs:
+      - build-docker-image-x64
+      - publish-docker-image-x64:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /.*/
+      - publish-docker-image-arm64:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /.*/
+  test-bazel7-linux:
+    jobs:
+      - test-bazel7-linux
+  test-bazel-latest-linux:
+    jobs:
+      - test-bazel-latest-linux
+  test-bazel7-mac-arm64:
+    jobs:
+      - test-bazel7-mac-arm64
+  test-bazel-latest-mac-arm64:
+    jobs:
+      - test-bazel-latest-mac-arm64
+  test-bazel7-windows:
+    jobs:
+      - test-bazel7-windows
+  test-bazel-latest-windows:
+    jobs:
+      - test-bazel-latest-windows

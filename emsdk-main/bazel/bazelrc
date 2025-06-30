@@ -1,0 +1,2 @@
+build:wasm --incompatible_enable_cc_toolchain_resolution
+build:wasm --platforms=@emsdk//:platform_wasm

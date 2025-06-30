@@ -1,0 +1,61 @@
+load("@emsdk//emscripten_toolchain:wasm_rules.bzl", "wasm_cc_binary")
+
+_TEST_TARGETS = [
+    "long_command_line_file01",
+    "long_command_line_file02",
+    "long_command_line_file03",
+    "long_command_line_file04",
+    "long_command_line_file05",
+    "long_command_line_file06",
+    "long_command_line_file07",
+    "long_command_line_file08",
+    "long_command_line_file09",
+    "long_command_line_file10",
+    "long_command_line_file11",
+    "long_command_line_file12",
+    "long_command_line_file13",
+    "long_command_line_file14",
+    "long_command_line_file15",
+    "long_command_line_file16",
+    "long_command_line_file17",
+    "long_command_line_file18",
+    "long_command_line_file19",
+    "long_command_line_file20",
+]
+
+_TEST_TARGET_SUFFIXES = [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+]
+
+[cc_library(
+    name = "{}_{}".format(target, suffix),
+    hdrs = ["include/{}.hh".format(target)],
+    # stripping include prefix to create more flags passed to emcc
+    strip_include_prefix = "include",
+    srcs = ["{}.cc".format(target)],
+) for target in _TEST_TARGETS for suffix in _TEST_TARGET_SUFFIXES]
+
+cc_binary(
+    name = "long_command_line",
+    linkshared = True,
+    srcs = ["long_command_line.cc"],
+    deps = [":{}_{}".format(target, suffix) for target in _TEST_TARGETS for suffix in _TEST_TARGET_SUFFIXES],
+)
+
+wasm_cc_binary(
+    name = "long_command_line_wasm",
+    cc_target = ":long_command_line",
+    outputs = [
+        "long_command_line.js",
+        "long_command_line.wasm",
+    ],
+)

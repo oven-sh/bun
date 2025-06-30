@@ -1,7 +1,4 @@
 const std = @import("std");
-const bun = @import("bun");
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
 
 pub const Reader = struct {
     const Self = @This();
@@ -20,12 +17,12 @@ pub const Reader = struct {
     }
 
     pub fn read(this: *Self, count: usize) ![]u8 {
-        const read_count = @min(count, this.remain.len);
+        const read_count = @minimum(count, this.remain.len);
         if (read_count < count) {
             return error.EOF;
         }
 
-        const slice = this.remain[0..read_count];
+        var slice = this.remain[0..read_count];
 
         this.remain = this.remain[read_count..];
 
@@ -33,7 +30,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readAs(this: *Self, comptime T: type) !T {
-        if (!std.meta.hasUniqueRepresentation(T)) {
+        if (!std.meta.trait.hasUniqueRepresentation(T)) {
             @compileError(@typeName(T) ++ " must have unique representation.");
         }
 
@@ -75,8 +72,11 @@ pub const Reader = struct {
                 return std.mem.readIntSliceNative(T, this.read(length * @sizeOf(T)));
             },
             [:0]const u8, []const u8 => {
-                const array = try this.allocator.alloc(T, length);
-                for (array) |*a| a.* = try this.readArray(u8);
+                var i: u32 = 0;
+                var array = try this.allocator.alloc(T, length);
+                while (i < length) : (i += 1) {
+                    array[i] = try this.readArray(u8);
+                }
                 return array;
             },
             else => {
@@ -85,7 +85,7 @@ pub const Reader = struct {
                         switch (Struct.layout) {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
-                                const slice = try this.read(sizeof * length);
+                                var slice = try this.read(sizeof * length);
                                 return std.mem.bytesAsSlice(T, slice);
                             },
                             else => {},
@@ -93,13 +93,17 @@ pub const Reader = struct {
                     },
                     .Enum => |type_info| {
                         const enum_values = try this.read(length * @sizeOf(type_info.tag_type));
-                        return @as([*]T, @ptrCast(enum_values.ptr))[0..length];
+                        return @ptrCast([*]T, enum_values.ptr)[0..length];
                     },
                     else => {},
                 }
 
-                const array = try this.allocator.alloc(T, length);
-                for (array) |*v| v.* = try this.readValue(T);
+                var i: u32 = 0;
+                var array = try this.allocator.alloc(T, length);
+                while (i < length) : (i += 1) {
+                    array[i] = try this.readValue(T);
+                }
+
                 return array;
             },
         }
@@ -115,7 +119,7 @@ pub const Reader = struct {
     }
 
     pub inline fn readInt(this: *Self, comptime T: type) !T {
-        const slice = try this.read(@sizeOf(T));
+        var slice = try this.read(@sizeOf(T));
 
         return std.mem.readIntSliceNative(T, slice);
     }
@@ -152,7 +156,7 @@ pub const Reader = struct {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
                                 var slice = try this.read(sizeof);
-                                return @as(*align(1) T, @ptrCast(slice[0..sizeof])).*;
+                                return @ptrCast(*align(1) T, slice[0..sizeof]).*;
                             },
                             else => {},
                         }
@@ -197,7 +201,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub inline fn writeEnum(this: *Self, val: anytype) !void {
-            try this.writeInt(@intFromEnum(val));
+            try this.writeInt(@enumToInt(val));
         }
 
         pub fn writeValue(this: *Self, comptime SliceType: type, slice: SliceType) !void {
@@ -260,7 +264,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub fn writeArray(this: *Self, comptime T: type, slice: anytype) !void {
-            try this.writeInt(@as(u32, @truncate(slice.len)));
+            try this.writeInt(@truncate(u32, slice.len));
 
             switch (T) {
                 u8 => {
@@ -328,21 +332,48 @@ pub const FileWriter = Writer(std.fs.File);
 pub const Api = struct {
     pub const Loader = enum(u8) {
         _none,
+        /// jsx
         jsx,
+
+        /// js
         js,
+
+        /// ts
         ts,
+
+        /// tsx
         tsx,
+
+        /// css
         css,
+
+        /// file
         file,
+
+        /// json
         json,
+
+        /// toml
         toml,
+
+        /// wasm
         wasm,
+
+        /// napi
         napi,
+
+        /// base64
         base64,
+
+        /// dataurl
         dataurl,
+
+        /// text
         text,
+
+        /// sqlite
         sqlite,
-        html,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -426,7 +457,56 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
+    pub const StackFramePosition = packed struct {
+        /// source_offset
+        source_offset: i32 = 0,
+
+        /// line
+        line: i32 = 0,
+
+        /// line_start
+        line_start: i32 = 0,
+
+        /// line_stop
+        line_stop: i32 = 0,
+
+        /// column_start
+        column_start: i32 = 0,
+
+        /// column_stop
+        column_stop: i32 = 0,
+
+        /// expression_start
+        expression_start: i32 = 0,
+
+        /// expression_stop
+        expression_stop: i32 = 0,
+
+        pub fn decode(reader: anytype) anyerror!StackFramePosition {
+            var this = std.mem.zeroes(StackFramePosition);
+
+            this.source_offset = try reader.readValue(i32);
+            this.line = try reader.readValue(i32);
+            this.line_start = try reader.readValue(i32);
+            this.line_stop = try reader.readValue(i32);
+            this.column_start = try reader.readValue(i32);
+            this.column_stop = try reader.readValue(i32);
+            this.expression_start = try reader.readValue(i32);
+            this.expression_stop = try reader.readValue(i32);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.source_offset);
+            try writer.writeInt(this.line);
+            try writer.writeInt(this.line_start);
+            try writer.writeInt(this.line_stop);
+            try writer.writeInt(this.column_start);
+            try writer.writeInt(this.column_stop);
+            try writer.writeInt(this.expression_start);
+            try writer.writeInt(this.expression_stop);
+        }
+    };
 
     pub const SourceLine = struct {
         /// line
@@ -800,6 +880,9 @@ pub const Api = struct {
         /// import_source
         import_source: []const u8,
 
+        /// react_fast_refresh
+        react_fast_refresh: bool = false,
+
         pub fn decode(reader: anytype) anyerror!Jsx {
             var this = std.mem.zeroes(Jsx);
 
@@ -808,6 +891,7 @@ pub const Api = struct {
             this.fragment = try reader.readValue([]const u8);
             this.development = try reader.readValue(bool);
             this.import_source = try reader.readValue([]const u8);
+            this.react_fast_refresh = try reader.readValue(bool);
             return this;
         }
 
@@ -815,24 +899,18 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.factory), this.factory);
             try writer.writeEnum(this.runtime);
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
-            try writer.writeInt(@as(u8, @intFromBool(this.development)));
+            try writer.writeInt(@as(u8, @boolToInt(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
+            try writer.writeInt(@as(u8, @boolToInt(this.react_fast_refresh)));
         }
     };
 
-    /// Represents a slice stored within an externally stored buffer. Safe to serialize.
-    /// Must be an extern struct to match with `headers-handwritten.h`.
-    pub const StringPointer = extern struct {
+    pub const StringPointer = packed struct {
         /// offset
         offset: u32 = 0,
 
         /// length
         length: u32 = 0,
-
-        comptime {
-            bun.assert(@alignOf(StringPointer) == @alignOf(u32));
-            bun.assert(@sizeOf(StringPointer) == @sizeOf(u64));
-        }
 
         pub fn decode(reader: anytype) anyerror!StringPointer {
             var this = std.mem.zeroes(StringPointer);
@@ -845,10 +923,6 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.offset);
             try writer.writeInt(this.length);
-        }
-
-        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
-            return bytes[this.offset .. this.offset + this.length];
         }
     };
 
@@ -1095,7 +1169,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeEnum(this.kind);
             try writer.writeValue(@TypeOf(this.path), this.path);
-            try writer.writeInt(@as(u8, @intFromBool(this.dynamic)));
+            try writer.writeInt(@as(u8, @boolToInt(this.dynamic)));
         }
     };
 
@@ -1337,7 +1411,7 @@ pub const Api = struct {
             }
             if (this.development) |development| {
                 try writer.writeFieldID(5);
-                try writer.writeInt(@as(u8, @intFromBool(development)));
+                try writer.writeInt(@as(u8, @boolToInt(development)));
             }
             if (this.client_css_in_js) |client_css_in_js| {
                 try writer.writeFieldID(6);
@@ -1511,7 +1585,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeValue(@TypeOf(this.package), this.package);
             try writer.writeValue(@TypeOf(this.display_name), this.display_name);
-            try writer.writeInt(@as(u8, @intFromBool(this.development)));
+            try writer.writeInt(@as(u8, @boolToInt(this.development)));
             try writer.writeValue(@TypeOf(this.entry_points), this.entry_points);
             try writer.writeEnum(this.client_css_in_js);
             try writer.writeValue(@TypeOf(this.override_modules), this.override_modules);
@@ -1612,23 +1686,6 @@ pub const Api = struct {
         }
     };
 
-    pub const UnhandledRejections = enum(u8) {
-        strict = 0,
-        throw = 1,
-        warn = 2,
-        none = 3,
-        warn_with_error_code = 4,
-        bun = 5,
-
-        pub const map = bun.ComptimeStringMap(UnhandledRejections, .{
-            .{ "strict", .strict },
-            .{ "throw", .throw },
-            .{ "warn", .warn },
-            .{ "none", .none },
-            .{ "warn-with-error-code", .warn_with_error_code },
-        });
-    };
-
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -1643,12 +1700,10 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[:0]const u8 = null,
+        absolute_working_dir: ?[]const u8 = null,
 
         /// define
         define: ?StringMap = null,
-
-        drop: []const []const u8 = &.{},
 
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
@@ -1686,11 +1741,17 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
+        /// framework
+        framework: ?FrameworkConfig = null,
+
+        /// router
+        router: ?RouteConfig = null,
+
         /// no_summary
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: bool = false,
+        disable_hmr: ?bool = null,
 
         /// port
         port: ?u16 = null,
@@ -1700,36 +1761,6 @@ pub const Api = struct {
 
         /// source_map
         source_map: ?SourceMapMode = null,
-
-        /// conditions
-        conditions: []const []const u8,
-
-        /// packages
-        packages: ?PackagesMode = null,
-
-        /// ignore_dce_annotations
-        ignore_dce_annotations: bool,
-
-        /// e.g.:
-        /// [serve.static]
-        /// plugins = ["tailwindcss"]
-        serve_plugins: ?[]const []const u8 = null,
-        serve_minify_syntax: ?bool = null,
-        serve_minify_whitespace: ?bool = null,
-        serve_minify_identifiers: ?bool = null,
-        serve_env_behavior: DotEnvBehavior = ._none,
-        serve_env_prefix: ?[]const u8 = null,
-        serve_splitting: bool = false,
-        serve_public_path: ?[]const u8 = null,
-        serve_hmr: ?bool = null,
-        serve_define: ?StringMap = null,
-
-        // from --no-addons. null == true
-        allow_addons: ?bool = null,
-        /// from --unhandled-rejections, default is 'bun'
-        unhandled_rejections: ?UnhandledRejections = null,
-
-        bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
@@ -1785,7 +1816,9 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {},
+                    16 => {
+                        this.serve = try reader.readValue(bool);
+                    },
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },
@@ -1812,12 +1845,6 @@ pub const Api = struct {
                     },
                     25 => {
                         this.source_map = try reader.readValue(SourceMapMode);
-                    },
-                    26 => {
-                        this.conditions = try reader.readArray([]const u8);
-                    },
-                    27 => {
-                        this.packages = try reader.readValue(PackagesMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1854,7 +1881,7 @@ pub const Api = struct {
             }
             if (this.preserve_symlinks) |preserve_symlinks| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @intFromBool(preserve_symlinks)));
+                try writer.writeInt(@as(u8, @boolToInt(preserve_symlinks)));
             }
             if (this.entry_points) |entry_points| {
                 try writer.writeFieldID(8);
@@ -1862,7 +1889,7 @@ pub const Api = struct {
             }
             if (this.write) |write| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @intFromBool(write)));
+                try writer.writeInt(@as(u8, @boolToInt(write)));
             }
             if (this.inject) |inject| {
                 try writer.writeFieldID(10);
@@ -1890,7 +1917,7 @@ pub const Api = struct {
             }
             if (this.serve) |serve| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @intFromBool(serve)));
+                try writer.writeInt(@as(u8, @boolToInt(serve)));
             }
             if (this.env_files) |env_files| {
                 try writer.writeFieldID(17);
@@ -1910,11 +1937,11 @@ pub const Api = struct {
             }
             if (this.no_summary) |no_summary| {
                 try writer.writeFieldID(21);
-                try writer.writeInt(@as(u8, @intFromBool(no_summary)));
+                try writer.writeInt(@as(u8, @boolToInt(no_summary)));
             }
             if (this.disable_hmr) |disable_hmr| {
                 try writer.writeFieldID(22);
-                try writer.writeInt(@as(u8, @intFromBool(disable_hmr)));
+                try writer.writeInt(@as(u8, @boolToInt(disable_hmr)));
             }
             if (this.port) |port| {
                 try writer.writeFieldID(23);
@@ -1928,42 +1955,14 @@ pub const Api = struct {
                 try writer.writeFieldID(25);
                 try writer.writeEnum(source_map);
             }
-
-            if (this.conditions) |conditions| {
-                try writer.writeFieldID(26);
-                try writer.writeArray([]const u8, conditions);
-            }
-
-            if (this.packages) |packages| {
-                try writer.writeFieldID(27);
-                try writer.writeValue([]const u8, packages);
-            }
-
             try writer.endMessage();
         }
     };
 
     pub const SourceMapMode = enum(u8) {
-        none,
-
-        /// inline
-        @"inline",
-
-        /// external
-        external,
-
-        linked,
-
-        _,
-
-        pub fn jsonStringify(self: @This(), writer: anytype) !void {
-            return try writer.write(@tagName(self));
-        }
-    };
-
-    pub const PackagesMode = enum(u8) {
-        /// bundle
-        bundle,
+        _none,
+        /// inline_into_file
+        inline_into_file,
 
         /// external
         external,
@@ -2419,7 +2418,7 @@ pub const Api = struct {
             }
             if (this.build) |build| {
                 try writer.writeFieldID(2);
-                try writer.writeInt(@as(u8, @intFromBool(build)));
+                try writer.writeInt(@as(u8, @boolToInt(build)));
             }
             try writer.endMessage();
         }
@@ -2799,27 +2798,6 @@ pub const Api = struct {
         /// token
         token: []const u8,
 
-        pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
-
-            var out: NpmRegistry = .{
-                .url = "",
-                .username = "",
-                .password = "",
-                .token = "",
-            };
-
-            var i: usize = 0;
-            inline for (std.meta.fields(NpmRegistry)) |field| {
-                const field_value = @field(this, field.name);
-                @memcpy(buf[i .. i + field_value.len], field_value);
-                @field(&out, field.name) = buf[i .. i + field_value.len];
-                i += field_value.len;
-            }
-
-            return out;
-        }
-
         pub fn decode(reader: anytype) anyerror!NpmRegistry {
             var this = std.mem.zeroes(NpmRegistry);
 
@@ -2836,101 +2814,14 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
         }
-
-        pub const Parser = struct {
-            log: *bun.logger.Log,
-            source: *const bun.logger.Source,
-            allocator: std.mem.Allocator,
-
-            fn addError(this: *Parser, loc: bun.logger.Loc, comptime text: []const u8) !void {
-                this.log.addError(this.source, loc, text) catch unreachable;
-                return error.ParserError;
-            }
-
-            fn expectString(this: *Parser, expr: js_ast.Expr) !void {
-                switch (expr.data) {
-                    .e_string => {},
-                    else => {
-                        this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
-                            @as(js_ast.Expr.Tag, expr.data),
-                        }) catch unreachable;
-                        return error.ParserError;
-                    },
-                }
-            }
-
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
-                return try this.parseRegistryURLStringImpl(str.data);
-            }
-
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
-                const url = bun.URL.parse(str);
-                var registry = std.mem.zeroes(Api.NpmRegistry);
-
-                // Token
-                if (url.username.len == 0 and url.password.len > 0) {
-                    registry.token = url.password;
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
-                } else if (url.username.len > 0 and url.password.len > 0) {
-                    registry.username = url.username;
-                    registry.password = url.password;
-
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
-                } else {
-                    // Do not include a trailing slash. There might be parameters at the end.
-                    registry.url = url.href;
-                }
-
-                return registry;
-            }
-
-            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
-                var registry = std.mem.zeroes(Api.NpmRegistry);
-
-                if (obj.get("url")) |url| {
-                    try this.expectString(url);
-                    const href = url.asString(this.allocator).?;
-                    // Do not include a trailing slash. There might be parameters at the end.
-                    registry.url = href;
-                }
-
-                if (obj.get("username")) |username| {
-                    try this.expectString(username);
-                    registry.username = username.asString(this.allocator).?;
-                }
-
-                if (obj.get("password")) |password| {
-                    try this.expectString(password);
-                    registry.password = password.asString(this.allocator).?;
-                }
-
-                if (obj.get("token")) |token| {
-                    try this.expectString(token);
-                    registry.token = token.asString(this.allocator).?;
-                }
-
-                return registry;
-            }
-
-            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
-                switch (expr.data) {
-                    .e_string => |str| {
-                        return this.parseRegistryURLString(str);
-                    },
-                    .e_object => |obj| {
-                        return this.parseRegistryObject(obj);
-                    },
-                    else => {
-                        try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                        return std.mem.zeroes(Api.NpmRegistry);
-                    },
-                }
-            }
-        };
     };
 
     pub const NpmRegistryMap = struct {
-        scopes: bun.StringArrayHashMapUnmanaged(NpmRegistry) = .{},
+        /// scopes
+        scopes: []const []const u8,
+
+        /// registries
+        registries: []const NpmRegistry,
 
         pub fn decode(reader: anytype) anyerror!NpmRegistryMap {
             var this = std.mem.zeroes(NpmRegistryMap);
@@ -2941,8 +2832,8 @@ pub const Api = struct {
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.scopes.keys());
-            try writer.writeArray(NpmRegistry, this.scopes.values());
+            try writer.writeArray([]const u8, this.scopes);
+            try writer.writeArray(NpmRegistry, this.registries);
         }
     };
 
@@ -3009,19 +2900,6 @@ pub const Api = struct {
 
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
-
-        cafile: ?[]const u8 = null,
-
-        save_text_lockfile: ?bool = null,
-
-        ca: ?union(enum) {
-            str: []const u8,
-            list: []const []const u8,
-        } = null,
-
-        ignore_scripts: ?bool = null,
-
-        link_workspace_packages: ?bool = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
@@ -3126,35 +3004,35 @@ pub const Api = struct {
             }
             if (this.dry_run) |dry_run| {
                 try writer.writeFieldID(6);
-                try writer.writeInt(@as(u8, @intFromBool(dry_run)));
+                try writer.writeInt(@as(u8, @boolToInt(dry_run)));
             }
             if (this.force) |force| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @intFromBool(force)));
+                try writer.writeInt(@as(u8, @boolToInt(force)));
             }
             if (this.save_dev) |save_dev| {
                 try writer.writeFieldID(8);
-                try writer.writeInt(@as(u8, @intFromBool(save_dev)));
+                try writer.writeInt(@as(u8, @boolToInt(save_dev)));
             }
             if (this.save_optional) |save_optional| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @intFromBool(save_optional)));
+                try writer.writeInt(@as(u8, @boolToInt(save_optional)));
             }
             if (this.save_peer) |save_peer| {
                 try writer.writeFieldID(10);
-                try writer.writeInt(@as(u8, @intFromBool(save_peer)));
+                try writer.writeInt(@as(u8, @boolToInt(save_peer)));
             }
             if (this.save_lockfile) |save_lockfile| {
                 try writer.writeFieldID(11);
-                try writer.writeInt(@as(u8, @intFromBool(save_lockfile)));
+                try writer.writeInt(@as(u8, @boolToInt(save_lockfile)));
             }
             if (this.production) |production| {
                 try writer.writeFieldID(12);
-                try writer.writeInt(@as(u8, @intFromBool(production)));
+                try writer.writeInt(@as(u8, @boolToInt(production)));
             }
             if (this.save_yarn_lockfile) |save_yarn_lockfile| {
                 try writer.writeFieldID(13);
-                try writer.writeInt(@as(u8, @intFromBool(save_yarn_lockfile)));
+                try writer.writeInt(@as(u8, @boolToInt(save_yarn_lockfile)));
             }
             if (this.native_bin_links) |native_bin_links| {
                 try writer.writeFieldID(14);
@@ -3162,11 +3040,11 @@ pub const Api = struct {
             }
             if (this.disable_cache) |disable_cache| {
                 try writer.writeFieldID(15);
-                try writer.writeInt(@as(u8, @intFromBool(disable_cache)));
+                try writer.writeInt(@as(u8, @boolToInt(disable_cache)));
             }
             if (this.disable_manifest_cache) |disable_manifest_cache| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @intFromBool(disable_manifest_cache)));
+                try writer.writeInt(@as(u8, @boolToInt(disable_manifest_cache)));
             }
             if (this.global_dir) |global_dir| {
                 try writer.writeFieldID(17);
@@ -3178,11 +3056,11 @@ pub const Api = struct {
             }
             if (this.frozen_lockfile) |frozen_lockfile| {
                 try writer.writeFieldID(19);
-                try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
+                try writer.writeInt(@as(u8, @boolToInt(frozen_lockfile)));
             }
             if (this.exact) |exact| {
                 try writer.writeFieldID(20);
-                try writer.writeInt(@as(u8, @intFromBool(exact)));
+                try writer.writeInt(@as(u8, @boolToInt(exact)));
             }
             if (this.concurrent_scripts) |concurrent_scripts| {
                 try writer.writeFieldID(21);

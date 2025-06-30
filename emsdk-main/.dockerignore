@@ -1,0 +1,21 @@
+# Ignore everything
+*
+
+# Allow the entrypoint/test script inside the Docker container
+!/docker/entrypoint.sh
+!/docker/test_dockerimage.sh
+
+# Allow license file
+!LICENSE
+
+# Allow necessary build files in top-level directory
+!emscripten-releases-tags.json
+!emsdk
+!emsdk.py
+!emsdk_env.sh
+!emsdk_manifest.json
+
+# Allow files required to install legacy versions
+!legacy-binaryen-tags.txt
+!legacy-emscripten-tags.txt
+!llvm-tags-64bit.txt

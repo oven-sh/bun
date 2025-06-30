@@ -1,0 +1,39 @@
+#!/bin/sh
+# Copyright 2019 The Emscripten Authors.  All rights reserved.
+# Emscripten is available under two separate licenses, the MIT license and the
+# University of Illinois/NCSA Open Source License.  Both these licenses can be
+# found in the LICENSE file.
+
+# Wrapper script that runs emsdk.py
+
+# First look for python bundled in Emsdk
+if [ -z "$EMSDK_PYTHON" ]; then
+  PYTHON3="$(dirname "$0")/python/3.13.3-0_64bit/bin/python3"
+  if [ ! -f "$PYTHON3" ]; then
+    PYTHON3="$(dirname "$0")/python/3.9.2-1_64bit/bin/python3"
+  fi
+  if [ -f "$PYTHON3" ]; then
+    EMSDK_PYTHON="$PYTHON3"
+
+    # When using our bundled python we never want the users
+    # PYTHONHOME or PYTHONPATH
+    # https://github.com/emscripten-core/emsdk/issues/598
+    unset PYTHONHOME
+    unset PYTHONPATH
+  fi
+fi
+
+# If bundled python is not found, look for `python3` in PATH.  This is especially important on macOS (See:
+# https://github.com/emscripten-core/emsdk/pull/273)
+if [ -z "$EMSDK_PYTHON" ]; then
+  if PYTHON3="$(command -v python3 2>/dev/null)"; then
+    EMSDK_PYTHON=$PYTHON3
+  fi
+fi
+
+# Finally fall back to just looking for `python` in PATH
+if [ -z "$EMSDK_PYTHON" ]; then
+  EMSDK_PYTHON=python
+fi
+
+exec "$EMSDK_PYTHON" "$0.py" "$@"

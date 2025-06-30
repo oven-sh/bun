@@ -704,7 +704,7 @@ build-obj-small:
 
 .PHONY: dev-build-obj-wasm
 dev-build-obj-wasm:
-	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding
+	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding -Dcodegen_path=build/codegen
 
 .PHONY: dev-wasm
 dev-wasm: dev-build-obj-wasm
@@ -717,7 +717,7 @@ dev-wasm: dev-build-obj-wasm
 
 .PHONY: build-obj-wasm
 build-obj-wasm:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
+	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding -Dcodegen_path=build/codegen
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
@@ -727,7 +727,7 @@ build-obj-wasm:
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
+	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding -Dcodegen_path=build/codegen
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-Oz -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \

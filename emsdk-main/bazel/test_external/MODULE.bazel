@@ -1,0 +1,6 @@
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "emsdk")
+local_path_override(
+    module_name = "emsdk",
+    path = "..",
+)

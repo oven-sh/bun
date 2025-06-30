@@ -1,0 +1,16 @@
+import os
+import platform
+
+ROOT_DIR = os.environ["ROOT_DIR"]
+EMSCRIPTEN_ROOT = os.environ["EMSCRIPTEN"]
+BINARYEN_ROOT = os.path.join(ROOT_DIR, os.environ["EM_BIN_PATH"])
+LLVM_ROOT = os.path.join(BINARYEN_ROOT, "bin")
+NODE_JS = os.path.join(ROOT_DIR, os.environ["NODE_JS_PATH"])
+FROZEN_CACHE = True
+
+# This works around an issue with Bazel RBE where the symlinks in node_modules/.bin
+# are uploaded as the linked files, which means the cli.js cannot load its
+# dependencies from the expected locations.
+# See https://github.com/emscripten-core/emscripten/pull/16640 for more
+CLOSURE_COMPILER = [NODE_JS, os.path.join(EMSCRIPTEN_ROOT, "node_modules",
+                                          "google-closure-compiler", "cli.js")]

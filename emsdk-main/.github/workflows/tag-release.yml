@@ -1,0 +1,78 @@
+# When a release commit created by create-release.yml is landed, create the
+# corresponding tag.
+name: Create release tag
+
+on:
+  push:
+    paths:
+      - emscripten-releases-tags.json
+      - .github/workflows/tag-release.yml
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  tag-release:
+    # Only activate for commits created by the create-release.yml workflow.
+    # The assumption is that when manual changes happen, we want to handle
+    # tagging manually too.
+    name: Check for release commit and create tag
+    # The author is emscripten-bot when triggered from Chromium CI, and github-actions when manually triggered.
+    if: ${{ github.event.head_commit.author.username == 'github-actions[bot]' || github.event.head_commit.author.username == 'emscripten-bot' }}
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.create-tag.outputs.result }}
+    steps:
+      - name: Match message and create tag
+        id: create-tag
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.EMSCRIPTEN_BOT_TOKEN }}
+          # A commit with the message of the form 'Release X.Y.Z' is expected
+          # to have been created by create_release.py and update the latest
+          # release in emscripten-releases-tags.json
+          script: |
+            const message = `${{ github.event.head_commit.message }}`
+            const regex = /Release ([0-9]+.[0-9]+.[0-9]+)/;
+            const match = message.match(regex);
+            let is_release = false;
+            if (match) {
+              const release = match[1];
+              console.log(`Matched release ${release}`);
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${release}`,
+                sha: context.sha
+              });
+              is_release = true;
+            } else {
+              console.log(`Commit message: '${message}' did not match pattern`);
+            }
+            return is_release;
+
+  dispatch-emscripten-tag:
+    name: Dispatch workflow to tag emscripten repo
+    runs-on: ubuntu-latest
+    needs: tag-release
+    if: ${{ needs.tag-release.outputs.is_release == 'true' }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Find emscripten revision
+        # get_emscripten_revision_info.py sets env.EMSCRIPTEN_HASH to the
+        # emscripten hash associated with the latest release in
+        # emscripten-releases-tags.json
+        run: python3 scripts/get_emscripten_revision_info.py
+      - name: Dispatch emscripten workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.EMSCRIPTEN_BOT_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: 'emscripten',
+              workflow_id: 'tag-release.yml',
+              ref: 'main',
+              inputs: { 'release-sha': '${{ env.EMSCRIPTEN_HASH }}' }
+            });

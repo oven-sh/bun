@@ -448,11 +448,11 @@ const TestAnalyzer = struct {
 };
 export fn getTests(opts_array: u64) u64 {
     var arena = Arena.init() catch unreachable;
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
+    const opts = Api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
     var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
     code.contents_is_recycled = true;
     defer {
@@ -487,7 +487,7 @@ export fn getTests(opts_array: u64) u64 {
     };
 
     var output = std.ArrayList(u8).init(default_allocator);
-    var output_writer = output.writer();
+    const output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
     var response = Api.GetTestsResponse{
@@ -502,12 +502,12 @@ export fn getTests(opts_array: u64) u64 {
 export fn transform(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);
 
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.Transform.decode(&reader) catch unreachable;
+    const opts = Api.Transform.decode(&reader) catch unreachable;
     const loader_ = opts.loader orelse Api.Loader.tsx;
 
     defer {
@@ -534,7 +534,7 @@ export fn transform(opts_array: u64) u64 {
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
     if (result == .ast and log.errors == 0) {
-        var symbols = JSAst.Symbol.NestedList.init(&[_]JSAst.Symbol.List{result.ast.symbols});
+        const symbols = JSAst.Symbol.NestedList.init(&[_]JSAst.Symbol.List{result.ast.symbols});
 
         _ = JSPrinter.printAst(
             @TypeOf(&writer),
@@ -562,7 +562,7 @@ export fn transform(opts_array: u64) u64 {
     };
 
     var output = std.ArrayList(u8).init(default_allocator);
-    var output_writer = output.writer();
+    const output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
     transform_response.encode(&encoder) catch {};
@@ -572,12 +572,12 @@ export fn transform(opts_array: u64) u64 {
 export fn scan(opts_array: u64) u64 {
     // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
     log = Logger.Log.init(allocator);
 
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.Scan.decode(&reader) catch unreachable;
+    const opts = Api.Scan.decode(&reader) catch unreachable;
     const loader_ = opts.loader orelse Api.Loader.tsx;
 
     defer {
@@ -605,7 +605,7 @@ export fn scan(opts_array: u64) u64 {
     if (log.errors == 0) {
         var scan_result = std.mem.zeroes(Api.ScanResult);
         var output = std.ArrayList(u8).init(default_allocator);
-        var output_writer = output.writer();
+        const output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
 
         if (result == .ast) {
@@ -629,7 +629,7 @@ export fn scan(opts_array: u64) u64 {
         return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
     } else {
         var output = std.ArrayList(u8).init(default_allocator);
-        var output_writer = output.writer();
+        const output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
         var scan_result = Api.ScanResult{
             .exports = &.{},

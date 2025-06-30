@@ -1,0 +1,25 @@
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "emsdk")
+local_path_override(
+    module_name = "emsdk",
+    path = "..",
+)
+
+emscripten_cache = use_extension(
+    "@emsdk//:emscripten_cache.bzl",
+    "emscripten_cache",
+)
+emscripten_cache.configuration(flags = ["--lto"])
+emscripten_cache.targets(targets = [
+    "crtbegin",
+    "libprintf_long_double-debug",
+    "libstubs-debug",
+    "libnoexit",
+    "libc-debug",
+    "libdlmalloc",
+    "libcompiler_rt",
+    "libc++-noexcept",
+    "libc++abi-debug-noexcept",
+    "libsockets",
+    "libdlmalloc-debug",
+])

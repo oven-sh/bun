@@ -202,8 +202,8 @@ pub fn build(b: *Build) !void {
 
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
-    // Lower the default reference trace for incremental
-    b.reference_trace = b.reference_trace orelse if (b.graph.incremental == true) 8 else 16;
+    // Lower the default reference trace
+    b.reference_trace = b.reference_trace orelse 16;
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
@@ -290,7 +290,7 @@ pub fn build(b: *Build) !void {
             .name = "bun-test",
             .optimize = build_options.optimize,
             .root_source_file = b.path("src/unit_test.zig"),
-            .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
+            .test_runner = b.path("src/main_test.zig"),
             .target = build_options.target,
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
@@ -308,7 +308,7 @@ pub fn build(b: *Build) !void {
         unit_tests.linker_allow_shlib_undefined = true;
         unit_tests.link_function_sections = true;
         unit_tests.link_data_sections = true;
-        unit_tests.bundle_ubsan_rt = false;
+        // unit_tests.bundle_ubsan_rt = false; // This field no longer exists in newer Zig
 
         const bin = unit_tests.getEmittedBin();
         const obj = bin.dirname().path(b, "bun-test.o");
@@ -322,6 +322,36 @@ pub fn build(b: *Build) !void {
         var windows_shim = build_options.windowsShim(b);
         step.dependOn(&b.addInstallFile(windows_shim.exe.getEmittedBin(), "bun_shim_impl.exe").step);
         step.dependOn(&b.addInstallFile(windows_shim.dbg.getEmittedBin(), "bun_shim_debug.exe").step);
+    }
+
+    // zig build bun-wasm
+    {
+        var step = b.step("bun-wasm", "Build Bun for WebAssembly");
+        
+        // Create a special build options for WASM
+        var wasm_build_options = build_options;
+        wasm_build_options.os = .wasm;
+        
+        // Create WASM object
+        const wasm_obj = b.addObject(.{
+            .name = "bun-wasm",
+            .root_source_file = b.path("src/main_wasm.zig"),
+            .target = wasm_build_options.target,
+            .optimize = wasm_build_options.optimize,
+        });
+        
+        // Configure the WASM object
+        configureObj(b, &wasm_build_options, wasm_obj);
+        addInternalImports(b, &wasm_obj.root_module, &wasm_build_options);
+        
+        // Add mimalloc for WASM
+        wasm_obj.addObjectFile(b.path("build/release/libmimalloc.o.wasm"));
+        
+        step.dependOn(&wasm_obj.step);
+        
+        // Install the object file where the Makefile expects it
+        const wasm_dir = if (wasm_build_options.optimize == .Debug) "packages/debug-bun-freestanding-wasm32" else "packages/bun-freestanding-wasm32";
+        step.dependOn(&b.addInstallFile(wasm_obj.getEmittedBin(), b.fmt("{s}/bun-wasm.o", .{wasm_dir})).step);
     }
 
     // zig build check
@@ -469,7 +499,7 @@ const TargetDescription = struct {
         return b.resolveTargetQuery(.{
             .os_tag = OperatingSystem.stdOSTag(desc.os),
             .cpu_arch = desc.arch,
-            .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
+            .cpu_model = getCpuModel(desc.os, desc.arch) orelse .{ .determined_by_cpu_arch = {} },
             .os_version_min = getOSVersionMin(desc.os),
             .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
         });
@@ -533,7 +563,7 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
 
-    translate_c.addIncludePath(b.path("vendor/zstd/lib"));
+    translate_c.addIncludeDir("vendor/zstd/lib");
 
     if (target.result.os.tag == .windows) {
         // translate-c is unable to translate the unsuffixed windows functions
@@ -550,11 +580,9 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         // HANDLE point to the standard library structures.
         const helper_exe = b.addExecutable(.{
             .name = "process_windows_translate_c",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
-                .target = b.graph.host,
-                .optimize = .Debug,
-            }),
+            .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
         });
         const in = translate_c.getOutput();
         const run = b.addRunArtifact(helper_exe);
@@ -584,8 +612,11 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
 
     const obj = b.addObject(.{
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
-        .root_module = root,
+        .root_source_file = root.root_source_file,
+        .target = opts.target,
+        .optimize = opts.optimize,
     });
+    // obj.root_module = root; // API changed in newer Zig, modules are handled differently
     configureObj(b, opts, obj);
     return obj;
 }
@@ -604,12 +635,12 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
         } else {
-            const fail_step = b.addFail("asan is not supported on this platform");
+            const fail_step = b.addSystemCommand(&.{"echo", "asan is not supported on this platform"});
             obj.step.dependOn(&fail_step.step);
         }
     }
     obj.bundle_compiler_rt = false;
-    obj.bundle_ubsan_rt = false;
+    // obj.bundle_ubsan_rt = false; // This field no longer exists in newer Zig
 
     // Link libc
     if (opts.os != .wasm) {
@@ -780,7 +811,7 @@ fn propagateImports(source_mod: *Module) !void {
     var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
     defer queue.deinit();
     try queue.appendSlice(source_mod.import_table.values());
-    while (queue.pop()) |mod| {
+    while (queue.popOrNull()) |mod| {
         if ((try seen.getOrPut(mod)).found_existing) continue;
         try queue.appendSlice(mod.import_table.values());
 
@@ -816,35 +847,31 @@ const WindowsShim = struct {
 
         const exe = b.addExecutable(.{
             .name = "bun_shim_impl",
-            .root_module = b.createModule(.{
-                .root_source_file = path,
-                .target = target,
-                .optimize = .ReleaseFast,
-                .unwind_tables = .none,
-                .omit_frame_pointer = true,
-                .strip = true,
-                .sanitize_thread = false,
-                .single_threaded = true,
-                .link_libc = false,
-            }),
+            .root_source_file = path,
+            .target = target,
+            .optimize = .ReleaseFast,
             .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
         });
+        exe.root_module.unwind_tables = false;
+        exe.root_module.omit_frame_pointer = true;
+        exe.root_module.strip = true;
+        exe.root_module.sanitize_thread = false;
+        exe.root_module.single_threaded = true;
+        exe.linkLibC();
 
         const dbg = b.addExecutable(.{
             .name = "bun_shim_debug",
-            .root_module = b.createModule(.{
-                .root_source_file = path,
-                .target = target,
-                .optimize = .Debug,
-                .single_threaded = true,
-                .link_libc = false,
-            }),
+            .root_source_file = path,
+            .target = target,
+            .optimize = .Debug,
             .linkage = .static,
             .use_llvm = true,
             .use_lld = true,
         });
+        dbg.root_module.single_threaded = true;
+        dbg.linkLibC();
 
         return .{ .exe = exe, .dbg = dbg };
     }

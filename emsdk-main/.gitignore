@@ -1,0 +1,35 @@
+*.pyc
+__pycache__
+
+# Support for --embedded configs
+/.emscripten
+/.emscripten.old
+/.emscripten_cache
+/.emscripten_cache__last_clear
+/.emscripten_sanity
+/.emscripten_sanity_wasm
+
+# Tags files that get generated at runtime
+/emscripten-releases-tot.txt
+
+# File that get download/extracted by emsdk itself
+/ccache
+/gnu
+/upstream
+/fastcomp
+/fastcomp-clang/
+/llvm
+/ninja
+/releases
+/clang
+/emscripten
+/git
+/node
+/python
+/temp
+/downloads
+/crunch
+/java
+/mingw
+/spidermonkey
+/binaryen

@@ -23,10 +23,11 @@ void call_register(void) {
 void init_static(void) {
   // should be called second by dlopen
   printf("init_static\n");
- }
+}
 
 napi_value register_cb(napi_env env, napi_value exports) {
-  // should be called third, after dlopen returns and bun runs the callback passed to napi_module_register
+  // should be called third, after dlopen returns and bun runs the callback
+  // passed to napi_module_register
   (void)env;
   printf("register_cb\n");
   return exports;

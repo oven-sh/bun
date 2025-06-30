@@ -34,10 +34,10 @@ pub const Handler = struct {
         publish_to_self: bool = false,
     } = .{},
 
-    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
+    pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, ws_value: JSC.JSValue, error_value: JSC.JSValue) void {
         const onError = this.onError;
         if (!onError.isEmptyOrUndefinedOrNull()) {
-            _ = onError.call(globalObject, .js_undefined, &.{error_value}) catch |err|
+            _ = onError.call(globalObject, .js_undefined, &.{ws_value, error_value}) catch |err|
                 this.globalObject.reportActiveExceptionAsUnhandled(err);
             return;
         }
@@ -90,13 +90,13 @@ pub const Handler = struct {
             valid = true;
         }
 
-        if (try object.getTruthy(globalObject, "onError")) |onError_| {
-            if (!onError_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
+        if (try object.getTruthy(globalObject, "error")) |error_| {
+            if (!error_.isCallable()) {
+                return globalObject.throwInvalidArguments("websocket expects a function for the error option", .{});
             }
-            const onError = onError_.withAsyncContextIfNeeded(globalObject);
-            handler.onError = onError;
-            onError.ensureStillAlive();
+            const error_fn = error_.withAsyncContextIfNeeded(globalObject);
+            handler.onError = error_fn;
+            error_fn.ensureStillAlive();
         }
 
         if (try object.getTruthy(globalObject, "ping")) |cb| {

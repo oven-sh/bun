@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { chmodSync } from "node:fs";
 
@@ -16,7 +16,7 @@ test("bun publish should work with read-only package.json", async () => {
   });
 
   const packageJsonPath = `${dir}/package.json`;
-  
+
   // Make package.json read-only
   chmodSync(packageJsonPath, 0o444); // read-only for owner, group, and others
 
@@ -36,11 +36,11 @@ test("bun publish should work with read-only package.json", async () => {
 
     // The command should succeed (exit code 0) even with read-only package.json
     expect(exitCode).toBe(0);
-    
+
     // Should not contain the error message about package.json needing to be writable
     expect(stderr).not.toContain("package.json must be writable");
     expect(stderr).not.toContain("Permission denied");
-    
+
     // Should show the dry-run output
     expect(stdout).toContain("test-package@1.0.0");
     expect(stdout).toContain("(dry-run)");
@@ -63,7 +63,7 @@ test("bun pack should work with read-only package.json", async () => {
   });
 
   const packageJsonPath = `${dir}/package.json`;
-  
+
   // Make package.json read-only
   chmodSync(packageJsonPath, 0o444); // read-only for owner, group, and others
 
@@ -83,11 +83,11 @@ test("bun pack should work with read-only package.json", async () => {
 
     // The command should succeed (exit code 0) even with read-only package.json
     expect(exitCode).toBe(0);
-    
+
     // Should not contain the error message about package.json needing to be writable
     expect(stderr).not.toContain("package.json must be writable");
     expect(stderr).not.toContain("Permission denied");
-    
+
     // Should show the pack output
     expect(stdout).toContain("test-package-pack-1.0.0.tgz");
   } finally {
@@ -106,7 +106,7 @@ test("bun install with packages should still require writable package.json", asy
   });
 
   const packageJsonPath = `${dir}/package.json`;
-  
+
   // Make package.json read-only
   chmodSync(packageJsonPath, 0o444); // read-only for owner, group, and others
 
@@ -126,7 +126,7 @@ test("bun install with packages should still require writable package.json", asy
 
     // The command should fail because it needs to write to package.json
     expect(exitCode).not.toBe(0);
-    
+
     // Should contain the error message about package.json needing to be writable
     expect(stderr).toContain("package.json must be writable");
   } finally {

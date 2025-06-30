@@ -171,7 +171,7 @@ async function processCppFile(filePath: string): Promise<FunctionSignature[]> {
 
         const exceptionType = precedingText.includes("ZIG_EXPORT_ZEROISTHROW")
           ? "ZeroIsThrow"
-          : precedingText.includes("ZIG_EXPORT_CHECKEXCEPTION")
+          : precedingText.includes("ZIG_EXPORT_CHECKEXCEPTION_SLOW")
             ? "CheckException"
             : precedingText.includes("ZIG_EXPORT_NOTHROW")
               ? "NoThrow"
@@ -342,7 +342,7 @@ for (const cppFile of allCppFiles) {
           outputRawBindings.push(`    /// Source: ${filePath}:${func.line}:${func.column}\n`);
           outputRawBindings.push(`    extern fn ${func.name}(${params}) ${returnType};\n`);
 
-          // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION
+          // Generate wrapper function for ZIG_EXPORT_CHECKEXCEPTION_SLOW
           const wrapperParams = func.params
             .map(
               param => `${param.name}: ${cppTypeToZig(param.type, param.isPointer, param.isConst, param.isReference)}`,
@@ -382,7 +382,7 @@ for (const cppFile of allCppFiles) {
       const parts: Zig[] = [];
       if (exportCount > 0) parts.push(`${exportCount} ZIG_EXPORT`);
       if (exceptionCount > 0) parts.push(`${exceptionCount} ZIG_EXPORT_ZEROISTHROW`);
-      if (checkExceptionCount > 0) parts.push(`${checkExceptionCount} ZIG_EXPORT_CHECKEXCEPTION`);
+      if (checkExceptionCount > 0) parts.push(`${checkExceptionCount} ZIG_EXPORT_CHECKEXCEPTION_SLOW`);
 
       if (parts.length > 0) {
         console.log(`  - ${cppFile}: ${parts.join(", ")} functions`);
@@ -421,6 +421,6 @@ console.log(`Generated Zig bindings written to: ${outputFile}`);
 TODO:
 - evaluate if @src() is allowed
 - use zls commit 46ca66f933693c0e5acb959ade9bc53354646f1b, it adds parseSourceLocation
-- we need to reduce `.exception()` calls in zig. ZIG_EXPORT_CHECKEXCEPTION should be removed,
+- we need to reduce `.exception()` calls in zig. ZIG_EXPORT_CHECKEXCEPTION_SLOW should be removed,
   we should be signaling exceptions in the return type (or even through some kind of errno value)
 */

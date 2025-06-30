@@ -16,6 +16,20 @@ public:
     }
 
     bool IsEmpty() const { return m_local.IsEmpty(); }
+    
+    // Extract the Local<T> value if not empty
+    bool ToLocal(Local<T>* out) const {
+        if (IsEmpty()) {
+            return false;
+        }
+        *out = m_local;
+        return true;
+    }
+    
+    // Get the Local<T> value (should only be called if not empty)
+    Local<T> ToLocalChecked() const {
+        return m_local;
+    }
 
 private:
     Local<T> m_local;

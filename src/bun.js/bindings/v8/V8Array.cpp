@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERROR#include "V8Array.h"
+#include "V8Array.h"
 
 #include "V8HandleScope.h"
 #include "V8Context.h"
@@ -9,6 +9,7 @@ THIS SHOULD BE A LINTER ERROR#include "V8Array.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
 #include "JavaScriptCore/IteratorOperations.h"
+#include "JavaScriptCore/ArgList.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Array)
 
@@ -16,6 +17,7 @@ using JSC::ArrayAllocationProfile;
 using JSC::JSArray;
 using JSC::JSValue;
 using JSC::JSGlobalObject;
+using JSC::MarkedArgumentBuffer;
 
 namespace v8 {
 
@@ -30,16 +32,19 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
         return isolate->currentHandleScope()->createLocal<Array>(vm, array);
     }
     
-    // Create array with elements
+    // Use MarkedArgumentsBuffer as suggested
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length));
+    MarkedArgumentBuffer args;
     
-    // Set each element
+    // Add each element to the arguments buffer
     for (size_t i = 0; i < length; i++) {
         JSValue elementValue = elements[i]->localToJSValue();
-        array->putDirectIndex(globalObject, static_cast<unsigned>(i), elementValue);
-        RETURN_IF_EXCEPTION(scope, Local<Array>());
+        args.append(elementValue);
     }
+    
+    // Construct array using the buffer
+    JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, Local<Array>());
     
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
@@ -65,7 +70,7 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     auto& vm = isolate->vm();
     
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length));
+    MarkedArgumentBuffer args;
     
     // Fill array using callback
     for (size_t i = 0; i < length; i++) {
@@ -77,9 +82,12 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
         }
         
         JSValue elementValue = value->localToJSValue();
-        array->putDirectIndex(globalObject, static_cast<unsigned>(i), elementValue);
-        RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
+        args.append(elementValue);
     }
+    
+    // Construct array using the buffer
+    JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
     
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
@@ -87,7 +95,7 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
 // Get array length
 uint32_t Array::Length() const
 {
-    JSArray* jsArray = localToObjectPointer<JSArray>();
+    const JSArray* jsArray = localToObjectPointer<JSArray>();
     return static_cast<uint32_t>(jsArray->length());
 }
 
@@ -105,9 +113,9 @@ void Array::CheckCast(Value* obj)
 }
 
 // Iterate implementation using forEachInIterable
-Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
+Maybe<bool> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
 {
-    JSArray* jsArray = localToObjectPointer<JSArray>();
+    const JSArray* jsArray = localToObjectPointer<JSArray>();
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -131,16 +139,14 @@ Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, v
         }
     });
     
-    RETURN_IF_EXCEPTION(scope, Nothing<void>());
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     
     // Check if we should return an exception or success
     if (finalResult == CallbackResult::kException) {
-        return Nothing<void>();
+        return Nothing<bool>();
     }
     
-    Maybe<void> result;
-    result.m_hasValue = true;
-    return result;
+    return Just(true);
 }
 
 } // namespace v8

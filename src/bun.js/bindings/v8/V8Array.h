@@ -47,7 +47,7 @@ public:
                                                  void* data);
 
     // Iterates over array elements efficiently
-    BUN_EXPORT Maybe<void> Iterate(Local<Context> context, IterationCallback callback,
+    BUN_EXPORT Maybe<bool> Iterate(Local<Context> context, IterationCallback callback,
                       void* callback_data);
 
 private:

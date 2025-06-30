@@ -1,12 +1,4 @@
-import type {
-  BuildConfig,
-  BunPlugin,
-  OnLoadCallback,
-  OnResolveCallback,
-  PluginBuilder,
-  PluginConstraints,
-} from "bun";
-type AnyFunction = (...args: any[]) => any;
+// Types from bun are global in this environment – no explicit import needed
 
 /**
  * @see `JSBundlerPlugin.h`
@@ -37,9 +29,11 @@ interface BundlerPlugin {
 type Setup = BunPlugin["setup"];
 type MinifyObj = Exclude<BuildConfig["minify"], boolean>;
 interface BuildConfigExt extends BuildConfig {
-  // we support esbuild-style 'entryPoints' capitalization
+  /** esbuild-style alias */
   entryPoints?: string[];
-  // plugins is guaranteed to not be null
+  /** lowercase alias kept for back-compat */
+  entrypoints?: string[];
+  /** plugins is guaranteed non-null inside our helpers */
   plugins: BunPlugin[];
 }
 interface PluginBuilderExt extends PluginBuilder {
@@ -63,9 +57,10 @@ export function loadAndResolvePluginsForServe(
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  let config = {
+  const config = {
     root: bunfig_folder,
-    plugins: [] as BunPlugin[],
+    target: "browser",
+    plugins: [],
   } as BuildConfigExt;
 
   class InvalidBundlerPluginError extends TypeError {
@@ -135,7 +130,13 @@ export function runSetupFunction(
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
   >();
 
-  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
+  function validate(
+    filterObject: PluginConstraints,
+    callback: any,
+    map: any,
+    symbol?: string,
+    external?: unknown,
+  ): void {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }

@@ -1,11 +1,6 @@
 {
-  "private": true,
   "name": "bun",
   "version": "1.2.18",
-  "workspaces": [
-    "./packages/bun-types",
-    "./packages/@types/bun"
-  ],
   "devDependencies": {
     "@types/react": "^18.3.3",
     "esbuild": "^0.21.4",
@@ -18,6 +13,7 @@
     "source-map-js": "^1.2.0",
     "typescript": "^5.7.2"
   },
+  "private": true,
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
     "@types/bun": "workspace:packages/@types/bun"
@@ -80,7 +76,8 @@
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   },
-  "dependencies": {
-    "@lezer/cpp": "^1.1.3"
-  }
+  "workspaces": [
+    "./packages/bun-types",
+    "./packages/@types/bun"
+  ]
 }

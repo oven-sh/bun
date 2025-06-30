@@ -5,14 +5,17 @@
 // during a finalizer -- not during a callback scheduled with
 // node_api_post_finalizer -- so it cannot use NAPI_VERSION_EXPERIMENTAL.
 
-#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <js_native_api.h>
 #include <node_api.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <thread>
 
-// "we have static_assert at home" - MSVC
-char assertion[NAPI_VERSION == 8 ? 1 : -1];
+static_assert(NAPI_VERSION == 8,
+              "this module must be built with Node-API version 8");
+
+static std::thread::id js_thread_id;
 
 #define NODE_API_CALL_CUSTOM_RETURN(env, call, retval)                         \
   do {                                                                         \
@@ -46,14 +49,14 @@ static void finalizer(napi_env env, void *data, void *hint) {
   (void)hint;
   RefHolder *ref_holder = (RefHolder *)data;
   NODE_API_CALL_RETURN_VOID(env, napi_delete_reference(env, ref_holder->ref));
-  free(ref_holder);
+  delete ref_holder;
 }
 
 static napi_value create_ref(napi_env env, napi_callback_info info) {
   (void)info;
   napi_value object;
   NODE_API_CALL(env, napi_create_object(env, &object));
-  RefHolder *ref_holder = calloc(1, sizeof *ref_holder);
+  RefHolder *ref_holder = new RefHolder;
   NODE_API_CALL(env, napi_wrap(env, object, ref_holder, finalizer, NULL,
                                &ref_holder->ref));
   napi_value undefined;
@@ -61,12 +64,59 @@ static napi_value create_ref(napi_env env, napi_callback_info info) {
   return undefined;
 }
 
+static int buffer_finalize_count = 0;
+
+static void buffer_finalizer(napi_env env, void *data, void *hint) {
+  (void)hint;
+  if (std::this_thread::get_id() == js_thread_id) {
+    printf("buffer_finalizer run from js thread\n");
+  } else {
+    printf("buffer_finalizer run from another thread\n");
+  }
+  fflush(stdout);
+  free(data);
+  buffer_finalize_count++;
+}
+
+static napi_value create_buffer(napi_env env, napi_callback_info info) {
+  (void)info;
+  static const size_t len = 1000000;
+  void *data = malloc(len);
+  memset(data, 5, len);
+  napi_value buf;
+  // JavaScriptCore often runs external ArrayBuffer finalizers off the main
+  // thread. In this case, Bun needs to concurrently post a task to the main
+  // thread to invoke the finalizer.
+  NODE_API_CALL(env, napi_create_external_arraybuffer(
+                         env, data, len, buffer_finalizer, NULL, &buf));
+  return buf;
+}
+
+static napi_value get_buffer_finalize_count(napi_env env,
+                                            napi_callback_info info) {
+  (void)info;
+  napi_value count;
+  NODE_API_CALL(env, napi_create_int32(env, buffer_finalize_count, &count));
+  return count;
+}
+
 /* napi_value */ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
-  napi_value create_ref_function;
+  js_thread_id = std::this_thread::get_id();
+  napi_value js_function;
+  NODE_API_CALL(env, napi_create_function(env, "create_ref", NAPI_AUTO_LENGTH,
+                                          create_ref, NULL, &js_function));
+  NODE_API_CALL(
+      env, napi_set_named_property(env, exports, "create_ref", js_function));
   NODE_API_CALL(env,
-                napi_create_function(env, "create_ref", NAPI_AUTO_LENGTH,
-                                     create_ref, NULL, &create_ref_function));
-  NODE_API_CALL(env, napi_set_named_property(env, exports, "create_ref",
-                                             create_ref_function));
+                napi_create_function(env, "create_buffer", NAPI_AUTO_LENGTH,
+                                     create_buffer, NULL, &js_function));
+  NODE_API_CALL(
+      env, napi_set_named_property(env, exports, "create_buffer", js_function));
+  NODE_API_CALL(env, napi_create_function(
+                         env, "get_buffer_finalize_count", NAPI_AUTO_LENGTH,
+                         get_buffer_finalize_count, NULL, &js_function));
+  NODE_API_CALL(env, napi_set_named_property(env, exports,
+                                             "get_buffer_finalize_count",
+                                             js_function));
   return exports;
 }

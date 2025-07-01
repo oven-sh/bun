@@ -833,7 +833,6 @@ pub fn deinit(dev: *DevServer) void {
             dev.magic = undefined;
         },
     };
-    // FIXME: ZACK THIS SHOULD NOT BE COMMENTED OUT
     dev.allocation_scope.deinit();
     bun.destroy(dev);
 }
@@ -3139,12 +3138,8 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
-        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-    }
-
-    if (dev.server.?.config.onRequest != .zero) {
-        dev.server.?.onRequest(req, resp);
+    if (dev.server.?.config().onRequest != .zero) {
+        dev.server.?.onRequest(req, AnyResponse.init(resp));
         return;
     }
 

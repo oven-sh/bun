@@ -64,7 +64,6 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  console.log("render", meta, "request", request, "params", meta.params);
   // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);
 

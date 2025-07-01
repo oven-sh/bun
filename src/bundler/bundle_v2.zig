@@ -2549,49 +2549,6 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        // Debug: Write output files to disk for inspection
-        // if (bun.Environment.isDebug) {
-        //     Output.prettyln("\n<b>Debug: Writing bundle output to disk</b>", .{});
-
-        //     var output_files = std.ArrayList(bun.options.OutputFile).init(this.graph.allocator);
-        //     defer output_files.deinit();
-
-        //     this.linker.writeOutputFilesToDisk("bake-debug-output", chunks, &output_files) catch |err| {
-        //         Output.warn("Failed to write debug output: {}", .{err});
-        //     };
-
-        //     if (output_files.items.len > 0) {
-        //         Output.prettyln("Wrote {d} files to bake-debug-output/:", .{output_files.items.len});
-        //         for (output_files.items) |file| {
-        //             Output.prettyln("  {s}", .{file.dest_path});
-        //         }
-        //     }
-
-        //     Output.prettyln("\nBundle chunks summary:", .{});
-        //     for (chunks, 0..) |*chunk, i| {
-        //         Output.prettyln("  Chunk {d}: content={s}, files={d}", .{
-        //             i,
-        //             @tagName(chunk.content),
-        //             chunk.files_with_parts_in_chunk.count(),
-        //         });
-
-        //         // Print first few files in the chunk
-        //         if (chunk.content == .javascript) {
-        //             const js = chunk.content.javascript;
-        //             const files = js.files_in_chunk_order;
-        //             const max_show = @min(files.len, 5);
-        //             for (files[0..max_show], 0..) |file_idx, j| {
-        //                 const source = this.graph.input_files.items(.source)[file_idx];
-        //                 Output.prettyln("    File {d}: {s}", .{ j, source.path.text });
-        //             }
-        //             if (files.len > max_show) {
-        //                 Output.prettyln("    ... and {d} more files", .{files.len - max_show});
-        //             }
-        //         }
-        //     }
-        //     Output.flush();
-        // }
-
         try dev_server.finalizeBundle(this, &.{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,

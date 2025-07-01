@@ -791,7 +791,15 @@ pub fn getSourceMapImpl(
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) ?SourceMap.ParseUrl {
-    var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+    // This was previously 65535 but that is a size that can risk stack overflow
+    // and due to the many layers of indirections and wrappers this function is called in, it
+    // is difficult to reason about how deeply nested of a callstack this
+    // function is called in. 1024 is a safer number.
+    //
+    // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
+    //       adjust the size
+    const STACK_SPACE_TO_USE = 1024;
+    var sfb = std.heap.stackFallback(STACK_SPACE_TO_USE, bun.default_allocator);
     var arena = bun.ArenaAllocator.init(sfb.get());
     defer arena.deinit();
     const allocator = arena.allocator();

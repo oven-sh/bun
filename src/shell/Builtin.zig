@@ -375,6 +375,7 @@ pub fn init(
             cmd.exec.bltn.impl = .{
                 .rm = Rm{
                     .opts = .{},
+                    .alloc_scope = shell.AllocScope.beginScope(bun.default_allocator),
                 },
             };
         },

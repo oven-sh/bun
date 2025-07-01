@@ -1,4 +1,5 @@
 opts: Opts,
+alloc_scope: shell.AllocScope,
 state: union(enum) {
     idle,
     parse_opts: struct {
@@ -321,7 +322,7 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
 }
 
 pub fn deinit(this: *Rm) void {
-    _ = this;
+    this.alloc_scope.endScope();
 }
 
 pub inline fn bltn(this: *Rm) *Builtin {
@@ -429,6 +430,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
         this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
+        task.deinit();
         this.next().run();
     }
 }
@@ -495,18 +497,38 @@ pub const ShellRmTask = struct {
 
     const ParentRmTask = @This();
 
+    /// Notes about how this code works:
+    ///
+    /// A `DirTask` iterates over the entries of its directory. If there are
+    /// sub-directories, it will create sub-DirTasks that will run concurrently.
+    ///
+    /// Because of the concurrent nature of these tasks, clean-up of a `DirTask` becomes a little complicated.
+    ///
+    /// There are essentially three scenarios that we need to be mindful of:
+    ///
+    /// 1. The `DirTask` encountered no sub-directories and can just clean itself up immediately.
+    /// 2. The `DirTask` encountered and spawned sub-DirTasks, but they all finished before the parent `DirTask` iterated over its entries.
+    /// 3. The `DirTask` encountered and spawned sub-DirTasks, but they are still running when the parent `DirTask` finishes iterating over its entries.
+    ///
+    /// We need some synchronization mechanism to disambiguate 2 from 3 concurrently.
     pub const DirTask = struct {
         task_manager: *ParentRmTask,
         parent_task: ?*DirTask,
         path: [:0]const u8,
         is_absolute: bool = false,
-        subtask_count: std.atomic.Value(usize),
-        need_to_wait: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-        deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        /// This is initialized to 1 because we also count the PARENT DirTask
+        ///
+        /// The parent DirTask decrements the count after the directory iterating (inside `removeEntryDir(...)` ) is complete
+        ///
+        subtask_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
+
         kind_hint: EntryKindHint,
         task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
         deleted_entries: std.ArrayList(u8),
         concurrent_task: JSC.EventLoopTask,
+
+        do_post_run_from_toplevel: bool = true,
 
         const EntryKindHint = enum { idk, dir, file };
 
@@ -533,17 +555,16 @@ pub const ShellRmTask = struct {
 
         fn runFromThreadPoolImpl(this: *DirTask) void {
             defer {
-                if (!this.deleting_after_waiting_for_children.load(.seq_cst)) {
+                if (this.do_post_run_from_toplevel) {
                     this.postRun();
                 }
             }
-
             // Root, get cwd path on windows
             if (bun.Environment.isWindows) {
                 if (this.parent_task == null) {
                     var buf: bun.PathBuffer = undefined;
                     const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
-                        .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
+                        .result => |p| this.task_manager.rm.alloc_scope.allocator().dupeZ(u8, p) catch bun.outOfMemory(),
                         .err => |err| {
                             debug("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                             this.task_manager.err_mutex.lock();
@@ -591,34 +612,56 @@ pub const ShellRmTask = struct {
         }
 
         pub fn postRun(this: *DirTask) void {
-            debug("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
-            // // This is true if the directory has subdirectories
-            // // that need to be deleted
-            if (this.need_to_wait.load(.seq_cst)) return;
+            return this.postRunImpl(true);
+        }
 
-            // We have executed all the children of this task
-            if (this.subtask_count.fetchSub(1, .seq_cst) == 1) {
-                defer {
-                    if (this.task_manager.opts.verbose)
-                        this.queueForWrite()
-                    else
-                        this.deinit();
-                }
+        pub fn postRunImpl(this: *DirTask, check_if_done: bool) void {
+            debug("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
+
+            const all_done = if (!check_if_done) brk: {
+                bun.assert(this.subtask_count.load(.acquire) == 0);
+                break :brk true;
+            } else brk: {
+
+                // If this value is:
+                //    1: The parent DirTask has finished iterating and we are the last child
+                //   >1: We are not the last child, or the parent DirTask is still iterating
+                const previous_tasks_amount = this.subtask_count.fetchSub(1, .acq_rel);
+                bun.assert(previous_tasks_amount >= 1);
+
+                // We have executed all the children of this task
+                break :brk previous_tasks_amount == 1;
+            };
+
+            if (all_done) {
+                const deinit_fn: *const fn (*DirTask) void = if (this.task_manager.opts.verbose)
+                    DirTask.queueForWrite
+                else
+                    DirTask.deinit;
 
                 // If we have a parent and we are the last child, now we can delete the parent
-                if (this.parent_task != null) {
-                    // It's possible that we queued this subdir task and it finished, while the parent
-                    // was still in the `removeEntryDir` function
-                    const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .seq_cst);
-                    const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.monotonic);
-                    if (!parent_still_in_remove_entry_dir and tasks_left_before_decrement == 2) {
-                        this.parent_task.?.deleteAfterWaitingForChildren();
+                if (this.parent_task) |parent_task| {
+                    // BUT, only if the parent task is done iterating
+                    const parent_tasks_previous_amount = parent_task.subtask_count.fetchSub(1, .acq_rel);
+                    debug("DirTask(0x{x}, path={s}) parent=(0x{x}, path={s}) parent_tasks_previous_amount={d}", .{
+                        @intFromPtr(this),
+                        this.path,
+                        @intFromPtr(parent_task),
+                        parent_task.path,
+                        parent_tasks_previous_amount,
+                    });
+                    bun.assert(parent_tasks_previous_amount >= 1);
+                    deinit_fn(this);
+                    if (parent_tasks_previous_amount == 1) {
+                        parent_task.deleteAfterWaitingForChildren();
                     }
                     return;
                 }
 
                 // Otherwise we are root task
-                this.task_manager.finishConcurrently();
+                const task_manager = this.task_manager;
+                deinit_fn(this);
+                task_manager.finishConcurrently();
             }
 
             // Otherwise need to wait
@@ -626,12 +669,9 @@ pub const ShellRmTask = struct {
 
         pub fn deleteAfterWaitingForChildren(this: *DirTask) void {
             debug("DirTask(0x{x}, path={s}) deleteAfterWaitingForChildren", .{ @intFromPtr(this), this.path });
-            // `runFromMainThreadImpl` has a `defer this.postRun()` so need to set this to true to skip that
-            this.deleting_after_waiting_for_children.store(true, .seq_cst);
-            this.need_to_wait.store(false, .seq_cst);
             var do_post_run = true;
             defer {
-                if (do_post_run) this.postRun();
+                if (do_post_run) this.postRunImpl(false);
             }
             if (this.task_manager.error_signal.load(.seq_cst)) {
                 return;
@@ -645,7 +685,7 @@ pub const ShellRmTask = struct {
                     if (this.task_manager.err == null) {
                         this.task_manager.err = e;
                     } else {
-                        bun.default_allocator.free(e.path);
+                        this.task_manager.rm.alloc_scope.allocator().free(e.path);
                     }
                 },
                 .result => |deleted| {
@@ -667,18 +707,19 @@ pub const ShellRmTask = struct {
         }
 
         pub fn deinit(this: *DirTask) void {
+            log("DirTask(0x{x}, path={s}) deinit", .{ @intFromPtr(this), this.path });
             this.deleted_entries.deinit();
             // The root's path string is from Rm's argv so don't deallocate it
             // And the root task is actually a field on the struct of the AsyncRmTask so don't deallocate it either
             if (this.parent_task != null) {
-                bun.default_allocator.free(this.path);
-                bun.default_allocator.destroy(this);
+                this.task_manager.rm.alloc_scope.allocator().free(this.path);
+                this.task_manager.rm.alloc_scope.allocator().destroy(this);
             }
         }
     };
 
     pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
-        const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
+        const task = rm.alloc_scope.allocator().create(ShellRmTask) catch bun.outOfMemory();
         task.* = ShellRmTask{
             .rm = rm,
             .opts = rm.opts,
@@ -690,7 +731,7 @@ pub const ShellRmTask = struct {
                 .path = root_path.sliceAssumeZ(),
                 .subtask_count = std.atomic.Value(usize).init(1),
                 .kind_hint = .idk,
-                .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                .deleted_entries = std.ArrayList(u8).init(rm.alloc_scope.allocator()),
                 .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
             .event_loop = rm.bltn().parentCmd().base.eventLoop(),
@@ -699,6 +740,7 @@ pub const ShellRmTask = struct {
             .root_is_absolute = is_absolute,
             .join_style = JoinStyle.fromPath(root_path),
         };
+        debug("DirTask(0x{x}, path={s}) created", .{ @intFromPtr(&task.root_task), task.root_path });
         return task;
     }
 
@@ -711,7 +753,7 @@ pub const ShellRmTask = struct {
             return;
         }
         const new_path = this.join(
-            bun.default_allocator,
+            this.rm.alloc_scope.allocator(),
             &[_][]const u8{
                 parent_dir.path[0..parent_dir.path.len],
                 path[0..path.len],
@@ -728,14 +770,14 @@ pub const ShellRmTask = struct {
             return;
         }
 
-        var subtask = bun.default_allocator.create(DirTask) catch bun.outOfMemory();
+        var subtask = this.rm.alloc_scope.allocator().create(DirTask) catch bun.outOfMemory();
         subtask.* = DirTask{
             .task_manager = this,
             .path = path,
             .parent_task = parent_task,
             .subtask_count = std.atomic.Value(usize).init(1),
             .kind_hint = kind_hint,
-            .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+            .deleted_entries = std.ArrayList(u8).init(this.rm.alloc_scope.allocator()),
             .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
         };
 
@@ -827,7 +869,7 @@ pub const ShellRmTask = struct {
         }
 
         if (!this.opts.recursive) {
-            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
+            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(this.rm.alloc_scope.allocator().dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
         }
 
         const flags = bun.O.DIRECTORY | bun.O.RDONLY;
@@ -906,12 +948,21 @@ pub const ShellRmTask = struct {
             }
         }
 
+        // If this value is:
+        //    1: then all other sub-tasks have finished
+        //   >1: then there are still sub-tasks running
+        const previous_subtask_value = dir_task.subtask_count.fetchSub(1, .acq_rel);
+        bun.assert(previous_subtask_value >= 1);
+        dir_task.do_post_run_from_toplevel = false;
+
         // Need to wait for children to finish
-        if (dir_task.subtask_count.load(.seq_cst) > 1) {
+        if (previous_subtask_value > 1) {
             close_fd = true;
-            dir_task.need_to_wait.store(true, .seq_cst);
             return Maybe(void).success;
         }
+
+        // We'll post run ourselves
+        defer dir_task.postRunImpl(false);
 
         if (this.error_signal.load(.seq_cst)) return Maybe(void).success;
 
@@ -978,14 +1029,14 @@ pub const ShellRmTask = struct {
 
         pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
             if (this.child_of_dir) {
-                this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
+                this.task.enqueueNoJoin(parent_dir_task, this.task.rm.alloc_scope.allocator().dupeZ(u8, path) catch bun.outOfMemory(), .dir);
                 return Maybe(void).success;
             }
             return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
+            if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, this.task.rm.alloc_scope.allocator().dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
             return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
         }
     };
@@ -1139,8 +1190,7 @@ pub const ShellRmTask = struct {
     }
 
     fn errorWithPath(this: *ShellRmTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
-        _ = this;
-        return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+        return err.withPath(this.rm.alloc_scope.allocator().dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
     }
 
     inline fn join(this: *ShellRmTask, alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
@@ -1170,7 +1220,7 @@ pub const ShellRmTask = struct {
     }
 
     pub fn deinit(this: *ShellRmTask) void {
-        bun.default_allocator.destroy(this);
+        this.rm.alloc_scope.allocator().destroy(this);
     }
 };
 

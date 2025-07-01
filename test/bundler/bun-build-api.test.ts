@@ -788,7 +788,7 @@ identity(mod23);
 
   expect(build.success).toBe(true);
   const text = await build.outputs[0].text();
-
+  expect(text).not.toContain("process.env.");
   expect(text).not.toContain(" global.");
   expect(text).toContain(" globalThis.");
 });

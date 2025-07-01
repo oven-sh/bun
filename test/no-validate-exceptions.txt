@@ -269,6 +269,7 @@ test/js/junit-reporter/junit.test.js
 test/js/node/assert/assert-promise.test.ts
 test/js/node/assert/assert.spec.ts
 test/js/node/async_hooks/AsyncLocalStorage.test.ts
+test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts
 test/js/node/buffer-concat.test.ts
 test/js/node/buffer.test.js
 test/js/node/child_process/child-process-exec.test.ts

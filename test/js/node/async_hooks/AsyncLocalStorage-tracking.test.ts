@@ -1,7 +1,7 @@
-import { expect, test, describe } from "bun:test";
 import { Glob } from "bun";
-import { basename, join } from "path";
+import { describe, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
+import { basename, join } from "path";
 
 describe("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];

@@ -3813,8 +3813,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     return JSValue::encode(jsUndefined());
 }
 
-// @zig-export nothrow
-extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
+extern "C" void [[ZIG_EXPORT(nothrow)]] JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);

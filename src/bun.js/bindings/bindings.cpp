@@ -5173,8 +5173,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     return {};
 }
 
-// @zig-export checkexception_slow
-extern "C" void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+extern "C" void [[ZIG_EXPORT(nothrow)]] JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
@@ -5273,7 +5272,10 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool JSC__VM__isJITEnabled() { return JSC::Options::useJIT(); }
+bool JSC__VM__isJITEnabled()
+{
+    return JSC::Options::useJIT();
+}
 
 void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
 {
@@ -5302,8 +5304,14 @@ extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGloba
     populateStackTrace(arg0->vm(), arg0->stack(), trace, global, PopulateStackTraceFlags::OnlyPosition);
 }
 
-void JSC__VM__shrinkFootprint(JSC::VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
-void JSC__VM__whenIdle(JSC::VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
+void JSC__VM__shrinkFootprint(JSC::VM* arg0)
+{
+    arg0->shrinkFootprintWhenIdle();
+};
+void JSC__VM__whenIdle(JSC::VM* arg0, void (*ArgFn1)())
+{
+    arg0->whenIdle(ArgFn1);
+};
 
 void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
@@ -5354,13 +5362,25 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
 }
 
 void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject) {}
-void JSC__VM__drainMicrotasks(JSC::VM* arg0) { arg0->drainMicrotasks(); }
+void JSC__VM__drainMicrotasks(JSC::VM* arg0)
+{
+    arg0->drainMicrotasks();
+}
 
-bool JSC__VM__executionForbidden(JSC::VM* arg0) { return (*arg0).executionForbidden(); }
+bool JSC__VM__executionForbidden(JSC::VM* arg0)
+{
+    return (*arg0).executionForbidden();
+}
 
-bool JSC__VM__isEntered(JSC::VM* arg0) { return (*arg0).isEntered(); }
+bool JSC__VM__isEntered(JSC::VM* arg0)
+{
+    return (*arg0).isEntered();
+}
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
+void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
+{
+    (*arg0).setExecutionForbidden();
+}
 
 // These may be called concurrently from another thread.
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
@@ -5373,9 +5393,18 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
     if (didEnter)
         vm.apiLock().lock();
 }
-void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0) { (*arg0).notifyNeedDebuggerBreak(); }
-void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0) { (*arg0).notifyNeedShellTimeoutCheck(); }
-void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0) { (*arg0).notifyNeedWatchdogCheck(); }
+void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
+{
+    (*arg0).notifyNeedDebuggerBreak();
+}
+void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
+{
+    (*arg0).notifyNeedShellTimeoutCheck();
+}
+void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0)
+{
+    (*arg0).notifyNeedWatchdogCheck();
+}
 
 void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
 {

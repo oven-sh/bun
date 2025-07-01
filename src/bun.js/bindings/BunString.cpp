@@ -397,8 +397,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-// @zig-export zero_is_throw
-extern "C" JSC::EncodedJSValue BunString__toJSON(
+extern "C" JSC::EncodedJSValue [[ZIG_EXPORT(zero_is_throw)]] BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {

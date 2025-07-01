@@ -1,10 +1,10 @@
-import Parser, { Language, SyntaxNode, TreeCursor } from "tree-sitter";
+import Parser, { Language, SyntaxNode, TreeCursor, Query } from "tree-sitter";
 import Cpp from "tree-sitter-cpp";
 import { mkdir, readdir } from "fs/promises";
 import { join, relative } from "path";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
-// https://intmainreturn0.com/ts-visualizer/
+// https://tree-sitter.github.io/tree-sitter/7-playground.html
 
 type Point = {
   line: number;
@@ -175,78 +175,6 @@ type ShouldExport = {
     position: Srcloc;
   };
 };
-function processNode(
-  file: string,
-  cursor: TreeCursor,
-  allFunctions: CppFn[],
-  shouldExport: ShouldExport,
-  isInExternC: boolean,
-  usingNamespaces: string[],
-) {
-  const node = cursor.currentNode;
-  if (node.type === "function_definition" && shouldExport.value) {
-    try {
-      const result = processFunction(file, node, shouldExport.value.tag);
-      allFunctions.push(result);
-    } catch (e) {
-      appendErrorFromCatch(e, nodePosition(file, node));
-    }
-    shouldExport.value = undefined;
-
-    if (!isInExternC) {
-      appendError(nodePosition(file, node), '@zig-export-ed function must be extern "C"');
-      return;
-    }
-  } else {
-    if (node.type === "linkage_specification") {
-      const value = node.childrenForFieldName("value")[0];
-      if (value && value.type === "string_literal" && value.text === '"C"') {
-        isInExternC = true;
-      }
-    }
-
-    let x = cursor.gotoFirstChild();
-    while (x && cursor.gotoNextSibling()) {
-      const child = cursor.currentNode;
-      if (child.type === "using_declaration") {
-        const identifiers = child.descendantsOfType("identifier");
-        if (identifiers.length !== 1) continue;
-        usingNamespaces = [...usingNamespaces, identifiers[0].text];
-      }
-    }
-
-    const hadShouldExport = !!shouldExport.value;
-    x && cursor.gotoParent();
-    x = cursor.gotoFirstChild();
-    while (x && cursor.gotoNextSibling()) {
-      const child = cursor.currentNode;
-      if (child.type === "comment" && child.text.includes("@zig-export")) {
-        const text = child.text;
-        if (shouldExport.value) appendError(nodePosition(file, child), "multiple @zig-export comments in a row");
-        if (text.includes("checkexception_slow")) {
-          shouldExport.value = { tag: "check_slow", position: nodePosition(file, child) };
-        } else if (text.includes("zero_is_throw")) {
-          shouldExport.value = { tag: "zero_is_throw", position: nodePosition(file, child) };
-        } else if (text.includes("nothrow")) {
-          shouldExport.value = { tag: "nothrow", position: nodePosition(file, child) };
-        } else {
-          appendError(nodePosition(file, child), "unknown @zig-export comment: " + text);
-        }
-      } else {
-        processNode(file, cursor, allFunctions, shouldExport, isInExternC, usingNamespaces);
-        if (shouldExport.value && !hadShouldExport) {
-          appendError(shouldExport.value.position, "unused @zig-export comment");
-          shouldExport.value = undefined;
-        }
-      }
-    }
-    if (shouldExport.value && !hadShouldExport) {
-      appendError(shouldExport.value.position, "unused @zig-export comment");
-      shouldExport.value = undefined;
-    }
-    x && cursor.gotoParent();
-  }
-}
 
 const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
 const sharedTypesLines = sharedTypesText.split("\n");
@@ -308,13 +236,42 @@ function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], f
   return `    /// Source: ${fn.name}`;
 }
 
-async function processFile(parser: Parser, file: string, allFunctions: CppFn[]) {
+async function processFile(parserAndQueries: ParserAndQueries, file: string, allFunctions: CppFn[]) {
   const sourceCode = await Bun.file(file).text();
-  if (!sourceCode.includes("@zig-export")) return;
-  const tree = parser.parse(sourceCode);
+  if (!sourceCode.includes("ZIG_EXPORT")) return;
+  const tree = parserAndQueries.parser.parse(sourceCode);
 
-  const cursor = tree.walk();
-  processNode(file, cursor, allFunctions, {}, false, []);
+  const matches = parserAndQueries.query.matches(tree.rootNode);
+
+  for (const match of matches) {
+    const identifierCapture = match.captures.find(c => c.name === "attribute.identifier");
+    const fnCapture = match.captures.find(c => c.name === "fn");
+    if (!identifierCapture || !fnCapture) continue;
+
+    const linkage = fnCapture.node.closest("linkage_specification");
+    const value = linkage?.childrenForFieldName("value")[0];
+    if (!linkage || value?.type !== "string_literal" || value.text !== '"C"') {
+      appendError(nodePosition(file, fnCapture.node), 'exported function must be extern "C"');
+    }
+
+    const tagStr = identifierCapture.node.text;
+    let tag: ExportTag | undefined;
+
+    if (tagStr === "nothrow" || tagStr === "zero_is_throw" || tagStr === "check_slow") {
+      tag = tagStr;
+    } else {
+      appendError(nodePosition(file, identifierCapture.node), "tag must be nothrow, zero_is_throw, or check_slow");
+      tag = "nothrow";
+    }
+
+    try {
+      const result = processFunction(file, fnCapture.node, tag);
+      allFunctions.push(result);
+    } catch (e) {
+      appendErrorFromCatch(e, nodePosition(file, fnCapture.node));
+    }
+  }
+  // processNode(file, cursor, allFunctions, {}, false, []);
 }
 
 async function renderError(position: Srcloc, message: string, label: string, color: string) {
@@ -372,6 +329,11 @@ async function readFileOrEmpty(file: string): Promise<string> {
   }
 }
 
+type ParserAndQueries = {
+  parser: Parser;
+  query: Query;
+};
+
 async function main() {
   const args = process.argv.slice(2);
   const rootDir = args[0];
@@ -384,13 +346,35 @@ async function main() {
 
   const parser = new Parser();
   parser.setLanguage(Cpp as unknown as Language);
+  const query = new Query(
+    Cpp as unknown as Language,
+    `(
+      (function_definition
+        (attribute_declaration
+          (attribute
+            name: (identifier) @attribute.name
+            (#eq? @attribute.name "ZIG_EXPORT")
+            (argument_list (identifier) @attribute.identifier)
+          )
+        )
+      )
+      @fn
+    )`,
+  );
 
   const allSourceFiles = await readdir(rootDir, { recursive: true });
   const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp")).map(file => join(rootDir, file));
 
   const allFunctions: CppFn[] = [];
   for (const file of allCppFiles) {
-    await processFile(parser, file, allFunctions);
+    await processFile(
+      {
+        parser,
+        query,
+      },
+      file,
+      allFunctions,
+    );
   }
 
   const resultRaw: string[] = [];

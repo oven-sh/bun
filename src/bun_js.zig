@@ -468,16 +468,12 @@ pub const Run = struct {
         vm.globalExit();
     }
 
-    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
-    /// add `gc()` to `globalThis`.
-    extern fn JSC__JSGlobalObject__addGc(*JSC.JSGlobalObject) void;
-
     fn addConditionalGlobals(this: *Run) void {
         const vm = this.vm;
         const runtime_options: *const Command.RuntimeOptions = &this.ctx.runtime_options;
 
         if (runtime_options.eval.script.len > 0) {
-            Bun__ExposeNodeModuleGlobals(vm.global);
+            bun.cpp.Bun__ExposeNodeModuleGlobals(vm.global);
         }
         if (runtime_options.expose_gc) {
             bun.cpp.JSC__JSGlobalObject__addGc(vm.global);

@@ -41,4 +41,5 @@ export const sharedTypes: Record<string, string> = {
   "HotReloadId": "HTTPServerAgent.HotReloadId",
   "ServerId": "HTTPServerAgent.ServerId",
   "Route": "HTTPServerAgent.Route",
+  "Zig::GlobalObject": "JSC.JSGlobalObject",
 };

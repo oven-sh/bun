@@ -39,4 +39,6 @@ export const sharedTypes: Record<string, string> = {
   "ZigException": "bun.JSC.ZigException",
   "Inspector::InspectorHTTPServerAgent": "HTTPServerAgent.InspectorHTTPServerAgent",
   "HotReloadId": "HTTPServerAgent.HotReloadId",
+  "ServerId": "HTTPServerAgent.ServerId",
+  "Route": "HTTPServerAgent.Route",
 };

@@ -18,6 +18,7 @@ type CppFn = {
   returnType: CppType;
   parameters: CppParameter[];
   position: Srcloc;
+  tag: ExportTag;
 };
 type CppParameter = {
   type: CppType;
@@ -108,7 +109,7 @@ function processDeclarator(
   return { type: rootmostType, final: declarator };
 }
 
-function processFunction(file: string, node: SyntaxNode): CppFn {
+function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn {
   // void* spiral()
 
   const type: CppType = processRootmostType(file, node.childrenForFieldName("type"));
@@ -152,12 +153,14 @@ function processFunction(file: string, node: SyntaxNode): CppFn {
     name: name.text,
     parameters,
     position: nodePosition(file, name),
+    tag,
   };
 }
 
+type ExportTag = "check_slow" | "zero_is_throw" | "nothrow";
 type ShouldExport = {
   value?: {
-    tag: "check_slow" | "zero_is_throw" | "nothrow";
+    tag: ExportTag;
     position: Srcloc;
   };
 };
@@ -175,7 +178,7 @@ function processNode(
       return;
     }
     try {
-      const result = processFunction(file, node);
+      const result = processFunction(file, node, shouldExport.value.tag);
       allFunctions.push(result);
     } catch (e) {
       if (e instanceof PositionedErrorClass) {
@@ -275,12 +278,11 @@ function formatZigName(name: string): string {
   if (name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return name;
   return "@" + JSON.stringify(name);
 }
-function generateZigExtern(dstDir: string, fn: CppFn, result: string[]) {
-  const parameters = fn.parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type)}`).join(", ");
-  result.push(
-    `    /// Source: ${relative(dstDir, fn.position.file)}:${fn.position.start.line}:${fn.position.start.column}`,
-  );
-  result.push(`    extern fn ${formatZigName(fn.name)}(${parameters}) ${generateZigType(fn.returnType)};`);
+function generateZigParameterList(parameters: CppParameter[]): string {
+  return parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type)}`).join(", ");
+}
+function generateZigSourceComment(dstDir, fn: CppFn): string {
+  return `    /// Source: ${relative(dstDir, fn.position.file)}:${fn.position.start.line}:${fn.position.start.column}`;
 }
 
 async function processFile(parser: Parser, file: string, allFunctions: CppFn[]) {
@@ -323,7 +325,37 @@ async function main() {
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];
   for (const fn of allFunctions) {
-    generateZigExtern(dstDir, fn, resultRaw);
+    if (fn.tag === "nothrow") {
+      if (resultBindings.length) resultBindings.push("");
+      resultBindings.push(
+        generateZigSourceComment(dstDir, fn),
+        `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+      );
+    } else if (fn.tag === "check_slow") {
+      if (resultRaw.length) resultRaw.push("");
+      if (resultBindings.length) resultBindings.push("");
+      resultRaw.push(
+        generateZigSourceComment(dstDir, fn),
+        `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+      );
+      resultBindings.push(
+        `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)} {`,
+        `        bun.JSC.fromJSHostCallGeneric(raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
+        `    }`,
+      );
+    } else if (fn.tag === "zero_is_throw") {
+      if (resultRaw.length) resultRaw.push("");
+      if (resultBindings.length) resultBindings.push("");
+      resultRaw.push(
+        generateZigSourceComment(dstDir, fn),
+        `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+      );
+      resultBindings.push(
+        `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)} {`,
+        `        bun.JSC.fromJSHostCall(raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
+        `    }`,
+      );
+    } else assertNever(fn.tag);
   }
 
   for (const message of errors) {
@@ -339,7 +371,7 @@ async function main() {
     typeDeclarations +
       "\nconst raw = struct {\n" +
       resultRaw.join("\n") +
-      "\n};\npub const bindings = struct {\n" +
+      "\n};\n\npub const bindings = struct {\n" +
       resultBindings.join("\n") +
       "\n};\n",
   );

@@ -255,6 +255,10 @@ set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
 absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/sources/ZigGeneratedClassesSources.txt)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
+
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.cpp
@@ -306,6 +310,23 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/GeneratedJS2Native.h
   # Zig will complain if files are outside of the source directory
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
+)
+
+register_command(
+  TARGET
+    bun-cppbind
+  COMMENT
+    "Generating C++ --> Zig bindings"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      ${CWD}/src/codegen/cppbind.ts
+      ${CWD}/src
+      ${CWD}/src
+  SOURCES
+    ${CWD}/src/codegen/cppbind.ts
+    ${BUN_CXX_SOURCES}
+  OUTPUTS
+    ${CWD}/src/cpp.zig
 )
 
 register_command(
@@ -606,9 +627,11 @@ register_command(
   TARGETS
     clone-zig
     clone-zstd
+    bun-cppbind
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
+    ${CWD}/src/cpp.zig
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
@@ -617,10 +640,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 # --- C/C++ Sources ---
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
-
-# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
-absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)

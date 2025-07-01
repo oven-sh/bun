@@ -6,7 +6,6 @@ const HTTPServerAgent = bun.jsc.Debugger.HTTPServerAgent;
 
 export const sharedTypes: Record<string, string> = {
   // Basic types
-  "void": "void",
   "bool": "bool",
   "char": "u8",
   "unsigned char": "u8",

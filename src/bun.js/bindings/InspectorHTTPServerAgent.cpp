@@ -188,7 +188,7 @@ typedef int RouteId;
 typedef int RequestId;
 
 // @zig-export nothrow
-void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, BunString* address, double startTime, void* serverInstance)
+void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
@@ -222,7 +222,7 @@ struct Route {
 };
 
 // @zig-export nothrow
-void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId,
+void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId,
     Route* routes_ptr, size_t routes_len)
 {
 

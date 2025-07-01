@@ -4,6 +4,8 @@ import { readdir } from "fs/promises";
 import { join, relative } from "path";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
+// https://intmainreturn0.com/ts-visualizer/
+
 type Point = {
   line: number;
   column: number;
@@ -29,11 +31,13 @@ type CppType =
       type: "pointer";
       child: CppType;
       position: Srcloc;
+      isConst: boolean;
     }
   | {
       type: "reference";
       child: CppType;
       position: Srcloc;
+      isConst: boolean;
     }
   | {
       type: "named";
@@ -82,28 +86,34 @@ function processRootmostType(file: string, types: SyntaxNode[]): CppType {
 
 function processDeclarator(
   file: string,
-  declarators: SyntaxNode[],
-  rootmostType: CppType,
+  node: SyntaxNode,
+  rootmostType?: CppType,
 ): { type: CppType; final: SyntaxNode } {
   // example: int* spiral() is:
   // type: primitive_type[int], declarator: pointer_declarator[ declarator: function_declarator[ declarator: identifier[spiral], parameters: parame
 
+  const declarators = node.childrenForFieldName("declarator");
   const declarator = declarators[0];
   if (!declarator) throwError(nodePosition(file, declarators[0]), "no declarator found");
+
+  rootmostType ??= processRootmostType(file, node.childrenForFieldName("type"));
+  if (!rootmostType) throwError(nodePosition(file, node), "no rootmost type found");
+
+  const isConst = node.children.some(child => child.type === "type_qualifier" && child.text === "const");
   if (declarator.type === "pointer_declarator") {
-    const children = declarator.childrenForFieldName("declarator");
-    return processDeclarator(file, children, {
+    return processDeclarator(file, declarator, {
       type: "pointer",
       child: rootmostType,
       position: nodePosition(file, declarator),
+      isConst,
     });
   }
   if (declarator.type === "reference_declarator") {
-    const children = declarator.childrenForFieldName("declarator");
-    return processDeclarator(file, children, {
+    return processDeclarator(file, declarator, {
       type: "reference",
       child: rootmostType,
       position: nodePosition(file, declarator),
+      isConst,
     });
   }
   return { type: rootmostType, final: declarator };
@@ -112,17 +122,11 @@ function processDeclarator(
 function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn {
   // void* spiral()
 
-  const type: CppType = processRootmostType(file, node.childrenForFieldName("type"));
-  if (!type) throwError(nodePosition(file, node.childrenForFieldName("type")[0]), "no type found");
-  const declarator = processDeclarator(file, node.childrenForFieldName("declarator"), type);
+  const declarator = processDeclarator(file, node);
   if (!declarator) throwError(nodePosition(file, node.childrenForFieldName("declarator")[0]), "no declarator found");
   const final = declarator.final;
   if (final.type !== "function_declarator") {
-    const hasFunctionDeclarator = final.closest("function_declarator");
-    if (hasFunctionDeclarator) {
-      throwError(nodePosition(file, final), "final type is not a function_declarator (but it has one): " + final.type);
-    }
-    throwError(nodePosition(file, final), "no function_declarator found. final was: " + final.type);
+    throwError(nodePosition(file, final), "not a function_declarator: " + final.type);
   }
   const name = final.childrenForFieldName("declarator")[0];
   if (!name) throwError(nodePosition(file, final.childrenForFieldName("declarator")[0]), "no name found");
@@ -134,9 +138,7 @@ function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn 
   for (const parameter of parameterList.children) {
     if (parameter.type !== "parameter_declaration") continue;
 
-    const type: CppType = processRootmostType(file, parameter.childrenForFieldName("type"));
-    if (!type) throwError(nodePosition(file, parameter.childrenForFieldName("type")[0]), "no type found for parameter");
-    const declarator = processDeclarator(file, parameter.childrenForFieldName("declarator"), type);
+    const declarator = processDeclarator(file, parameter);
     if (!declarator)
       throwError(
         nodePosition(file, parameter.childrenForFieldName("declarator")[0]),
@@ -145,7 +147,7 @@ function processFunction(file: string, node: SyntaxNode, tag: ExportTag): CppFn 
     const name = declarator.final;
     if (!name) throwError(nodePosition(file, parameter), "no name found for parameter");
 
-    parameters.push({ type, name: name.text });
+    parameters.push({ type: declarator.type, name: name.text });
   }
 
   return {
@@ -248,12 +250,18 @@ for (const line of sharedTypesLines) {
 }
 
 const errorsForTypes: Map<string, PositionedError> = new Map();
-function generateZigType(type: CppType) {
+function generateZigType(type: CppType, subLevel?: boolean) {
   if (type.type === "pointer") {
-    return `[*c]${generateZigType(type.child)}`;
+    if (type.isConst) return `*const ${generateZigType(type.child, true)}`;
+    return `*${generateZigType(type.child, true)}`;
   }
   if (type.type === "reference") {
-    return `*${generateZigType(type.child)}`;
+    if (type.isConst) return `*const ${generateZigType(type.child, true)}`;
+    return `*${generateZigType(type.child, true)}`;
+  }
+  if (type.type === "named" && type.name === "void") {
+    if (subLevel) return "anyopaque";
+    return "void";
   }
   if (type.type === "named") {
     const sharedType = sharedTypes[type.name];
@@ -279,7 +287,7 @@ function formatZigName(name: string): string {
   return "@" + JSON.stringify(name);
 }
 function generateZigParameterList(parameters: CppParameter[]): string {
-  return parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type)}`).join(", ");
+  return parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`).join(", ");
 }
 function generateZigSourceComment(dstDir, fn: CppFn): string {
   return `    /// Source: ${relative(dstDir, fn.position.file)}:${fn.position.start.line}:${fn.position.start.column}`;
@@ -345,8 +353,8 @@ async function main() {
         `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
       );
       resultBindings.push(
-        `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)} {`,
-        `        bun.JSC.fromJSHostCallGeneric(raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `        return bun.JSC.fromJSHostCallGeneric(raw.${formatZigName(fn.name)}, @src(), .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
         `    }`,
       );
     } else if (fn.tag === "zero_is_throw") {
@@ -357,8 +365,8 @@ async function main() {
         `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
       );
       resultBindings.push(
-        `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)} {`,
-        `        bun.JSC.fromJSHostCall(raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
+        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+        `        return bun.JSC.fromJSHostCall(raw.${formatZigName(fn.name)}, @src(), .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
         `    }`,
       );
     } else assertNever(fn.tag);

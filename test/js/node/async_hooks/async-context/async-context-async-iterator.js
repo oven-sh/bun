@@ -1,4 +1,4 @@
-const { AsyncLocalStorage } = require('async_hooks');
+const { AsyncLocalStorage } = require("async_hooks");
 
 const asyncLocalStorage = new AsyncLocalStorage();
 
@@ -9,17 +9,17 @@ async function* asyncGenerator() {
   yield 3;
 }
 
-asyncLocalStorage.run({ test: 'async.iterator' }, async () => {
+asyncLocalStorage.run({ test: "async.iterator" }, async () => {
   try {
     for await (const value of asyncGenerator()) {
-      if (asyncLocalStorage.getStore()?.test !== 'async.iterator') {
-        console.error('FAIL: async iterator lost context at value', value);
+      if (asyncLocalStorage.getStore()?.test !== "async.iterator") {
+        console.error("FAIL: async iterator lost context at value", value);
         process.exit(1);
       }
     }
     process.exit(0);
   } catch (err) {
-    console.error('ERROR:', err);
+    console.error("ERROR:", err);
     process.exit(1);
   }
 });

@@ -2111,9 +2111,84 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s), JSC::jsNumber(1), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_module_version"_s), JSC::jsNumber(REPORTED_NODEJS_ABI_VERSION), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
+
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
+#if OS(WINDOWS)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(1), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "force_dynamic_crt"_s), JSC::jsNumber(0), 0);
+
+#if CPU(ARM64)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
+#else
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("x64"_s)), 0);
+#endif
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(NAPI_), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "nasm_version"_s), JSC::jsNumber(2), 0);
+#elif OS(MACOS)
+
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(ASAN_ENABLED), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "force_dynamic_crt"_s), JSC::jsNumber(0), 0);
+#if CPU(ARM64)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "arm_fpu"_s), JSC::jsString(vm, String("neon"_s)), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
+#elif CPU(X64)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("x64"_s)), 0);
+#else
+#error "Unsupported architecture"
+#endif
+#elif OS(LINUX)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(ASAN_ENABLED), 0);
+    // We use clang, but we lie about it so that napi addons don't get confused.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "force_dynamic_crt"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build"_s), JSC::jsString(vm, String("0.0"_s)), 0);
+#if CPU(X64)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("x64"_s)), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "target_arch"_s), JSC::jsString(vm, String("x64"_s)), 0);
+#elif CPU(ARM64)
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "target_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
+#else
+#error "Unsupported architecture"
+#endif
+
+#else
+#error "Unsupported OS"
+#endif
     config->freeze(vm);
     return config;
 }

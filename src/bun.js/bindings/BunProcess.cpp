@@ -2182,6 +2182,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #elif CPU(ARM64)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "host_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "target_arch"_s), JSC::jsString(vm, String("arm64"_s)), 0);
+
 #else
 #error "Unsupported architecture"
 #endif

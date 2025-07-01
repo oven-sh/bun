@@ -727,3 +727,68 @@ test("regression/NODE_PATHBuild api", async () => {
   expect(error).toBe("");
   expect(output.trim()).toBe("MyClass");
 });
+
+test("regression/GlobalThis", async () => {
+  const dir = tempDirWithFiles("global-this-regression", {
+    "entry.js": `
+      function identity(x) {
+        return x;
+      }
+  import * as mod1 from  'assert';
+  identity(mod1);
+import * as mod2 from  'buffer';
+identity(mod2);
+import * as mod3 from  'console';
+identity(mod3);
+import * as mod4 from  'constants';
+identity(mod4);
+import * as mod5 from  'crypto';
+identity(mod5);
+import * as mod6 from  'domain';
+identity(mod6);
+import * as mod7 from  'events';
+identity(mod7);
+import * as mod8 from  'http';
+identity(mod8);
+import * as mod9 from  'https';
+identity(mod9);
+import * as mod10 from  'net';
+identity(mod10);
+import * as mod11 from  'os';
+identity(mod11);
+import * as mod12 from  'path';
+identity(mod12);
+import * as mod13 from  'process';
+identity(mod13);
+import * as mod14 from  'punycode';
+identity(mod14);
+import * as mod15 from  'stream';
+identity(mod15);
+import * as mod16 from  'string_decoder';
+identity(mod16);
+import * as mod17 from  'sys';
+identity(mod17);
+import * as mod18 from  'timers';
+identity(mod18);
+import * as mod20 from  'tty';
+identity(mod20);
+import * as mod21 from  'url';
+identity(mod21);
+import * as mod22 from  'util';
+identity(mod22);
+import * as mod23 from  'zlib';
+identity(mod23);
+      `,
+  });
+
+  const build = await Bun.build({
+    entrypoints: [join(dir, "entry.js")],
+    target: "browser",
+  });
+
+  expect(build.success).toBe(true);
+  const text = await build.outputs[0].text();
+
+  expect(text).not.toContain(" global.");
+  expect(text).toContain(" globalThis.");
+});

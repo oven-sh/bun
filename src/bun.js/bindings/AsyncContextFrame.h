@@ -7,7 +7,7 @@
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetCallData;
 
     static AsyncContextFrame* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue callback, JSC::JSValue context);
     static AsyncContextFrame* create(JSC::JSGlobalObject* global, JSC::JSValue callback, JSC::JSValue context);
@@ -19,7 +19,7 @@ public:
 
     // The following is JSC::call but
     // - it unwraps AsyncContextFrame
-    // - does not take a CallData, because JSC::getCallData(AsyncContextFrame) -> not callable
+    // - provides async context management during function execution
     // static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, const JSC::ArgList&, ASCIILiteral errorMessage);
     // static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&, ASCIILiteral errorMessage);
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
@@ -30,6 +30,9 @@ public:
 
     // Alias of call.
     static JSC::JSValue profiledCall(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&, NakedPtr<JSC::Exception>& returnedException);
+
+    // Make this object callable by delegating to the target function
+    static JSC::CallData getCallData(JSC::JSCell*);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

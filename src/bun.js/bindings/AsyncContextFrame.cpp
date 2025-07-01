@@ -52,6 +52,15 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
         context);
 }
 
+JSC::CallData AsyncContextFrame::getCallData(JSC::JSCell* cell)
+{
+    auto* asyncFrame = jsCast<AsyncContextFrame*>(cell);
+    JSValue callback = asyncFrame->callback.get();
+    
+    // Delegate to the target function's call data
+    return JSC::getCallData(callback);
+}
+
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

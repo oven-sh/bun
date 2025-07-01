@@ -105,7 +105,8 @@ beforeAll(async () => {
       stdin: "inherit",
       env: {
         ...bunEnv,
-        npm_config_target: "v23.2.0",
+        npm_config_target: "v24.3.0",
+        CXXFLAGS: (bunEnv.CXXFLAGS ?? "") + (process.platform == "win32" ? " -std=c++20" : " -std=gnu++20"),
         // on linux CI, node-gyp will default to g++ and the version installed there is very old,
         // so we make it use clang instead
         ...(process.platform == "linux" && isCI

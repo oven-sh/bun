@@ -395,3 +395,8 @@ async function main() {
 
 // Run the main function
 await main();
+
+/*
+TODO:
+- line and column numbers have to be stored in a seperate file (otherwise if you edit any marked c++ file, zig will recompile)
+*/

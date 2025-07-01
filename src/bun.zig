@@ -3774,4 +3774,4 @@ pub fn move(dest: []u8, src: []const u8) void {
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
-pub const cpp = @import("cpp.zig");
+pub const cpp = @import("cpp.zig").bindings;

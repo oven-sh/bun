@@ -1,4 +1,3 @@
-
 const bun = @import("bun");
 const JSC = bun.JSC;
 const HTTPServerAgent = bun.jsc.Debugger.HTTPServerAgent;
@@ -13,7 +12,7 @@ const raw = struct {
 
 pub const bindings = struct {
     pub inline fn BunString__toJSON(globalObject: *JSC.JSGlobalObject, bunString: *bun.String) bun.JSError!JSC.JSValue {
-        return bun.JSC.fromJSHostCall(raw.BunString__toJSON, @src(), .{ globalObject, bunString});
+        return bun.JSC.fromJSHostCall(raw.BunString__toJSON, @src(), .{ globalObject, bunString });
     }
 
     /// Source: bun.js/bindings/InspectorHTTPServerAgent.cpp:191:6
@@ -26,6 +25,6 @@ pub const bindings = struct {
     pub extern fn Bun__HTTPServerAgent__notifyServerRoutesUpdated(agent: *HTTPServerAgent.InspectorHTTPServerAgent, serverId: HTTPServerAgent.ServerId, hotReloadId: HTTPServerAgent.HotReloadId, routes_ptr: *HTTPServerAgent.Route, routes_len: usize) void;
 
     pub inline fn JSC__JSValue__toZigException(jsException: JSC.JSValue, global: *JSC.JSGlobalObject, exception: *bun.JSC.ZigException) bun.JSError!void {
-        return bun.JSC.fromJSHostCallGeneric(raw.JSC__JSValue__toZigException, @src(), .{ jsException, global, exception});
+        return bun.JSC.fromJSHostCallGeneric(raw.JSC__JSValue__toZigException, @src(), .{ jsException, global, exception });
     }
 };

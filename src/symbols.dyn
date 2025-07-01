@@ -19,7 +19,9 @@
     __ZN2v824EscapableHandleScopeBase10EscapeSlotEPm;
     __ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE;
     __ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm;
-    __ZN2v86Number3NewEPNS_7IsolateEd;
+__ZN2v85Array3NewEPNS_7IsolateEi;
+__ZNK2v85Array6LengthEv;
+__ZN2v86Number3NewEPNS_7IsolateEd;
     __ZN2v86Object16GetInternalFieldEi;
     __ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE;
     __ZN2v86Object20SlowGetInternalFieldEi;

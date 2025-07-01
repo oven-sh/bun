@@ -607,6 +607,8 @@ EXPORTS
   ??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z
   ?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z
   ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z
+  ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z
+  ?Length@Array@v8@@QEBAIXZ
   ?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z
   ?IsBoolean@Value@v8@@QEBA_NXZ
   ?Value@Boolean@v8@@QEBA_NXZ

@@ -2329,7 +2329,6 @@ pub const startsWithWindowsDriveLetter = _paths.startsWithWindowsDriveLetter;
 pub const startsWithWindowsDriveLetterT = _paths.startsWithWindowsDriveLetterT;
 pub const toExtendedPathNormalized = _paths.toExtendedPathNormalized;
 pub const toKernel32Path = _paths.toKernel32Path;
-pub const toNTMaxPath = _paths.toNTMaxPath;
 pub const toNTPath = _paths.toNTPath;
 pub const toNTPath16 = _paths.toNTPath16;
 pub const toPath = _paths.toPath;

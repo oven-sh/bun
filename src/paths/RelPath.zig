@@ -126,7 +126,17 @@ pub fn RelPath(comptime opts: Options) type {
 
             const trimmed = strings.trimTrailingPathSeparators(printed);
 
-            this.len += @intCast(trimmed.len);
+            if (comptime opts.normalize_slashes) {
+                for (trimmed) |c| {
+                    switch (c) {
+                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
+                        else => {},
+                    }
+                    this.len += 1;
+                }
+            } else {
+                this.len += @intCast(trimmed.len);
+            }
         }
 
         pub fn pop(this: *@This(), component: string) void {

@@ -824,6 +824,10 @@ pub fn init(
         bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
     }
 
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS)) {
+        bun.sys.WindowsSymlinkOptions.has_failed_to_create_symlink = true;
+    }
+
     if (PackageManager.verbose_install) {
         Output.prettyErrorln("Cache Dir: {s}", .{options.cache_directory});
         Output.flush();

@@ -563,6 +563,11 @@ pub const FD = packed struct(backing_int) {
         };
     }
 
+    // TODO: make our own version of deleteTree
+    pub fn deleteTree(dir: FD, subpath: []const u8) !void {
+        try dir.stdDir().deleteTree(subpath);
+    }
+
     // The following functions are from bun.sys but with the 'f' prefix dropped
     // where it is relevant. These functions all take FD as the first argument,
     // so that makes them Zig methods, even when declared in a separate file.

@@ -188,7 +188,17 @@ pub fn AbsPath(comptime opts: Options) type {
             else
                 strings.trimPathSeparators(printed);
 
-            this.len += @intCast(trimmed.len);
+            if (comptime opts.normalize_slashes) {
+                for (trimmed) |c| {
+                    switch (c) {
+                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
+                        else => {},
+                    }
+                    this.len += 1;
+                }
+            } else {
+                this.len += @intCast(trimmed.len);
+            }
         }
 
         pub fn undo(this: *@This(), n_components: usize) callconv(bun.callconv_inline) void {

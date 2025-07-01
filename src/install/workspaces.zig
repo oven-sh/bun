@@ -1090,48 +1090,55 @@ const ensureSymlink = if (Environment.isWindows)
 else
     ensureSymlinkPosix;
 
-fn ensureSymlinkPosix(target: [:0]const u8, dest_dir: FD, dest_subpath: [:0]const u8) void {
-    return sys.symlinkat(target, dest_dir, dest_subpath).unwrap() catch |symlink_err1| switch (symlink_err1) {
-        error.ENOENT => {
-            const parent_dir = std.fs.path.dirname(dest_subpath) orelse {
-                Output.err(symlink_err1, "failed to create symlink: '{}/{s}' -\\> '{s}'", .{
-                    dest_dir,
-                    dest_subpath,
-                    target,
-                });
-                Global.exit(1);
-            };
+fn ensureSymlinkPosix(target: [:0]const u8, dest: [:0]const u8) void {
+    return switch (sys.symlink(target, dest)) {
+        .result => {},
+        .err => |symlink_err1| {
+            switch (symlink_err1.getErrno()) {
+                .NOENT => {
+                    const parent_dir = std.fs.path.dirname(dest) orelse {
+                        Output.err(symlink_err1, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                            dest,
+                            target,
+                        });
+                        Global.exit(1);
+                    };
 
-            dest_dir.makePath(u8, parent_dir) catch {};
+                    FD.cwd().makePath(u8, parent_dir) catch {};
 
-            sys.symlinkat(target, dest_dir, dest_subpath).unwrap() catch |symlink_err2| {
-                Output.err(symlink_err2, "failed to create symlink: '{}/{s}' -\\> '{s}'", .{
-                    dest_dir,
-                    dest_subpath,
-                    target,
-                });
-                Global.exit(1);
-            };
-        },
-        error.EEXIST => {
-            dest_dir.stdDir().deleteTree(dest_subpath) catch {};
+                    switch (sys.symlink(target, dest)) {
+                        .result => {},
+                        .err => |symlink_err2| {
+                            Output.err(symlink_err2, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                                dest,
+                                target,
+                            });
+                            Global.exit(1);
+                        },
+                    }
+                },
+                .EXIST => {
+                    FD.cwd().deleteTree(dest) catch {};
 
-            sys.symlinkat(target, dest_dir, dest_subpath).unwrap() catch |symlink_err2| {
-                Output.err(symlink_err2, "failed to create symlink: '{}/{s}' -\\> '{s}'", .{
-                    dest_dir,
-                    dest_subpath,
-                    target,
-                });
-                Global.exit(1);
-            };
-        },
-        else => {
-            Output.err(symlink_err1, "failed to create symlink: '{}/{s}' -\\> '{s}'", .{
-                dest_dir,
-                dest_subpath,
-                target,
-            });
-            Global.exit(1);
+                    switch (sys.symlink(target, dest)) {
+                        .result => {},
+                        .err => |symlink_err2| {
+                            Output.err(symlink_err2, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                                dest,
+                                target,
+                            });
+                            Global.exit(1);
+                        },
+                    }
+                },
+                else => {
+                    Output.err(symlink_err1, "failed to create symlink: '{s}' -\\> '{s}'", .{
+                        dest,
+                        target,
+                    });
+                    Global.exit(1);
+                },
+            }
         },
     };
 }
@@ -1473,15 +1480,15 @@ pub const Store = struct {
                             pkg_cache_dir_subpath.deinit();
                         }
 
-                        var dest_dir_subpath: bun.RelPath(.{}) = .init();
-                        defer dest_dir_subpath.deinit();
+                        var dest_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .init();
+                        defer dest_subpath.deinit();
 
-                        installer.appendStorePath(&dest_dir_subpath, this.entry_id);
+                        installer.appendStorePath(&dest_subpath, this.entry_id);
 
                         // link the package
                         if (comptime Environment.isMac) {
                             if (install.PackageInstall.supported_method == .clonefile) hardlink_fallback: {
-                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
+                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
                                     .result => {
                                         // success! move to next step
                                         continue :next_step this.nextStep();
@@ -1491,13 +1498,13 @@ pub const Store = struct {
                                             .XDEV => break :hardlink_fallback,
                                             .OPNOTSUPP => break :hardlink_fallback,
                                             .NOENT => {
-                                                const parent_dest_dir = std.fs.path.dirname(dest_dir_subpath.slice()) orelse {
+                                                const parent_dest_dir = std.fs.path.dirname(dest_subpath.slice()) orelse {
                                                     @panic("TODO: return error.ENOENT back to main thread");
                                                 };
 
                                                 FD.cwd().makePath(u8, parent_dest_dir) catch {};
 
-                                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_dir_subpath.sliceZ())) {
+                                                switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
                                                     .result => {
                                                         continue :next_step this.nextStep();
                                                     },
@@ -1531,48 +1538,116 @@ pub const Store = struct {
                         );
                         defer walker.deinit();
 
-                        while (walker.next() catch @panic("todo!")) |entry| {
-                            if (comptime Environment.isWindows) {
-                                continue;
-                            }
+                        if (comptime Environment.isWindows) {
+                            var src_buf: bun.WPathBuffer = undefined;
+                            var src: [:0]u16 = src: {
+                                const cache_dir_path_w = bun.strings.toNTPath(&src_buf, strings.withoutTrailingSlash(cache_dir_path.slice()));
+                                src_buf[cache_dir_path_w.len] = std.fs.path.sep;
+                                const pkg_cache_dir_subpath_w = bun.strings.convertUTF8toUTF16InBufferZ(src_buf[cache_dir_path_w.len + 1 ..], pkg_cache_dir_subpath.slice());
+                                src_buf[cache_dir_path_w.len + 1 + pkg_cache_dir_subpath_w.len] = std.fs.path.sep;
+                                src_buf[cache_dir_path_w.len + 1 + pkg_cache_dir_subpath_w.len + 1] = 0;
+                                break :src src_buf[0 .. cache_dir_path_w.len + 1 + pkg_cache_dir_subpath_w.len + 1 :0];
+                            };
 
-                            const dest_save = dest_dir_subpath.save();
-                            defer dest_save.restore();
+                            var dest_buf: bun.WPathBuffer = undefined;
+                            var dest: [:0]u16 = bun.strings.convertUTF8toUTF16InBufferZ(&dest_buf, dest_subpath.slice());
+                            dest_buf[dest.len] = std.fs.path.sep;
+                            dest.len += 1;
 
-                            dest_dir_subpath.append(entry.path);
+                            while (walker.next() catch @panic("todo!")) |entry| {
+                                // TODO: add support for utf16 in AbsPath and RelPath
+                                const saved_src_len = src.len;
+                                defer src.len = saved_src_len;
 
-                            switch (entry.kind) {
-                                .directory => {
-                                    bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_dir_subpath.slice()) catch {};
-                                },
-                                .file => {
-                                    sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch |err| {
-                                        switch (err) {
-                                            error.EEXIST => {
-                                                sys.unlinkat(FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {};
-                                                sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {
-                                                    @panic("OOOPS!");
-                                                };
-                                            },
-                                            error.ENOENT => {
-                                                if (dest_dir_subpath.dirname()) |dest_dir_dir_path| {
-                                                    bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_dir_dir_path) catch {};
+                                @memcpy(src_buf[src.len..][0..entry.path.len], entry.path);
+                                src_buf[src.len + entry.path.len] = 0;
+                                src = src_buf[0 .. src.len + entry.path.len :0];
+
+                                const saved_dest_len = dest.len;
+                                defer dest.len = saved_dest_len;
+
+                                @memcpy(dest_buf[dest.len..][0..entry.path.len], entry.path);
+                                dest_buf[dest.len + entry.path.len] = 0;
+                                dest = dest_buf[0 .. dest.len + entry.path.len :0];
+
+                                switch (entry.kind) {
+                                    .directory => {
+                                        FD.cwd().makePath(u16, dest) catch {};
+                                    },
+                                    .file => {
+                                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                                            continue;
+                                        }
+
+                                        switch (bun.windows.GetLastError()) {
+                                            .ALREADY_EXISTS, .FILE_EXISTS, .CANNOT_MAKE => {
+                                                _ = bun.windows.DeleteFileW(dest.ptr);
+                                                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                                                    continue;
                                                 }
-                                                sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_dir_subpath.sliceZ()).unwrap() catch {
-                                                    @panic("OOOPS!!");
+                                            },
+                                            .PATH_NOT_FOUND, .FILE_NOT_FOUND, .NOT_FOUND => {
+                                                const parent = bun.Dirname.dirname(u16, dest) orelse {
+                                                    @panic("failed to create hardlink");
                                                 };
+                                                FD.cwd().makePath(u16, parent) catch {};
+
+                                                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                                                    continue;
+                                                }
+                                                @panic("hardlink failed!");
                                             },
                                             else => {
-                                                @panic("OOPS!");
+                                                @panic("hardlink failed!");
                                             },
                                         }
-                                    };
-                                },
-                                else => {},
+                                    },
+                                    else => {},
+                                }
                             }
+
+                            continue :next_step this.nextStep();
+                        } else {
+                            while (walker.next() catch @panic("todo!")) |entry| {
+                                var dest_subpath_save = dest_subpath.save();
+                                defer dest_subpath_save.restore();
+
+                                dest_subpath.append(entry.path);
+
+                                switch (entry.kind) {
+                                    .directory => {
+                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_subpath.slice()) catch {};
+                                    },
+                                    .file => {
+                                        sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_subpath.sliceZ()).unwrap() catch |err| {
+                                            switch (err) {
+                                                error.EEXIST => {
+                                                    sys.unlinkat(FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {};
+                                                    sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {
+                                                        @panic("OOOPS!");
+                                                    };
+                                                },
+                                                error.ENOENT => {
+                                                    if (dest_subpath.dirname()) |dest_dir_dir_path| {
+                                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), dest_dir_dir_path) catch {};
+                                                    }
+                                                    sys.linkatZ(.fromStdDir(entry.dir), entry.basename, FD.cwd(), dest_subpath.sliceZ()).unwrap() catch {
+                                                        @panic("OOOPS!!");
+                                                    };
+                                                },
+                                                else => {
+                                                    @panic("OOPS!");
+                                                },
+                                            }
+                                        };
+                                    },
+                                    else => {},
+                                }
+                            }
+                            continue :next_step this.nextStep();
                         }
 
-                        continue :next_step this.nextStep();
+                        unreachable;
                     },
                     .@"symlink dependencies and their binaries" => {
                         {
@@ -1861,7 +1936,7 @@ pub const Store = struct {
             pkg_name: String,
             pkg_res: *const Resolution,
             patch_info: PatchInfo,
-        ) struct { FD, bun.AbsPath(.{}), bun.RelPath(.{}) } {
+        ) struct { FD, bun.AbsPath(.{}), bun.RelPath(.{ .normalize_slashes = true }) } {
             const string_buf = this.lockfile.buffers.string_bytes.items;
 
             const subpath = switch (pkg_res.tag) {
@@ -2034,7 +2109,7 @@ pub const Store = struct {
             }
         }
 
-        pub fn linkDependencies(this: *const Installer, entry_id: Entry.Id) void {
+        fn linkDependencies(this: *const Installer, entry_id: Entry.Id) void {
             const lockfile = this.lockfile;
             const store = this.store;
 
@@ -2054,80 +2129,39 @@ pub const Store = struct {
             // const pkg_names = pkgs.items(.name);
             // const pkg_resolutions = pkgs.items(.resolution);
 
-            var entry_node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
-            defer entry_node_modules_path.deinit();
+            for (entry_dependency_lists[entry_id.get()].slice()) |dep| {
+                // link the dep from the store's node_modules to the dep store entry
 
-            var dep_path = entry_node_modules_path.clone();
-            defer dep_path.deinit();
-
-            const entry_dependencies = entry_dependency_lists[entry_id.get()];
-
-            this.appendStoreNodeModulesPath(&entry_node_modules_path, entry_id);
-
-            var target_path: bun.RelPath(.{}) = .init();
-            defer target_path.deinit();
-
-            var maybe_entry_node_modules_dir: ?FD = null;
-            defer if (maybe_entry_node_modules_dir) |entry_node_modules_dir| entry_node_modules_dir.close();
-
-            // std.debug.print("linking deps ({s}@{} - {s}): {d}\n", .{
-            //     pkg_names[entry_pkg_id].slice(string_buf),
-            //     pkg_resolutions[entry_pkg_id].fmt(string_buf, .posix),
-            //     @tagName(pkg_resolutions[entry_pkg_id].tag),
-            //     entry_dependencies.list.items.len,
-            // });
-
-            for (entry_dependencies.slice()) |dep_entry_id| {
-                const dep_path_save = dep_path.save();
-                defer dep_path_save.restore();
-                const entry_node_modules_path_save = entry_node_modules_path.save();
-                defer entry_node_modules_path_save.restore();
-                const target_path_save = target_path.save();
-                defer target_path_save.restore();
-
-                const dep_node_id = entry_node_ids[dep_entry_id.entry_id.get()];
-                // const dep_pkg_id = node_pkg_ids[dep_node_id.get()];
-                // const dep_pkg_name = pkg_names[dep_pkg_id];
-                // const dep_peers = node_peers[dep_node_id.get()];
+                const dep_node_id = entry_node_ids[dep.entry_id.get()];
                 const dep_id = node_dep_ids[dep_node_id.get()];
-                const dep = dependencies[dep_id];
+                const dep_name = dependencies[dep_id].name.slice(string_buf);
 
-                // Entry.appendStorePath(
-                //     &dep_path,
-                //     dep_pkg_id,
-                //     dep_peers,
-                //     string_buf,
-                //     pkg_names,
-                //     pkg_resolutions,
-                // );
+                var dest: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+                defer dest.deinit();
 
-                this.appendStorePath(&dep_path, dep_entry_id.entry_id);
+                this.appendStoreNodeModulesPath(&dest, entry_id);
+                dest.append(dep_name);
 
-                entry_node_modules_path.append(dep.name.slice(string_buf));
+                var dep_store_path: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+                defer dep_store_path.deinit();
 
-                // if this is a scoped package we want to be relative to
-                // the nested directory
-                const rel_save = entry_node_modules_path.save();
-                entry_node_modules_path.undo(1);
-                entry_node_modules_path.relative(&dep_path, &target_path);
-                rel_save.restore();
+                this.appendStorePath(&dep_store_path, dep.entry_id);
+
+                var target: bun.RelPath(.{ .normalize_slashes = true }) = .init();
+                defer target.deinit();
+
+                {
+                    var dest_save = dest.save();
+                    defer dest_save.restore();
+
+                    dest.undo(1);
+                    dest.relative(&dep_store_path, &target);
+                }
 
                 if (comptime Environment.isWindows) {
-                    ensureSymlink(entry_node_modules_path.sliceZ(), target_path.sliceZ(), dep_path.sliceZ());
+                    ensureSymlink(target.sliceZ(), dep_store_path.sliceZ(), dest.sliceZ());
                 } else {
-                    const dep_name_len = dep.name.len();
-                    const entry_path = entry_node_modules_path.sliceZ();
-                    const dest_dir_path = entry_path[entry_path.len - dep_name_len ..][0..dep_name_len :0];
-
-                    const entry_node_modules_dir = maybe_entry_node_modules_dir orelse open: {
-                        maybe_entry_node_modules_dir = FD.makeOpenPath(FD.cwd(), u8, entry_path[0 .. entry_path.len - dep_name_len]) catch |err| {
-                            Output.err(err, "failed to open/create node_modules: '{s}'", .{entry_node_modules_path.slice()});
-                            Global.exit(1);
-                        };
-                        break :open maybe_entry_node_modules_dir.?;
-                    };
-
-                    ensureSymlink(target_path.sliceZ(), entry_node_modules_dir, dest_dir_path);
+                    ensureSymlink(target.sliceZ(), dest.sliceZ());
                 }
             }
         }

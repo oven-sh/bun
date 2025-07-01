@@ -362,8 +362,12 @@ async function main() {
     )`,
   );
 
-  const allSourceFiles = await readdir(rootDir, { recursive: true });
-  const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp")).map(file => join(rootDir, file));
+  const allCppFiles = (await Bun.file("cmake/sources/CxxSources.txt").text())
+    .trim()
+    .split("\n")
+    .map(q => q.trim())
+    .filter(q => !!q)
+    .filter(q => !q.startsWith("#"));
 
   const allFunctions: CppFn[] = [];
   for (const file of allCppFiles) {

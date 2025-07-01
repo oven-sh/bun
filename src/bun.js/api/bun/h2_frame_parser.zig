@@ -700,13 +700,13 @@ pub const H2FrameParser = struct {
     // local Window limits the download of data
 
     // current window size for the connection
-    windowSize: u64 = 65535,
+    windowSize: u64 = DEFAULT_WINDOW_SIZE,
     // used window size for the connection
     usedWindowSize: u64 = 0,
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 65535,
+    remoteWindowSize: u64 = DEFAULT_WINDOW_SIZE,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -4423,8 +4423,6 @@ pub const H2FrameParser = struct {
         this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
-        this.windowSize = this.localSettings.initialWindowSize;
-        log("windowSize: {d} isServer: {}", .{ this.windowSize, is_server });
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

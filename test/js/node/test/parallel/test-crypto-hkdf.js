@@ -217,7 +217,7 @@ algorithms.forEach(([ hash, secret, salt, info, length ]) => {
 
 
 if (!hasOpenSSL3) {
-  const kKnownUnsupported = ['shake128', 'shake256', 'blake2b256', 'blake2b512', 'sha3-256', 'sha3-224', 'sha3-384','sha3-512'];
+  const kKnownUnsupported = ['shake128', 'shake256'];
   getHashes()
     .filter((hash) => !kKnownUnsupported.includes(hash))
     .forEach((hash) => {

@@ -358,6 +358,7 @@ src/codegen/process_windows_translate_c.zig
 src/compile_target.zig
 src/comptime_string_map.zig
 src/copy_file.zig
+src/cpp.zig
 src/crash_handler.zig
 src/create/SourceFileProjectGenerator.zig
 src/csrf.zig

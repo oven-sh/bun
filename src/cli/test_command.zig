@@ -652,15 +652,11 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        handleTestSkipImpl(cb, id, file, label, expectations, elapsed_ns, parent, false);
-    }
-
-    fn handleTestSkipImpl(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope, skipped_because_label: bool) void {
         var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
-        if (jest.Jest.runner != null and !jest.Jest.runner.?.only and !skipped_because_label) {
+        if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
@@ -675,15 +671,18 @@ pub const CommandLineReporter = struct {
 
         // this.updateDots();
         this.summary().skip += 1;
-        if (skipped_because_label) {
-            this.summary().skipped_because_label += 1;
-        }
         this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
-    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        handleTestSkipImpl(cb, id, file, label, expectations, elapsed_ns, parent, true);
+    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, _: string, _: string, expectations: u32, _: u64, _: ?*jest.DescribeScope) void {
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        // this.updateDots();
+        this.summary().skipped_because_label += 1;
+        this.summary().skip += 1;
+        this.summary().expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {

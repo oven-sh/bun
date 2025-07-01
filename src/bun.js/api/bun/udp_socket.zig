@@ -380,7 +380,7 @@ pub const UDPSocket = struct {
         const globalThis = this.globalThis;
         const vm = globalThis.bunVM();
 
-        if (err.isTerminationException(vm.jsc)) {
+        if (err.isTerminationException()) {
             return;
         }
         if (callback == .zero) {

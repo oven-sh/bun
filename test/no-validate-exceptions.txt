@@ -185,6 +185,10 @@ test/js/bun/spawn/job-object-bug.test.ts
 test/js/bun/spawn/spawn-empty-arrayBufferOrBlob.test.ts
 test/js/bun/spawn/spawn-path.test.ts
 test/js/bun/spawn/spawn-stdin-destroy.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-edge-cases.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-integration.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-sync.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/bun/spawn/spawn-stream-serve.test.ts
 test/js/bun/spawn/spawn-streaming-stdout.test.ts
 test/js/bun/spawn/spawn-stress.test.ts
@@ -606,6 +610,7 @@ test/js/node/test/parallel/test-crypto-oaep-zero-length.js
 test/js/node/test/parallel/test-crypto-oneshot-hash.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 test/js/node/test/parallel/test-crypto-padding.js
+test/js/node/test/parallel/test-crypto-padding-aes256.js
 test/js/node/test/parallel/test-crypto-pbkdf2.js
 test/js/node/test/parallel/test-crypto-prime.js
 test/js/node/test/parallel/test-crypto-private-decrypt-gh32240.js
@@ -1257,6 +1262,7 @@ test/js/node/test/parallel/test-net-connect-after-destroy.js
 test/js/node/test/parallel/test-net-connect-buffer.js
 test/js/node/test/parallel/test-net-connect-buffer2.js
 test/js/node/test/parallel/test-net-connect-call-socket-connect.js
+test/js/node/test/parallel/test-net-connect-custom-lookup-non-string-address.mjs
 test/js/node/test/parallel/test-net-connect-destroy.js
 test/js/node/test/parallel/test-net-connect-immediate-destroy.js
 test/js/node/test/parallel/test-net-connect-immediate-finish.js
@@ -1302,6 +1308,7 @@ test/js/node/test/parallel/test-net-reuseport.js
 test/js/node/test/parallel/test-net-server-async-dispose.mjs
 test/js/node/test/parallel/test-net-server-blocklist.js
 test/js/node/test/parallel/test-net-server-call-listen-multiple-times.js
+test/js/node/test/parallel/test-net-server-capture-rejection.js
 test/js/node/test/parallel/test-net-server-close-before-calling-lookup-callback.js
 test/js/node/test/parallel/test-net-server-close-before-ipc-response.js
 test/js/node/test/parallel/test-net-server-close.js

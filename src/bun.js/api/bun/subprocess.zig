@@ -56,7 +56,8 @@ pub const Flags = packed struct(u8) {
     has_stdin_destructor_called: bool = false,
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
-    _: u3 = 0,
+    is_stdin_a_readable_stream: bool = false,
+    _: u2 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -446,6 +447,7 @@ const Readable = union(enum) {
             .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, max_size) },
             .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
             .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
+            .readable_stream => Readable{ .ignore = {} }, // ReadableStream is handled separately
         };
     }
 
@@ -1269,16 +1271,17 @@ const Writable = union(enum) {
     pub fn onStart(_: *Writable) void {}
 
     pub fn init(
-        stdio: Stdio,
+        stdio: *Stdio,
         event_loop: *JSC.EventLoop,
         subprocess: *Subprocess,
         result: StdioResult,
+        promise_for_stream: *JSC.JSValue,
     ) !Writable {
         assertStdioResult(result);
 
         if (Environment.isWindows) {
-            switch (stdio) {
-                .pipe => {
+            switch (stdio.*) {
+                .pipe, .readable_stream => {
                     if (result == .buffer) {
                         const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
 
@@ -1287,6 +1290,9 @@ const Writable = union(enum) {
                             .err => |err| {
                                 _ = err; // autofix
                                 pipe.deref();
+                                if (stdio.* == .readable_stream) {
+                                    stdio.readable_stream.cancel(event_loop.global);
+                                }
                                 return error.UnexpectedCreatingStdin;
                             },
                         }
@@ -1295,6 +1301,16 @@ const Writable = union(enum) {
                         subprocess.ref();
                         subprocess.flags.deref_on_stdin_destroyed = true;
                         subprocess.flags.has_stdin_destructor_called = false;
+
+                        if (stdio.* == .readable_stream) {
+                            const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                            if (assign_result.toError()) |err| {
+                                pipe.deref();
+                                subprocess.deref();
+                                return event_loop.global.throwValue(err);
+                            }
+                            promise_for_stream.* = assign_result;
+                        }
 
                         return Writable{
                             .pipe = pipe,
@@ -1332,14 +1348,14 @@ const Writable = union(enum) {
         }
 
         if (comptime Environment.isPosix) {
-            if (stdio == .pipe) {
+            if (stdio.* == .pipe) {
                 _ = bun.sys.setNonblocking(result.?);
             }
         }
 
-        switch (stdio) {
+        switch (stdio.*) {
             .dup2 => @panic("TODO dup2 stdio"),
-            .pipe => {
+            .pipe, .readable_stream => {
                 const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
 
                 switch (pipe.writer.start(pipe.fd, true)) {
@@ -1347,16 +1363,30 @@ const Writable = union(enum) {
                     .err => |err| {
                         _ = err; // autofix
                         pipe.deref();
+                        if (stdio.* == .readable_stream) {
+                            stdio.readable_stream.cancel(event_loop.global);
+                        }
+
                         return error.UnexpectedCreatingStdin;
                     },
                 }
+
+                pipe.writer.handle.poll.flags.insert(.socket);
 
                 subprocess.weak_file_sink_stdin_ptr = pipe;
                 subprocess.ref();
                 subprocess.flags.has_stdin_destructor_called = false;
                 subprocess.flags.deref_on_stdin_destroyed = true;
 
-                pipe.writer.handle.poll.flags.insert(.socket);
+                if (stdio.* == .readable_stream) {
+                    const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
+                    if (assign_result.toError()) |err| {
+                        pipe.deref();
+                        subprocess.deref();
+                        return event_loop.global.throwValue(err);
+                    }
+                    promise_for_stream.* = assign_result;
+                }
 
                 return Writable{
                     .pipe = pipe,
@@ -1407,7 +1437,7 @@ const Writable = union(enum) {
                     // https://github.com/oven-sh/bun/pull/14092
                     bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
                     const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
-                    pipe.onAttachedProcessExit();
+                    pipe.onAttachedProcessExit(&subprocess.process.status);
                     if (Environment.isDebug) {
                         bun.debugAssert(subprocess.ref_count.active_counts == debug_ref_count.active_counts);
                     }
@@ -1522,6 +1552,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     this.pid_rusage = rusage.*;
     const is_sync = this.flags.is_sync;
     this.clearAbortSignal();
+
     defer this.deref();
     defer this.disconnectIPC(true);
 
@@ -1532,7 +1563,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     jsc_vm.onSubprocessExit(process);
 
-    var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
+    var stdin: ?*JSC.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = JSC.JSValue.zero;
     if (this_jsvalue != .zero) {
         if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
@@ -1542,7 +1573,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                     stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
-                existing_stdin_value = existing_value;
+                if (!this.flags.is_stdin_a_readable_stream) {
+                    existing_stdin_value = existing_value;
+                }
             }
         }
     }
@@ -1580,8 +1613,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     if (stdin) |pipe| {
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
+
         // It is okay if it does call deref() here, as in that case it was truly ref'd.
-        pipe.onAttachedProcessExit();
+        pipe.onAttachedProcessExit(&status);
     }
 
     var did_update_has_pending_activity = false;
@@ -2054,7 +2088,7 @@ pub fn spawnMaybeSync(
                         var stdio_iter = try stdio_val.arrayIterator(globalThis);
                         var i: u31 = 0;
                         while (try stdio_iter.next()) |value| : (i += 1) {
-                            try stdio[i].extract(globalThis, i, value);
+                            try stdio[i].extract(globalThis, i, value, is_sync);
                             if (i == 2)
                                 break;
                         }
@@ -2062,7 +2096,7 @@ pub fn spawnMaybeSync(
 
                         while (try stdio_iter.next()) |value| : (i += 1) {
                             var new_item: Stdio = undefined;
-                            try new_item.extract(globalThis, i, value);
+                            try new_item.extract(globalThis, i, value, is_sync);
 
                             const opt = switch (new_item.asSpawnOption(i)) {
                                 .result => |opt| opt,
@@ -2081,15 +2115,15 @@ pub fn spawnMaybeSync(
                 }
             } else {
                 if (try args.get(globalThis, "stdin")) |value| {
-                    try stdio[0].extract(globalThis, 0, value);
+                    try stdio[0].extract(globalThis, 0, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stderr")) |value| {
-                    try stdio[2].extract(globalThis, 2, value);
+                    try stdio[2].extract(globalThis, 2, value, is_sync);
                 }
 
                 if (try args.get(globalThis, "stdout")) |value| {
-                    try stdio[1].extract(globalThis, 1, value);
+                    try stdio[1].extract(globalThis, 1, value, is_sync);
                 }
             }
 
@@ -2355,16 +2389,19 @@ pub fn spawnMaybeSync(
     MaxBuf.createForSubprocess(subprocess, &subprocess.stderr_maxbuf, maxBuffer);
     MaxBuf.createForSubprocess(subprocess, &subprocess.stdout_maxbuf, maxBuffer);
 
+    var promise_for_stream: JSC.JSValue = .zero;
+
     // When run synchronously, subprocess isn't garbage collected
     subprocess.* = Subprocess{
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
         .stdin = Writable.init(
-            stdio[0],
+            &stdio[0],
             loop,
             subprocess,
             spawned.stdin,
+            &promise_for_stream,
         ) catch {
             subprocess.deref();
             return globalThis.throwOutOfMemory();
@@ -2408,6 +2445,27 @@ pub fn spawnMaybeSync(
 
     subprocess.process.setExitHandler(subprocess);
 
+    promise_for_stream.ensureStillAlive();
+    subprocess.flags.is_stdin_a_readable_stream = promise_for_stream != .zero;
+
+    if (promise_for_stream != .zero and !globalThis.hasException()) {
+        if (promise_for_stream.toError()) |err| {
+            _ = globalThis.throwValue(err) catch {};
+        }
+    }
+
+    if (globalThis.hasException()) {
+        const err = globalThis.takeException(error.JSError);
+        // Ensure we kill the process so we don't leave things in an unexpected state.
+        _ = subprocess.tryKill(subprocess.killSignal);
+
+        if (globalThis.hasException()) {
+            return error.JSError;
+        }
+
+        return globalThis.throwValue(err);
+    }
+
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
@@ -2441,7 +2499,7 @@ pub fn spawnMaybeSync(
         ipc_data.writeVersionPacket(globalThis);
     }
 
-    if (subprocess.stdin == .pipe) {
+    if (subprocess.stdin == .pipe and promise_for_stream == .zero) {
         subprocess.stdin.pipe.signal = JSC.WebCore.streams.Signal.init(&subprocess.stdin);
     }
 
@@ -2471,6 +2529,10 @@ pub fn spawnMaybeSync(
         }
         if (ipc_callback.isCell()) {
             JSC.Codegen.JSSubprocess.ipcCallbackSetCached(out, globalThis, ipc_callback);
+        }
+
+        if (stdio[0] == .readable_stream) {
+            JSC.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stdio[0].readable_stream.value);
         }
 
         switch (subprocess.process.watch()) {

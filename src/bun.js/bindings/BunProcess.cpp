@@ -2118,10 +2118,9 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
 #if OS(WINDOWS)
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(1), 0);
 
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(0), 0);
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(1), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);

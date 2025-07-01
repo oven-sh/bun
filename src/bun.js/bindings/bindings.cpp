@@ -5272,7 +5272,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool JSC__VM__isJITEnabled()
+bool [[ZIG_EXPORT(nothrow)]] JSC__VM__isJITEnabled()
 {
     return JSC::Options::useJIT();
 }

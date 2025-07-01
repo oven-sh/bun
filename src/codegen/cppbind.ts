@@ -1,4 +1,4 @@
-import Parser, { Language, SyntaxNode } from "tree-sitter";
+import Parser, { Language, SyntaxNode, TreeCursor } from "tree-sitter";
 import Cpp from "tree-sitter-cpp";
 import { mkdir, readdir } from "fs/promises";
 import { join, relative } from "path";
@@ -177,12 +177,13 @@ type ShouldExport = {
 };
 function processNode(
   file: string,
-  node: SyntaxNode,
+  cursor: TreeCursor,
   allFunctions: CppFn[],
   shouldExport: ShouldExport,
   isInExternC: boolean,
   usingNamespaces: string[],
 ) {
+  const node = cursor.currentNode;
   if (node.type === "function_definition" && shouldExport.value) {
     try {
       const result = processFunction(file, node, shouldExport.value.tag);
@@ -204,7 +205,9 @@ function processNode(
       }
     }
 
-    for (const child of node.children) {
+    let x = cursor.gotoFirstChild();
+    while (x && cursor.gotoNextSibling()) {
+      const child = cursor.currentNode;
       if (child.type === "using_declaration") {
         const identifiers = child.descendantsOfType("identifier");
         if (identifiers.length !== 1) continue;
@@ -213,7 +216,10 @@ function processNode(
     }
 
     const hadShouldExport = !!shouldExport.value;
-    for (const child of node.children) {
+    x && cursor.gotoParent();
+    x = cursor.gotoFirstChild();
+    while (x && cursor.gotoNextSibling()) {
+      const child = cursor.currentNode;
       if (child.type === "comment" && child.text.includes("@zig-export")) {
         const text = child.text;
         if (shouldExport.value) appendError(nodePosition(file, child), "multiple @zig-export comments in a row");
@@ -227,7 +233,7 @@ function processNode(
           appendError(nodePosition(file, child), "unknown @zig-export comment: " + text);
         }
       } else {
-        processNode(file, child, allFunctions, shouldExport, isInExternC, usingNamespaces);
+        processNode(file, cursor, allFunctions, shouldExport, isInExternC, usingNamespaces);
         if (shouldExport.value && !hadShouldExport) {
           appendError(shouldExport.value.position, "unused @zig-export comment");
           shouldExport.value = undefined;
@@ -238,6 +244,7 @@ function processNode(
       appendError(shouldExport.value.position, "unused @zig-export comment");
       shouldExport.value = undefined;
     }
+    x && cursor.gotoParent();
   }
 }
 
@@ -306,7 +313,8 @@ async function processFile(parser: Parser, file: string, allFunctions: CppFn[]) 
   if (!sourceCode.includes("@zig-export")) return;
   const tree = parser.parse(sourceCode);
 
-  processNode(file, tree.rootNode, allFunctions, {}, false, []);
+  const cursor = tree.walk();
+  processNode(file, cursor, allFunctions, {}, false, []);
 }
 
 async function renderError(position: Srcloc, message: string, label: string, color: string) {

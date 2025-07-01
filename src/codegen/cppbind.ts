@@ -184,10 +184,6 @@ function processNode(
   usingNamespaces: string[],
 ) {
   if (node.type === "function_definition" && shouldExport.value) {
-    if (!isInExternC) {
-      appendError(nodePosition(file, node), "@zig-export-ed function is not in extern C");
-      return;
-    }
     try {
       const result = processFunction(file, node, shouldExport.value.tag);
       allFunctions.push(result);
@@ -195,6 +191,11 @@ function processNode(
       appendErrorFromCatch(e, nodePosition(file, node));
     }
     shouldExport.value = undefined;
+
+    if (!isInExternC) {
+      appendError(nodePosition(file, node), "@zig-export-ed function is not in extern C");
+      return;
+    }
   } else {
     if (node.type === "linkage_specification") {
       const value = node.childrenForFieldName("value")[0];

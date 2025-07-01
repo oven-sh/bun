@@ -832,6 +832,15 @@ export class Client extends EventEmitter {
     });
   }
 
+  elemsText(selector: string): Promise<string[]> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const elems = await this.js<
+        string[]
+      >`Array.from(document.querySelectorAll(${selector})).map(elem => elem.innerHTML)`;
+      return elems;
+    });
+  }
+
   async [Symbol.asyncDispose]() {
     if (activeClient === this) {
       activeClient = null;
@@ -1360,10 +1369,8 @@ function cleanTestDir(dir: string) {
 
 async function installReactWithCache(root: string) {
   const cacheFiles = ["node_modules", "package.json", "bun.lock"];
-  const cacheValid = cacheFiles.every(file => 
-    fs.existsSync(path.join(reactCacheDir, file))
-  );
-  
+  const cacheValid = cacheFiles.every(file => fs.existsSync(path.join(reactCacheDir, file)));
+
   if (cacheValid) {
     // Copy from cache
     for (const file of cacheFiles) {
@@ -1381,7 +1388,7 @@ async function installReactWithCache(root: string) {
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
-    
+
     // Copy to cache for future use
     for (const file of cacheFiles) {
       const src = path.join(root, file);

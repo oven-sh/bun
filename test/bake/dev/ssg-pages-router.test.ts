@@ -69,290 +69,295 @@ devTest("SSG pages router - dynamic routes with [slug]", {
   },
 });
 
-// devTest("SSG pages router - nested routes", {
-//   files: {
-//     "pages/blog/index.tsx": `
-//       export default function BlogIndex() {
-//         return <h1>Blog Index</h1>;
-//       }
-//     `,
-//     "pages/blog/[id].tsx": `
-//       const BlogPost: Bun.SSGPage = ({ params }) => {
-//         return <h1>Blog Post {params.id}</h1>;
-//       };
+devTest("SSG pages router - nested routes", {
+  framework: "react",
+  files: {
+    "pages/blog/index.tsx": `
+      export default function BlogIndex() {
+        return <h1>Blog Index</h1>;
+      }
+    `,
+    "pages/blog/[id].tsx": `
+      const BlogPost: Bun.SSGPage = ({ params }) => {
+        return <h1>Blog Post {params.id}</h1>;
+      };
 
-//       export default BlogPost;
+      export default BlogPost;
 
-//       export const getStaticPaths: Bun.GetStaticPaths = async () => {
-//         return {
-//           paths: [
-//             { params: { id: "1" } },
-//             { params: { id: "2" } },
-//           ],
-//         };
-//       };
-//     `,
-//     "pages/blog/categories/[category].tsx": `
-//       const CategoryPage: Bun.SSGPage = ({ params }) => {
-//         return <h1>Category: {params.category}</h1>;
-//       };
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        return {
+          paths: [
+            { params: { id: "1" } },
+            { params: { id: "2" } },
+          ],
+        };
+      };
+    `,
+    "pages/blog/categories/[category].tsx": `
+      const CategoryPage: Bun.SSGPage = ({ params }) => {
+        return <h1>Category: {params.category}</h1>;
+      };
 
-//       export default CategoryPage;
+      export default CategoryPage;
 
-//       export const getStaticPaths: Bun.GetStaticPaths = async () => {
-//         return {
-//           paths: [
-//             { params: { category: "tech" } },
-//             { params: { category: "lifestyle" } },
-//           ],
-//         };
-//       };
-//     `,
-//   },
-//   async test(dev) {
-//     // Test blog index
-//     await using c1 = await dev.client("/blog");
-//     expect(await c1.elemText("h1")).toBe("Blog Index");
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        return {
+          paths: [
+            { params: { category: "tech" } },
+            { params: { category: "lifestyle" } },
+          ],
+        };
+      };
+    `,
+  },
+  async test(dev) {
+    // Test blog index
+    await using c1 = await dev.client("/blog");
+    expect(await c1.elemText("h1")).toBe("Blog Index");
 
-//     // Test blog posts
-//     await using c2 = await dev.client("/blog/1");
-//     expect(await c2.elemText("h1")).toBe("Blog Post 1");
+    // Test blog posts
+    await using c2 = await dev.client("/blog/1");
+    expect(await c2.elemText("h1")).toBe("Blog Post 1");
 
-//     await using c3 = await dev.client("/blog/2");
-//     expect(await c3.elemText("h1")).toBe("Blog Post 2");
+    await using c3 = await dev.client("/blog/2");
+    expect(await c3.elemText("h1")).toBe("Blog Post 2");
 
-//     // Test categories
-//     await using c4 = await dev.client("/blog/categories/tech");
-//     expect(await c4.elemText("h1")).toBe("Category: tech");
+    // Test categories
+    await using c4 = await dev.client("/blog/categories/tech");
+    expect(await c4.elemText("h1")).toBe("Category: tech");
 
-//     await using c5 = await dev.client("/blog/categories/lifestyle");
-//     expect(await c5.elemText("h1")).toBe("Category: lifestyle");
-//   },
-// });
+    await using c5 = await dev.client("/blog/categories/lifestyle");
+    expect(await c5.elemText("h1")).toBe("Category: lifestyle");
+  },
+});
 
-// devTest("SSG pages router - hot reload on page changes", {
-//   framework: "react",
-//   async test(dev) {
-//     await using c = await dev.client("/");
-//     expect(await c.elemText("h1")).toBe("Welcome to SSG");
+devTest("SSG pages router - hot reload on page changes", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      export default function IndexPage() {
+        return <h1>Welcome to SSG</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    expect(await c.elemText("h1")).toBe("Welcome to SSG");
 
-//     // Update the page
-//     await dev.write(
-//       "pages/index.tsx",
-//       `
-//         export default function IndexPage() {
-//           console.log("updated load");
-//           return <h1>Updated Content</h1>;
-//         }
-//       `,
-//     );
+    // Update the page
+    await dev.write(
+      "pages/index.tsx",
+      `
+        export default function IndexPage() {
+          console.log("updated load");
+          return <h1>Updated Content</h1>;
+        }
+      `,
+    );
 
-//     await c.expectMessage(/updated load/);
-//     expect(await c.elemText("h1")).toBe("Updated Content");
-//   },
-// });
+    await c.expectMessage(/updated load/);
+    expect(await c.elemText("h1")).toBe("Updated Content");
+  },
+});
 
-// devTest("SSG pages router - data fetching with async components", {
-//   framework: "react",
-//   files: {
-//     "pages/data.tsx": `
-//       async function fetchData() {
-//         // Simulate API call
-//         return new Promise(resolve => {
-//           setTimeout(() => {
-//             resolve({ message: "Data from API", items: ["Item 1", "Item 2", "Item 3"] });
-//           }, 10);
-//         });
-//       }
+devTest("SSG pages router - data fetching with async components", {
+  framework: "react",
+  files: {
+    "pages/data.tsx": `
+      async function fetchData() {
+        // Simulate API call
+        return new Promise(resolve => {
+          setTimeout(() => {
+            resolve({ message: "Data from API", items: ["Item 1", "Item 2", "Item 3"] });
+          }, 10);
+        });
+      }
 
-//       export default async function DataPage() {
-//         const data = await fetchData();
+      export default async function DataPage() {
+        const data = await fetchData();
 
-//         return (
-//           <div>
-//             <h1>{data.message}</h1>
-//             <ul>
-//               {data.items.map((item, index) => (
-//                 <li key={index}>{item}</li>
-//               ))}
-//             </ul>
-//           </div>
-//         );
-//       }
-//     `,
-//   },
-//   async test(dev) {
-//     await using c = await dev.client("/data");
-//     expect(await c.elemText("h1")).toBe("Data from API");
+        return (
+          <div>
+            <h1>{data.message}</h1>
+            <ul>
+              {data.items.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/data");
+    expect(await c.elemText("h1")).toBe("Data from API");
 
-//     const items = await c.elems("li");
-//     expect(items.length).toBe(3);
-//     expect(await items[0].text()).toBe("Item 1");
-//     expect(await items[1].text()).toBe("Item 2");
-//     expect(await items[2].text()).toBe("Item 3");
-//   },
-// });
+    const items = await c.elemsText("li");
+    expect(items).toEqual(["Item 1", "Item 2", "Item 3"]);
+  },
+});
 
-// devTest("SSG pages router - 404 handling", {
-//   framework: "react",
-//   files: {
-//     "pages/404.tsx": `
-//       export default function NotFoundPage() {
-//         return (
-//           <div>
-//             <h1>404 - Page Not Found</h1>
-//             <p>The page you're looking for doesn't exist.</p>
-//           </div>
-//         );
-//       }
-//     `,
-//   },
-//   async test(dev) {
-//     // Test existing page
-//     await using c1 = await dev.client("/");
-//     expect(await c1.elemText("h1")).toBe("Welcome to SSG");
+devTest("SSG pages router - 404 handling", {
+  framework: "react",
+  files: {
+    "pages/404.tsx": `
+      export default function NotFoundPage() {
+        return (
+          <div>
+            <h1>404 - Page Not Found</h1>
+            <p>The page you're looking for doesn't exist.</p>
+          </div>
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    // Test existing page
+    await using c1 = await dev.client("/");
+    expect(await c1.elemText("h1")).toBe("Welcome to SSG");
 
-//     // Test non-existing page should show 404
-//     await using c2 = await dev.client("/non-existent-page");
-//     expect(await c2.elemText("h1")).toBe("404 - Page Not Found");
-//     expect(await c2.elemText("p")).toBe("The page you're looking for doesn't exist.");
-//   },
-// });
+    // Test non-existing page should show 404
+    await using c2 = await dev.client("/non-existent-page");
+    expect(await c2.elemText("h1")).toBe("404 - Page Not Found");
+    expect(await c2.elemText("p")).toBe("The page you're looking for doesn't exist.");
+  },
+});
 
-// devTest("SSG pages router - multiple dynamic segments", {
-//   framework: "react",
-//   files: {
-//     "pages/[category]/[year]/[slug].tsx": `
-//       const ArticlePage: Bun.SSGPage = ({ params }) => {
-//         return (
-//           <div>
-//             <h1>{params.slug}</h1>
-//             <p>Category: {params.category}</p>
-//             <p>Year: {params.year}</p>
-//           </div>
-//         );
-//       };
+devTest("SSG pages router - multiple dynamic segments", {
+  framework: "react",
+  files: {
+    "pages/[category]/[year]/[slug].tsx": `
+      const ArticlePage: Bun.SSGPage = ({ params }) => {
+        return (
+          <div>
+            <h1>{params.slug}</h1>
+            <p>Category: {params.category}</p>
+            <p>Year: {params.year}</p>
+          </div>
+        );
+      };
 
-//       export default ArticlePage;
+      export default ArticlePage;
 
-//       export const getStaticPaths: Bun.GetStaticPaths = async () => {
-//         return {
-//           paths: [
-//             { params: { category: "tech", year: "2024", slug: "bun-release" } },
-//             { params: { category: "news", year: "2024", slug: "breaking-story" } },
-//             { params: { category: "tech", year: "2023", slug: "year-review" } },
-//           ],
-//         };
-//       };
-//     `,
-//   },
-//   async test(dev) {
-//     // Test first path
-//     await using c1 = await dev.client("/tech/2024/bun-release");
-//     expect(await c1.elemText("h1")).toBe("bun-release");
-//     expect(await c1.elemTexts("p")).toEqual(["Category: tech", "Year: 2024"]);
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        return {
+          paths: [
+            { params: { category: "tech", year: "2024", slug: "bun-release" } },
+            { params: { category: "news", year: "2024", slug: "breaking-story" } },
+            { params: { category: "tech", year: "2023", slug: "year-review" } },
+          ],
+        };
+      };
+    `,
+  },
+  async test(dev) {
+    // Test first path
+    await using c1 = await dev.client("/tech/2024/bun-release");
+    expect(await c1.elemText("h1")).toBe("bun-release");
+    expect(await c1.elemsText("p")).toEqual(["Category: tech", "Year: 2024"]);
 
-//     // Test second path
-//     await using c2 = await dev.client("/news/2024/breaking-story");
-//     expect(await c2.elemText("h1")).toBe("breaking-story");
-//     expect(await c2.elemTexts("p")).toEqual(["Category: news", "Year: 2024"]);
+    // Test second path
+    await using c2 = await dev.client("/news/2024/breaking-story");
+    expect(await c2.elemText("h1")).toBe("breaking-story");
+    expect(await c2.elemsText("p")).toEqual(["Category: news", "Year: 2024"]);
 
-//     // Test third path
-//     await using c3 = await dev.client("/tech/2023/year-review");
-//     expect(await c3.elemText("h1")).toBe("year-review");
-//     expect(await c3.elemTexts("p")).toEqual(["Category: tech", "Year: 2023"]);
-//   },
-// });
+    // Test third path
+    await using c3 = await dev.client("/tech/2023/year-review");
+    expect(await c3.elemText("h1")).toBe("year-review");
+    expect(await c3.elemsText("p")).toEqual(["Category: tech", "Year: 2023"]);
+  },
+});
 
-// devTest("SSG pages router - catch all routes", {
-//   framework: "react",
-//   files: {
-//     "pages/docs/[...path].tsx": `
-//       const DocsPage: Bun.SSGPage = ({ params }) => {
-//         const path = Array.isArray(params.path) ? params.path.join("/") : params.path;
-//         return (
-//           <div>
-//             <h1>Documentation</h1>
-//             <p>Path: {path}</p>
-//           </div>
-//         );
-//       };
+devTest("SSG pages router - catch all routes", {
+  framework: "react",
+  files: {
+    "pages/docs/[...path].tsx": `
+      const DocsPage: Bun.SSGPage = ({ params }) => {
+        const path = Array.isArray(params.path) ? params.path.join("/") : params.path;
+        return (
+          <div>
+            <h1>Documentation</h1>
+            <p>Path: {path}</p>
+          </div>
+        );
+      };
 
-//       export default DocsPage;
+      export default DocsPage;
 
-//       export const getStaticPaths: Bun.GetStaticPaths = async () => {
-//         return {
-//           paths: [
-//             { params: { path: ["getting-started"] } },
-//             { params: { path: ["api", "reference"] } },
-//             { params: { path: ["guides", "advanced", "optimization"] } },
-//           ],
-//         };
-//       };
-//     `,
-//   },
-//   async test(dev) {
-//     // Test single segment
-//     await using c1 = await dev.client("/docs/getting-started");
-//     expect(await c1.elemText("h1")).toBe("Documentation");
-//     expect(await c1.elemText("p")).toBe("Path: getting-started");
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        return {
+          paths: [
+            { params: { path: ["getting-started"] } },
+            { params: { path: ["api", "reference"] } },
+            { params: { path: ["guides", "advanced", "optimization"] } },
+          ],
+        };
+      };
+    `,
+  },
+  async test(dev) {
+    // Test single segment
+    await using c1 = await dev.client("/docs/getting-started");
+    expect(await c1.elemText("h1")).toBe("Documentation");
+    expect(await c1.elemText("p")).toBe("Path: getting-started");
 
-//     // Test two segments
-//     await using c2 = await dev.client("/docs/api/reference");
-//     expect(await c2.elemText("p")).toBe("Path: api/reference");
+    // Test two segments
+    await using c2 = await dev.client("/docs/api/reference");
+    expect(await c2.elemText("p")).toBe("Path: api/reference");
 
-//     // Test three segments
-//     await using c3 = await dev.client("/docs/guides/advanced/optimization");
-//     expect(await c3.elemText("p")).toBe("Path: guides/advanced/optimization");
-//   },
-// });
+    // Test three segments
+    await using c3 = await dev.client("/docs/guides/advanced/optimization");
+    expect(await c3.elemText("p")).toBe("Path: guides/advanced/optimization");
+  },
+});
 
-// devTest("SSG pages router - file loading with Bun.file", {
-//   framework: "react",
-//   fixture: "ssg-pages-router",
-//   files: {
-//     "pages/[slug].tsx": `
-//       import { join } from "path";
+devTest("SSG pages router - file loading with Bun.file", {
+  framework: "react",
+  fixture: "ssg-pages-router",
+  files: {
+    "pages/[slug].tsx": `
+      import { join } from "path";
 
-//       const PostPage: Bun.SSGPage = async ({ params }) => {
-//         const content = await Bun.file(
-//           join(process.cwd(), "posts", params.slug + ".txt")
-//         ).text();
+      const PostPage: Bun.SSGPage = async ({ params }) => {
+        const content = await Bun.file(
+          join(process.cwd(), "posts", params.slug + ".txt")
+        ).text();
 
-//         return (
-//           <div>
-//             <h1>{params.slug}</h1>
-//             <div>{content}</div>
-//           </div>
-//         );
-//       };
+        return (
+          <div>
+            <h1>{params.slug}</h1>
+            <div>{content}</div>
+          </div>
+        );
+      };
 
-//       export default PostPage;
+      export default PostPage;
 
-//       export const getStaticPaths: Bun.GetStaticPaths = async () => {
-//         const glob = new Bun.Glob("**/*.txt");
-//         const paths = [];
+      export const getStaticPaths: Bun.GetStaticPaths = async () => {
+        const glob = new Bun.Glob("**/*.txt");
+        const paths = [];
 
-//         for (const file of Array.from(glob.scanSync({ cwd: join(process.cwd(), "posts") }))) {
-//           const slug = file.replace(/\\.txt$/, "");
-//           paths.push({ params: { slug } });
-//         }
+        for (const file of Array.from(glob.scanSync({ cwd: join(process.cwd(), "posts") }))) {
+          const slug = file.replace(/\\.txt$/, "");
+          paths.push({ params: { slug } });
+        }
 
-//         return { paths };
-//       };
-//     `,
-//     "posts/hello-world.txt": "This is the content of hello world post",
-//     "posts/second-post.txt": "This is the second post content",
-//   },
-//   async test(dev) {
-//     // Test first post
-//     await using c1 = await dev.client("/hello-world");
-//     expect(await c1.elemText("h1")).toBe("hello-world");
-//     expect(await c1.elemText("div div")).toBe("This is the content of hello world post");
+        return { paths };
+      };
+    `,
+    "posts/hello-world.txt": "This is the content of hello world post",
+    "posts/second-post.txt": "This is the second post content",
+  },
+  async test(dev) {
+    // Test first post
+    await using c1 = await dev.client("/hello-world");
+    expect(await c1.elemText("h1")).toBe("hello-world");
+    expect(await c1.elemText("div div")).toBe("This is the content of hello world post");
 
-//     // Test second post
-//     await using c2 = await dev.client("/second-post");
-//     expect(await c2.elemText("h1")).toBe("second-post");
-//     expect(await c2.elemText("div div")).toBe("This is the second post content");
-//   },
-// });
+    // Test second post
+    await using c2 = await dev.client("/second-post");
+    expect(await c2.elemText("h1")).toBe("second-post");
+    expect(await c2.elemText("div div")).toBe("This is the second post content");
+  },
+});

@@ -641,29 +641,33 @@ pub const FSWatcher = struct {
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        var buf: bun.PathBuffer = undefined;
-        var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
-        }
+        const joined_buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(joined_buf);
+        const file_path = brk: {
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
+            var slice = args.path.slice();
+            if (bun.strings.startsWith(slice, "file://")) {
+                slice = slice[6..];
+            }
 
-        var parts = [_]string{
-            slice,
+            var parts = [_]string{
+                slice,
+            };
+
+            const cwd = switch (bun.sys.getcwd(buf)) {
+                .result => |r| r,
+                .err => |err| return .{ .err = err },
+            };
+            buf[cwd.len] = std.fs.path.sep;
+
+            break :brk Path.joinAbsStringBuf(
+                buf[0 .. cwd.len + 1],
+                joined_buf,
+                &parts,
+                .auto,
+            );
         };
-
-        const cwd = switch (bun.sys.getcwd(&buf)) {
-            .result => |r| r,
-            .err => |err| return .{ .err = err },
-        };
-        buf[cwd.len] = std.fs.path.sep;
-
-        var joined_buf: bun.PathBuffer = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .auto,
-        );
 
         joined_buf[file_path.len] = 0;
         const file_path_z = joined_buf[0..file_path.len :0];
@@ -702,7 +706,7 @@ pub const FSWatcher = struct {
             }
         else
             null;
-        ctx.initJS(args.listener);
+        ctx.initJS(args.listener.withAsyncContextIfNeeded(args.global_this));
         return .{ .result = ctx };
     }
 };

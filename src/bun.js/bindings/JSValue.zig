@@ -290,9 +290,6 @@ pub const JSValue = enum(i64) {
     extern fn Bun__Process__queueNextTick2(*JSGlobalObject, func: JSValue, JSValue, JSValue) void;
 
     pub inline fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
-        if (Environment.isDebug) {
-            bun.assert(function.isCallable());
-        }
         switch (comptime bun.len(@as(@TypeOf(args), undefined))) {
             1 => Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
             2 => Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),

@@ -260,6 +260,8 @@ pub const Value = union(Tag) {
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob: InternalBlob,
+    /// HTMLBundle route used by Bun.serve()
+    HTMLBundle: RefPtr(HTMLBundle.Route),
     /// Single-use Blob that stores the bytes in the Value itself.
     // InlineBlob: InlineBlob,
     Locked: PendingValue,
@@ -278,6 +280,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.slice().len == 0,
             .Blob => this.Blob.size == 0,
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
+            .HTMLBundle => false,
             .Error, .Locked => false,
         };
     }
@@ -371,6 +374,7 @@ pub const Value = union(Tag) {
             .Blob => this.Blob.size,
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
+            .HTMLBundle => 0,
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
             else => 0,
@@ -381,6 +385,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
+            .HTMLBundle => 0,
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
             else => 0,
@@ -391,6 +396,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
+            .HTMLBundle => this.HTMLBundle.data.memoryCost(),
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
@@ -401,6 +407,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.sliceConst().len,
             .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
+            .HTMLBundle => 0,
             .Locked => this.Locked.sizeHint(),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
@@ -433,6 +440,7 @@ pub const Value = union(Tag) {
         Blob,
         WTFStringImpl,
         InternalBlob,
+        HTMLBundle,
         // InlineBlob,
         Locked,
         Used,
@@ -596,9 +604,10 @@ pub const Value = union(Tag) {
 
         if (js_type == .DOMWrapper) {
             if (value.as(Blob)) |blob| {
-                return Body.Value{
-                    .Blob = blob.dupe(),
-                };
+                return Body.Value{ .Blob = blob.dupe() };
+            }
+            if (value.as(HTMLBundle)) |html| {
+                return Body.Value{ .HTMLBundle = HTMLBundle.Route.init(html, false) };
             }
         }
 
@@ -755,6 +764,7 @@ pub const Value = union(Tag) {
             .Blob => this.Blob.sharedView(),
             .InternalBlob => this.InternalBlob.sliceConst(),
             .WTFStringImpl => if (this.WTFStringImpl.canUseAsUTF8()) this.WTFStringImpl.latin1Slice() else "",
+            .HTMLBundle => "",
             // .InlineBlob => this.InlineBlob.sliceConst(),
             else => "",
         };
@@ -804,6 +814,10 @@ pub const Value = union(Tag) {
                 this.* = .{ .Used = {} };
                 return new_blob;
             },
+            .HTMLBundle => {
+                this.* = .{ .Used = {} };
+                return Blob.initEmpty(undefined);
+            },
             // .InlineBlob => {
             //     const cloned = this.InlineBlob.bytes;
             //     // keep same behavior as InternalBlob but clone the data
@@ -834,6 +848,7 @@ pub const Value = union(Tag) {
             .Blob => AnyBlob{ .Blob = this.Blob },
             .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
             // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .HTMLBundle => return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };
@@ -965,6 +980,11 @@ pub const Value = union(Tag) {
             this.* = Value{ .Null = {} };
         }
 
+        if (tag == .HTMLBundle) {
+            this.HTMLBundle.deref();
+            this.* = Value{ .Null = {} };
+        }
+
         if (tag == .Error) {
             this.Error.deinit();
         }
@@ -1066,6 +1086,10 @@ pub const Value = union(Tag) {
         if (this.* == .WTFStringImpl) {
             this.WTFStringImpl.ref();
             return Value{ .WTFStringImpl = this.WTFStringImpl };
+        }
+
+        if (this.* == .HTMLBundle) {
+            return Value{ .HTMLBundle = this.HTMLBundle.dupeRef() };
         }
 
         if (this.* == .Null) {
@@ -1719,3 +1743,5 @@ const AnyBlob = Blob.Any;
 const InternalBlob = Blob.Internal;
 const Response = JSC.WebCore.Response;
 const streams = JSC.WebCore.streams;
+const HTMLBundle = JSC.API.HTMLBundle;
+const RefPtr = bun.ptr.RefPtr;

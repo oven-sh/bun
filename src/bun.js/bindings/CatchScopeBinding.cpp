@@ -55,3 +55,9 @@ extern "C" void CatchScope__assertNoException(void* ptr)
     ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
     static_cast<CatchScope*>(ptr)->assertNoException();
 }
+
+extern "C" void CatchScope__clearException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    static_cast<CatchScope*>(ptr)->clearException();
+}

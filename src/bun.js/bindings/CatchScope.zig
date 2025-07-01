@@ -138,6 +138,13 @@ pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerm
     }
 }
 
+/// Clear the thrown exception
+pub fn clearException(self: *CatchScope) void {
+    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (!self.enabled) return;
+    CatchScope__clearException(&self.bytes);
+}
+
 pub fn deinit(self: *CatchScope) void {
     if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return;
@@ -161,6 +168,7 @@ extern fn CatchScope__pureException(ptr: *align(alignment) [size]u8) ?*jsc.Excep
 extern fn CatchScope__exceptionIncludingTraps(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
 extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
+extern fn CatchScope__clearException(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");
 const bun = @import("bun");

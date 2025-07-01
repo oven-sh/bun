@@ -122,18 +122,6 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, JSEventPrototype::Base);
 
 using JSEventDOMConstructor = JSDOMConstructor<JSEvent>;
 
-/* Hash table */
-
-static const struct CompactHashIndex JSEventTableIndex[2] = {
-    { 0, -1 },
-    { -1, -1 },
-};
-
-static const HashTableValue JSEventTableValues[] = {
-    { "isTrusted"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_isTrusted, 0 } },
-};
-
-static const HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
 /* Hash table for constructor */
 
 static const HashTableValue JSEventConstructorTableValues[] = {
@@ -211,6 +199,8 @@ static const HashTableValue JSEventPrototypeTableValues[] = {
     { "bubbles"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_bubbles, 0 } },
     { "cancelable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_cancelable, 0 } },
     { "defaultPrevented"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_defaultPrevented, 0 } },
+    // Node puts isTrusted on the prototype rather than the instance (what the web standard says). See node lib/internal/event_target.js isTrusted.
+    { "isTrusted"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_isTrusted, 0 } },
     { "composed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_composed, 0 } },
     { "timeStamp"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_timeStamp, 0 } },
     { "srcElement"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_srcElement, 0 } },
@@ -235,7 +225,7 @@ void JSEventPrototype::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable
+const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, nullptr
 #if 0
     ,
     &checkSubClassSnippetForJSEvent

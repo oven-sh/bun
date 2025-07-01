@@ -2286,7 +2286,7 @@ pub const Expect = struct {
             if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
 
             var expected_class = ZigString.Empty;
-            expected_value.getClassName(globalThis, &expected_class);
+            try expected_value.getClassName(globalThis, &expected_class);
             const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .js_undefined;
             return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
@@ -2410,8 +2410,12 @@ pub const Expect = struct {
             defer formatter.deinit();
             var expected_class = ZigString.Empty;
             var received_class = ZigString.Empty;
-            expected_value.getClassName(globalThis, &expected_class);
-            result.getClassName(globalThis, &received_class);
+            try expected_value.getClassName(globalThis, &expected_class);
+            if (result.isCell()) {
+                try result.getClassName(globalThis, &received_class);
+            } else {
+                received_class = ZigString.init("primitive value");
+            }
             const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
             const fmt = signature ++ "\n\nExpected constructor: <green>{s}<r>\nReceived constructor: <red>{s}<r>\n\n";
 
@@ -2466,7 +2470,7 @@ pub const Expect = struct {
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
-        expected_value.getClassName(globalThis, &expected_class);
+        try expected_value.getClassName(globalThis, &expected_class);
         return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
     }
     fn getValueAsToThrow(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) bun.JSError!struct { ?JSValue, JSValue } {

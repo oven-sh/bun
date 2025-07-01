@@ -1758,10 +1758,10 @@ inline fn createScope(
         }
 
         if (description.isClass(globalThis)) {
-            const name_str = if (description.className(globalThis).toSlice(allocator).length() == 0)
+            const name_str = if ((try description.className(globalThis)).toSlice(allocator).length() == 0)
                 description.getName(globalThis).toSlice(allocator).slice()
             else
-                description.className(globalThis).toSlice(allocator).slice();
+                (try description.className(globalThis)).toSlice(allocator).slice();
             break :brk try allocator.dupe(u8, name_str);
         }
         if (description.isFunction()) {

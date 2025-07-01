@@ -703,9 +703,9 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__jsTDZValue();
     }
 
-    pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
+    pub fn className(this: JSValue, globalThis: *JSGlobalObject) JSError!ZigString {
         var str = ZigString.init("");
-        this.getClassName(globalThis, &str);
+        try this.getClassName(globalThis, &str);
         return str;
     }
 
@@ -1095,8 +1095,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
-    pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void {
-        JSC__JSValue__getClassName(this, global, ret);
+    pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
+        try JSC.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
     }
 
     pub inline fn isCell(this: JSValue) bool {

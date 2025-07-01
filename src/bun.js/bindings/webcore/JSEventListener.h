@@ -34,6 +34,8 @@
 
 namespace WebCore {
 
+class AsyncContextFrame;
+
 class JSEventListener : public EventListener {
 public:
     WEBCORE_EXPORT static Ref<JSEventListener> create(JSC::JSObject& listener, JSC::JSObject& wrapper, bool isAttribute, DOMWrapperWorld&);
@@ -87,6 +89,9 @@ private:
     mutable bool m_isInitialized : 1;
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;
     mutable JSC::Weak<JSC::JSObject> m_wrapper;
+
+    // Optional async context captured when the listener was created
+    mutable JSC::Weak<JSC::Unknown> m_asyncContext;
 
     Ref<DOMWrapperWorld> m_isolatedWorld;
 };

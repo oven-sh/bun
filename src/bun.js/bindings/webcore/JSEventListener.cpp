@@ -20,6 +20,7 @@
 #include "config.h"
 #include "JSEventListener.h"
 
+#include "AsyncContextFrame.h"
 #include "BunProcess.h"
 // #include "BeforeUnloadEvent.h"
 // #include "ContentSecurityPolicy.h"
@@ -58,6 +59,17 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
         ASSERT(wrapper);
         m_jsFunction = JSC::Weak<JSC::JSObject>(function);
         m_isInitialized = true;
+        
+        // Capture the current async context if available
+        if (auto* globalObject = wrapper->globalObject()) {
+            if (globalObject->isAsyncContextTrackingEnabled()) {
+                JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+                if (!context.isUndefined()) {
+                    // Store the current async context
+                    m_asyncContext = JSC::Weak<JSC::Unknown>(context);
+                }
+            }
+        }
     }
 }
 
@@ -87,6 +99,23 @@ void JSEventListener::replaceJSFunctionForAttributeListener(JSObject* function, 
         m_wrapper = Weak { wrapper };
         m_isInitialized = true;
     }
+    
+    // Capture the current async context for the new function
+    if (auto* globalObject = wrapper->globalObject()) {
+        if (globalObject->isAsyncContextTrackingEnabled()) {
+            JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+            if (!context.isUndefined()) {
+                // Store the current async context
+                m_asyncContext = JSC::Weak<JSC::Unknown>(context);
+            } else {
+                // Clear the async context if no context is available
+                m_asyncContext = JSC::Weak<JSC::Unknown>();
+            }
+        } else {
+            // Clear the async context if tracking is disabled
+            m_asyncContext = JSC::Weak<JSC::Unknown>();
+        }
+    }
 }
 
 JSValue eventHandlerAttribute(EventTarget& eventTarget, const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
@@ -109,6 +138,10 @@ inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
         return;
 
     visitor.append(m_jsFunction);
+    
+    // Visit the async context to prevent it from being garbage collected
+    if (m_asyncContext)
+        visitor.append(m_asyncContext);
 }
 
 void JSEventListener::visitJSFunction(AbstractSlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
@@ -228,7 +261,21 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     JSValue thisValue = handleEventFunction == jsFunction ? toJS(lexicalGlobalObject, globalObject, event.currentTarget()) : jsFunction;
     NakedPtr<JSC::Exception> uncaughtException;
-    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+    
+    JSValue retval;
+    // If we have an async context, restore it during the call
+    if (m_asyncContext && m_asyncContext.get()) {
+        auto* asyncContextData = lexicalGlobalObject->m_asyncContextData.get();
+        JSValue restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(lexicalGlobalObject->vm(), 0, m_asyncContext.get());
+        
+        retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+        
+        // Restore the previous async context
+        asyncContextData->putInternalField(lexicalGlobalObject->vm(), 0, restoreAsyncContext);
+    } else {
+        retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+    }
 
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 

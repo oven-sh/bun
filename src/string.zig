@@ -666,10 +666,8 @@ pub const String = extern struct {
         return false;
     }
 
-    extern fn BunString__toJSON(globalObject: *bun.JSC.JSGlobalObject, this: *String) JSC.JSValue;
-
     pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJSON, .{ globalObject, self });
+        return bun.cpp.BunString__toJSON(globalObject, self);
     }
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {

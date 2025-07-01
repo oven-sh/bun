@@ -56,6 +56,15 @@ function appendError(position: Srcloc, message: string): PositionedError {
   errors.push(error);
   return error;
 }
+function appendErrorFromCatch(error: unknown, position: Srcloc): PositionedError {
+  if (error instanceof PositionedErrorClass) {
+    return appendError(error.position, error.message);
+  }
+  if (error instanceof Error) {
+    return appendError(position, error.message);
+  }
+  return appendError(position, "unknown error: " + JSON.stringify(error));
+}
 function throwError(position: Srcloc, message: string): never {
   throw new PositionedErrorClass(position, message);
 }
@@ -183,11 +192,7 @@ function processNode(
       const result = processFunction(file, node, shouldExport.value.tag);
       allFunctions.push(result);
     } catch (e) {
-      if (e instanceof PositionedErrorClass) {
-        appendError(e.position, e.message);
-      } else {
-        appendError(nodePosition(file, node), "error processing function: " + (e as Error).message);
-      }
+      appendErrorFromCatch(e, nodePosition(file, node));
     }
     shouldExport.value = undefined;
   } else {
@@ -316,6 +321,31 @@ async function renderError(position: Srcloc, message: string, label: string, col
   console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
+function generateZigFn(fn: CppFn, resultRaw: string[], resultBindings: string[], dstDir: string): void {
+  if (fn.tag === "nothrow") {
+    if (resultBindings.length) resultBindings.push("");
+    resultBindings.push(
+      generateZigSourceComment(dstDir, fn),
+      `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+    );
+  } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
+    if (resultRaw.length) resultRaw.push("");
+    if (resultBindings.length) resultBindings.push("");
+    resultRaw.push(
+      generateZigSourceComment(dstDir, fn),
+      `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
+    );
+    const globalThisArg = fn.parameters.find(param => generateZigType(param.type) === "*JSC.JSGlobalObject");
+    if (!globalThisArg) throwError(fn.position, "no globalThis argument found");
+    const callName = fn.tag === "check_slow" ? "fromJSHostCallGeneric" : "fromJSHostCall";
+    resultBindings.push(
+      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
+      `        return bun.JSC.${callName}(${formatZigName(globalThisArg.name)}, @src(), raw.${formatZigName(fn.name)}, .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")} });`,
+      `    }`,
+    );
+  } else assertNever(fn.tag);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const rootDir = args[0];
@@ -339,37 +369,11 @@ async function main() {
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];
   for (const fn of allFunctions) {
-    if (fn.tag === "nothrow") {
-      if (resultBindings.length) resultBindings.push("");
-      resultBindings.push(
-        generateZigSourceComment(dstDir, fn),
-        `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
-      );
-    } else if (fn.tag === "check_slow") {
-      if (resultRaw.length) resultRaw.push("");
-      if (resultBindings.length) resultBindings.push("");
-      resultRaw.push(
-        generateZigSourceComment(dstDir, fn),
-        `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
-      );
-      resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
-        `        return bun.JSC.fromJSHostCallGeneric(raw.${formatZigName(fn.name)}, @src(), .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
-        `    }`,
-      );
-    } else if (fn.tag === "zero_is_throw") {
-      if (resultRaw.length) resultRaw.push("");
-      if (resultBindings.length) resultBindings.push("");
-      resultRaw.push(
-        generateZigSourceComment(dstDir, fn),
-        `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
-      );
-      resultBindings.push(
-        `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) bun.JSError!${generateZigType(fn.returnType)} {`,
-        `        return bun.JSC.fromJSHostCall(raw.${formatZigName(fn.name)}, @src(), .{ ${fn.parameters.map(p => formatZigName(p.name)).join(", ")}});`,
-        `    }`,
-      );
-    } else assertNever(fn.tag);
+    try {
+      generateZigFn(fn, resultRaw, resultBindings, dstDir);
+    } catch (e) {
+      appendErrorFromCatch(e, fn.position);
+    }
   }
 
   for (const message of errors) {
@@ -381,14 +385,16 @@ async function main() {
   }
 
   const resultFile = await Bun.file(join(dstDir, "cpp.zig"));
-  await resultFile.write(
+  const resultContents =
     typeDeclarations +
-      "\nconst raw = struct {\n" +
-      resultRaw.join("\n") +
-      "\n};\n\npub const bindings = struct {\n" +
-      resultBindings.join("\n") +
-      "\n};\n",
-  );
+    "\nconst raw = struct {\n" +
+    resultRaw.join("\n") +
+    "\n};\n\npub const bindings = struct {\n" +
+    resultBindings.join("\n") +
+    "\n};\n";
+  if ((await resultFile.text()) !== resultContents) {
+    await resultFile.write(resultContents);
+  }
 
   console.log(
     (errors.length > 0 ? "✗" : "✓") +

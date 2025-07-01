@@ -1143,9 +1143,8 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isTerminationException(this);
     }
 
-    extern fn JSC__JSValue__toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
     pub fn toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void {
-        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__toZigException, .{ this, global, exception }) catch return; // TODO: properly propagate termination
+        return bun.cpp.JSC__JSValue__toZigException(this, global, exception) catch return; // TODO: properly propagate termination
     }
 
     extern fn JSC__JSValue__toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void;

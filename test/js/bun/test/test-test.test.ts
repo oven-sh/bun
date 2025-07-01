@@ -297,8 +297,9 @@ it("should return non-zero exit code for invalid syntax", async () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const err = await new Response(stderr).text();
-    expect(err.replaceAll(test_dir, "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]")).toMatchInlineSnapshot(`
+    const err = (await new Response(stderr).text()).replaceAll("\\", "/");
+    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
+      .toMatchInlineSnapshot(`
       "
       bad.test.js:
 

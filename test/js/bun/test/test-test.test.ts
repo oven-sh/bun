@@ -298,10 +298,25 @@ it("should return non-zero exit code for invalid syntax", async () => {
       env: bunEnv,
     });
     const err = await new Response(stderr).text();
-    expect(err).toContain("error: Unexpected end of file");
-    expect(err).toContain(" 0 pass");
-    expect(err).toContain(" 1 fail");
-    expect(err).toContain("Ran 1 tests across 1 files");
+    expect(err.replaceAll(test_dir, "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]")).toMatchInlineSnapshot(`
+      "
+      bad.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | !!!
+            ^
+      error: Unexpected end of file
+          at <dir>/bad.test.js:1:3
+      -------------------------------
+
+
+       0 pass
+       1 fail
+       1 error
+      Ran 1 test across 1 file. [xx ms]
+      "
+    `);
     expect(stdout).toBeDefined();
     expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
@@ -732,7 +747,7 @@ test("my-test", () => {
         expect(output).toContain("1 error");
       }
 
-      expect(output).toContain("Ran 1 tests across 1 files");
+      expect(output).toContain("Ran 1 test across 1 file");
     });
   }
 });

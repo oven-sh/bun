@@ -317,9 +317,6 @@ function Install-Visual-Studio {
   if ($process.ExitCode -ne 0) {
     throw "Failed to install Visual Studio: code $($process.ExitCode)"
   }
-
-  Set-Env -Name "CL" -Value "/GL-"
-  Set-Env -Name "LINK" -Value "/LTCG:OFF"
 }
 
 function Install-Rust {

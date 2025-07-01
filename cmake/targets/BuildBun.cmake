@@ -952,6 +952,7 @@ if(APPLE)
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
+    -Wl,-exported_symbol,__weak_symbol
   )
 endif()
 

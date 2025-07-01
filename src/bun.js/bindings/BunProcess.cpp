@@ -113,6 +113,12 @@ extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" int32_t bun_stdio_tty[3];
 
+// `WEAK_DEFINES` symbol needs to be defined in the Mach-O binary to match Node's
+// behavior of replacing weak definitions with strong definitions at node module load time.
+// This function does that.
+extern "C" __attribute__((weak)) __attribute__((visibility("default")))
+void _weak_symbol(){};
+
 namespace Bun {
 
 using namespace JSC;

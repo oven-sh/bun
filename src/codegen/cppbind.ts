@@ -309,11 +309,17 @@ async function renderError(position: Srcloc, message: string, label: string, col
 }
 
 async function main() {
+  const args = process.argv.slice(2);
+  const rootDir = args[0];
+  const dstDir = args[1];
+  if (!rootDir || !dstDir) {
+    console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
+    process.exit(1);
+  }
+
   const parser = new Parser();
   parser.setLanguage(Cpp as unknown as Language);
 
-  const rootDir = "src";
-  const dstDir = "build/debug/codegen";
   const allSourceFiles = await readdir(rootDir, { recursive: true });
   const allCppFiles = allSourceFiles.filter(file => file.endsWith(".cpp")).map(file => join(rootDir, file));
 

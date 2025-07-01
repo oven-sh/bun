@@ -121,6 +121,7 @@ src/generated_enum_extractor.zig
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
 src/bun.js/bindings/GeneratedBindings.zig
+src/cpp.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github

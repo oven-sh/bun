@@ -1876,15 +1876,6 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
 // TODO:
 pub fn deinit(this: *VirtualMachine) void {
-    {
-        var frame: std.builtin.StackTrace = .{
-            .index = 0,
-            .instruction_addresses = &[_]usize{},
-        };
-        std.debug.captureStackTrace(@returnAddress(), &frame);
-        bun.Output.printErrorln("Pointer allocated here:", .{});
-        bun.crash_handler.dumpStackTrace(frame, .{});
-    }
     this.auto_killer.deinit();
 
     if (source_code_printer) |print| {

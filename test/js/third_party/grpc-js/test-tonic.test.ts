@@ -1,9 +1,9 @@
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
-import path from "path";
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { tmpdirSync } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, rmSync } from "fs";
+import { tmpdirSync } from "harness";
+import path from "path";
 // Load proto
 const packageDefinition = protoLoader.loadSync(
   path.join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"),

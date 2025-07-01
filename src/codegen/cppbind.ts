@@ -363,7 +363,7 @@ function generateZigFn(
   } else assertNever(fn.tag);
 }
 
-async function readFileOrEmpty(file: string): string {
+async function readFileOrEmpty(file: string): Promise<string> {
   try {
     const fileContents = await Bun.file(file).text();
     return fileContents;

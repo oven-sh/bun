@@ -18,6 +18,8 @@ Note that compiling Bun may take up to 2.5 minutes. It is slow!
 
 Use `bun:test` with files that end in `*.test.ts`.
 
+**Do not write flaky tests**. Unless explicitly asked, **never wait for time to pass in tests**. Always wait for the condition to be met instead of waiting for an arbitrary amount of time. **Never use hardcoded port numbers**. Always use `port: 0` to get a random port.
+
 ### Spawning processes
 
 #### Spawning Bun in tests

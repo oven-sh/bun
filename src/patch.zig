@@ -1,10 +1,3 @@
-const Output = bun.Output;
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Allocator = std.mem.Allocator;
-const List = std.ArrayListUnmanaged;
-
 const WHITESPACE: []const u8 = " \t\n\r";
 
 // TODO: calculate this for different systems
@@ -1541,3 +1534,13 @@ fn shouldSkipLine(line: []const u8) bool {
             // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
             (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }
+
+// @sortImports
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const Output = bun.Output;
+
+const std = @import("std");
+const List = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -20,7 +20,6 @@ let result = vm.runInContext('Object.hasOwnProperty(this, "propBase");',
 
 assert.strictEqual(result, false);
 
-
 // Ref: https://github.com/nodejs/node/issues/5350
 base = { __proto__: null };
 base.x = 1;

@@ -1,6 +1,6 @@
 import Parser, { Language, SyntaxNode } from "tree-sitter";
 import Cpp from "tree-sitter-cpp";
-import { readdir } from "fs/promises";
+import { mkdir, readdir } from "fs/promises";
 import { join, relative } from "path";
 import { sharedTypes, typeDeclarations } from "./shared-types";
 
@@ -294,8 +294,10 @@ function formatZigName(name: string): string {
 function generateZigParameterList(parameters: CppParameter[]): string {
   return parameters.map(p => `${formatZigName(p.name)}: ${generateZigType(p.type, false)}`).join(", ");
 }
-function generateZigSourceComment(dstDir, fn: CppFn): string {
-  return `    /// Source: ${relative(dstDir, fn.position.file)}:${fn.position.start.line}:${fn.position.start.column}`;
+function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], fn: CppFn): string {
+  const fileName = relative(dstDir, fn.position.file);
+  resultSourceLinks.push(`${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
+  return `    /// Source: ${fn.name}`;
 }
 
 async function processFile(parser: Parser, file: string, allFunctions: CppFn[]) {
@@ -321,18 +323,24 @@ async function renderError(position: Srcloc, message: string, label: string, col
   console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
-function generateZigFn(fn: CppFn, resultRaw: string[], resultBindings: string[], dstDir: string): void {
+function generateZigFn(
+  fn: CppFn,
+  resultRaw: string[],
+  resultBindings: string[],
+  resultSourceLinks: string[],
+  dstDir: string,
+): void {
   if (fn.tag === "nothrow") {
     if (resultBindings.length) resultBindings.push("");
     resultBindings.push(
-      generateZigSourceComment(dstDir, fn),
+      generateZigSourceComment(dstDir, resultSourceLinks, fn),
       `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
     );
   } else if (fn.tag === "check_slow" || fn.tag === "zero_is_throw") {
     if (resultRaw.length) resultRaw.push("");
     if (resultBindings.length) resultBindings.push("");
     resultRaw.push(
-      generateZigSourceComment(dstDir, fn),
+      generateZigSourceComment(dstDir, resultSourceLinks, fn),
       `    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${generateZigType(fn.returnType)};`,
     );
     const globalThisArg = fn.parameters.find(param => generateZigType(param.type) === "*JSC.JSGlobalObject");
@@ -346,6 +354,15 @@ function generateZigFn(fn: CppFn, resultRaw: string[], resultBindings: string[],
   } else assertNever(fn.tag);
 }
 
+async function readFileOrEmpty(file: string): string {
+  try {
+    const fileContents = await Bun.file(file).text();
+    return fileContents;
+  } catch (e) {
+    return "";
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const rootDir = args[0];
@@ -354,6 +371,7 @@ async function main() {
     console.error("Usage: bun src/codegen/cppbind <rootDir> <dstDir>");
     process.exit(1);
   }
+  await mkdir(dstDir, { recursive: true });
 
   const parser = new Parser();
   parser.setLanguage(Cpp as unknown as Language);
@@ -368,9 +386,10 @@ async function main() {
 
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];
+  const resultSourceLinks: string[] = [];
   for (const fn of allFunctions) {
     try {
-      generateZigFn(fn, resultRaw, resultBindings, dstDir);
+      generateZigFn(fn, resultRaw, resultBindings, resultSourceLinks, dstDir);
     } catch (e) {
       appendErrorFromCatch(e, fn.position);
     }
@@ -384,7 +403,7 @@ async function main() {
     console.error();
   }
 
-  const resultFile = await Bun.file(join(dstDir, "cpp.zig"));
+  const resultFilePath = join(dstDir, "cpp.zig");
   const resultContents =
     typeDeclarations +
     "\nconst raw = struct {\n" +
@@ -392,14 +411,20 @@ async function main() {
     "\n};\n\npub const bindings = struct {\n" +
     resultBindings.join("\n") +
     "\n};\n";
-  if ((await resultFile.text()) !== resultContents) {
-    await resultFile.write(resultContents);
+  if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
+    await Bun.write(resultFilePath, resultContents);
+  }
+
+  const resultSourceLinksFilePath = join(dstDir, "cpp.source-links");
+  const resultSourceLinksContents = resultSourceLinks.join("\n");
+  if ((await readFileOrEmpty(resultSourceLinksFilePath)) !== resultSourceLinksContents) {
+    await Bun.write(resultSourceLinksFilePath, resultSourceLinksContents);
   }
 
   console.log(
     (errors.length > 0 ? "✗" : "✓") +
       " cppbind.ts generated bindings to " +
-      join(dstDir, "cpp.zig") +
+      resultFilePath +
       (errors.length > 0 ? " with errors" : ""),
   );
   if (errors.length > 0) {

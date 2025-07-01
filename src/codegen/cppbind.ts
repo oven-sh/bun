@@ -193,7 +193,7 @@ function processNode(
     shouldExport.value = undefined;
 
     if (!isInExternC) {
-      appendError(nodePosition(file, node), "@zig-export-ed function is not in extern C");
+      appendError(nodePosition(file, node), '@zig-export-ed function must be extern "C"');
       return;
     }
   } else {

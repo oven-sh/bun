@@ -296,7 +296,7 @@ function generateZigParameterList(parameters: CppParameter[]): string {
 }
 function generateZigSourceComment(dstDir: string, resultSourceLinks: string[], fn: CppFn): string {
   const fileName = relative(dstDir, fn.position.file);
-  resultSourceLinks.push(`${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
+  resultSourceLinks.push(`${fn.name}:${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
   return `    /// Source: ${fn.name}`;
 }
 
@@ -434,8 +434,3 @@ async function main() {
 
 // Run the main function
 await main();
-
-/*
-TODO:
-- line and column numbers have to be stored in a seperate file (otherwise if you edit any marked c++ file, zig will recompile)
-*/

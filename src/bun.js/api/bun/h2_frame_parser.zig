@@ -706,7 +706,7 @@ pub const H2FrameParser = struct {
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 0,
+    remoteWindowSize: u64 = 65535,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -979,7 +979,7 @@ pub const H2FrameParser = struct {
                             break :brk dataHeader.write(@TypeOf(writer), writer);
                         } else {
                             const frame_slice = frame.slice();
-                            const max_size = @min(@min(frame_slice.len, (this.remoteWindowSize -| this.remoteUsedWindowSize), (client.remoteWindowSize -| client.remoteUsedWindowSize)), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                            const max_size = @min(@min(frame_slice.len, this.remoteWindowSize -| this.remoteUsedWindowSize, client.remoteWindowSize -| client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                             if (max_size == 0) {
                                 is_flow_control_limited = true;
                                 log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
@@ -996,9 +996,10 @@ pub const H2FrameParser = struct {
 
                                 const padding = this.getPadding(able_to_send.len, max_size);
                                 const payload_size = able_to_send.len + (if (padding != 0) padding + 1 else 0);
+
                                 this.remoteUsedWindowSize += payload_size;
                                 client.remoteUsedWindowSize += payload_size;
-                                log("dataFrame partial flushed {} {} {} {} {} {} {}", .{ able_to_send.len, frame.end_stream, client.queuedDataSize, this.remoteUsedWindowSize, client.remoteUsedWindowSize, this.remoteWindowSize, client.remoteWindowSize });
+
                                 var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -1021,18 +1022,13 @@ pub const H2FrameParser = struct {
                             } else {
 
                                 // flush with some payload
-
-                                const padding = this.getPadding(frame_slice.len, max_size);
                                 client.queuedDataSize -= frame_slice.len;
                                 written.* += frame_slice.len;
-                                log("dataFrame flushed {} {}", .{ frame_slice.len, frame.end_stream });
 
+                                const padding = this.getPadding(frame_slice.len, max_size);
                                 const payload_size = frame_slice.len + (if (padding != 0) padding + 1 else 0);
-
                                 this.remoteUsedWindowSize += payload_size;
                                 client.remoteUsedWindowSize += payload_size;
-                                log("dataFrame flushed {} {} {} {} {} {} {}", .{ frame_slice.len, frame.end_stream, client.queuedDataSize, this.remoteUsedWindowSize, client.remoteUsedWindowSize, this.remoteWindowSize, client.remoteWindowSize });
-
                                 var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -3255,8 +3251,7 @@ pub const H2FrameParser = struct {
 
             while (offset < payload.len) {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
-                var max_size = @min(@min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME, (this.remoteWindowSize -| this.remoteUsedWindowSize)), (stream.remoteWindowSize -| stream.remoteUsedWindowSize));
-
+                var max_size = @min(@min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME, this.remoteWindowSize -| this.remoteUsedWindowSize), stream.remoteWindowSize -| stream.remoteUsedWindowSize);
                 var is_flow_control_limited = false;
                 if (max_size == 0) {
                     is_flow_control_limited = true;
@@ -3277,10 +3272,8 @@ pub const H2FrameParser = struct {
                 } else {
                     const padding = stream.getPadding(size, max_size);
                     const payload_size = size + (if (padding != 0) padding + 1 else 0);
-
                     stream.remoteUsedWindowSize += payload_size;
                     this.remoteUsedWindowSize += payload_size;
-                    log("remoteUsedWindowSize += {} {} {} {} {} {}", .{ size, stream.remoteUsedWindowSize, stream.remoteWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize, this.isServer });
                     var flags: u8 = if (end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                     if (padding != 0) {
                         flags |= @intFromEnum(DataFrameFlags.PADDED);

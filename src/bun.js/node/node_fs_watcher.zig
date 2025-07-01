@@ -440,7 +440,7 @@ pub const FSWatcher = struct {
         const js_this = this.toJS(this.globalThis);
         js_this.ensureStillAlive();
         this.js_this = js_this;
-        js.listenerSetCached(js_this, this.globalThis, listener);
+        js.listenerSetCached(js_this, this.globalThis, listener.withAsyncContextIfNeeded(this.globalThis));
 
         if (this.signal) |s| {
             // already aborted?

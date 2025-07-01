@@ -480,7 +480,7 @@ pub const Run = struct {
             Bun__ExposeNodeModuleGlobals(vm.global);
         }
         if (runtime_options.expose_gc) {
-            JSC__JSGlobalObject__addGc(vm.global);
+            bun.cpp.JSC__JSGlobalObject__addGc(vm.global);
         }
     }
 };

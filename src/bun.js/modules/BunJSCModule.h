@@ -81,7 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
         auto str = hostValue.toWTFString(globalObject);
         if (!str.isEmpty())
-            host = toCString(str).data();
+            host = toCString(str).span().data();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -415,14 +415,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.data())) {
+            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.data();
+            Options::samplingProfilerPath() = pathCString.span().data();
             samplingProfiler.registerForReportAtExit();
         }
     }
@@ -584,8 +584,11 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     Bun__drainMicrotasks();
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -615,9 +618,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
         return {};
     }
     vm.dateCache.resetIfNecessarySlow();
-    WTF::Vector<UChar, 32> buffer;
+    WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
-    WTF::String timeZoneString({ buffer.data(), buffer.size() });
+    WTF::String timeZoneString(buffer.span());
     return JSValue::encode(jsString(vm, timeZoneString));
 }
 
@@ -767,7 +770,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     bool asNodeBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
-        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+        auto binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (binaryTypeValue) {
             if (!binaryTypeValue.isString()) {
                 throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
                 return {};
@@ -783,9 +788,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope,
-            serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
     }
 
     auto serializedValue = serialized.releaseReturnValue();
@@ -884,7 +888,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     }
 
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.data(),
+        globalObject, Bun::toString(fileName), basicBlocks.begin(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 

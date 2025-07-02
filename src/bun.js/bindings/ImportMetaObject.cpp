@@ -107,7 +107,9 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+                auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (pathsObject) {
                     if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                         auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                         if (pathsArray->length() > 0) {
@@ -213,7 +215,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
-            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (pathsObject) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -246,6 +250,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString())
             from = JSC::JSValue::encode(pathProperty);
@@ -354,12 +359,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) goto cleanup;
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
                     paths.append(Bun::toStringRef(pathStr));
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.data(), paths.size());
-                if (scope.exception()) goto cleanup;
+                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
+                if (scope.exception()) [[unlikely]]
+                    goto cleanup;
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
@@ -418,7 +425,9 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
+            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (pathsObject) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
@@ -444,6 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         auto clientData = WebCore::clientData(vm);
         JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (pathProperty && pathProperty.isString()) [[likely]] {
             from = pathProperty;
@@ -541,7 +551,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * glo
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
+    auto* nullable = thisObject->requireProperty.getInitializedOnMainThread(thisObject);
+    return JSValue::encode(nullable ? nullable : jsUndefined());
 }
 
 // https://github.com/oven-sh/bun/issues/11754#issuecomment-2452626172
@@ -651,6 +662,7 @@ void ImportMetaObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
+        auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
         WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
@@ -666,8 +678,10 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        JSFunction* value = jsCast<JSFunction*>(Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path));
-        init.set(value);
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        RETURN_IF_EXCEPTION(scope, );
+        ASSERT(object);
+        init.set(jsCast<JSFunction*>(object));
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);

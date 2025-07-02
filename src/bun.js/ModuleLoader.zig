@@ -429,7 +429,7 @@ pub const AsyncModule = struct {
             errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                 switch (err) {
                     error.JSError => {
-                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError).asVoid());
+                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError));
                         break :outer;
                     },
                     else => {
@@ -468,13 +468,16 @@ pub const AsyncModule = struct {
         specifier_: bun.String,
         referrer_: bun.String,
         log: *logger.Log,
-    ) void {
+    ) bun.JSExecutionTerminated!void {
         JSC.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src());
         defer {
             specifier.deref();
             referrer.deref();
+            scope.deinit();
         }
 
         var errorable: JSC.ErrorableResolvedSource = undefined;
@@ -487,7 +490,7 @@ pub const AsyncModule = struct {
             }
 
             if (e == error.JSError) {
-                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError).asVoid());
+                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError));
             } else {
                 VirtualMachine.processFetchLog(
                     globalThis,
@@ -512,6 +515,7 @@ pub const AsyncModule = struct {
             &specifier,
             &referrer,
         );
+        try scope.assertNoExceptionExceptTermination();
     }
 
     pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
@@ -1354,7 +1358,7 @@ pub fn transpileSourceCode(
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            try JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
                 }
@@ -1616,7 +1620,7 @@ pub export fn Bun__transpileFile(
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?JSC.WebCore.Blob = null;
     var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
-        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS().asVoid());
+        ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
@@ -1815,7 +1819,7 @@ pub export fn Bun__transpileFile(
                 },
                 error.PluginError => return null,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return null;
                 },
                 else => {
@@ -1991,7 +1995,7 @@ export fn Bun__transpileVirtualModule(
             switch (err) {
                 error.PluginError => return true,
                 error.JSError => {
-                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return true;
                 },
                 else => {
@@ -2140,12 +2144,12 @@ pub const RuntimeTranspilerStore = struct {
     }
 
     // This is run at the top of the event loop on the JS thread.
-    pub fn drain(this: *RuntimeTranspilerStore) void {
+    pub fn drain(this: *RuntimeTranspilerStore) bun.JSExecutionTerminated!void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
         if (iter.next()) |job| {
             // we run just one job first to see if there are more
-            job.runFromJSThread();
+            try job.runFromJSThread();
         } else {
             return;
         }
@@ -2155,8 +2159,8 @@ pub const RuntimeTranspilerStore = struct {
         const jsc_vm = vm.jsc;
         while (iter.next()) |job| {
             // if there are more, we need to drain the microtasks from the previous run
-            event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
-            job.runFromJSThread();
+            try event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            try job.runFromJSThread();
         }
 
         // immediately after this is called, the microtasks will be drained again.
@@ -2263,7 +2267,7 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
-        pub fn runFromJSThread(this: *TranspilerJob) void {
+        pub fn runFromJSThread(this: *TranspilerJob) bun.JSExecutionTerminated!void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
@@ -2296,7 +2300,7 @@ pub const RuntimeTranspilerStore = struct {
 
             _ = vm.transpiler_store.store.put(this);
 
-            ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
+            try ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }
 
         pub fn schedule(this: *TranspilerJob) void {

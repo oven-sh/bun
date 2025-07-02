@@ -143,7 +143,7 @@ describe("WebSocket", () => {
         };
         return promise;
       }
-      const url = `wss://127.0.0.1:${server.address.port}`;
+      const url = server.url.href;
       {
         // by default rejectUnauthorized is true
         const client = new WebSocket(url);

@@ -34,7 +34,7 @@ const proc = Bun.spawn(["cat"], {
   ),
 });
 
-const text = await new Response(proc.stdout).text();
+const text = await proc.stdout.text();
 console.log(text); // "const input = "hello world".repeat(400); ..."
 ```
 
@@ -139,8 +139,8 @@ You can read results from the subprocess via the `stdout` and `stderr` propertie
 
 ```ts
 const proc = Bun.spawn(["bun", "--version"]);
-const text = await new Response(proc.stdout).text();
-console.log(text); // => "$BUN_LATEST_VERSION"
+const text = await proc.stdout.text();
+console.log(text); // => "$BUN_LATEST_VERSION\n"
 ```
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:

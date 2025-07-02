@@ -3307,7 +3307,7 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T> | HTMLBundle;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>
@@ -5870,7 +5870,7 @@ declare module "bun" {
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime.
+   * Used when importing an HTML file at runtime or at build time.
    *
    * @example
    *
@@ -5878,10 +5878,34 @@ declare module "bun" {
    * import app from "./index.html";
    * ```
    *
-   * Bun.build support for this isn't imlpemented yet.
    */
+
   interface HTMLBundle {
     index: string;
+
+    /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
+    files?: Array<{
+      /** Original source file path. */
+      input?: string;
+      /** Generated output file path (with content hash, if included in naming) */
+      path: string;
+      /** File type/loader used (js, css, html, file, etc.) */
+      loader: Loader;
+      /** Whether this file is an entry point */
+      isEntry: boolean;
+      /** HTTP headers including ETag and Content-Type */
+      headers: {
+        /** ETag for caching */
+        etag: string;
+        /** MIME type with charset */
+        "content-type": string;
+
+        /**
+         * Additional headers may be added in the future.
+         */
+        [key: string]: string;
+      };
+    }>;
   }
 
   /**

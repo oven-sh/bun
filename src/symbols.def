@@ -641,3 +641,4 @@ EXPORTS
   ?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
   ?IsFunction@Value@v8@@QEBA_NXZ
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
+  ?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z

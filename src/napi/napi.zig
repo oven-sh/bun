@@ -1849,6 +1849,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v86String19ContainsOnlyOneByteEv() *anyopaque;
     pub extern fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() *anyopaque;
     pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
+    pub extern fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
@@ -1926,6 +1927,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
     pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
+    pub extern fn @"?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;

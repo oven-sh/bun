@@ -60,6 +60,7 @@ test/cli/install/bun-lockb.test.ts
 test/cli/install/bun-pack.test.ts
 test/cli/install/bun-patch.test.ts
 test/cli/install/bun-pm.test.ts
+test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-remove.test.ts
 test/cli/install/bun-update.test.ts

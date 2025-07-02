@@ -495,10 +495,10 @@ pub const All = struct {
             }
 
             break :brk if (TimeoutObject.fromJS(timer_id_value)) |timeout|
-                &timeout.internals
+                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
+                if (kind != .setImmediate) &timeout.internals else return
             else if (ImmediateObject.fromJS(timer_id_value)) |immediate|
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-                // setTimeout and setInterval can be cleared by any of the 3 clear functions.
                 if (kind == .setImmediate) &immediate.internals else return
             else
                 null;

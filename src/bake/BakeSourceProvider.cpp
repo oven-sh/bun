@@ -38,7 +38,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
   ));
 
   JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(fnValue);
 
@@ -72,7 +72,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   ));
 
   JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(result);
   return JSC::JSValue::encode(result);
@@ -136,7 +136,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   ));
 
   global->moduleLoader()->provideFetch(global, key, sourceCode);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   return JSC::JSValue::encode(key);
 }

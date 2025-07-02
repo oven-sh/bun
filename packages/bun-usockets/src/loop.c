@@ -336,12 +336,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
-
+            /* The context can change after calling a callback but the loop is always the same */
+            struct us_loop_t* loop = s->context->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
-                s->context->loop->data.last_write_failed = 0;
-
+                loop->data.last_write_failed = 0;
+                
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {
@@ -349,8 +350,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->context->loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
-                    us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 }
             }
 
@@ -358,25 +359,28 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
-                if (s->context->is_low_prio(s)) {
-                    if (s->flags.low_prio_state == 2) {
-                        s->flags.low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
-                    } else if (s->context->loop->data.low_prio_budget > 0) {
-                        s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
+                struct us_socket_context_t *context = s->context;
+                struct us_socket_flags* flags = &s->flags;
+                if (context->is_low_prio(s)) {
+                    if (flags->low_prio_state == 2) {
+                        flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
+                    } else if (loop->data.low_prio_budget > 0) {
+                        loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
-                        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                        us_socket_context_ref(0,  s->context);
-                        us_internal_socket_context_unlink_socket(0, s->context, s);
+                        struct us_poll_t* poll = &s->p;
+                        us_poll_change(poll, loop, us_poll_events(poll) & LIBUS_SOCKET_WRITABLE);
+                        us_socket_context_ref(0,  context);
+                        us_internal_socket_context_unlink_socket(0, context, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are
                          * maybe not already timeouted - sounds unfair, but works better in real-life with smaller client-timeouts
                          * under high load */
                         s->prev = 0;
-                        s->next = s->context->loop->data.low_prio_head;
+                        s->next = loop->data.low_prio_head;
                         if (s->next) s->next->prev = s;
-                        s->context->loop->data.low_prio_head = s;
+                        loop->data.low_prio_head = s;
 
-                        s->flags.low_prio_state = 1;
+                        flags->low_prio_state = 1;
 
                         break;
                     }
@@ -385,7 +389,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 size_t repeat_recv_count = 0;
 
                 do {
-                    const struct us_loop_t* loop = s->context->loop;
                     #ifdef _WIN32
                       const int recv_flags = MSG_PUSH_IMMEDIATE;
                     #else
@@ -478,7 +481,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if(s->flags.allow_half_open) {
                     /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
-                    us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
                     s = s->context->on_end(s);
                 } else {
                     /* We dont allow half open just emit end and close the socket */

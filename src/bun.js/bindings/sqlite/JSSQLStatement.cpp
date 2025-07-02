@@ -520,7 +520,9 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         size_t len = sqlite3_column_bytes(stmt, i);
         const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
         if (len > 0 && blob != nullptr) [[likely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
+            RETURN_IF_EXCEPTION(scope, {});
             memcpy(array->vector(), blob, len);
             return array;
         }

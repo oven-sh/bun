@@ -391,7 +391,6 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
 
         // Check if this key already exists
         JSValue existing = result->getIfPropertyExists(globalObject, Identifier::fromString(vm, key));
-
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (existing) {
             JSArray* array = jsDynamicCast<JSArray*>(existing);

@@ -121,6 +121,22 @@ pub fn fromJSHostCall(
     return if (value == .zero) error.JSError else value;
 }
 
+pub fn fromJSHostCallGeneric(
+    globalThis: *JSGlobalObject,
+    /// For attributing thrown exceptions
+    src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
+    var scope: jsc.CatchScope = undefined;
+    scope.init(globalThis, src, .assertions_only);
+    defer scope.deinit();
+
+    const result = @call(.auto, function, args);
+    try scope.returnIfException();
+    return result;
+}
+
 const ParsedHostFunctionErrorSet = struct {
     OutOfMemory: bool = false,
     JSError: bool = false,

@@ -97,6 +97,12 @@ pub const StandaloneModuleGraph = struct {
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
         module_format: ModuleFormat = .none,
+        side: FileSide = .server,
+    };
+
+    pub const FileSide = enum(u8) {
+        server = 0,
+        client = 1,
     };
 
     pub const Encoding = enum(u8) {
@@ -141,6 +147,11 @@ pub const StandaloneModuleGraph = struct {
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
         module_format: ModuleFormat = .none,
+        side: FileSide = .server,
+
+        pub fn appearsInEmbeddedFilesArray(this: *const File) bool {
+            return this.side == .client or !this.loader.isJavaScriptLike();
+        }
 
         pub fn stat(this: *const File) bun.Stat {
             var result = std.mem.zeroes(bun.Stat);
@@ -300,6 +311,7 @@ pub const StandaloneModuleGraph = struct {
                         .none,
                     .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
                     .module_format = module.module_format,
+                    .side = module.side,
                 },
             );
         }
@@ -347,8 +359,10 @@ pub const StandaloneModuleGraph = struct {
                     string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
-                        if (output_file.output_kind == .@"entry-point") {
-                            entry_point_id = module_count;
+                        if (output_file.side == null or output_file.side.? == .server) {
+                            if (output_file.output_kind == .@"entry-point") {
+                                entry_point_id = module_count;
+                            }
                         }
                     }
 
@@ -421,6 +435,10 @@ pub const StandaloneModuleGraph = struct {
                     else => .none,
                 } else .none,
                 .bytecode = bytecode,
+                .side = switch (output_file.side orelse .server) {
+                    .server => .server,
+                    .client => .client,
+                },
             };
 
             if (output_file.source_map_index != std.math.maxInt(u32)) {
@@ -839,7 +857,7 @@ pub const StandaloneModuleGraph = struct {
             .fromStdDir(root_dir),
             bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
-            if (err == error.IsDir) {
+            if (err == error.IsDir or err == error.EISDIR) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
             } else {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });

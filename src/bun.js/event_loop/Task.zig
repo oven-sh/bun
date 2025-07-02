@@ -71,6 +71,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellGlobTask,
     ShellIOReaderAsyncDeinit,
     ShellIOWriterAsyncDeinit,
+    ShellIOWriter,
     ShellLsTask,
     ShellMkdirTask,
     ShellMvBatchedTask,
@@ -80,6 +81,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellTouchTask,
     Stat,
     StatFS,
+    StreamPending,
     Symlink,
     ThreadSafeFunction,
     TimeoutObject,
@@ -143,6 +145,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             @field(Task.Tag, @typeName(ShellIOWriterAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                 shell_ls_task.runFromMainThread();
+            },
+            @field(Task.Tag, @typeName(ShellIOWriter)) => {
+                var shell_io_writer: *ShellIOWriter = task.get(ShellIOWriter).?;
+                shell_io_writer.runFromMainThread();
             },
             @field(Task.Tag, @typeName(ShellIOReaderAsyncDeinit)) => {
                 var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
@@ -218,7 +224,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
             },
             @field(Task.Tag, @typeName(bun.api.napi.napi_async_work)) => {
                 const transform_task: *bun.api.napi.napi_async_work = task.get(bun.api.napi.napi_async_work).?;
-                transform_task.*.runFromJS();
+                transform_task.runFromJS(virtual_machine, global);
             },
             @field(Task.Tag, @typeName(ThreadSafeFunction)) => {
                 var transform_task: *ThreadSafeFunction = task.as(ThreadSafeFunction);
@@ -484,6 +490,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
                 any.runFromJSThread();
             },
+            @field(Task.Tag, @typeName(StreamPending)) => {
+                var any: *StreamPending = task.get(StreamPending).?;
+                any.runFromJSThread();
+            },
 
             .@"shell.builtin.yes.YesTask", .@"bun.js.api.Timer.ImmediateObject", .@"bun.js.api.Timer.TimeoutObject" => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
@@ -568,6 +578,7 @@ const Unlink = AsyncFS.unlink;
 const NativeZlib = JSC.API.NativeZlib;
 const NativeBrotli = JSC.API.NativeBrotli;
 const NativeZstd = JSC.API.NativeZstd;
+const StreamPending = JSC.WebCore.streams.Result.Pending;
 
 const ShellGlobTask = shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -583,6 +594,7 @@ const ShellAsync = shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = shell.Interpreter.AsyncDeinitWriter;
+const ShellIOWriter = shell.Interpreter.IOWriter;
 const TimeoutObject = Timer.TimeoutObject;
 const ImmediateObject = Timer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};

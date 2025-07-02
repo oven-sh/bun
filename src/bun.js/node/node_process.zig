@@ -9,6 +9,7 @@ comptime {
     @export(&createArgv0, .{ .name = "Bun__Process__createArgv0" });
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&createExecArgv, .{ .name = "Bun__Process__createExecArgv" });
+    @export(&getEval, .{ .name = "Bun__Process__getEval" });
 }
 
 var title_mutex = bun.Mutex{};
@@ -193,13 +194,21 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
+pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.module_loader.eval_source) |source| {
+        return JSC.ZigString.init(source.contents).toJS(globalObject);
+    }
+    return .js_undefined;
+}
+
 pub const getCwd = JSC.host_fn.wrap1(getCwd_);
 fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
     var buf: bun.PathBuffer = undefined;
     switch (bun.api.node.path.getCwd(&buf)) {
         .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
-            return globalObject.throwValue(e.toJSC(globalObject));
+            return globalObject.throwValue(e.toJS(globalObject));
         },
     }
 }
@@ -224,7 +233,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
                 .result => |r| r,
                 .err => |err| {
                     _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
-                    return globalObject.throwValue(err.toJSC(globalObject));
+                    return globalObject.throwValue(err.toJS(globalObject));
                 },
             };
             @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
@@ -243,7 +252,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
             return str.transferToJS(globalObject);
         },
         .err => |e| {
-            return globalObject.throwValue(e.toJSC(globalObject));
+            return globalObject.throwValue(e.toJS(globalObject));
         },
     }
 }

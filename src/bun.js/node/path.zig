@@ -2325,14 +2325,14 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
 pub inline fn relativePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
     return switch (relativePosixT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
-        .err => |e| e.toJSC(globalObject),
+        .err => |e| e.toJS(globalObject),
     };
 }
 
 pub inline fn relativeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
     return switch (relativeWindowsT(T, from, to, buf, buf2, buf3)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
-        .err => |e| e.toJSC(globalObject),
+        .err => |e| e.toJS(globalObject),
     };
 }
 
@@ -2779,14 +2779,14 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
 pub inline fn resolvePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (resolvePosixT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
-        .err => |e| e.toJSC(globalObject),
+        .err => |e| e.toJS(globalObject),
     };
 }
 
 pub inline fn resolveWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (resolveWindowsT(T, paths, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
-        .err => |e| e.toJSC(globalObject),
+        .err => |e| e.toJS(globalObject),
     };
 }
 
@@ -2925,7 +2925,7 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
 pub inline fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (toNamespacedPathWindowsT(T, path, buf, buf2)) {
         .result => |r| bun.String.createUTF8ForJS(globalObject, r),
-        .err => |e| e.toJSC(globalObject),
+        .err => |e| e.toJS(globalObject),
     };
 }
 

@@ -22,9 +22,8 @@ const size = 56;
 const alignment = 8;
 
 bytes: [size]u8 align(alignment),
-global: *jsc.JSGlobalObject,
 /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
-location: if (Environment.allow_assert) *u8 else void,
+location: if (Environment.ci_assert) *u8 else void,
 enabled: bool,
 
 pub const Enable = enum {
@@ -46,13 +45,13 @@ pub fn init(
     /// If you need to do something different when there is an exception, leave enabled.
     /// If you are only using the scope to prove you handle exceptions correctly, you can pass
     /// `Environment.allow_assert` as `enabled`.
-    enable_condition: Enable,
+    comptime enable_condition: Enable,
 ) void {
-    const enabled = switch (enable_condition) {
+    const enabled = comptime switch (enable_condition) {
         .enabled => true,
-        .assertions_only => Environment.allow_assert,
+        .assertions_only => Environment.ci_assert,
     };
-    if (enabled) {
+    if (comptime enabled) {
         CatchScope__construct(
             &self.bytes,
             global,
@@ -65,8 +64,7 @@ pub fn init(
     }
     self.* = .{
         .bytes = self.bytes,
-        .global = global,
-        .location = if (Environment.allow_assert) &self.bytes[0],
+        .location = if (Environment.ci_assert) &self.bytes[0],
         .enabled = enabled,
     };
 }
@@ -86,14 +84,14 @@ pub fn hasException(self: *CatchScope) bool {
 
 /// Get the thrown exception if it exists (like scope.exception() in C++)
 pub fn exception(self: *CatchScope) ?*jsc.Exception {
-    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return null;
     return CatchScope__pureException(&self.bytes);
 }
 
 /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
 pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
-    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return null;
     return CatchScope__exceptionIncludingTraps(&self.bytes);
 }
@@ -106,7 +104,7 @@ pub fn returnIfException(self: *CatchScope) bun.JSError!void {
 
 /// Asserts there has not been any exception thrown.
 pub fn assertNoException(self: *CatchScope) void {
-    if (Environment.allow_assert) {
+    if (comptime Environment.ci_assert) {
         if (self.exception()) |e| self.assertionFailure(e);
     }
 }
@@ -115,7 +113,7 @@ pub fn assertNoException(self: *CatchScope) void {
 /// Prefer over `assert(scope.hasException() == ...)` because if there is an unexpected exception,
 /// this function prints a trace of where it was thrown.
 pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: bool) void {
-    if (Environment.allow_assert) {
+    if (comptime Environment.ci_assert) {
         // paranoid; will only fail if you manually changed enabled to false
         bun.assert(self.enabled);
         if (should_have_exception) {
@@ -131,20 +129,17 @@ pub fn assertExceptionPresenceMatches(self: *CatchScope, should_have_exception: 
 /// If non-termination exception, assertion failure.
 pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
     bun.assert(self.enabled);
-    return if (self.exception()) |e|
-        if (jsc.JSValue.fromCell(e).isTerminationException(self.global.vm()))
-            error.JSExecutionTerminated
-        else if (Environment.allow_assert)
-            self.assertionFailure(e)
-        else
-            // we got an exception other than the termination one, but we can't assert.
-            // treat this like the termination exception so we still bail out
-            error.JSExecutionTerminated
-    else {};
+    if (self.exception()) |e| {
+        if (jsc.JSValue.fromCell(e).isTerminationException())
+            return error.JSExecutionTerminated
+        else if (comptime Environment.ci_assert)
+            self.assertionFailure(e);
+        // Unconditionally panicing here is worse for our users.
+    }
 }
 
 pub fn deinit(self: *CatchScope) void {
-    if (Environment.allow_assert) bun.assert(self.location == &self.bytes[0]);
+    if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
     if (!self.enabled) return;
     CatchScope__destruct(&self.bytes);
     self.bytes = undefined;

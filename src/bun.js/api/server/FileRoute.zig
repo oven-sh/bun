@@ -12,6 +12,7 @@ has_content_length_header: bool,
 pub const InitOptions = struct {
     server: ?AnyServer,
     status_code: u16 = 200,
+    headers: ?*JSC.WebCore.FetchHeaders = null,
 };
 
 pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
@@ -34,12 +35,14 @@ pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
 }
 
 pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
-    const headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+    const headers = Headers.from(opts.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
     return bun.new(FileRoute, .{
         .ref_count = .init(),
         .server = opts.server,
         .blob = blob,
         .headers = headers,
+        .has_last_modified_header = headers.get("last-modified") != null,
+        .has_content_length_header = headers.get("content-length") != null,
         .status_code = opts.status_code,
     });
 }

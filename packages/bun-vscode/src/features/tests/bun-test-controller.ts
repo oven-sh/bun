@@ -320,8 +320,10 @@ export class BunTestController implements vscode.Disposable {
       ];
     }
 
+    const arrayString = eachMatch[1].replace(/,\s*(?=[\]\}])/g, "");
+
     try {
-      const eachValues = JSON.parse(eachMatch[1]);
+      const eachValues = JSON.parse(arrayString);
       if (!Array.isArray(eachValues)) {
         throw new Error("Not an array");
       }

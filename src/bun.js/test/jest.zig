@@ -222,8 +222,9 @@ pub const TestRunner = struct {
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
     }
 
-    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
+        this.tests.items(.line_number)[test_id] = line_number;
         this.callback.onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent);
     }
 
@@ -1400,6 +1401,11 @@ pub const TestRunnerTask = struct {
                 .skip => {
                     this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, test_id_for_debugger, describe);
                 },
+                .skipped_because_label => {
+                    if (Jest.runner.?.test_options.file_reporter == .junit) {
+                        this.processTestResult(globalThis, .{ .skipped_because_label = {} }, test_, test_id, test_id_for_debugger, describe);
+                    }
+                },
                 else => {},
             }
             this.deinit();
@@ -1647,7 +1653,7 @@ pub const TestRunnerTask = struct {
                 );
             },
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe, test_.line_number),
-            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe),
+            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe, test_.line_number),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe, test_.line_number),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
@@ -2197,7 +2203,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             }
 
             if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only and tag_to_use != .skip) {
+                if (Jest.runner.?.only and tag != .only and tag_to_use != .skip and tag_to_use != .skipped_because_label) {
                     allocator.free(formattedLabel);
                     for (function_args) |arg| {
                         if (arg != .zero) arg.unprotect();

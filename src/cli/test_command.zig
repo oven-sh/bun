@@ -81,14 +81,14 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
             true => switch (status) {
                 .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
                 .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+                .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
                 .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
             else => switch (status) {
                 .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
                 .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+                .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
                 .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
@@ -888,8 +888,22 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
-    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, _: string, _: string, expectations: u32, _: u64, _: ?*jest.DescribeScope) void {
+    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        if (this.file_reporter) |_| {
+            var writer_ = Output.errorWriter();
+
+            const initial_length = this.skips_to_repeat_buf.items.len;
+            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+
+            writeTestStatusLine(.skipped_because_label, &writer);
+            const line_number = this.jest.tests.items(.line_number)[id];
+            printTestLine(.skipped_because_label, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
+
+            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
+            Output.flush();
+        }
 
         // this.updateDots();
         this.summary().skipped_because_label += 1;

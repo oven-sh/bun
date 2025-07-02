@@ -16,22 +16,16 @@ public:
     }
 
     bool IsEmpty() const { return m_local.IsEmpty(); }
-    
+
     // Extract the Local<T> value if not empty
-    bool ToLocal(Local<T>* out) const {
+    bool ToLocal(Local<T>* out) const
+    {
         if (IsEmpty()) {
-            *out = nullptr;  // V8 assigns nullptr when empty
+            *out = nullptr; // V8 assigns nullptr when empty
             return false;
         }
         *out = m_local;
         return true;
-    }
-    
-    // Get the Local<T> value (should only be called if not empty)
-    Local<T> ToLocalChecked() const {
-        // V8 crashes if called on empty MaybeLocal
-        RELEASE_ASSERT(!IsEmpty());
-        return m_local;
     }
 
 private:

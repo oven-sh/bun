@@ -486,7 +486,7 @@ export class BunTestController implements vscode.Disposable {
             if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
               testNames.push(`^ ${t}$`);
             } else {
-              testNames.push(`^ ${t}`);
+              testNames.push(`^ ${t} `);
             }
           }
 
@@ -843,40 +843,44 @@ export class BunTestController implements vscode.Disposable {
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
     const args = [...testArgs, ...testFiles];
 
-    const testNames = [];
-    const breakpoints: vscode.SourceBreakpoint[] = [];
-    for (const test of tests) {
-      let t = test.id.includes("#")
-        ? test.id
-            .slice(test.id.indexOf("#") + 1)
-            .split(" > ")
-            .join(" ")
-        : test.label;
+    if (isFileOnly) {
+      args.push("--inspect-brk");
+    } else {
+      const testNames = [];
+      const breakpoints: vscode.SourceBreakpoint[] = [];
+      for (const test of tests) {
+        let t = test.id.includes("#")
+          ? test.id
+              .slice(test.id.indexOf("#") + 1)
+              .split(" > ")
+              .join(" ")
+          : test.label;
 
-      t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
-      t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
-      t = t.replaceAll(/\\%[isfd]/g, ".*?");
+        t = t.replaceAll(/\$\{[^}]+\}/g, ".*?");
+        t = t.replaceAll(/\\\$\\\{[^}]+\\\}/g, ".*?");
+        t = t.replaceAll(/\\%[isfd]/g, ".*?");
 
-      if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
-        testNames.push(`^ ${t}$`);
-      } else {
-        testNames.push(`^ ${t}`);
+        if (test.tags.some(tag => tag.id === "test" || tag.id === "it")) {
+          testNames.push(`^ ${t}$`);
+        } else {
+          testNames.push(`^ ${t} `);
+        }
+
+        if (test.uri) {
+          breakpoints.push(
+            new vscode.SourceBreakpoint(
+              new vscode.Location(test.uri, new vscode.Position((test.range?.end.line ?? 0) + 1, 0)),
+              true,
+            ),
+          );
+        }
       }
+      vscode.debug.addBreakpoints(breakpoints);
 
-      if (test.uri) {
-        breakpoints.push(
-          new vscode.SourceBreakpoint(
-            new vscode.Location(test.uri, new vscode.Position((test.range?.end.line ?? 0) + 1, 0)),
-            true,
-          ),
-        );
+      if (testNames.length > 0) {
+        const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
+        args.push("--test-name-pattern", process.platform === "win32" ? `""` : testNamesRegex);
       }
-    }
-    vscode.debug.addBreakpoints(breakpoints);
-
-    if (testNames.length > 0) {
-      const testNamesRegex = testNames.map(pattern => `(${pattern})`).join("|");
-      args.push("--test-name-pattern", process.platform === "win32" ? `""` : testNamesRegex);
     }
 
     const debugConfiguration: vscode.DebugConfiguration = {

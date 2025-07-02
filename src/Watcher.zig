@@ -469,9 +469,10 @@ fn appendDirectoryAssumeCapacity(
             if (comptime copy_file_path) bun.PathBufferPool.put(buf);
         }
         const path = if (comptime !copy_file_path) file_path_[0..file_path_.len :0] else brk: {
-            @memcpy(buf[0..file_path_.len], file_path_);
-            buf[file_path_.len] = 0;
-            break :brk buf[0..file_path.len :0];
+            const trailing_slash = std.mem.trimRight(u8, file_path_, "/");
+            @memcpy(buf[0..trailing_slash.len], trailing_slash);
+            buf[trailing_slash.len] = 0;
+            break :brk buf[0..trailing_slash.len :0];
         };
 
         item.eventlist_index = switch (this.platform.watchDir(path)) {

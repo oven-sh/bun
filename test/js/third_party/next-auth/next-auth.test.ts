@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cpSync, mkdirSync } from "fs";
+import { cpSync } from "fs";
 import { bunEnv, bunRun, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 describe("next-auth", () => {

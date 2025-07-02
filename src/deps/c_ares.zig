@@ -332,7 +332,7 @@ pub const hostent_with_ttls = struct {
                     bun.dns.addressToJS(&std.net.Address.initIp4(addr[0..4].*, 0), globalThis)) catch return globalThis.throwOutOfMemoryValue();
 
                 const ttl: ?c_int = if (count < this.ttls.len) this.ttls[count] else null;
-                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .jsUndefined());
+                const resultObject = JSC.JSValue.createObject2(globalThis, &addressKey, &ttlKey, addrString, if (ttl) |val| JSC.jsNumber(val) else .js_undefined);
                 array.putIndex(globalThis, count, resultObject);
             }
 
@@ -439,7 +439,7 @@ pub const struct_nameinfo = extern struct {
             const node_slice = this.node[0..node_len];
             array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 0, .jsUndefined());
+            array.putIndex(globalThis, 0, .js_undefined);
         }
 
         if (this.service != null) {
@@ -447,7 +447,7 @@ pub const struct_nameinfo = extern struct {
             const service_slice = this.service[0..service_len];
             array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
         } else {
-            array.putIndex(globalThis, 1, .jsUndefined());
+            array.putIndex(globalThis, 1, .js_undefined);
         }
 
         return array;
@@ -1418,8 +1418,8 @@ pub const struct_any_reply = struct {
             reply.toJSResponse(allocator, globalThis, lookup_name);
 
         if (response.isArray()) {
-            var iterator = response.arrayIterator(globalThis);
-            while (iterator.next()) |item| {
+            var iterator = try response.arrayIterator(globalThis);
+            while (try iterator.next()) |item| {
                 try append(globalThis, array, i, item, lookup_name);
             }
         } else {
@@ -1697,7 +1697,10 @@ pub const Error = enum(i32) {
             const system_error = JSC.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
-                .message = if (this.hostname) |hostname| bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory() else bun.String.empty,
+                .message = if (this.hostname) |hostname|
+                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
+                else
+                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
                 .syscall = bun.String.createUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
@@ -1745,31 +1748,23 @@ pub const Error = enum(i32) {
         return Deferred.init(this, syscall, host_string, promise.*);
     }
 
-    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
+            .syscall = bun.String.static(syscall),
+            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
     }
 
-    pub fn toJSWithSyscall(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8) JSC.JSValue {
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) JSC.JSValue {
         const instance = (JSC.SystemError{
             .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
-        }).toErrorInstance(globalThis);
-        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
-        return instance;
-    }
-
-    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *JSC.JSGlobalObject, comptime syscall: []const u8, hostname: []const u8) JSC.JSValue {
-        const instance = (JSC.SystemError{
-            .errno = @intFromEnum(this),
-            .code = bun.String.static(this.code()),
+            .code = bun.String.static(this.code()[4..]),
             .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
-            .syscall = bun.String.static((syscall ++ "\x00")[0..syscall.len :0]),
+            .syscall = bun.String.static(syscall),
             .hostname = bun.String.createUTF8(hostname),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
@@ -2021,9 +2016,9 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         const addr_slice = addr.toSlice(bun.default_allocator);
         const addr_str = addr_slice.slice();
         if (addr_str.len >= INET6_ADDRSTRLEN) {
-            return .jsUndefined();
+            return .js_undefined;
         }
-        for (addr_str) |char| if (char == '/') return .jsUndefined(); // CIDR not allowed
+        for (addr_str) |char| if (char == '/') return .js_undefined; // CIDR not allowed
 
         var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
         // we need a null terminated string as input
@@ -2036,12 +2031,12 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
             af = AF.INET6;
             if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return .jsUndefined();
+                return .js_undefined;
             }
         }
         // ip_addr will contain the null-terminated string of the cannonicalized IP
         if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return .jsUndefined();
+            return .js_undefined;
         }
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));

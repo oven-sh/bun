@@ -413,7 +413,7 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber()) {
+    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > std.math.maxInt(usize)) {
         return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
@@ -546,7 +546,7 @@ pub fn toBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |err| {
             return err;

@@ -296,7 +296,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -395,7 +395,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -669,7 +669,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJSC(globalObject),
+                .err => |err| err.toJS(globalObject),
                 .result => |*res| brk: {
                     break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
@@ -1220,7 +1220,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
@@ -1286,11 +1286,11 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Rename {
             const old_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .jsUndefined());
+                return ctx.throwInvalidArgumentTypeValue("oldPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
 
             const new_path = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .jsUndefined());
+                return ctx.throwInvalidArgumentTypeValue("newPath", "string or an instance of Buffer or URL", arguments.next() orelse .js_undefined);
             };
 
             return Rename{ .old_path = old_path, .new_path = new_path };
@@ -1350,7 +1350,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Writev {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1404,7 +1404,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Readv {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1450,7 +1450,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FTruncate {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1521,7 +1521,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fchown {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -1577,7 +1577,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
@@ -1585,7 +1585,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -1619,7 +1619,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const mode_arg: JSC.JSValue = arguments.next() orelse .jsUndefined();
+            const mode_arg: JSC.JSValue = arguments.next() orelse .js_undefined;
             const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
                 return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
@@ -1639,12 +1639,12 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FChmod {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const mode_arg: JSC.JSValue = arguments.next() orelse .jsUndefined();
+            const mode_arg: JSC.JSValue = arguments.next() orelse .js_undefined;
             const mode: Mode = try JSC.Node.modeFromJS(ctx, mode_arg) orelse {
                 return JSC.Node.validators.throwErrInvalidArgType(ctx, "mode", .{}, "number", mode_arg);
             };
@@ -1753,7 +1753,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *@This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fstat {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2160,7 +2160,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!MkdirTemp {
             const prefix = try PathLike.fromJS(ctx, arguments) orelse {
-                return ctx.throwInvalidArgumentTypeValue("prefix", "string, Buffer, or URL", arguments.next() orelse .jsUndefined());
+                return ctx.throwInvalidArgumentTypeValue("prefix", "string, Buffer, or URL", arguments.next() orelse .js_undefined);
             };
             errdefer prefix.deinit();
 
@@ -2268,7 +2268,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: Close) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Close {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2355,19 +2355,19 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Futimes {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -2427,7 +2427,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Write {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2532,7 +2532,7 @@ pub const Arguments = struct {
             // fs_binding.read(fd, buffer, offset, length, position)
 
             // fd = getValidatedFd(fd);
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -2977,7 +2977,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!FdataSync {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -3085,7 +3085,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
+                    mode = try arg.coerce(i32, ctx);
                 }
             }
 
@@ -3127,7 +3127,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(_: *const @This()) void {}
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Fsync {
-            const fd_value: JSC.JSValue = arguments.nextEat() orelse .jsUndefined();
+            const fd_value: JSC.JSValue = arguments.nextEat() orelse .js_undefined;
             const fd = try bun.FD.fromJSValidated(fd_value, ctx) orelse {
                 return throwInvalidFdError(ctx, fd_value);
             };
@@ -3144,14 +3144,14 @@ pub const StatOrNotFound = union(enum) {
     pub fn toJS(this: *StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJS(globalObject),
-            .not_found => .jsUndefined(),
+            .not_found => .js_undefined,
         };
     }
 
-    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJSNewlyCreated(globalObject),
-            .not_found => .jsUndefined(),
+            .not_found => .js_undefined,
         };
     }
 };
@@ -3163,7 +3163,7 @@ pub const StringOrUndefined = union(enum) {
     pub fn toJS(this: *const StringOrUndefined, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
             .string => this.string.toJS(globalObject),
-            .none => .jsUndefined(),
+            .none => .js_undefined,
         };
     }
 };
@@ -3283,13 +3283,8 @@ const Return = struct {
                     var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
-                        const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        if (res == .zero) return .zero;
-                        array.putIndex(
-                            globalObject,
-                            @truncate(i),
-                            res,
-                        );
+                        const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
+                        array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },
@@ -5044,7 +5039,7 @@ pub const NodeFS = struct {
                             if (this.vm) |vm| {
                                 // Attempt to create the buffer in JSC's heap.
                                 // This avoids creating a WastefulTypedArray.
-                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer);
+                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer) catch .zero; // TODO: properly propagate exception upwards
                                 array_buffer.ensureStillAlive();
                                 return .{
                                     .result = .{
@@ -5876,7 +5871,7 @@ pub const NodeFS = struct {
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this)) catch {};
-            return Maybe(Return.Watch){ .result = .jsUndefined() };
+            return Maybe(Return.Watch){ .result = .js_undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };
     }

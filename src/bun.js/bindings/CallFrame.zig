@@ -17,7 +17,7 @@ pub const CallFrame = opaque {
     /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
     pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
         const slice = call_frame.arguments();
-        var value: [count]JSValue = @splat(.jsUndefined());
+        var value: [count]JSValue = @splat(.js_undefined);
         const n = @min(call_frame.argumentsCount(), count);
         @memcpy(value[0..n], slice[0..n]);
         return value;
@@ -25,7 +25,7 @@ pub const CallFrame = opaque {
 
     /// This function protects out-of-bounds access by returning undefined
     pub fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
-        return if (self.argumentsCount() > i) self.arguments()[i] else .jsUndefined();
+        return if (self.argumentsCount() > i) self.arguments()[i] else .js_undefined;
     }
 
     pub fn argumentsCount(self: *const CallFrame) u32 {
@@ -134,7 +134,7 @@ pub const CallFrame = opaque {
             }
 
             pub inline fn initUndef(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args: [max]JSC.JSValue = @splat(.jsUndefined());
+                var args: [max]JSC.JSValue = @splat(.js_undefined);
                 args[0..i].* = ptr[0..i].*;
                 return @This(){ .ptr = args, .len = i };
             }
@@ -168,7 +168,7 @@ pub const CallFrame = opaque {
         const slice = self.arguments();
         comptime bun.assert(max <= 9);
         return switch (@as(u4, @min(slice.len, max))) {
-            0 => .{ .ptr = @splat(.jsUndefined()), .len = 0 },
+            0 => .{ .ptr = @splat(.js_undefined), .len = 0 },
             inline 1...9 => |count| Arguments(max).initUndef(@min(count, max), slice.ptr),
             else => unreachable,
         };

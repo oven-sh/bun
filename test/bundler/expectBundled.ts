@@ -826,10 +826,13 @@ function expectBundled(
       }
 
       const bundlerEnv = { ...bunEnv, ...env };
-      // remove undefined keys instead of passing "undefined"
+      // remove undefined keys instead of passing "undefined" and resolve {{root}}
       for (const key in bundlerEnv) {
-        if (bundlerEnv[key] === undefined) {
+        const value = bundlerEnv[key];
+        if (value === undefined) {
           delete bundlerEnv[key];
+        } else if (typeof value === "string") {
+          bundlerEnv[key] = value.replaceAll("{{root}}", root);
         }
       }
 

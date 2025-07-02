@@ -570,8 +570,8 @@ pub fn NewSource(
                     bun.assert(flag.isBoolean());
                 }
                 return switch (this.context.setRawMode(flag == .true)) {
-                    .result => .jsUndefined(),
-                    .err => |e| e.toJSC(global),
+                    .result => .js_undefined,
+                    .err => |e| e.toJS(global),
                 };
             }
 
@@ -618,7 +618,7 @@ pub fn NewSource(
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;
-                var buffer = view.asArrayBuffer(globalThis) orelse return .jsUndefined();
+                var buffer = view.asArrayBuffer(globalThis) orelse return .js_undefined;
                 return processResult(
                     this_jsvalue,
                     globalThis,
@@ -636,7 +636,7 @@ pub fn NewSource(
                     .ready => return JSValue.jsNumber(16384),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        return globalThis.throwValue(err.toJSC(globalThis));
+                        return globalThis.throwValue(err.toJS(globalThis));
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -653,7 +653,7 @@ pub fn NewSource(
                 switch (result) {
                     .err => |err| {
                         if (err == .Error) {
-                            return globalThis.throwValue(err.Error.toJSC(globalThis));
+                            return globalThis.throwValue(err.Error.toJS(globalThis));
                         } else {
                             const js_err = err.JSValue;
                             js_err.ensureStillAlive();
@@ -662,7 +662,7 @@ pub fn NewSource(
                         }
                     },
                     .pending => {
-                        const out = result.toJS(globalThis);
+                        const out = try result.toJS(globalThis);
                         js.pendingPromiseSetCached(this_jsvalue, globalThis, out);
                         return out;
                     },
@@ -679,7 +679,7 @@ pub fn NewSource(
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 this.cancel();
-                return .jsUndefined();
+                return .js_undefined;
             }
 
             pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
@@ -704,7 +704,7 @@ pub fn NewSource(
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
-                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .jsUndefined());
+                    js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .js_undefined);
                     return;
                 }
 
@@ -720,7 +720,7 @@ pub fn NewSource(
 
                 JSC.markBinding(@src());
 
-                return this.close_jsvalue.get() orelse .jsUndefined();
+                return this.close_jsvalue.get() orelse .js_undefined;
             }
 
             pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -732,7 +732,7 @@ pub fn NewSource(
                     return val;
                 }
 
-                return .jsUndefined();
+                return .js_undefined;
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -742,7 +742,7 @@ pub fn NewSource(
                 const ref_or_unref = callFrame.argument(0).toBoolean();
                 this.setRef(ref_or_unref);
 
-                return .jsUndefined();
+                return .js_undefined;
             }
 
             fn onClose(ptr: ?*anyopaque) void {
@@ -768,7 +768,7 @@ pub fn NewSource(
                 if (list.len > 0) {
                     return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
                 }
-                return JSValue.jsUndefined();
+                return .js_undefined;
             }
 
             pub fn text(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {

@@ -49,7 +49,7 @@ function depromise<T>(_promise: Promise<T>): T {
 
   tsd.expectType(proc.pid).is<number>();
 
-  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBufferLike>>>();
+  tsd.expectType(proc.stdout).is<Bun.BunReadableStream>();
   tsd.expectType(proc.stderr).is<undefined>();
   tsd.expectType(proc.stdin).is<undefined>();
 }
@@ -74,8 +74,8 @@ function depromise<T>(_promise: Promise<T>): T {
   tsd.expectType(proc.stdio[3]).is<number | undefined>();
 
   tsd.expectType(proc.stdin).is<FileSink>();
-  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array>>();
-  tsd.expectType(proc.stderr).is<ReadableStream<Uint8Array>>();
+  tsd.expectType(proc.stdout).is<Bun.BunReadableStream>();
+  tsd.expectType(proc.stderr).is<Bun.BunReadableStream>();
 }
 
 {

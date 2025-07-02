@@ -105,7 +105,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             result.ensureStillAlive();
 
             handleResolve(ctx, result);
-            return JSValue.jsUndefined();
+            return .js_undefined;
         }
 
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -254,8 +254,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
             defer ctx.deref();
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .jsUndefined());
-            return JSValue.jsUndefined();
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .js_undefined);
+            return .js_undefined;
         }
 
         fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -856,14 +856,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJSC(globalThis)),
+                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis)),
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
                     if (auto_close) {
                         fd.close();
                     }
@@ -1622,7 +1622,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             defer req.deref();
             req.handleResolveStream();
-            return JSValue.jsUndefined();
+            return .js_undefined;
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             streamLog("onRejectStream", .{});
@@ -1632,7 +1632,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             defer req.deref();
 
             req.handleRejectStream(globalThis, err);
-            return JSValue.jsUndefined();
+            return .js_undefined;
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
@@ -1978,7 +1978,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get() orelse .jsUndefined(),
+                        server.js_value.get() orelse .js_undefined,
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();

@@ -482,7 +482,7 @@ pub const JSGlobalObject = opaque {
         error_array: JSValue,
     ) JSValue {
         if (bun.Environment.allow_assert) bun.assert(error_array.isArray());
-        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .jsUndefined());
+        return JSC__JSGlobalObject__createAggregateErrorWithArray(globalObject, error_array, message, .js_undefined);
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
@@ -490,6 +490,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__generateHeapSnapshot(this);
     }
 
+    // DEPRECATED - use CatchScope to check for exceptions and signal exceptions by returning JSError
     pub fn hasException(this: *JSGlobalObject) bool {
         return JSGlobalObject__hasException(this);
     }
@@ -552,7 +553,7 @@ pub const JSGlobalObject = opaque {
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
         const exception = this.takeException(err);
-        if (!exception.isTerminationException(this.vm())) {
+        if (!exception.isTerminationException()) {
             _ = this.bunVM().uncaughtException(this, exception, false);
         }
     }

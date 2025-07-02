@@ -41,6 +41,7 @@ pub fn kill(this: *ProcessAutoKiller) Result {
 fn killProcesses(this: *ProcessAutoKiller) u32 {
     var count: u32 = 0;
     while (this.processes.pop()) |process| {
+        defer process.key.deref();
         if (!process.key.hasExited()) {
             log("process.kill {d}", .{process.key.pid});
             count += @as(u32, @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)) == .result));
@@ -50,6 +51,10 @@ fn killProcesses(this: *ProcessAutoKiller) u32 {
 }
 
 pub fn clear(this: *ProcessAutoKiller) void {
+    for (this.processes.keys()) |process| {
+        process.deref();
+    }
+
     if (this.processes.capacity() > 256) {
         this.processes.clearAndFree(bun.default_allocator);
     }
@@ -58,15 +63,23 @@ pub fn clear(this: *ProcessAutoKiller) void {
 }
 
 pub fn onSubprocessSpawn(this: *ProcessAutoKiller, process: *bun.spawn.Process) void {
-    if (this.enabled)
-        this.processes.put(bun.default_allocator, process, {}) catch {};
+    if (this.enabled) {
+        this.processes.put(bun.default_allocator, process, {}) catch return;
+        process.ref();
+    }
 }
 
 pub fn onSubprocessExit(this: *ProcessAutoKiller, process: *bun.spawn.Process) void {
-    if (this.ever_enabled)
-        _ = this.processes.swapRemove(process);
+    if (this.ever_enabled) {
+        if (this.processes.swapRemove(process)) {
+            process.deref();
+        }
+    }
 }
 
 pub fn deinit(this: *ProcessAutoKiller) void {
+    for (this.processes.keys()) |process| {
+        process.deref();
+    }
     this.processes.deinit(bun.default_allocator);
 }

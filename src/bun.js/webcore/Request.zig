@@ -94,7 +94,7 @@ pub const InternalJSEventCallback = struct {
 
     pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
         if (this.function.get()) |callback| {
-            _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(
+            _ = callback.call(globalThis, .js_undefined, &.{JSC.JSValue.jsNumber(
                 @intFromEnum(eventType),
             )}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
             return true;
@@ -555,10 +555,10 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (arguments.len > 1 and arguments[1].isObject())
             arguments[1]
         else if (is_first_argument_a_url)
-            .jsUndefined()
+            .js_undefined
         else
             url_or_object,
-        if (is_first_argument_a_url) .jsUndefined() else url_or_object,
+        if (is_first_argument_a_url) .js_undefined else url_or_object,
     };
     const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
         @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
@@ -941,7 +941,7 @@ const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = @import("../../http/Method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const Output = bun.Output;

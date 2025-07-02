@@ -144,8 +144,18 @@ pub const JSObject = opaque {
         return JSC__JSObject__create(global, length, creator, Type.call);
     }
 
-    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
-        return JSC__JSObject__getIndex(this, globalThis, i);
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSError!JSValue {
+        // we don't use fromJSHostCall, because it will assert that if there is an exception
+        // then the JSValue is zero. the function this ends up calling can return undefined
+        // with an exception:
+        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalThis, @src());
+        defer scope.deinit();
+        const value = JSC__JSObject__getIndex(this, globalThis, i);
+        try scope.returnIfException();
+        bun.assert(value != .zero);
+        return value;
     }
 
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {

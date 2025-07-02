@@ -99,7 +99,7 @@ pub const PmVersionCommand = struct {
             Global.exit(1);
         };
 
-        const new_version_str = try calculateNewVersion(ctx.allocator, current_version, version_type, new_version, pm.options.preid);
+        const new_version_str = try calculateNewVersion(ctx.allocator, current_version, version_type, new_version, pm.options.preid, package_json_dir);
         defer ctx.allocator.free(new_version_str);
 
         if (!pm.options.allow_same_version and strings.eql(current_version, new_version_str)) {
@@ -200,7 +200,7 @@ pub const PmVersionCommand = struct {
             return;
         }
 
-        if (!isGitClean(cwd) and !pm.options.force) {
+        if (!try isGitClean(cwd) and !pm.options.force) {
             Output.errGeneric("Git working directory not clean.", .{});
             Global.exit(1);
         }
@@ -265,10 +265,10 @@ pub const PmVersionCommand = struct {
             \\
         ;
         Output.pretty(increment_help_text, .{
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .patch, null, pm.options.preid),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .minor, null, pm.options.preid),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .major, null, pm.options.preid),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, pm.options.preid),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .patch, null, pm.options.preid, cwd),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .minor, null, pm.options.preid, cwd),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .major, null, pm.options.preid, cwd),
+            current_version, try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, pm.options.preid, cwd),
         });
 
         if (strings.indexOfChar(current_version, '-') != null or pm.options.preid.len > 0) {
@@ -279,9 +279,9 @@ pub const PmVersionCommand = struct {
                 \\
             ;
             Output.pretty(prerelease_help_text, .{
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .prepatch, null, pm.options.preid),
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .preminor, null, pm.options.preid),
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .premajor, null, pm.options.preid),
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .prepatch, null, pm.options.preid, cwd),
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .preminor, null, pm.options.preid, cwd),
+                current_version, try calculateNewVersion(ctx.allocator, current_version, .premajor, null, pm.options.preid, cwd),
             });
         }
 
@@ -364,13 +364,13 @@ pub const PmVersionCommand = struct {
         Global.exit(1);
     }
 
-    fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8) bun.OOM![]const u8 {
+    fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8, cwd: []const u8) bun.OOM![]const u8 {
         if (version_type == .specific) {
             return try allocator.dupe(u8, specific_version.?);
         }
 
         if (version_type == .from_git) {
-            return try getVersionFromGit(allocator);
+            return try getVersionFromGit(allocator, cwd);
         }
 
         const current = Semver.Version.parse(Semver.SlicedString.init(current_str, current_str));
@@ -469,141 +469,163 @@ pub const PmVersionCommand = struct {
         return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
     }
 
-    fn isGitClean(cwd: []const u8) bool {
-        var child_proc = std.process.Child.init(
-            &[_][]const u8{ "git", "status", "--porcelain" },
-            bun.default_allocator,
-        );
-        child_proc.stdout_behavior = .Pipe;
-        child_proc.stderr_behavior = .Pipe;
-
-        child_proc.cwd = cwd;
-        child_proc.spawn() catch return false;
-
-        var stdout = std.ArrayListUnmanaged(u8){};
-        defer stdout.deinit(bun.default_allocator);
-        var stderr = std.ArrayListUnmanaged(u8){};
-        defer stderr.deinit(bun.default_allocator);
-
-        child_proc.collectOutput(bun.default_allocator, &stdout, &stderr, 1024 * 1024) catch return false;
-
-        const result = child_proc.wait() catch return false;
-
-        return switch (result) {
-            .Exited => |code| code == 0 and stdout.items.len == 0,
-            else => false,
+    fn isGitClean(cwd: []const u8) bun.OOM!bool {
+        var path_buf: bun.PathBuffer = undefined;
+        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+            Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
+            Global.exit(1);
         };
+
+        const proc = bun.spawnSync(&.{
+            .argv = &.{ git_path, "status", "--porcelain" },
+            .stdout = .buffer,
+            .stderr = .ignore,
+            .stdin = .ignore,
+            .cwd = cwd,
+            .envp = null,
+        }) catch return false;
+
+        switch (proc) {
+            .err => |err| {
+                Output.err(err, "Failed to spawn git process", .{});
+                return false;
+            },
+            .result => |result| {
+                return result.isOK() and result.stdout.items.len == 0;
+            },
+        }
     }
 
-    fn getVersionFromGit(allocator: std.mem.Allocator) bun.OOM![]const u8 {
-        var child_proc = std.process.Child.init(
-            &[_][]const u8{ "git", "describe", "--tags", "--abbrev=0" },
-            allocator,
-        );
-        child_proc.stdout_behavior = .Pipe;
-        child_proc.stderr_behavior = .Pipe;
-
-        child_proc.spawn() catch |err| {
-            Output.errGeneric("Failed to run git command: {s}", .{@errorName(err)});
+    fn getVersionFromGit(allocator: std.mem.Allocator, cwd: []const u8) bun.OOM![]const u8 {
+        var path_buf: bun.PathBuffer = undefined;
+        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+            Output.errGeneric("git must be installed to use `bun pm version from-git`", .{});
             Global.exit(1);
         };
 
-        var stdout = std.ArrayListUnmanaged(u8){};
-        defer stdout.deinit(allocator);
-        var stderr = std.ArrayListUnmanaged(u8){};
-        defer stderr.deinit(allocator);
-
-        child_proc.collectOutput(allocator, &stdout, &stderr, 1024 * 1024) catch |err| {
-            Output.errGeneric("Failed to collect git output: {s}", .{@errorName(err)});
+        const proc = bun.spawnSync(&.{
+            .argv = &.{ git_path, "describe", "--tags", "--abbrev=0" },
+            .stdout = .buffer,
+            .stderr = .buffer,
+            .stdin = .ignore,
+            .cwd = cwd,
+            .envp = null,
+        }) catch |err| {
+            Output.err(err, "Failed to spawn git process", .{});
             Global.exit(1);
         };
 
-        const result = child_proc.wait() catch |err| {
-            Output.errGeneric("Failed to wait for git process: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
-
-        switch (result) {
-            .Exited => |code| {
-                if (code != 0) {
-                    if (stderr.items.len > 0) {
-                        Output.errGeneric("Git error: {s}", .{strings.trim(stderr.items, " \n\r\t")});
+        switch (proc) {
+            .err => |err| {
+                Output.err(err, "Git command failed unexpectedly", .{});
+                Global.exit(1);
+            },
+            .result => |result| {
+                if (!result.isOK()) {
+                    if (result.stderr.items.len > 0) {
+                        Output.errGeneric("Git error: {s}", .{strings.trim(result.stderr.items, " \n\r\t")});
                     } else {
                         Output.errGeneric("No git tags found", .{});
                     }
                     Global.exit(1);
                 }
-            },
-            else => {
-                Output.errGeneric("Git command failed unexpectedly", .{});
-                Global.exit(1);
+
+                var version_str = strings.trim(result.stdout.items, " \n\r\t");
+                if (strings.startsWith(version_str, "v")) {
+                    version_str = version_str[1..];
+                }
+
+                return try allocator.dupe(u8, version_str);
             },
         }
-
-        var version_str = strings.trim(stdout.items, " \n\r\t");
-        if (strings.startsWith(version_str, "v")) {
-            version_str = version_str[1..];
-        }
-
-        return try allocator.dupe(u8, version_str);
     }
 
     fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) bun.OOM!void {
-        var stage_proc = std.process.Child.init(
-            &[_][]const u8{ "git", "add", "package.json" },
-            allocator,
-        );
-        stage_proc.cwd = cwd;
-        stage_proc.stdout_behavior = .Ignore;
-        stage_proc.stderr_behavior = .Ignore;
-        const stage_result = stage_proc.spawnAndWait() catch |err| {
+        var path_buf: bun.PathBuffer = undefined;
+        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+            Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
+            Global.exit(1);
+        };
+
+        const stage_proc = bun.spawnSync(&.{
+            .argv = &.{ git_path, "add", "package.json" },
+            .cwd = cwd,
+            .stdout = .buffer,
+            .stderr = .buffer,
+            .stdin = .ignore,
+            .envp = null,
+        }) catch |err| {
             Output.errGeneric("Git add failed: {s}", .{@errorName(err)});
             return;
         };
 
-        if (stage_result != .Exited or stage_result.Exited != 0) {
-            Output.errGeneric("Git add failed with result: {any}", .{stage_result});
-            return;
+        switch (stage_proc) {
+            .err => |err| {
+                Output.err(err, "Git add failed unexpectedly", .{});
+                return;
+            },
+            .result => |result| {
+                if (!result.isOK()) {
+                    Output.errGeneric("Git add failed with exit code {d}", .{result.status.exited.code});
+                    return;
+                }
+            },
         }
 
         const commit_message = custom_message orelse try std.fmt.allocPrint(allocator, "v{s}", .{version});
         defer if (custom_message == null) allocator.free(commit_message);
 
-        var commit_proc = std.process.Child.init(
-            &[_][]const u8{ "git", "commit", "-m", commit_message },
-            allocator,
-        );
-        commit_proc.cwd = cwd;
-        commit_proc.stdout_behavior = .Ignore;
-        commit_proc.stderr_behavior = .Ignore;
-        const commit_result = commit_proc.spawnAndWait() catch |err| {
+        const commit_proc = bun.spawnSync(&.{
+            .argv = &.{ git_path, "commit", "-m", commit_message },
+            .cwd = cwd,
+            .stdout = .buffer,
+            .stderr = .buffer,
+            .stdin = .ignore,
+            .envp = null,
+        }) catch |err| {
             Output.errGeneric("Git commit failed: {s}", .{@errorName(err)});
             return;
         };
 
-        if (commit_result != .Exited or commit_result.Exited != 0) {
-            Output.errGeneric("Git commit failed", .{});
-            return;
+        switch (commit_proc) {
+            .err => |err| {
+                Output.err(err, "Git commit failed unexpectedly", .{});
+                return;
+            },
+            .result => |result| {
+                if (!result.isOK()) {
+                    Output.errGeneric("Git commit failed", .{});
+                    return;
+                }
+            },
         }
 
         const tag_name = try std.fmt.allocPrint(allocator, "v{s}", .{version});
         defer allocator.free(tag_name);
 
-        var tag_proc = std.process.Child.init(
-            &[_][]const u8{ "git", "tag", "-a", tag_name, "-m", tag_name },
-            allocator,
-        );
-        tag_proc.cwd = cwd;
-        tag_proc.stdout_behavior = .Ignore;
-        tag_proc.stderr_behavior = .Ignore;
-        const tag_result = tag_proc.spawnAndWait() catch |err| {
+        const tag_proc = bun.spawnSync(&.{
+            .argv = &.{ git_path, "tag", "-a", tag_name, "-m", tag_name },
+            .cwd = cwd,
+            .stdout = .buffer,
+            .stderr = .buffer,
+            .stdin = .ignore,
+            .envp = null,
+        }) catch |err| {
             Output.errGeneric("Git tag failed: {s}", .{@errorName(err)});
             return;
         };
 
-        if (tag_result != .Exited or tag_result.Exited != 0) {
-            Output.errGeneric("Git tag failed", .{});
-            return;
+        switch (tag_proc) {
+            .err => |err| {
+                Output.err(err, "Git tag failed unexpectedly", .{});
+                return;
+            },
+            .result => |result| {
+                if (!result.isOK()) {
+                    Output.errGeneric("Git tag failed", .{});
+                    return;
+                }
+            },
         }
     }
 };

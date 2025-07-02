@@ -533,6 +533,7 @@ pub const Target = enum {
 
         array.set(Target.node, &.{
             "node",
+            "module-sync",
         });
         array.set(Target.browser, &.{
             "browser",
@@ -541,15 +542,18 @@ pub const Target = enum {
         array.set(Target.bun, &.{
             "bun",
             "node",
+            "module-sync",
         });
         array.set(Target.bake_server_components_ssr, &.{
             "bun",
             "node",
+            "module-sync",
         });
         array.set(Target.bun_macro, &.{
             "macro",
             "bun",
             "node",
+            "module-sync",
         });
 
         break :brk array;

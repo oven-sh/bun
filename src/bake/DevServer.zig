@@ -1557,7 +1557,7 @@ fn onFrameworkRequestWithBundle(
         if (std.mem.indexOfScalar(u8, after_proto, '/')) |path_start| {
             const path_with_query = after_proto[path_start..];
             // Remove query string and hash
-            const end = std.mem.indexOfAny(u8, path_with_query, "?#") orelse path_with_query.len;
+            const end = bun.strings.indexOfAny(path_with_query, "?#") orelse path_with_query.len;
             break :blk path_with_query[0..end];
         }
         break :blk "/";

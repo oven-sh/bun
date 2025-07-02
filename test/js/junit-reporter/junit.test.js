@@ -268,12 +268,15 @@ describe("junit reporter", () => {
     expect(Number.parseInt(suite1.$.tests)).toBeGreaterThan(10);
 
     const junitPath2 = `${tmpDir}/junit-filtered.xml`;
-    const proc2 = spawn([bunExe(), "test", "-t", "should match", "--reporter=junit", "--reporter-outfile", junitPath2], {
-      cwd: tmpDir,
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const proc2 = spawn(
+      [bunExe(), "test", "-t", "should match", "--reporter=junit", "--reporter-outfile", junitPath2],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     await proc2.exited;
 
     const xmlContent2 = await file(junitPath2).text();

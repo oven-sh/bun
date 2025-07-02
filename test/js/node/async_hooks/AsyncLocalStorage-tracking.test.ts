@@ -1,12 +1,15 @@
 import { Glob } from "bun";
 import { describe, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isLinux, nodeExe } from "harness";
 import { basename, join } from "path";
 
 describe("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
 
-  const todos = ["async-context-worker_threads-message.js"];
+  let todos = ["async-context-worker_threads-message.js"];
+  if (isASAN && isBroken && isLinux) {
+    todos.push("async-context-dns-resolveTxt.js");
+  }
 
   files = files.filter(file => !todos.includes(basename(file)));
 

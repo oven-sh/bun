@@ -76,7 +76,13 @@ bool Value::StrictEquals(Local<Value> that) const
     JSC::JSValue thisValue = localToJSValue();
     JSC::JSValue thatValue = that->localToJSValue();
     auto* globalObject = v8::Isolate::GetCurrent()->globalObject();
-    return JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool result = JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return result;
 }
 
 bool Value::FullIsTrue() const

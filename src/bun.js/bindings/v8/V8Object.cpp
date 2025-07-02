@@ -71,13 +71,15 @@ Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> val
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
+    // TODO: investigate if we should use the return value
     bool success = object->putByIndex(object, globalObject, index, v, false);
+    (void)success;
     if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return Nothing<bool>();
     }
 
-    return Just(success);
+    return Just(true);
 }
 
 MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
@@ -94,7 +96,6 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
 
     JSValue result = object->get(globalObject, identifier);
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
         return MaybeLocal<Value>();
     }
 
@@ -112,7 +113,6 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
 
     JSValue result = object->get(globalObject, index);
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
         return MaybeLocal<Value>();
     }
 

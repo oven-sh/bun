@@ -1,6 +1,7 @@
 #include "V8Array.h"
 
 #include "V8HandleScope.h"
+#include "V8EscapableHandleScope.h"
 #include "V8Context.h"
 #include "v8_compatibility_assertions.h"
 #include "JavaScriptCore/JSArray.h"
@@ -26,14 +27,14 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (length == 0) {
         JSArray* array = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, Local<Array>());
         return isolate->currentHandleScope()->createLocal<Array>(vm, array);
     }
 
-    // Use MarkedArgumentsBuffer as suggested
-    auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer args;
 
     // Add each element to the arguments buffer
@@ -54,9 +55,11 @@ Local<Array> Array::New(Isolate* isolate, int length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     int realLength = length > 0 ? length : 0;
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(realLength));
+    RETURN_IF_EXCEPTION(scope, Local<Array>());
 
     return isolate->currentHandleScope()->createLocal<Array>(vm, array);
 }
@@ -68,6 +71,8 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     Isolate* isolate = context->GetIsolate();
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = isolate->vm();
+
+    EscapableHandleScope handleScope(isolate);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer args;
@@ -89,7 +94,8 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
 
-    return isolate->currentHandleScope()->createLocal<Array>(vm, array);
+    Local<Array> result = handleScope.createLocal<Array>(vm, array);
+    return handleScope.Escape(result);
 }
 
 // Get array length
@@ -103,42 +109,45 @@ uint32_t Array::Length() const
 void Array::CheckCast(Value* obj)
 {
     // Verify that the object is actually an array
-    if (obj && obj->localToJSValue().isCell()) {
-        JSC::JSCell* cell = obj->localToJSValue().asCell();
-        if (!cell->inherits<JSArray>()) {
-            // This would be a cast error in real V8
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+    if (!obj) {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    JSValue jsValue = obj->localToJSValue();
+    if (!jsValue || !JSC::jsDynamicCast<JSArray*>(jsValue)) {
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
 // Iterate implementation using manual iteration
-Maybe<bool> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
+Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
 {
     const JSArray* jsArray = localToObjectPointer<JSArray>();
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    HandleScope handleScope(context->GetIsolate());
+
     // Manual iteration to support early exit
     for (unsigned index = 0; index < jsArray->length(); ++index) {
         JSValue element = jsArray->getIndex(globalObject, index);
-        RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+        RETURN_IF_EXCEPTION(scope, Nothing<void>());
 
-        Local<Value> localElement = context->GetIsolate()->currentHandleScope()->createLocal<Value>(vm, element);
+        Local<Value> localElement = handleScope.createLocal<Value>(vm, element);
         CallbackResult result = callback(index, localElement, callback_data);
 
         switch (result) {
         case CallbackResult::kException:
-            return Nothing<bool>();
+            return Nothing<void>();
         case CallbackResult::kBreak:
-            return Just(true); // Early exit without error
+            return JustVoid(); // Early exit without error
         case CallbackResult::kContinue:
             break;
         }
     }
 
-    return Just(true);
+    return JustVoid();
 }
 
 } // namespace v8

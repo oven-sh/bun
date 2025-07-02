@@ -809,6 +809,10 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
     env.checkGC();
     const arraybuffer = arraybuffer_.get();
     const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.arraybuffer_expected);
+    if (array_buffer.typed_array_type != .ArrayBuffer) {
+        return env.setLastError(.arraybuffer_expected);
+    }
+
     const slice = array_buffer.slice();
     if (data) |dat|
         dat.* = slice.ptr;

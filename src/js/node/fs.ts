@@ -115,8 +115,8 @@ function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
 }
 
-function emitEventNT(this: import("node:events").EventEmitter, event: string, ...args: unknown[]) {
-  this.emit(event, ...args);
+function emitStop(self: StatWatcher) {
+  self.emit("stop");
 }
 
 class StatWatcher extends EventEmitter {
@@ -137,7 +137,7 @@ class StatWatcher extends EventEmitter {
   stop() {
     if (!this._handle) return;
 
-    process.nextTick(emitEventNT.bind(this, "stop"));
+    process.nextTick(emitStop, this);
 
     this._handle.close();
     this._handle = null;

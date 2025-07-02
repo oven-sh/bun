@@ -643,7 +643,7 @@ pub const FSWatcher = struct {
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
         const joined_buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(joined_buf);
-        const file_path = brk: {
+        const file_path: [:0]const u8 = brk: {
             const buf = bun.PathBufferPool.get();
             defer bun.PathBufferPool.put(buf);
             var slice = args.path.slice();
@@ -651,26 +651,24 @@ pub const FSWatcher = struct {
                 slice = slice[6..];
             }
 
-            var parts = [_]string{
-                slice,
-            };
-
             const cwd = switch (bun.sys.getcwd(buf)) {
                 .result => |r| r,
                 .err => |err| return .{ .err = err },
             };
             buf[cwd.len] = std.fs.path.sep;
 
-            break :brk Path.joinAbsStringBuf(
+            const parts = &[_]string{
+                cwd,
+                slice,
+            };
+
+            break :brk Path.joinAbsStringBufZ(
                 buf[0 .. cwd.len + 1],
                 joined_buf,
-                &parts,
+                parts,
                 .auto,
             );
         };
-
-        joined_buf[file_path.len] = 0;
-        const file_path_z = joined_buf[0..file_path.len :0];
 
         const vm = args.global_this.bunVM();
 
@@ -693,7 +691,7 @@ pub const FSWatcher = struct {
         ctx.current_task.ctx = ctx;
 
         ctx.path_watcher = if (args.signal == null or !args.signal.?.aborted())
-            switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
+            switch (PathWatcher.watch(vm, file_path, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
                 .result => |r| r,
                 .err => |err| {
                     ctx.deinit();

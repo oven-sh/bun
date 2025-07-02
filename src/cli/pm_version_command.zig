@@ -37,7 +37,7 @@ pub const PmVersionCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context, pm: *PackageManager, positionals: []const string, original_cwd: []const u8) !void {
-        const package_json_dir = findPackageDir(ctx.allocator, original_cwd) catch original_cwd;
+        const package_json_dir = try findPackageDir(ctx.allocator, original_cwd);
 
         if (positionals.len <= 1) {
             try showHelp(ctx, pm, package_json_dir);
@@ -66,20 +66,22 @@ pub const PmVersionCommand = struct {
         const scripts = json.asProperty("scripts");
         const scripts_obj = if (scripts) |s| if (s.expr.data == .e_object) s.expr else null else null;
 
-        if (scripts_obj) |s| {
-            if (s.get("preversion")) |script| {
-                if (script.asString(ctx.allocator)) |script_command| {
-                    try RunCommand.runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_command,
-                        "preversion",
-                        package_json_dir,
-                        pm.env,
-                        &.{},
-                        pm.options.log_level == .silent,
-                        ctx.debug.use_system_shell,
-                    );
+        if (pm.options.do.run_scripts) {
+            if (scripts_obj) |s| {
+                if (s.get("preversion")) |script| {
+                    if (script.asString(ctx.allocator)) |script_command| {
+                        try RunCommand.runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_command,
+                            "preversion",
+                            package_json_dir,
+                            pm.env,
+                            &.{},
+                            pm.options.log_level == .silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
                 }
             }
         }
@@ -120,20 +122,22 @@ pub const PmVersionCommand = struct {
             try file.writeAll(updated_contents);
         }
 
-        if (scripts_obj) |s| {
-            if (s.get("version")) |script| {
-                if (script.asString(ctx.allocator)) |script_command| {
-                    try RunCommand.runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_command,
-                        "version",
-                        package_json_dir,
-                        pm.env,
-                        &.{},
-                        pm.options.log_level == .silent,
-                        ctx.debug.use_system_shell,
-                    );
+        if (pm.options.do.run_scripts) {
+            if (scripts_obj) |s| {
+                if (s.get("version")) |script| {
+                    if (script.asString(ctx.allocator)) |script_command| {
+                        try RunCommand.runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_command,
+                            "version",
+                            package_json_dir,
+                            pm.env,
+                            &.{},
+                            pm.options.log_level == .silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
                 }
             }
         }
@@ -142,20 +146,22 @@ pub const PmVersionCommand = struct {
             try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir);
         }
 
-        if (scripts_obj) |s| {
-            if (s.get("postversion")) |script| {
-                if (script.asString(ctx.allocator)) |script_command| {
-                    try RunCommand.runPackageScriptForeground(
-                        ctx,
-                        ctx.allocator,
-                        script_command,
-                        "postversion",
-                        package_json_dir,
-                        pm.env,
-                        &.{},
-                        pm.options.log_level == .silent,
-                        ctx.debug.use_system_shell,
-                    );
+        if (pm.options.do.run_scripts) {
+            if (scripts_obj) |s| {
+                if (s.get("postversion")) |script| {
+                    if (script.asString(ctx.allocator)) |script_command| {
+                        try RunCommand.runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            script_command,
+                            "postversion",
+                            package_json_dir,
+                            pm.env,
+                            &.{},
+                            pm.options.log_level == .silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
                 }
             }
         }
@@ -164,7 +170,7 @@ pub const PmVersionCommand = struct {
         Output.flush();
     }
 
-    fn findPackageDir(allocator: std.mem.Allocator, start_dir: []const u8) ![]const u8 {
+    fn findPackageDir(allocator: std.mem.Allocator, start_dir: []const u8) bun.OOM![]const u8 {
         var path_buf: bun.PathBuffer = undefined;
         var current_dir = start_dir;
 
@@ -215,16 +221,33 @@ pub const PmVersionCommand = struct {
         Global.exit(1);
     }
 
-    fn showHelp(ctx: Command.Context, pm: *PackageManager, cwd: []const u8) !void {
+    fn getCurrentVersion(ctx: Command.Context, cwd: []const u8) ?[]const u8 {
         var path_buf: bun.PathBuffer = undefined;
-        const package_json_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{"package.json"}, .auto);
-        const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, ctx.allocator).unwrap() catch |err| {
-            Output.errGeneric("Failed to read package.json: {s}", .{@errorName(err)});
-            Global.exit(1);
-        };
-        defer ctx.allocator.free(package_json_contents);
+        const package_json_path = bun.path.joinAbsStringBufZ(cwd, &path_buf, &.{"package.json"}, .auto);
 
-        const _current_version = extractVersion(package_json_contents);
+        const package_json_contents = bun.sys.File.readFrom(bun.FD.cwd(), package_json_path, ctx.allocator).unwrap() catch {
+            return null;
+        };
+
+        const package_json_source = logger.Source.initPathString(package_json_path, package_json_contents);
+        const json = JSON.parsePackageJSONUTF8(&package_json_source, ctx.log, ctx.allocator) catch {
+            return null;
+        };
+
+        if (json.asProperty("version")) |v| {
+            switch (v.expr.data) {
+                .e_string => |s| {
+                    return s.data;
+                },
+                else => {},
+            }
+        }
+
+        return null;
+    }
+
+    fn showHelp(ctx: Command.Context, pm: *PackageManager, cwd: []const u8) bun.OOM!void {
+        const _current_version = getCurrentVersion(ctx, cwd);
         const current_version = _current_version orelse "1.0.0";
 
         Output.prettyln("<r><b>bun pm version<r> <d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
@@ -284,25 +307,6 @@ pub const PmVersionCommand = struct {
         Output.flush();
     }
 
-    fn extractVersion(contents: []const u8) ?[]const u8 {
-        const version_start = std.mem.indexOf(u8, contents, "\"version\"") orelse return null;
-        const colon_pos = std.mem.indexOfPos(u8, contents, version_start, ":") orelse return null;
-        var quote_pos = colon_pos + 1;
-        while (quote_pos < contents.len and (contents[quote_pos] == ' ' or contents[quote_pos] == '\t')) {
-            quote_pos += 1;
-        }
-        if (quote_pos >= contents.len or contents[quote_pos] != '"') return null;
-
-        const value_start = quote_pos + 1;
-        var value_end = value_start;
-        while (value_end < contents.len and contents[value_end] != '"') {
-            value_end += 1;
-        }
-        if (value_end >= contents.len) return null;
-
-        return contents[value_start..value_end];
-    }
-
     fn updateVersionString(allocator: std.mem.Allocator, contents: []const u8, old_version: []const u8, new_version: []const u8) ![]const u8 {
         const version_key = "\"version\"";
 
@@ -360,7 +364,7 @@ pub const PmVersionCommand = struct {
         Global.exit(1);
     }
 
-    fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8) ![]const u8 {
+    fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8) bun.OOM![]const u8 {
         if (version_type == .specific) {
             return try allocator.dupe(u8, specific_version.?);
         }
@@ -396,7 +400,7 @@ pub const PmVersionCommand = struct {
         return try incrementVersion(allocator, current_str, current, version_type, prerelease_id);
     }
 
-    fn incrementVersion(allocator: std.mem.Allocator, current_str: []const u8, current: Semver.Version.ParseResult, version_type: VersionType, preid: []const u8) ![]const u8 {
+    fn incrementVersion(allocator: std.mem.Allocator, current_str: []const u8, current: Semver.Version.ParseResult, version_type: VersionType, preid: []const u8) bun.OOM![]const u8 {
         var new_version = current.version.min();
 
         switch (version_type) {
@@ -491,7 +495,7 @@ pub const PmVersionCommand = struct {
         };
     }
 
-    fn getVersionFromGit(allocator: std.mem.Allocator) ![]const u8 {
+    fn getVersionFromGit(allocator: std.mem.Allocator) bun.OOM![]const u8 {
         var child_proc = std.process.Child.init(
             &[_][]const u8{ "git", "describe", "--tags", "--abbrev=0" },
             allocator,
@@ -544,7 +548,7 @@ pub const PmVersionCommand = struct {
         return try allocator.dupe(u8, version_str);
     }
 
-    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) !void {
+    fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) bun.OOM!void {
         var stage_proc = std.process.Child.init(
             &[_][]const u8{ "git", "add", "package.json" },
             allocator,

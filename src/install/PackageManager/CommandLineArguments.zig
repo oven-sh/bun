@@ -74,7 +74,8 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
     clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
-    clap.parseParam("--no-git-tag-version                   Don't create a git commit and tag") catch unreachable,
+    clap.parseParam("--git-tag-version <STR>                Create a git commit and tag") catch unreachable,
+    clap.parseParam("--no-git-tag-version") catch unreachable,
     clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
     clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
     clap.parseParam("--preid <STR>                          Identifier to be used to prefix premajor, preminor, prepatch or prerelease version increments") catch unreachable,
@@ -892,7 +893,17 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (comptime subcommand == .pm) {
         // `bun pm version` command options
-        cli.git_tag_version = !args.flag("--no-git-tag-version");
+        if (args.option("--git-tag-version")) |git_tag_version| {
+            if (strings.eqlComptime(git_tag_version, "true")) {
+                cli.git_tag_version = true;
+            } else if (strings.eqlComptime(git_tag_version, "false")) {
+                cli.git_tag_version = false;
+            }
+        } else if (args.flag("--no-git-tag-version")) {
+            cli.git_tag_version = false;
+        } else {
+            cli.git_tag_version = true;
+        }
         cli.allow_same_version = args.flag("--allow-same-version");
         if (args.option("--preid")) |preid| {
             cli.preid = preid;

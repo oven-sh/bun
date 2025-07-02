@@ -262,6 +262,62 @@ describe("bun pm version", () => {
 
     const packageJson = await Bun.file(`${testDir4}/package.json`).json();
     expect(packageJson.version).toBe("1.0.1");
+
+    const testDir5 = setupGitTest();
+    const { output: output5, code: code5 } = await runCommand(
+      [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+      testDir5,
+    );
+
+    expect(code5).toBe(0);
+    expect(output5.trim()).toBe("v1.0.1");
+
+    const packageJson5 = await Bun.file(`${testDir5}/package.json`).json();
+    expect(packageJson5.version).toBe("1.0.1");
+
+    const { output: tagOutput5 } = await runCommand(["git", "tag", "-l"], testDir5);
+    expect(tagOutput5.trim()).toBe("");
+
+    const { output: logOutput5 } = await runCommand(["git", "log", "--oneline"], testDir5);
+    expect(logOutput5).toContain("Initial commit");
+    expect(logOutput5).not.toContain("v1.0.1");
+
+    const testDir6 = setupGitTest();
+    const { output: output6, code: code6 } = await runCommand(
+      [bunExe(), "pm", "version", "patch", "--git-tag-version=false"],
+      testDir6,
+    );
+
+    expect(code6).toBe(0);
+    expect(output6.trim()).toBe("v1.0.1");
+
+    const packageJson6 = await Bun.file(`${testDir6}/package.json`).json();
+    expect(packageJson6.version).toBe("1.0.1");
+
+    const { output: tagOutput6 } = await runCommand(["git", "tag", "-l"], testDir6);
+    expect(tagOutput6.trim()).toBe("");
+
+    const { output: logOutput6 } = await runCommand(["git", "log", "--oneline"], testDir6);
+    expect(logOutput6).toContain("Initial commit");
+    expect(logOutput6).not.toContain("v1.0.1");
+
+    const testDir7 = setupGitTest();
+    const { output: output7, code: code7 } = await runCommand(
+      [bunExe(), "pm", "version", "patch", "--git-tag-version=true"],
+      testDir7,
+    );
+
+    expect(code7).toBe(0);
+    expect(output7.trim()).toBe("v1.0.1");
+
+    const packageJson7 = await Bun.file(`${testDir7}/package.json`).json();
+    expect(packageJson7.version).toBe("1.0.1");
+
+    const { output: tagOutput7 } = await runCommand(["git", "tag", "-l"], testDir7);
+    expect(tagOutput7).toContain("v1.0.1");
+
+    const { output: logOutput7 } = await runCommand(["git", "log", "--oneline"], testDir7);
+    expect(logOutput7).toContain("v1.0.1");
   });
 
   it("preserves JSON formatting correctly", async () => {
@@ -550,6 +606,35 @@ describe("bun pm version", () => {
 
     const content = await Bun.file(join(testDir4, "version-output.txt")).text();
     expect(content.trim()).toBe("built");
+
+    const testDir5 = tempDirWithFiles(`version-${i++}`, {
+      "package.json": JSON.stringify(
+        {
+          name: "test",
+          version: "1.0.0",
+          scripts: {
+            preversion: "echo 'should not run' >> ignored.log",
+            version: "echo 'should not run' >> ignored.log",
+            postversion: "echo 'should not run' >> ignored.log",
+          },
+        },
+        null,
+        2,
+      ),
+    });
+
+    const { output: output5, code: code5 } = await runCommand(
+      [bunExe(), "pm", "version", "patch", "--no-git-tag-version", "--ignore-scripts"],
+      testDir5,
+    );
+
+    expect(code5).toBe(0);
+    expect(output5.trim()).toBe("v1.0.1");
+
+    const packageJson5 = await Bun.file(join(testDir5, "package.json")).json();
+    expect(packageJson5.version).toBe("1.0.1");
+
+    expect(await Bun.file(join(testDir5, "ignored.log")).exists()).toBe(false);
   });
 
   it("should version workspace packages individually", async () => {

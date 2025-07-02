@@ -16,7 +16,6 @@ const {
 const { Server: NetServer, Socket: NetSocket } = net;
 
 const {
-  rootCertificates,
   SecureContext: NodeTLSSecureContext,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
   TLS1_3_VERSION,

@@ -1,4 +1,4 @@
-import { expect, describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { devTest, minimalFramework } from "../bake-harness";
 
 /**

@@ -24,7 +24,7 @@ delete bunEnv.CXX;
 bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
   bunEnv.CXXFLAGS += " -std=gnu++20";
-} else if (process.platform !== "win32") {
+} else {
   bunEnv.CXXFLAGS += " -std=c++20";
 }
 // https://github.com/isaacs/node-tar/blob/bef7b1e4ffab822681fea2a9b22187192ed14717/lib/get-write-flag.js
@@ -76,7 +76,7 @@ async function build(
             "-j",
             "max",
           ]
-        : [bunExe(), "x", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : [bunExe(), "x", "node-gyp@11", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",

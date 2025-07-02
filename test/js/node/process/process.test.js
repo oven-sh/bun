@@ -305,14 +305,9 @@ const versions = existsSync(generated_versions_list);
 });
 
 it("process.config", () => {
-  expect(process.config).toEqual({
-    variables: {
-      enable_lto: false,
-      node_module_version: expect.any(Number),
-      v8_enable_i8n_support: 1,
-    },
-    target_defaults: {},
-  });
+  expect(process.config.variables.clang).toBeNumber();
+  expect(process.config.variables.host_arch).toBeDefined();
+  expect(process.config.variables.target_arch).toBeDefined();
 });
 
 it("process.execArgv", () => {

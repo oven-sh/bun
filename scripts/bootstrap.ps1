@@ -302,8 +302,6 @@ function Install-Visual-Studio {
     "--force",
     "--locale en-US",
     "--add Microsoft.VisualStudio.Workload.NativeDesktop",
-    "--add Microsoft.VisualStudio.Component.VC.Llvm.Clang",
-    "--add Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset",
     "--includeRecommended"
   )
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo

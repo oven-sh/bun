@@ -1958,16 +1958,31 @@ pub const PostgresSQLConnection = struct {
             };
 
             if (path.len > 0) {
-                ptr.socket = .{
-                    .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                        tls_config.deinit();
-                        if (tls_ctx) |tls| {
-                            tls.deinit(true);
-                        }
-                        ptr.deinit();
-                        return globalObject.throwError(err, "failed to connect to postgresql");
-                    },
-                };
+                if (ssl_mode != .disable and tls_ctx != null) {
+                    // Use TLS context for Unix socket connections when SSL is required
+                    ptr.socket = .{
+                        .SocketTLS = uws.SocketTLS.connectUnixAnon(path, tls_ctx.?, ptr, false) catch |err| {
+                            tls_config.deinit();
+                            if (tls_ctx) |tls| {
+                                tls.deinit(true);
+                            }
+                            ptr.deinit();
+                            return globalObject.throwError(err, "failed to connect to postgresql");
+                        },
+                    };
+                } else {
+                    // Use regular TCP context for Unix socket connections when SSL is disabled
+                    ptr.socket = .{
+                        .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                            tls_config.deinit();
+                            if (tls_ctx) |tls| {
+                                tls.deinit(true);
+                            }
+                            ptr.deinit();
+                            return globalObject.throwError(err, "failed to connect to postgresql");
+                        },
+                    };
+                }
             } else {
                 ptr.socket = .{
                     .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {

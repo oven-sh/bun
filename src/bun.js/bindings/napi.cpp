@@ -762,13 +762,15 @@ extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
     JSC::VM& vm = JSC::getVM(globalObject);
+    // Increment this one even if the module is invalid so that functionDlopen
+    // knows that napi_module_register was attempted
+    globalObject->napiModuleRegisterCallCount++;
 
     // Store the entire module struct to be processed after dlopen completes
     if (mod && mod->nm_register_func) {
         globalObject->m_pendingNapiModule = *mod;
         globalObject->m_hasPendingNapiModule = true;
         // Increment the counter to signal that a module registered itself
-        globalObject->napiModuleRegisterCallCount++;
         Bun__napi_module_register_count++;
     } else {
         JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));

@@ -233,10 +233,11 @@ describe("bun pm version", () => {
 
     const testDir2 = setupGitTest();
 
-    const { output: output2, error: error2, code: code2 } = await runCommand(
-      [bunExe(), "pm", "version", "patch", "--message", "Custom release message"],
-      testDir2,
-    );
+    const {
+      output: output2,
+      error: error2,
+      code: code2,
+    } = await runCommand([bunExe(), "pm", "version", "patch", "--message", "Custom release message"], testDir2);
     expect(error2).toBe("");
 
     const { output: gitLogOutput } = await runCommand(["git", "log", "--oneline"], testDir2);

@@ -1,7 +1,7 @@
 state: enum { idle, waiting_write_err, waiting_io, err, done } = .idle,
 expletive: []const u8 = "y",
 task: YesTask = undefined,
-buffer: []u8 = undefined,
+buffer: []u8 = "",
 buffer_used: usize = 0,
 alloc_scope: shell.AllocScope,
 

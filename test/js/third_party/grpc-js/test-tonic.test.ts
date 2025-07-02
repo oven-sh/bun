@@ -3,14 +3,14 @@ import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, cp, mkdir, rm } from "fs/promises";
 import { tmpdirSync } from "harness";
-import path from "path";
+import path, { join } from "path";
 import unzipper from "unzipper";
 
 const protoVersion = "31.0";
 
 const releases = {
   "win32_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
-  "win32_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
+  "win32_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win64.zip`,
   "linux_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_32.zip`,
   "linux_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_64.zip`,
   "darwin_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-x86_64.zip`,
@@ -20,37 +20,38 @@ const releases = {
 const platform = process.platform;
 const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x86_64" : "x86_32";
 const release = platform + "_" + arch;
+const binPath = join("bin", platform === "win32" ? "protoc.exe" : "protoc");
 
 // Load proto
-const packageDefinition = protoLoader.loadSync(
-  path.join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"),
-  {
-    keepCase: true,
-    longs: String,
-    enums: String,
-    defaults: true,
-    oneofs: true,
-  },
-);
+const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"), {
+  keepCase: true,
+  longs: String,
+  enums: String,
+  defaults: true,
+  oneofs: true,
+});
 
 type Server = { address: string; kill: () => void };
 
 const cargoBin = Bun.which("cargo") as string;
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
-  await cp(path.join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
+  await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
   const protocZip = await unzipper.Open.buffer(await fetch(releases[release]).then(res => res.bytes()));
 
-  const protocPath = path.join(tmpDir, "protoc");
+  const protocPath = join(tmpDir, "protoc");
   await mkdir(protocPath, { recursive: true });
   await protocZip.extract({ path: protocPath });
-  await chmod(path.join(protocPath, "bin/protoc"), 0o755);
+  const protocExec = join(protocPath, binPath);
+  await chmod(protocExec, 0o755);
 
   const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
     env: {
-      PROTOC: path.join(protocPath, "bin/protoc"),
+      PROTOC: protocExec,
       PATH: process.env.PATH,
+      CARGO_HOME: process.env.CARGO_HOME,
+      RUSTUP_HOME: process.env.RUSTUP_HOME,
     },
     stdout: "pipe",
     stdin: "ignore",
@@ -87,7 +88,7 @@ async function startServer(): Promise<Server> {
   }
 }
 
-describe.skipIf(!cargoBin)("test tonic server", () => {
+describe.skipIf(!cargoBin && !releases[release])("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {

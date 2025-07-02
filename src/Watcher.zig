@@ -408,12 +408,12 @@ fn appendDirectoryAssumeCapacity(
         };
     };
 
-    const parent_hash = getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
-
     const file_path_: string = if (comptime copy_file_path)
         bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
     else
         file_path;
+
+    const parent_hash = getHash(bun.fs.PathName.init(file_path_).dirWithTrailingSlash());
 
     const watchlist_id = this.watchlist.len;
 
@@ -464,14 +464,16 @@ fn appendDirectoryAssumeCapacity(
             null,
         );
     } else if (Environment.isLinux) {
-        const file_path_to_use_ = if (file_path_.len > 1) std.mem.trimRight(u8, file_path_, "/") else file_path_;
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
-        @memcpy(buf[0..file_path_to_use_.len], file_path_to_use_);
-        buf[file_path_to_use_.len] = 0;
-        const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
-        item.eventlist_index = switch (this.platform.watchDir(slice)) {
-            .err => |err| return .{ .err = err },
+        const path = if (comptime copy_file_path) file_path_[0 .. file_path_.len - 1 :0] else brk: {
+            @memcpy(buf[0..file_path_.len], file_path_);
+            buf[file_path_.len] = 0;
+            break :brk buf[0..file_path.len :0];
+        };
+
+        item.eventlist_index = switch (this.platform.watchDir(path)) {
+            .err => |err| return .{ .err = err.withPath(file_path) },
             .result => |r| r,
         };
     }
@@ -526,7 +528,7 @@ pub fn appendFileMaybeLock(
 
     if (autowatch_parent_dir) {
         parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path)) {
-            .err => |err| return .{ .err = err },
+            .err => |err| return .{ .err = err.withPath(parent_dir) },
             .result => |r| r,
         };
     }
@@ -540,7 +542,7 @@ pub fn appendFileMaybeLock(
         package_json,
         copy_file_path,
     )) {
-        .err => |err| return .{ .err = err },
+        .err => |err| return .{ .err = err.withPath(file_path) },
         .result => {},
     }
 

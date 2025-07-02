@@ -880,7 +880,7 @@ pub const Expect = struct {
 
             // jest-extended checks for truthiness before calling hasOwnProperty
             // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
-            if (!value.coerce(bool, globalThis)) break :brk count == 0;
+            if (!value.toBoolean()) break :brk count == 0;
 
             var i: u32 = 0;
 
@@ -4256,7 +4256,7 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("toHaveBeenCalledTimes() requires 1 non-negative integer argument", .{});
         }
 
-        const times = arguments[0].coerce(i32, globalThis);
+        const times = try arguments[0].coerce(i32, globalThis);
 
         var pass = @as(i32, @intCast(try calls.getLength(globalThis))) == times;
 
@@ -4466,7 +4466,7 @@ pub const Expect = struct {
             return globalThis.throw("Expected value must be a mock function: {}", .{value});
         }
 
-        const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) arguments[0].coerce(i32, globalThis) else 0;
+        const nthCallNum = if (arguments.len > 0 and arguments[0].isUInt32AsAnyInt()) try arguments[0].coerce(i32, globalThis) else 0;
         if (nthCallNum < 1) {
             return globalThis.throwInvalidArguments("toHaveBeenNthCalledWith() requires a positive integer argument", .{});
         }
@@ -4546,7 +4546,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArguments(name ++ "() requires 1 non-negative integer argument", .{});
             }
 
-            break :brk arguments[0].coerce(i32, globalThis);
+            break :brk try arguments[0].coerce(i32, globalThis);
         };
 
         var pass = false;
@@ -5645,7 +5645,7 @@ pub const ExpectMatcherUtils = struct {
                 return globalThis.throw("matcherHint: options must be an object (or undefined)", .{});
             }
             if (try options.get(globalThis, "isNot")) |val| {
-                is_not = val.coerce(bool, globalThis);
+                is_not = val.toBoolean();
             }
             if (try options.get(globalThis, "comment")) |val| {
                 comment = try val.toJSString(globalThis);

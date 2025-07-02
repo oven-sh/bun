@@ -339,6 +339,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     JSString* pathValue = nullptr;
     if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
         auto view = (*previousPath)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (view == path->impl.wtf) {
             pathValue = *previousPath;
 

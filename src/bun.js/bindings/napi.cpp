@@ -1248,7 +1248,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 
     auto globalObject = toJS(env);
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -2042,7 +2042,7 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
 // must match src/bun.js/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
 enum class NapiStringEncoding : uint8_t {
     utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
-    utf16le = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
+    utf16 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
     latin1 = static_cast<uint8_t>(WebCore::BufferEncodingType::latin1),
 };
 
@@ -2052,39 +2052,42 @@ struct BufferElement {
 };
 
 template<>
-struct BufferElement<NapiStringEncoding::utf16le> {
+struct BufferElement<NapiStringEncoding::utf16> {
     using Type = char16_t;
 };
 
 template<NapiStringEncoding EncodeTo>
 napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, typename BufferElement<EncodeTo>::Type* buf, size_t bufsize, size_t* writtenPtr)
 {
+    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isString(), napi_string_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    String view = jsValue.asCell()->getString(globalObject);
-    size_t length = view.length();
+    JSString* jsString = jsValue.toString(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    const auto view = jsString->view(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     if (buf == nullptr) {
         // they just want to know the length
         NAPI_CHECK_ARG(env, writtenPtr);
         switch (EncodeTo) {
         case NapiStringEncoding::utf8:
-            if (view.is8Bit()) {
-                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view.span8().data(), length);
+            if (view->is8Bit()) {
+                *writtenPtr = Bun__encoding__byteLengthLatin1AsUTF8(view->span8().data(), view->length());
             } else {
-                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view.span16().data(), length);
+                *writtenPtr = Bun__encoding__byteLengthUTF16AsUTF8(view->span16().data(), view->length());
             }
             break;
-        case NapiStringEncoding::utf16le:
+        case NapiStringEncoding::utf16:
             [[fallthrough]];
         case NapiStringEncoding::latin1:
             // if the string's encoding is the same as the destination encoding, this is trivially correct
             // if we are converting UTF-16 to Latin-1, then we do so by truncating each code unit, so the length is the same
             // if we are converting Latin-1 to UTF-16, then we do so by extending each code unit, so the length is also the same
-            *writtenPtr = length;
+            *writtenPtr = view->length();
             break;
         }
         return napi_set_last_error(env, napi_ok);
@@ -2103,28 +2106,31 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
 
     size_t written;
     std::span<unsigned char> writable_byte_slice(reinterpret_cast<unsigned char*>(buf),
-        EncodeTo == NapiStringEncoding::utf16le
+        EncodeTo == NapiStringEncoding::utf16
             // don't write encoded text to the last element of the destination buffer
             // since we need to put a null terminator there
             ? 2 * (bufsize - 1)
             : bufsize - 1);
-    if (view.is8Bit()) {
-        if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+    if (view->is8Bit()) {
+        const auto span = view->span8();
+        if constexpr (EncodeTo == NapiStringEncoding::utf16) {
+
             // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
-            written = Bun__encoding__writeLatin1(view.span8().data(),
-                std::min(static_cast<size_t>(view.span8().size()), bufsize),
+            written = Bun__encoding__writeLatin1(span.data(),
+                std::min(static_cast<size_t>(span.size()), bufsize),
                 writable_byte_slice.data(),
                 writable_byte_slice.size(),
                 static_cast<uint8_t>(EncodeTo));
         } else {
-            written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
         }
     } else {
-        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
+        const auto span = view->span16();
+        written = Bun__encoding__writeUTF16(span.data(), span.size(), writable_byte_slice.data(), writable_byte_slice.size(), static_cast<uint8_t>(EncodeTo));
     }
 
     // convert bytes to code units
-    if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
+    if constexpr (EncodeTo == NapiStringEncoding::utf16) {
         written /= 2;
     }
 
@@ -2163,7 +2169,7 @@ extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napi
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     // this function does set_last_error
-    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16le>(env, napiValue, buf, bufsize, writtenPtr);
+    return napi_get_value_string_any_encoding<NapiStringEncoding::utf16>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
@@ -2389,6 +2395,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive
@@ -2764,7 +2771,7 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (function != nullptr && !env->globalObject()->vm().hasTerminationRequest()) [[likely]] {
+    if (function != nullptr && !env->isVMTerminating()) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 
@@ -2778,7 +2785,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
 
     NAPI_PREAMBLE(env);
 
-    if (!env->globalObject()->vm().hasTerminationRequest()) {
+    if (!env->isVMTerminating()) {
         env->removeAsyncCleanupHook(handle);
     }
 

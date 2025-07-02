@@ -587,7 +587,7 @@ fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *JSC
     return null;
 }
 
-pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
     log("doResume", .{});
     if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
         return .false;
@@ -744,7 +744,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
             }
 
             if (chunk.len > 0) {
-                break :brk JSC.ArrayBuffer.createBuffer(globalThis, chunk);
+                break :brk JSC.ArrayBuffer.createBuffer(globalThis, chunk) catch return; // TODO: properly propagate exception upwards
             }
             break :brk .js_undefined;
         };

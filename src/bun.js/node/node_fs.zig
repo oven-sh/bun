@@ -296,7 +296,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -395,7 +395,7 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJSC(globalObject),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
                         break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
@@ -669,7 +669,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJSC(globalObject),
+                .err => |err| err.toJS(globalObject),
                 .result => |*res| brk: {
                     break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
@@ -1220,7 +1220,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
@@ -1577,7 +1577,7 @@ pub const Arguments = struct {
             };
             errdefer path.deinit();
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
@@ -1585,7 +1585,7 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -2360,14 +2360,14 @@ pub const Arguments = struct {
                 return throwInvalidFdError(ctx, fd_value);
             };
 
-            const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const atime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("atime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("atime must be a number or a Date", .{});
             };
             arguments.eat();
 
-            const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
+            const mtime = try JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
                 return ctx.throwInvalidArguments("mtime is required", .{});
             }) orelse {
                 return ctx.throwInvalidArguments("mtime must be a number or a Date", .{});
@@ -3085,7 +3085,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.coerce(i32, ctx);
+                    mode = try arg.coerce(i32, ctx);
                 }
             }
 
@@ -3148,7 +3148,7 @@ pub const StatOrNotFound = union(enum) {
         };
     }
 
-    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const StatOrNotFound, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             .stats => this.stats.toJSNewlyCreated(globalObject),
             .not_found => .js_undefined,
@@ -3283,13 +3283,8 @@ const Return = struct {
                     var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
-                        const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
-                        if (res == .zero) return .zero;
-                        array.putIndex(
-                            globalObject,
-                            @truncate(i),
-                            res,
-                        );
+                        const res = try item.toJSNewlyCreated(globalObject, &previous_jsstring);
+                        array.putIndex(globalObject, @truncate(i), res);
                     }
                     return array;
                 },
@@ -5044,7 +5039,7 @@ pub const NodeFS = struct {
                             if (this.vm) |vm| {
                                 // Attempt to create the buffer in JSC's heap.
                                 // This avoids creating a WastefulTypedArray.
-                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer);
+                                const array_buffer = JSC.ArrayBuffer.createBuffer(vm.global, temporary_read_buffer) catch .zero; // TODO: properly propagate exception upwards
                                 array_buffer.ensureStillAlive();
                                 return .{
                                     .result = .{

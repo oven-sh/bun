@@ -88,7 +88,7 @@ async function startServer(): Promise<Server> {
   }
 }
 
-describe.skipIf(!cargoBin && !releases[release])("test tonic server", () => {
+describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {

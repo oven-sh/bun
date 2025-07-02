@@ -1,9 +1,26 @@
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, rmSync } from "fs";
+import { cp, rm, mkdir, chmod } from "fs/promises";
 import { tmpdirSync } from "harness";
 import path from "path";
+import unzipper from "unzipper";
+
+const protoVersion = "31.0";
+
+const releases = {
+  "win32_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
+  "win32_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
+  "linux_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_32.zip`,
+  "linux_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_64.zip`,
+  "darwin_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-x86_64.zip`,
+  "darwin_arm64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-aarch_64.zip`,
+};
+
+const platform = process.platform;
+const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x86_64" : "x86_32";
+const release = platform + "_" + arch;
+
 // Load proto
 const packageDefinition = protoLoader.loadSync(
   path.join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"),
@@ -21,9 +38,20 @@ type Server = { address: string; kill: () => void };
 const cargoBin = Bun.which("cargo") as string;
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
-  cpSync(path.join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
+  await cp(path.join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
+  const protocZip = await unzipper.Open.buffer(await fetch(releases[release]).then(res => res.bytes()));
+
+  const protocPath = path.join(tmpDir, "protoc");
+  await mkdir(protocPath, { recursive: true });
+  await protocZip.extract({ path: protocPath });
+  await chmod(path.join(protocPath, "bin/protoc"), 0o755);
+
   const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
+    env: {
+      PROTOC: path.join(protocPath, "bin/protoc"),
+      PATH: process.env.PATH,
+    },
     stdout: "pipe",
     stdin: "ignore",
     stderr: "inherit",
@@ -43,9 +71,9 @@ async function startServer(): Promise<Server> {
         const [_, address] = text.split("Listening on ");
         resolve({
           address: address?.trim(),
-          kill() {
+          kill: async () => {
             server.kill();
-            rmSync(tmpDir, { recursive: true, force: true });
+            await rm(tmpDir, { recursive: true, force: true });
           },
         });
         break;
@@ -66,8 +94,8 @@ describe.skipIf(!cargoBin)("test tonic server", () => {
     server = await startServer();
   });
 
-  afterAll(() => {
-    server.kill();
+  afterAll(async () => {
+    await server.kill();
   });
 
   test("flow control should work in both directions", async () => {

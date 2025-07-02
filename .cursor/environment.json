@@ -1,0 +1,10 @@
+{
+  "snapshot": "snapshot-20250630-a406baa4-6bb1-41d9-a125-85176851e05b",
+  "install": "bun install",
+  "terminals": [
+    {
+      "name": "bun build",
+      "command": "bun run build"
+    }
+  ]
+}

@@ -9,7 +9,7 @@ test.each(["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts"])
 
     expect(result.stderr.toString()).toContain(" 1 pass\n");
     expect(result.stderr.toString()).toContain(" 0 fail\n");
-    expect(result.stderr.toString()).toContain("Ran 1 tests across 1 files");
+    expect(result.stderr.toString()).toContain("Ran 1 test across 1 file");
   },
 );
 

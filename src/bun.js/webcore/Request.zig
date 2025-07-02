@@ -941,7 +941,7 @@ const bun = @import("bun");
 const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = @import("../../http/Method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const Output = bun.Output;

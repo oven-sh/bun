@@ -873,7 +873,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl) {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
-                    const res = this.socket.rawWrite(buffer, false);
+                    const res = this.socket.rawWrite(buffer);
                     const uwrote: usize = @intCast(@max(res, 0));
                     this.bytes_written += uwrote;
                     log("write({d}) = {d}", .{ buffer.len, res });
@@ -881,7 +881,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const res = this.socket.write(buffer, false);
+            const res = this.socket.write(buffer);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
@@ -1202,7 +1202,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
+                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice()), 0));
                 this.bytes_written += written;
                 if (written > 0) {
                     if (this.buffered_data_for_node_net.len > written) {

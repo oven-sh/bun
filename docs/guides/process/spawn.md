@@ -32,8 +32,8 @@ By default, the `stdout` of the child process can be consumed as a `ReadableStre
 ```ts
 const proc = Bun.spawn(["echo", "hello"]);
 
-const output = await new Response(proc.stdout).text();
-output; // => "hello"
+const output = await proc.stdout.text();
+output; // => "hello\n"
 ```
 
 ---

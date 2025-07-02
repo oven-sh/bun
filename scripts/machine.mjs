@@ -798,7 +798,7 @@ export function getDiskSize(options) {
   if (os === "windows") {
     return 60;
   }
-  if (distro === "ubuntu" && release === "25.04") {
+  if (distro === "ubuntu") {
     return 60;
   }
 

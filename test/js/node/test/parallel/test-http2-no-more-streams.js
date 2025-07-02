@@ -15,11 +15,12 @@ server.on('stream', (stream) => {
 });
 
 server.listen(0, common.mustCall(() => {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
   const nextID = 2 ** 31 - 1;
 
   client.on('connect', () => {
     client.setNextStreamID(nextID);
+
     assert.strictEqual(client.state.nextStreamID, nextID);
 
     const countdown = new Countdown(2, () => {

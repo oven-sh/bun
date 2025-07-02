@@ -463,6 +463,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
         if (args.option("--test-name-pattern")) |namePattern| {
+            ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",

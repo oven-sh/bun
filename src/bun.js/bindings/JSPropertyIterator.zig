@@ -117,7 +117,7 @@ const JSPropertyIteratorImpl = opaque {
         only_non_index_properties: bool,
     ) bun.JSError!?*JSPropertyIteratorImpl {
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject, @src(), .enabled);
+        scope.init(globalObject, @src());
         defer scope.deinit();
         const iter = Bun__JSPropertyIterator__create(globalObject, object.toJS(), count, own_properties_only, only_non_index_properties);
         try scope.returnIfException();
@@ -128,7 +128,7 @@ const JSPropertyIteratorImpl = opaque {
 
     pub fn getNameAndValue(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) bun.JSError!JSC.JSValue {
         var scope: bun.jsc.CatchScope = undefined;
-        scope.init(globalObject, @src(), .enabled);
+        scope.init(globalObject, @src());
         defer scope.deinit();
         const value = Bun__JSPropertyIterator__getNameAndValue(iter, globalObject, object, propertyName, i);
         try scope.returnIfException();
@@ -137,7 +137,7 @@ const JSPropertyIteratorImpl = opaque {
 
     pub fn getNameAndValueNonObservable(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) bun.JSError!JSC.JSValue {
         var scope: bun.jsc.CatchScope = undefined;
-        scope.init(globalObject, @src(), .enabled);
+        scope.init(globalObject, @src());
         defer scope.deinit();
         const value = Bun__JSPropertyIterator__getNameAndValueNonObservable(iter, globalObject, object, propertyName, i);
         try scope.returnIfException();

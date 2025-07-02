@@ -131,7 +131,13 @@ class StatWatcher extends EventEmitter {
   start() {}
 
   stop() {
-    this._handle?.close();
+    if (this._handle === null) return;
+    
+    process.nextTick(() => {
+      this.emit('stop');
+    });
+    
+    this._handle.close();
     this._handle = null;
   }
 

@@ -2,7 +2,7 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
-const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
 const {
@@ -17,7 +17,6 @@ const { Server: NetServer, Socket: NetSocket } = net;
 
 const {
   rootCertificates,
-  canonicalizeIP,
   SecureContext: NodeTLSSecureContext,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
   TLS1_3_VERSION,
@@ -26,10 +25,15 @@ const {
   TLS1_VERSION,
 } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
+const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
+const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
+const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
+const ObjectFreeze = Object.freeze;
 
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeSlice = String.prototype.slice;
@@ -504,6 +508,7 @@ function toBuf(val, encoding?: BufferEncoding | "buffer") {
 function addCACerts(context, certs, name) {
   ArrayPrototypeForEach.$call(certs, cert => {
     validateKeyOrCertOption(name, cert);
+    context.addCACert(cert);
   });
 }
 
@@ -525,6 +530,7 @@ function setKey(context, key, passphrase, name) {
   if (passphrase !== undefined && passphrase !== null) {
     validateString(passphrase, `${name}.passphrase`);
   }
+  context.setKey(key, passphrase);
 }
 
 function processCiphers(ciphers, name) {
@@ -1098,6 +1104,59 @@ function loadSNI(servername) {
   });
 }
 
+let bundledRootCertificates: string[] | undefined;
+function cacheBundledRootCertificates(): string[] {
+  bundledRootCertificates ||= getBundledRootCertificates() as string[];
+  return bundledRootCertificates;
+}
+let defaultCACertificates: string[] | undefined;
+function cacheDefaultCACertificates() {
+  if (defaultCACertificates) return defaultCACertificates;
+  defaultCACertificates = [];
+
+  const bundled = cacheBundledRootCertificates();
+  for (let i = 0; i < bundled.length; ++i) {
+    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+  }
+
+  if (process.env.NODE_EXTRA_CA_CERTS) {
+    const extra = cacheExtraCACertificates();
+    for (let i = 0; i < extra.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, extra[i]);
+    }
+  }
+
+  ObjectFreeze(defaultCACertificates);
+  return defaultCACertificates;
+}
+
+function cacheSystemCACertificates(): string[] {
+  throw new Error("getCACertificates('system') is not yet implemented in Bun");
+}
+
+let extraCACertificates: string[] | undefined;
+function cacheExtraCACertificates(): string[] {
+  extraCACertificates ||= getExtraCACertificates() as string[];
+  return extraCACertificates;
+}
+
+function getCACertificates(type = "default") {
+  validateString(type, "type");
+
+  switch (type) {
+    case "default":
+      return cacheDefaultCACertificates();
+    case "bundled":
+      return cacheBundledRootCertificates();
+    case "system":
+      return cacheSystemCACertificates();
+    case "extra":
+      return cacheExtraCACertificates();
+    default:
+      throw $ERR_INVALID_ARG_VALUE("type", type);
+  }
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -1116,6 +1175,7 @@ export default {
   TLSSocket,
   checkServerIdentity,
   get rootCertificates() {
-    return rootCertificates;
+    return cacheBundledRootCertificates();
   },
+  getCACertificates,
 } as any as typeof import("node:tls");

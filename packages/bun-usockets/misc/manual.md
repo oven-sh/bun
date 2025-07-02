@@ -95,8 +95,7 @@ WIN32_EXPORT struct us_socket_context_t *us_create_child_socket_context(int ssl,
 
 ```c
 /* Write up to length bytes of data. Returns actual bytes written. Will call the on_writable callback of active socket context on failure to write everything off in one go.
- * Set hint msg_more if you have more immediate data to write. */
-WIN32_EXPORT int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more);
+WIN32_EXPORT int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length);
 
 /* Set a low precision, high performance timer on a socket. A socket can only have one single active timer at any given point in time. Will remove any such pre set timer */
 WIN32_EXPORT void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds);

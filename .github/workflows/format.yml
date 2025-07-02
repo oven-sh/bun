@@ -46,6 +46,8 @@ jobs:
         run: |
           bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
           zig fmt src
+          bun scripts/sortImports src
+          zig fmt src
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

@@ -24,6 +24,9 @@ fd: bun.FileDescriptor = bun.invalid_fd,
 auto_flusher: webcore.AutoFlusher = .{},
 run_pending_later: FlushPendingTask = .{},
 
+/// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
+readable_stream: JSC.WebCore.ReadableStream.Strong = .{},
+
 const log = Output.scoped(.FileSink, false);
 
 pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
@@ -72,13 +75,31 @@ comptime {
     @export(&Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio, .{ .name = "Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio" });
 }
 
-pub fn onAttachedProcessExit(this: *FileSink) void {
+pub fn onAttachedProcessExit(this: *FileSink, status: *const bun.spawn.Status) void {
     log("onAttachedProcessExit()", .{});
     this.done = true;
+    var readable_stream = this.readable_stream;
+    this.readable_stream = .{};
+    if (readable_stream.has()) {
+        if (this.event_loop_handle.globalObject()) |global| {
+            if (readable_stream.get(global)) |*stream| {
+                if (!status.isOK()) {
+                    const event_loop = global.bunVM().eventLoop();
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    stream.cancel(global);
+                } else {
+                    stream.done(global);
+                }
+            }
+        }
+        // Clean up the readable stream reference
+        readable_stream.deinit();
+    }
+
     this.writer.close();
 
     this.pending.result = .{ .err = .fromCode(.PIPE, .write) };
-
     this.runPending();
 
     if (this.must_be_kept_alive_until_eof) {
@@ -181,6 +202,14 @@ pub fn onReady(this: *FileSink) void {
 
 pub fn onClose(this: *FileSink) void {
     log("onClose()", .{});
+    if (this.readable_stream.has()) {
+        if (this.event_loop_handle.globalObject()) |global| {
+            if (this.readable_stream.get(global)) |stream| {
+                stream.done(global);
+            }
+        }
+    }
+
     this.signal.close(null);
 }
 
@@ -225,79 +254,39 @@ pub fn create(
 }
 
 pub fn setup(this: *FileSink, options: *const FileSink.Options) JSC.Maybe(void) {
-    // TODO: this should be concurrent.
-    var isatty = false;
-    var is_nonblocking = false;
-    const fd = switch (switch (options.input_path) {
-        .path => |path| brk: {
-            is_nonblocking = true;
-            break :brk bun.sys.openA(path.slice(), options.flags(), options.mode);
-        },
-        .fd => |fd_| brk: {
-            const duped = bun.sys.dupWithFlags(fd_, 0);
+    if (this.readable_stream.has()) {
+        // Already started.
+        return .{ .result = {} };
+    }
 
-            break :brk duped;
+    const result = bun.io.openForWriting(
+        bun.FileDescriptor.cwd(),
+        options.input_path,
+        options.flags(),
+        options.mode,
+        &this.pollable,
+        &this.is_socket,
+        this.force_sync,
+        &this.nonblocking,
+        *FileSink,
+        this,
+        struct {
+            fn onForceSyncOrIsaTTY(fs: *FileSink) void {
+                if (comptime bun.Environment.isPosix) {
+                    fs.force_sync = true;
+                    fs.writer.force_sync = true;
+                }
+            }
+        }.onForceSyncOrIsaTTY,
+        bun.sys.isPollable,
+    );
+
+    const fd = switch (result) {
+        .err => |err| {
+            return .{ .err = err };
         },
-    }) {
-        .err => |err| return .{ .err = err },
         .result => |fd| fd,
     };
-
-    if (comptime Environment.isPosix) {
-        switch (bun.sys.fstat(fd)) {
-            .err => |err| {
-                fd.close();
-                return .{ .err = err };
-            },
-            .result => |stat| {
-                this.pollable = bun.sys.isPollable(stat.mode);
-                if (!this.pollable) {
-                    isatty = std.posix.isatty(fd.native());
-                }
-
-                if (isatty) {
-                    this.pollable = true;
-                }
-
-                this.fd = fd;
-                this.is_socket = std.posix.S.ISSOCK(stat.mode);
-
-                if (this.force_sync or isatty) {
-                    // Prevents interleaved or dropped stdout/stderr output for terminals.
-                    // As noted in the following reference, local TTYs tend to be quite fast and
-                    // this behavior has become expected due historical functionality on OS X,
-                    // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
-                    // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
-                    _ = bun.sys.updateNonblocking(fd, false);
-                    is_nonblocking = false;
-                    this.force_sync = true;
-                    this.writer.force_sync = true;
-                } else if (!is_nonblocking) {
-                    const flags = switch (bun.sys.getFcntlFlags(fd)) {
-                        .result => |flags| flags,
-                        .err => |err| {
-                            fd.close();
-                            return .{ .err = err };
-                        },
-                    };
-                    is_nonblocking = (flags & @as(@TypeOf(flags), bun.O.NONBLOCK)) != 0;
-
-                    if (!is_nonblocking) {
-                        if (bun.sys.setNonblocking(fd) == .result) {
-                            is_nonblocking = true;
-                        }
-                    }
-                }
-
-                this.nonblocking = is_nonblocking and this.pollable;
-            },
-        }
-    } else if (comptime Environment.isWindows) {
-        this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync;
-        this.fd = fd;
-    } else {
-        @compileError("TODO: implement for this platform");
-    }
 
     if (comptime Environment.isWindows) {
         if (this.force_sync) {
@@ -434,7 +423,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
 
     if (this.done) {
-        return .{ .result = .undefined };
+        return .initResult(.js_undefined);
     }
 
     const rc = this.writer.flush();
@@ -454,11 +443,12 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC
     }
     return switch (this.toResult(rc)) {
         .err => unreachable,
-        else => |result| .{ .result = result.toJS(globalThis) },
+        else => |result| .initResult(result.toJS(globalThis)),
     };
 }
 
 pub fn finalize(this: *FileSink) void {
+    this.readable_stream.deinit();
     this.pending.deinit();
     this.deref();
 }
@@ -540,6 +530,7 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) JSC.Maybe(void) {
 fn deinit(this: *FileSink) void {
     this.pending.deinit();
     this.writer.deinit();
+    this.readable_stream.deinit();
     if (this.event_loop_handle.globalObject()) |global| {
         webcore.AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
     }
@@ -655,6 +646,98 @@ pub const FlushPendingTask = struct {
             this.runPending();
     }
 };
+
+/// Does not ref or unref.
+fn handleResolveStream(this: *FileSink, globalThis: *JSC.JSGlobalObject) void {
+    if (this.readable_stream.get(globalThis)) |*stream| {
+        stream.done(globalThis);
+    }
+
+    if (!this.done) {
+        this.writer.close();
+    }
+}
+
+/// Does not ref or unref.
+fn handleRejectStream(this: *FileSink, globalThis: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+    if (this.readable_stream.get(globalThis)) |*stream| {
+        stream.abort(globalThis);
+        this.readable_stream.deinit();
+    }
+
+    if (!this.done) {
+        this.writer.close();
+    }
+}
+
+fn onResolveStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    log("onResolveStream", .{});
+    var args = callframe.arguments();
+    var this: *@This() = args[args.len - 1].asPromisePtr(@This());
+    defer this.deref();
+    this.handleResolveStream(globalThis);
+    return .js_undefined;
+}
+fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    log("onRejectStream", .{});
+    const args = callframe.arguments();
+    var this = args[args.len - 1].asPromisePtr(@This());
+    const err = args[0];
+    defer this.deref();
+
+    this.handleRejectStream(globalThis, err);
+    return .js_undefined;
+}
+
+pub fn assignToStream(this: *FileSink, stream: *JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) JSC.JSValue {
+    var signal = &this.signal;
+    signal.* = JSC.WebCore.FileSink.JSSink.SinkSignal.init(JSValue.zero);
+    this.ref();
+    defer this.deref();
+
+    // explicitly set it to a dead pointer
+    // we use this memory address to disable signals being sent
+    signal.clear();
+
+    this.readable_stream = .init(stream.*, globalThis);
+    const promise_result = JSC.WebCore.FileSink.JSSink.assignToStream(globalThis, stream.value, this, @as(**anyopaque, @ptrCast(&signal.ptr)));
+
+    if (promise_result.toError()) |err| {
+        this.readable_stream.deinit();
+        this.readable_stream = .{};
+        return err;
+    }
+
+    if (!promise_result.isEmptyOrUndefinedOrNull()) {
+        if (promise_result.asAnyPromise()) |promise| {
+            switch (promise.status(globalThis.vm())) {
+                .pending => {
+                    this.writer.enableKeepingProcessAlive(this.event_loop_handle);
+                    this.ref();
+                    promise_result.then(globalThis, this, onResolveStream, onRejectStream);
+                },
+                .fulfilled => {
+                    // These don't ref().
+                    this.handleResolveStream(globalThis);
+                },
+                .rejected => {
+                    // These don't ref().
+                    this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
+                },
+            }
+        }
+    }
+
+    return promise_result;
+}
+
+comptime {
+    const export_prefix = "Bun__FileSink";
+    if (bun.Environment.export_cpp_apis) {
+        @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
+        @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+    }
+}
 
 const std = @import("std");
 const bun = @import("bun");

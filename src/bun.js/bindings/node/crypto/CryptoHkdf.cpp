@@ -50,11 +50,11 @@ void HkdfJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
         .len = key.size(),
     };
     auto infoBuf = ncrypto::Buffer<const unsigned char> {
-        .data = m_info.data(),
+        .data = m_info.begin(),
         .len = m_info.size(),
     };
     auto saltBuf = ncrypto::Buffer<const unsigned char> {
-        .data = m_salt.data(),
+        .data = m_salt.begin(),
         .len = m_salt.size(),
     };
     auto dp = ncrypto::hkdf(m_digest, keyBuf, infoBuf, saltBuf, m_length);
@@ -245,11 +245,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     std::optional<HkdfJobCtx> ctx = HkdfJobCtx::fromJS(lexicalGlobalObject, callFrame, scope, HkdfJobCtx::Mode::Async);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue callback = callFrame->argument(5);
     V::validateFunction(scope, lexicalGlobalObject, callback, "callback"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     HkdfJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callback);
 
@@ -262,7 +262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     std::optional<HkdfJobCtx> ctx = HkdfJobCtx::fromJS(lexicalGlobalObject, callFrame, scope, HkdfJobCtx::Mode::Sync);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     ctx->runTask(lexicalGlobalObject);
 
@@ -276,7 +276,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
     RefPtr<ArrayBuffer> buf = JSC::ArrayBuffer::tryCreateUninitialized(result.size(), 1);
     if (!buf) {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return JSValue::encode({});
+        return {};
     }
 
     memcpy(buf->data(), result.data(), result.size());

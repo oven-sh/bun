@@ -291,6 +291,50 @@ pub const LinkerContext = struct {
         _ = this.pending_task_count.fetchSub(1, .monotonic);
     }
 
+    fn processHtmlImportFiles(this: *LinkerContext) void {
+        const server_source_indices = &this.parse_graph.html_imports.server_source_indices;
+        const html_source_indices = &this.parse_graph.html_imports.html_source_indices;
+        if (server_source_indices.len > 0) {
+            const input_files: []const Logger.Source = this.parse_graph.input_files.items(.source);
+            const map = this.parse_graph.pathToSourceIndexMap(.browser);
+            const parts: []const BabyList(js_ast.Part) = this.graph.ast.items(.parts);
+            const actual_ref = this.graph.runtimeFunction("__jsonParse");
+
+            for (server_source_indices.slice()) |html_import| {
+                const source = &input_files[html_import];
+                const source_index = map.get(source.path.hashKey()) orelse {
+                    @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
+                };
+
+                html_source_indices.push(this.graph.allocator, source_index) catch bun.outOfMemory();
+
+                // S.LazyExport is a call to __jsonParse.
+                const original_ref = parts[html_import]
+                    .at(1)
+                    .stmts[0]
+                    .data
+                    .s_lazy_export
+                    .e_call
+                    .target
+                    .data
+                    .e_import_identifier
+                    .ref;
+
+                // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
+                this.graph.symbols.get(original_ref).?.link = actual_ref;
+
+                // When --splitting is enabled, we have to make sure we import the __jsonParse function.
+                this.graph.generateSymbolImportAndUse(
+                    html_import,
+                    Index.part(1).get(),
+                    actual_ref,
+                    1,
+                    Index.runtime,
+                ) catch bun.outOfMemory();
+            }
+        }
+    }
+
     pub noinline fn link(
         this: *LinkerContext,
         bundle: *BundleV2,
@@ -308,6 +352,8 @@ pub const LinkerContext = struct {
         if (this.options.source_maps != .none) {
             this.computeDataForSourceMap(@as([]Index.Int, @ptrCast(reachable)));
         }
+
+        this.processHtmlImportFiles();
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -795,13 +841,18 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
+        const public_path = if (chunk.is_browser_chunk_from_server_build)
+            @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
+        else
+            c.options.public_path;
+
         // Also hash the public path. If provided, this is used whenever files
         // reference each other such as cross-chunk imports, asset file references,
         // and source map comments. We always include the hash in all chunks instead
         // of trying to figure out which chunks will include the public path for
         // simplicity and for robustness to code changes in the future.
-        if (c.options.public_path.len > 0) {
-            hasher.write(c.options.public_path);
+        if (public_path.len > 0) {
+            hasher.write(public_path);
         }
 
         // Include the generated output content in the hash. This excludes the
@@ -844,13 +895,13 @@ pub const LinkerContext = struct {
     pub fn validateTLA(
         c: *LinkerContext,
         source_index: Index.Int,
-        tla_keywords: []Logger.Range,
+        tla_keywords: []const Logger.Range,
         tla_checks: []js_ast.TlaCheck,
-        input_files: []Logger.Source,
-        import_records: []ImportRecord,
+        input_files: []const Logger.Source,
+        import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
-        ast_import_records: []bun.BabyList(ImportRecord),
-    ) js_ast.TlaCheck {
+        ast_import_records: []const bun.BabyList(ImportRecord),
+    ) bun.OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -861,7 +912,15 @@ pub const LinkerContext = struct {
 
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags, ast_import_records);
+                    const parent = try c.validateTLA(
+                        record.source_index.get(),
+                        tla_keywords,
+                        tla_checks,
+                        input_files,
+                        ast_import_records[record.source_index.get()].slice(),
+                        meta_flags,
+                        ast_import_records,
+                    );
                     if (Index.isInvalid(Index.init(parent.parent))) {
                         continue;
                     }
@@ -898,31 +957,31 @@ pub const LinkerContext = struct {
                             }
 
                             if (!Index.isValid(Index.init(parent_tla_check.parent))) {
-                                notes.append(Logger.Data{
+                                try notes.append(Logger.Data{
                                     .text = "unexpected invalid index",
-                                }) catch bun.outOfMemory();
+                                });
                                 break;
                             }
 
                             other_source_index = parent_tla_check.parent;
 
-                            notes.append(Logger.Data{
-                                .text = std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
+                            try notes.append(Logger.Data{
+                                .text = try std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
-                                }) catch bun.outOfMemory(),
+                                }),
                                 .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
-                            }) catch bun.outOfMemory();
+                            });
                         }
 
                         const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
                         else
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
+                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
 
-                        c.log.addRangeErrorWithNotes(source, record.range, text, notes.items) catch bun.outOfMemory();
+                        try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
                     }
                 }
             }
@@ -2355,6 +2414,7 @@ pub const LinkerContext = struct {
                 'A' => .asset,
                 'C' => .chunk,
                 'S' => .scb,
+                'H' => .html_import,
                 else => {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
@@ -2381,6 +2441,11 @@ pub const LinkerContext = struct {
                     break;
                 },
                 .chunk => if (index >= count) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                .html_import => if (index >= c.parse_graph.html_imports.server_source_indices.len) {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;

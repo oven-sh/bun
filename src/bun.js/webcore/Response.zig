@@ -77,7 +77,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
     const arguments = callframe.arguments_old(1);
     const this_value = arguments.ptr[0];
     if (this_value.isEmptyOrUndefinedOrNull()) {
-        return .undefined;
+        return .js_undefined;
     }
 
     const body: *Body.Value = brk: {
@@ -87,15 +87,15 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             break :brk &request.body.value;
         }
 
-        return .undefined;
+        return .js_undefined;
     };
 
     // Get the body if it's available synchronously.
     switch (body.*) {
-        .Used, .Empty, .Null => return .undefined,
+        .Used, .Empty, .Null => return .js_undefined,
         .Blob => |*blob| {
             if (blob.isBunFile()) {
-                return .undefined;
+                return .js_undefined;
             }
             defer body.* = .{ .Used = {} };
             return blob.toArrayBuffer(globalObject, .transfer) catch return .zero;
@@ -104,7 +104,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked => return .undefined,
+        .Error, .Locked => return .js_undefined,
     }
 }
 
@@ -658,7 +658,7 @@ pub const Init = struct {
         }
 
         if (try response_init.fastGet(globalThis, .status)) |status_value| {
-            const number = status_value.coerceToInt64(globalThis);
+            const number = try status_value.coerceToInt64(globalThis);
             if ((200 <= number and number < 600) or number == 101) {
                 result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
             } else {
@@ -727,7 +727,7 @@ const MimeType = bun.http.MimeType;
 const http = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
+const Method = @import("../../http/Method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const Output = bun.Output;
 const string = bun.string;

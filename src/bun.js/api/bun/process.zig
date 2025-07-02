@@ -1,13 +1,6 @@
-const bun = @import("bun");
-const std = @import("std");
-const PosixSpawn = bun.spawn;
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const uv = bun.windows.libuv;
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
-const Maybe = JSC.Maybe;
+const log = bun.Output.scoped(.PROCESS, false);
 
 const win_rusage = struct {
     utime: struct {
@@ -78,10 +71,6 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 }
 pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
 
-const Subprocess = JSC.Subprocess;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const ShellSubprocess = bun.shell.ShellSubprocess;
-const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
@@ -374,11 +363,16 @@ pub const Process = struct {
         }
 
         if (this.poller == .fd) {
-            return this.poller.fd.register(
+            const maybe = this.poller.fd.register(
                 this.event_loop.loop(),
                 .process,
                 true,
             );
+            switch (maybe) {
+                .err => {},
+                .result => this.ref(),
+            }
+            return maybe;
         } else {
             @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }
@@ -985,6 +979,13 @@ pub const PosixSpawnOptions = struct {
     /// and posix_spawnp(2) will behave as a more
     /// featureful execve(2).
     use_execve_on_macos: bool = false,
+    /// If we need to call `socketpair()`, this
+    /// sets SO_NOSIGPIPE when true.
+    ///
+    /// If false, this avoids setting SO_NOSIGPIPE
+    /// for stdout. This is used to preserve
+    /// consistent shell semantics.
+    no_sigpipe: bool = true,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1342,7 +1343,17 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
+                    const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap() else try bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap();
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
@@ -2223,3 +2234,20 @@ pub const sync = struct {
         };
     }
 };
+
+// @sortImports
+
+const std = @import("std");
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const PosixSpawn = bun.spawn;
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const ShellSubprocess = bun.shell.ShellSubprocess;
+const uv = bun.windows.libuv;
+
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const Subprocess = JSC.Subprocess;

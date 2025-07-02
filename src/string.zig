@@ -514,18 +514,22 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src(), .assertions_only);
+        defer scope.deinit();
         var out: String = String.dead;
-        if (BunString__fromJS(globalObject, value, &out)) {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(out.tag != .Dead);
-            }
-            return out;
+        const ok = BunString__fromJS(globalObject, value, &out);
+
+        // If there is a pending exception, but stringifying succeeds, we don't return JSError.
+        // We do need to always call hasException() to satisfy the need for an exception check.
+        const has_exception = scope.hasException();
+        if (ok) {
+            bun.debugAssert(out.tag != .Dead);
+        } else {
+            bun.debugAssert(has_exception);
         }
 
-        if (comptime bun.Environment.isDebug) {
-            bun.assert(globalObject.hasException());
-        }
-        return error.JSError;
+        return if (ok) out else error.JSError;
     }
 
     pub fn toJS(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
@@ -549,7 +553,7 @@ pub const String = extern struct {
     /// calls toJS on all elements of `array`.
     pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return bun.jsc.fromJSHostValue(BunString__createArray(globalObject, array.ptr, array.len));
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createArray, .{ globalObject, array.ptr, array.len });
     }
 
     pub fn toZigString(this: String) ZigString {
@@ -662,16 +666,10 @@ pub const String = extern struct {
         return false;
     }
 
-    extern fn BunString__toJSON(
-        globalObject: *bun.JSC.JSGlobalObject,
-        this: *String,
-    ) JSC.JSValue;
+    extern fn BunString__toJSON(globalObject: *bun.JSC.JSGlobalObject, this: *String) JSC.JSValue;
 
     pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        JSC.markBinding(@src());
-        const result = BunString__toJSON(globalObject, self);
-        if (result == .zero) return error.JSError;
-        return result;
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJSON, .{ globalObject, self });
     }
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {

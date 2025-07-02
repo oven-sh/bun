@@ -7,7 +7,7 @@ When using [`Bun.spawn()`](https://bun.sh/docs/api/spawn), the `stdout` of the c
 ```ts
 const proc = Bun.spawn(["echo", "hello"]);
 
-const output = await new Response(proc.stdout).text();
+const output = await proc.stdout.text();
 output; // => "hello"
 ```
 

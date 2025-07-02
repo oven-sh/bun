@@ -1,6 +1,7 @@
 #include "config.h"
 #include "ZigGlobalObject.h"
 #include "ncrypto.h"
+#include "JavaScriptCore/WriteBarrier.h"
 
 namespace Bun {
 
@@ -143,5 +144,8 @@ private:
 };
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeTLSSecureContextConstructor, NodeTLSSecureContextConstructor::Base);
+BUN_DECLARE_HOST_FUNCTION(Bun__canonicalizeIP);
+JSC_DECLARE_HOST_FUNCTION(getBundledRootCertificates);
+JSC_DECLARE_HOST_FUNCTION(getExtraCACertificates);
 
 }

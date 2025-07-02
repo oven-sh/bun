@@ -917,7 +917,7 @@ void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
     Local<Value> *expected_values;
   } iter_data = {0, true, elements};
 
-  Maybe<bool> result = array->Iterate(
+  Maybe<void> result = array->Iterate(
       context,
       [](uint32_t index, Local<Value> element,
          void *data) -> Array::CallbackResult {
@@ -939,7 +939,7 @@ void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
       },
       &iter_data);
 
-  if (result.IsNothing() || !result.ToChecked()) {
+  if (result.IsNothing()) {
     return fail(info, "Array iteration failed");
   }
 
@@ -971,7 +971,7 @@ void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
       },
       &break_data);
 
-  if (result.IsNothing() || !result.ToChecked()) {
+  if (result.IsNothing()) {
     return fail(info, "Array iteration with break failed");
   }
 

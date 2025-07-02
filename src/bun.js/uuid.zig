@@ -205,3 +205,93 @@ pub const UUID7 = struct {
         return self.toUUID().format(layout, options, writer);
     }
 };
+
+/// UUID v5 implementation using SHA-1 hashing
+/// This is a name-based UUID that uses SHA-1 for hashing
+pub const UUID5 = struct {
+    bytes: [16]u8,
+
+    /// Generate a UUID v5 from a namespace UUID and name data
+    pub fn init(namespace: *const [16]u8, name: []const u8) UUID5 {
+        var sha1_hasher = bun.sha.SHA1.init();
+        defer sha1_hasher.deinit();
+
+        // Convert namespace to network byte order and hash it
+        var net_namespace: [16]u8 = undefined;
+        
+        // time_low (bytes 0-3) - convert to big-endian
+        net_namespace[0] = namespace[3];
+        net_namespace[1] = namespace[2];
+        net_namespace[2] = namespace[1];
+        net_namespace[3] = namespace[0];
+        
+        // time_mid (bytes 4-5) - convert to big-endian  
+        net_namespace[4] = namespace[5];
+        net_namespace[5] = namespace[4];
+        
+        // time_hi_and_version (bytes 6-7) - convert to big-endian
+        net_namespace[6] = namespace[7];
+        net_namespace[7] = namespace[6];
+        
+        // clock_seq and node (bytes 8-15) - already in network order
+        @memcpy(net_namespace[8..16], namespace[8..16]);
+
+        // Hash namespace + name
+        sha1_hasher.update(&net_namespace);
+        sha1_hasher.update(name);
+
+        var hash: [20]u8 = undefined;
+        sha1_hasher.final(&hash);
+
+        var bytes: [16]u8 = undefined;
+        // Take first 16 bytes of the 20-byte SHA-1 hash
+        @memcpy(bytes[0..16], hash[0..16]);
+
+        // Set version to 5 (bits 12-15 of time_hi_and_version)
+        bytes[6] = (bytes[6] & 0x0F) | 0x50;
+
+        // Set variant bits (bits 6-7 of clock_seq_hi_and_reserved)  
+        bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
+        return UUID5{
+            .bytes = bytes,
+        };
+    }
+
+    pub fn toBytes(self: UUID5) [16]u8 {
+        return self.bytes;
+    }
+
+    pub fn print(self: UUID5, buf: *[36]u8) void {
+        return printBytes(&self.toBytes(), buf);
+    }
+
+    pub fn toUUID(self: UUID5) UUID {
+        const bytes: [16]u8 = self.toBytes();
+        return .{ .bytes = bytes };
+    }
+
+    pub fn format(
+        self: UUID5,
+        comptime layout: []const u8,
+        options: fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        return self.toUUID().format(layout, options, writer);
+    }
+};
+
+// Standard UUID namespaces from RFC 4122
+pub const namespaces = struct {
+    /// DNS namespace: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    pub const DNS: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+    
+    /// URL namespace: 6ba7b811-9dad-11d1-80b4-00c04fd430c8  
+    pub const URL: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+    
+    /// ISO OID namespace: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+    pub const OID: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+    
+    /// X.500 DN namespace: 6ba7b814-9dad-11d1-80b4-00c04fd430c8
+    pub const X500: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+};

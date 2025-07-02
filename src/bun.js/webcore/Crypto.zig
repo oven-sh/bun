@@ -163,6 +163,98 @@ pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
 }
 
+comptime {
+    const Bun__randomUUIDv5 = JSC.toJSHostFn(Bun__randomUUIDv5_);
+    @export(&Bun__randomUUIDv5, .{ .name = "Bun__randomUUIDv5" });
+}
+pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments = callframe.argumentsUndef(3).slice();
+
+    // First argument: namespace (required)
+    if (arguments.len == 0 or arguments[0].isUndefinedOrNull()) {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be specified", .{}).throw();
+    }
+
+    // Second argument: name (required)
+    if (arguments.len < 2 or arguments[1].isUndefinedOrNull()) {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be specified", .{}).throw();
+    }
+
+    var encoding_value: JSC.JSValue = .js_undefined;
+
+    // Third argument: encoding (optional, defaults to "hex")
+    const encoding: JSC.Node.Encoding = brk: {
+        if (arguments.len > 2 and !arguments[2].isUndefined()) {
+            if (arguments[2].isString()) {
+                encoding_value = arguments[2];
+                break :brk try JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                    return globalThis.ERR(.UNKNOWN_ENCODING, "Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                };
+            }
+        }
+
+        break :brk JSC.Node.Encoding.hex;
+    };
+
+    // Parse namespace UUID
+    var namespace: [16]u8 = undefined;
+    
+    if (arguments[0].isString()) {
+        // Parse UUID string
+        const namespace_str = try arguments[0].toBunString(globalThis);
+        defer namespace_str.deref();
+        const namespace_slice = namespace_str.toUTF8(bun.default_allocator);
+        defer namespace_slice.deinit();
+        
+        if (namespace_slice.slice().len != 36) {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid UUID format for namespace", .{}).throw();
+        }
+        
+        const parsed_uuid = UUID.parse(namespace_slice.slice()) catch {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid UUID format for namespace", .{}).throw();
+        };
+        namespace = parsed_uuid.bytes;
+    } else if (arguments[0].asArrayBuffer(globalThis)) |array_buffer| {
+        // Accept ArrayBuffer/TypedArray with 16 bytes
+        const slice = array_buffer.byteSlice();
+        if (slice.len != 16) {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "Namespace must be exactly 16 bytes", .{}).throw();
+        }
+        @memcpy(namespace[0..16], slice[0..16]);
+    } else {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be a string or buffer", .{}).throw();
+    }
+
+    // Get name data
+    var name_data: []const u8 = undefined;
+    var name_allocated: ?[]u8 = null;
+    defer if (name_allocated) |allocated| bun.default_allocator.free(allocated);
+
+    if (arguments[1].isString()) {
+        const name_str = try arguments[1].toBunString(globalThis);
+        defer name_str.deref();
+        const name_slice = name_str.toUTF8(bun.default_allocator);
+        name_allocated = @constCast(name_slice.slice());
+        name_data = name_slice.slice();
+    } else if (arguments[1].asArrayBuffer(globalThis)) |array_buffer| {
+        const slice = array_buffer.byteSlice();
+        name_data = slice;
+    } else {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be a string or buffer", .{}).throw();
+    }
+
+    // Generate UUID v5
+    const uuid = UUID5.init(&namespace, name_data);
+
+    if (encoding == .hex) {
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        uuid.print(bytes[0..36]);
+        return str.transferToJS(globalThis);
+    }
+
+    return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
+}
+
 pub fn randomUUIDWithoutTypeChecks(
     _: *Crypto,
     globalThis: *JSC.JSGlobalObject,
@@ -193,6 +285,8 @@ pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue 
 }
 
 const UUID7 = @import("../uuid.zig").UUID7;
+const UUID = @import("../uuid.zig");
+const UUID5 = @import("../uuid.zig").UUID5;
 
 const std = @import("std");
 const bun = @import("bun");

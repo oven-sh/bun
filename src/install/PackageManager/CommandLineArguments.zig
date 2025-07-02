@@ -74,7 +74,6 @@ pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
     clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
-    clap.parseParam("--git-tag-version                      Create a git commit and tag") catch unreachable,
     clap.parseParam("--no-git-tag-version                   Don't create a git commit and tag") catch unreachable,
     clap.parseParam("--allow-same-version                   Allow bumping to the same version") catch unreachable,
     clap.parseParam("-m, --message <STR>                    Use the given message for the commit") catch unreachable,
@@ -205,7 +204,7 @@ save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
 
-// Version command options
+// `bun pm version` options
 git_tag_version: bool = true,
 allow_same_version: bool = false,
 preid: string = "",

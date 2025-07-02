@@ -314,7 +314,6 @@ _bun_pm_completion() {
             )
 
             pmargs=(
-                "--git-tag-version[create a git commit and tag]"
                 "--no-git-tag-version[don't create a git commit and tag]"
                 "--allow-same-version[allow bumping to the same version]"
                 "-m[use the given message for the commit]:message"

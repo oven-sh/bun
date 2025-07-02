@@ -383,7 +383,6 @@ fn appendFileAssumeCapacity(
     this.watchlist.appendAssumeCapacity(item);
     return .{ .result = {} };
 }
-
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
     stored_fd: bun.FileDescriptor,
@@ -468,8 +467,10 @@ fn appendDirectoryAssumeCapacity(
         defer {
             bun.PathBufferPool.put(buf);
         }
-        const path: [:0]const u8 = if (copy_file_path and file_path_[file_path_.len - 1] == 0) file_path_[0..file_path_.len :0] else brk: {
-            const trailing_slash = std.mem.trimRight(u8, file_path_, "/");
+        const path: [:0]const u8 = if (copy_file_path and file_path_.len > 0 and file_path_[file_path_.len - 1] == 0)
+            file_path_[0 .. file_path_.len - 1 :0]
+        else brk: {
+            const trailing_slash = std.mem.trimRight(u8, file_path_, &.{ 0, "/" });
             @memcpy(buf[0..trailing_slash.len], trailing_slash);
             buf[trailing_slash.len] = 0;
             break :brk buf[0..trailing_slash.len :0];

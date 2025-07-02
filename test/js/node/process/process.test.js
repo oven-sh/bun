@@ -269,7 +269,7 @@ it("process.umask()", () => {
 
 const generated_versions_list = join(import.meta.dir, "../../../../src/generated_versions_list.zig");
 const versions = existsSync(generated_versions_list);
-(versions ? it : it.skip)("process.versions", () => {
+it.skipIf(!versions)("process.versions", () => {
   // Generate a list of all the versions in the versions object
   // example:
   // pub const boringssl = "b275c5ce1c88bc06f5a967026d3c0ce1df2be815";

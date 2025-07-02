@@ -1796,9 +1796,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v88External5ValueEv() *anyopaque;
     pub extern fn _ZN2v86Object3NewEPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() *anyopaque;
-    pub extern fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() *anyopaque;
-    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() *anyopaque;
-    pub extern fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() *anyopaque;
     pub extern fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZN2v86Object20SlowGetInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() *anyopaque;
@@ -1815,8 +1812,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() *anyopaque;
     pub extern fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() *anyopaque;
-    pub extern fn _ZN2v85Array3NewEPNS_7IsolateEi() *anyopaque;
-    pub extern fn _ZNK2v85Array6LengthEv() *anyopaque;
     pub extern fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() *anyopaque;
     pub extern fn _ZNK2v85Value9IsBooleanEv() *anyopaque;
     pub extern fn _ZNK2v87Boolean5ValueEv() *anyopaque;
@@ -1836,7 +1831,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v85Value6IsTrueEv() *anyopaque;
     pub extern fn _ZNK2v85Value7IsFalseEv() *anyopaque;
     pub extern fn _ZNK2v85Value8IsStringEv() *anyopaque;
-    pub extern fn _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE() *anyopaque;
     pub extern fn _ZN2v87Boolean3NewEPNS_7IsolateEb() *anyopaque;
     pub extern fn _ZN2v86Object16GetInternalFieldEi() *anyopaque;
     pub extern fn _ZN2v87Context10GetIsolateEv() *anyopaque;
@@ -1877,9 +1871,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?Value@External@v8@@QEBAPEAXXZ"() *anyopaque;
     pub extern fn @"?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"() *anyopaque;
     pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"() *anyopaque;
-    pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@IV?$Local@VValue@v8@@@2@@Z"() *anyopaque;
-    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"() *anyopaque;
-    pub extern fn @"?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"() *anyopaque;
     pub extern fn @"?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
     pub extern fn @"?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
@@ -1895,8 +1886,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"() *anyopaque;
     pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"() *anyopaque;
-    pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z"() *anyopaque;
-    pub extern fn @"?Length@Array@v8@@QEBAIXZ"() *anyopaque;
     pub extern fn @"?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?IsBoolean@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?Value@Boolean@v8@@QEBA_NXZ"() *anyopaque;
@@ -1914,7 +1903,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsTrue@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsFalse@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsString@Value@v8@@QEBA_NXZ"() *anyopaque;
-    pub extern fn @"?StrictEquals@Value@v8@@QEBA_NV?$Local@VValue@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"() *anyopaque;
     pub extern fn @"?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"() *anyopaque;
     pub extern fn @"?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"() *anyopaque;

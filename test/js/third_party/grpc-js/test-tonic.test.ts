@@ -1,7 +1,7 @@
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cp, rm, mkdir, chmod } from "fs/promises";
+import { chmod, cp, mkdir, rm } from "fs/promises";
 import { tmpdirSync } from "harness";
 import path from "path";
 import unzipper from "unzipper";

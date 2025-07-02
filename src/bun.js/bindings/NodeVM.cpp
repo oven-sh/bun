@@ -419,9 +419,11 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
 
     std::span<const uint8_t> bytes = bytecode->span();
     JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
-
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(buffer);
+
+    if (!buffer) {
+        return throwVMError(globalObject, scope, "Failed to create buffer"_s);
+    }
 
     return JSValue::encode(buffer);
 }
@@ -437,6 +439,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
             return false;
         }
         String stack = stack_jsval.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         auto& e_stack = exception->stack();
         size_t stack_size = e_stack.size();
@@ -526,6 +529,7 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
             }
 
             outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         auto allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s));
@@ -536,6 +540,7 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
             }
 
             outOptions.allowWasm = allowWasmValue.toBoolean(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -1229,9 +1234,13 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTFMove(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
-    fetcher->owner(vm, function);
-
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (!function) {
+        return throwVMError(globalObject, scope, "Failed to compile function"_s);
+    }
+
+    fetcher->owner(vm, function);
 
     if (!function) {
         return throwVMError(globalObject, scope, "Failed to compile function"_s);
@@ -1254,7 +1263,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue contextArg = callFrame->argument(0);
     bool notContextified = getContextArg(globalObject, contextArg);
-
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!contextArg.isObject()) {

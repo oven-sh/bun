@@ -85,18 +85,25 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     uint32_t lineOffset = lineOffsetValue.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
     SourceOrigin sourceOrigin { {}, *fetcher };
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(sourceTextValue.toWTFString(globalObject), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
+    WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTFMove(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
         TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
 
     SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode), moduleWrapper);
+    WTF::String identifier = identifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTFMove(identifier), contextValue, WTFMove(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
 
     if (!initializeImportMeta.isUndefined()) {
@@ -330,6 +337,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             ASSERT(moduleNativeValue.isObject());
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             JSObject* moduleNative = moduleNativeValue.getObject();
             AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
 
@@ -405,6 +413,9 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     ASSERT(metaValue);
     ASSERT(metaValue.isObject());
 
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     CallData callData = JSC::getCallData(m_initializeImportMeta.get());
 
     MarkedArgumentBuffer args;
@@ -412,6 +423,7 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(m_moduleWrapper.get());
 
     JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

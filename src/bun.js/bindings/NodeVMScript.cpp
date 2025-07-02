@@ -92,8 +92,13 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     auto scope = DECLARE_THROW_SCOPE(vm);
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
-    String sourceString = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
+    String sourceString;
+    if (sourceArg.isUndefined()) {
+        sourceString = emptyString();
+    } else {
+        sourceString = sourceArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
+    }
 
     JSValue optionsArg = args.at(1);
     ScriptOptions options(""_s);
@@ -131,6 +136,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     auto filename = options.filename;
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTFMove(source), WTFMove(options));
+    RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
 
@@ -217,6 +223,9 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 
         std::span<const uint8_t> bytes = m_cachedBytecode->span();
         m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        if (!m_cachedBytecodeBuffer) {
+            return nullptr;
+        }
     }
 
     ASSERT(m_cachedBytecodeBuffer);
@@ -351,6 +360,8 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         run();
     }
 
+    RETURN_IF_EXCEPTION(scope, {});
+
     if (options.timeout) {
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
@@ -369,6 +380,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         return {};
     }
 
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 

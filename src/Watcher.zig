@@ -464,9 +464,10 @@ fn appendDirectoryAssumeCapacity(
             null,
         );
     } else if (Environment.isLinux) {
-        const file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-        var buf: bun.PathBuffer = undefined;
-        bun.copy(u8, &buf, file_path_to_use_);
+        const file_path_to_use_ = if (file_path_.len > 1) std.mem.trimRight(u8, file_path_, "/") else file_path_;
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        @memcpy(buf[0..file_path_to_use_.len], file_path_to_use_);
         buf[file_path_to_use_.len] = 0;
         const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
         item.eventlist_index = switch (this.platform.watchDir(slice)) {

@@ -80,7 +80,8 @@ pub const Weak = @import("Weak.zig").Weak;
 pub const WeakRefType = @import("Weak.zig").WeakRefType;
 pub const Exception = @import("bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("bindings/SourceProvider.zig").SourceProvider;
-pub const CatchScope = @import("bindings/CatchScope.zig");
+pub const CatchScope = @import("bindings/CatchScope.zig").CatchScope;
+pub const ExceptionValidationScope = @import("bindings/CatchScope.zig").ExceptionValidationScope;
 
 // JavaScript-related
 pub const Errorable = @import("bindings/Errorable.zig").Errorable;

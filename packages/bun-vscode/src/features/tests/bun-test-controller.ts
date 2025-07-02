@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { parseString as xmlParseString } from "xml2js";
-import type { BunFileResult, BunTestResult, ProcessInfo, TestNode } from "./types";
+import type { BunFileResult, BunTestResult, TestNode } from "./types";
 
 const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
 
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
-  private activeProcesses: Set<ProcessInfo> = new Set();
+  private activeProcesses: Set<ChildProcess> = new Set();
 
   constructor(
     private readonly testController: vscode.TestController,
@@ -526,6 +526,8 @@ export class BunTestController implements vscode.Disposable {
           let stderr = "";
           let output = "";
 
+          this.activeProcesses.add(proc);
+
           proc.stdout?.on("data", data => {
             const chunk = data.toString();
             stdout += chunk;
@@ -562,7 +564,7 @@ export class BunTestController implements vscode.Disposable {
           });
 
           proc.on("close", code => {
-            this.activeProcesses.delete({ process: proc, kill: () => proc.kill() });
+            this.activeProcesses.delete(proc);
 
             try {
               if (code === 0 || code === 1) {
@@ -657,6 +659,7 @@ export class BunTestController implements vscode.Disposable {
           });
 
           proc.on("error", err => {
+            this.activeProcesses.delete(proc);
             for (const test of tests) {
               run.errored(test, new vscode.TestMessage(`Error: ${err}`));
               if (test.uri) {
@@ -670,9 +673,8 @@ export class BunTestController implements vscode.Disposable {
               }
             }
             run.end();
+            resolve();
           });
-
-          this.activeProcesses.add({ process: proc, kill: () => proc.kill() });
         });
       } catch (error) {
         for (const test of tests) {

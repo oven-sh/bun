@@ -94,8 +94,3 @@ export type TestNode = {
   parent?: TestNode;
   startIdx: number;
 };
-
-export type ProcessInfo = {
-  process: import("node:child_process").ChildProcess;
-  kill: () => void;
-};

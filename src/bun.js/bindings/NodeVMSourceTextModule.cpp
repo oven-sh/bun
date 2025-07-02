@@ -194,7 +194,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& requests = moduleRecord->requestedModules();
 
     if (requests.isEmpty()) {
-        return constructEmptyArray(globalObject, nullptr, 0);
+        JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return requestsArray;
     }
 
     JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, requests.size());

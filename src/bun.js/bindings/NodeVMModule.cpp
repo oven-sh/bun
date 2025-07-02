@@ -29,15 +29,20 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
+
     array->putDirectIndex(globalObject, 0, JSC::jsString(globalObject->vm(), m_specifier));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* attributes = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return array;
 }

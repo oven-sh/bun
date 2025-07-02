@@ -381,7 +381,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -444,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -463,7 +463,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
         return encodedJSUndefined();
     }
 
-    return JSValue::encode(jsString(vm, url));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -477,10 +477,10 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     }
 
     if (auto* buffer = script->getBytecodeBuffer()) {
-        return JSValue::encode(buffer);
+        RELEASE_AND_RETURN(scope, JSValue::encode(buffer));
     }
 
-    return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -493,7 +493,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    return JSValue::encode(jsBoolean(script->cachedDataProduced()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(script->cachedDataProduced())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
@@ -508,11 +508,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
 
     switch (script->cachedDataRejected()) {
     case TriState::True:
-        return JSValue::encode(jsBoolean(true));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(true)));
     case TriState::False:
-        return JSValue::encode(jsBoolean(false));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(false)));
     default:
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(scope, encodedJSUndefined());
     }
 }
 
@@ -528,7 +528,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
     }
 
     const JSC::SourceCode& source = script->source();
-    return createCachedData(globalObject, source);
+    RELEASE_AND_RETURN(scope, createCachedData(globalObject, source));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -549,7 +549,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSObject* context = asObject(contextArg);
     ASSERT(nodeVmGlobalObject != nullptr);
 
-    return runInContext(nodeVmGlobalObject, script, context, args.at(1));
+    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, context, args.at(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -592,7 +592,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
-        return runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1));
+        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));
     }
 
     RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));

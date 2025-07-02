@@ -232,7 +232,7 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     auto* fetcher = static_cast<NodeVMScriptFetcher*>(sourceOrigin.fetcher());
 
     if (fetcher->isUsingDefaultLoader()) {
-        return nullptr;
+        RELEASE_AND_RETURN(scope, nullptr);
     }
 
     JSValue dynamicImportCallback = fetcher->dynamicImportCallback();
@@ -240,13 +240,13 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        return zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, parameters, sourceOrigin);
+        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, parameters, sourceOrigin));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
     }
 
-    return importModuleInner(globalObject, moduleName, parameters, sourceOrigin, dynamicImportCallback, fetcher->owner());
+    RELEASE_AND_RETURN(scope, importModuleInner(globalObject, moduleName, parameters, sourceOrigin, dynamicImportCallback, fetcher->owner()));
 }
 
 static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
@@ -318,7 +318,7 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
     promise = promise->then(globalObject, transformer, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return promise;
+    RELEASE_AND_RETURN(scope, promise);
 }
 
 // Helper function to create an anonymous function expression with parameters

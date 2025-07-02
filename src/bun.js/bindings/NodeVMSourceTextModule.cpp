@@ -111,7 +111,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     if (cachedData.isEmpty()) {
-        return ptr;
+        RELEASE_AND_RETURN(scope, ptr);
     }
 
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
@@ -142,7 +142,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
             CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
             if (compilationResult != CompilationResult::CompilationFailed) {
                 executable->installCode(codeBlock);
-                return ptr;
+                RELEASE_AND_RETURN(scope, ptr);
             }
         }
     }

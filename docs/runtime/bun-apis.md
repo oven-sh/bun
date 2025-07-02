@@ -76,6 +76,10 @@ Click the link in the right column to jump to the associated documentation.
 
 - Hashing
 - [`Bun.password`](https://bun.sh/docs/api/hashing#bun-password), [`Bun.hash`](https://bun.sh/docs/api/hashing#bun-hash), [`Bun.CryptoHasher`](https://bun.sh/docs/api/hashing#bun-cryptohasher), `Bun.sha`
+---
+
+- Cryptography
+- `Bun.loadExtraCACerts`
 
 ---
 

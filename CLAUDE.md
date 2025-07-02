@@ -210,6 +210,14 @@ Built-in JavaScript modules use special syntax and are organized as:
 
 Note: These are NOT ES modules. The preprocessor converts `$` to `@` (JSC's actual syntax) and handles the special functions.
 
+## CI
+
+Bun uses BuildKite for CI. To get the status of a PR, you can use the following command:
+
+```bash
+bun ci
+```
+
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.

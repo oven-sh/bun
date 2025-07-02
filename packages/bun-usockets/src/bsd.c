@@ -762,9 +762,9 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #else
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t written = bsd_send(fd, header, header_length, 0);
+    ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {
-        ssize_t second_write = bsd_send(fd, payload, payload_length, 0);
+        ssize_t second_write = bsd_send(fd, payload, payload_length);
         if (second_write > 0) {
             written += second_write;
         }
@@ -773,7 +773,7 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #endif
 
-ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -781,13 +781,8 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
 #define MSG_NOSIGNAL 0
 #endif
 
-        #ifdef MSG_MORE
-            // for Linux we do not want signals
-            ssize_t rc = send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
-        #else
-            // use TCP_NOPUSH
-            ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
-        #endif
+        // use TCP_NOPUSH
+        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;

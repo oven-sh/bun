@@ -262,6 +262,12 @@ export function tempDirWithFiles(
   return base;
 }
 
+export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
+  const base = tmpdirSync();
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
+  return base;
+}
+
 export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {

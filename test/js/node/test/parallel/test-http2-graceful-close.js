@@ -31,6 +31,7 @@ server.on('stream', common.mustCall((stream, headers) => {
     for (let i = 0; i < 16; i++) {
       stream.write(chunk);
     }
+
     // Stream end should happen after data is written
     stream.end();
   });
@@ -44,7 +45,7 @@ server.on('stream', common.mustCall((stream, headers) => {
 // Start the server
 server.listen(0, common.mustCall(() => {
   // Create client and request
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
   const req = client.request({ ':path': '/' });
 
   // Track received data

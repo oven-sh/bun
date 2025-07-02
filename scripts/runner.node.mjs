@@ -237,6 +237,27 @@ function getTestExpectations() {
 }
 
 /**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateExceptions = (() => {
+  let skipArray;
+  return test => {
+    if (!skipArray) {
+      const path = join(cwd, "test/no-validate-exceptions.txt");
+      if (!existsSync(path)) {
+        skipArray = [];
+      }
+      skipArray = readFileSync(path, "utf-8")
+        .split("\n")
+        .filter(line => !line.startsWith("#") && line.length > 0);
+    }
+    return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+  };
+})();
+
+/**
  * @param {string} testPath
  * @returns {string[]}
  */
@@ -422,16 +443,20 @@ async function runTests() {
         const runWithBunTest =
           title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
         const subcommand = runWithBunTest ? "test" : "run";
+        const env = {
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          BUN_DEBUG_QUIET_LOGS: "1",
+        };
+        if (basename(execPath).includes("asan") && shouldValidateExceptions(testPath)) {
+          env.BUN_JSC_validateExceptionChecks = "1";
+        }
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
             args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
-            env: {
-              FORCE_COLOR: "0",
-              NO_COLOR: "1",
-              BUN_DEBUG_QUIET_LOGS: "1",
-            },
+            env,
             stdout: chunk => pipeTestStdout(process.stdout, chunk),
             stderr: chunk => pipeTestStdout(process.stderr, chunk),
           });
@@ -1032,13 +1057,18 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 
   testArgs.push(absPath);
 
+  const env = {
+    GITHUB_ACTIONS: "true", // always true so annotations are parsed
+  };
+  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+    env.BUN_JSC_validateExceptionChecks = "1";
+  }
+
   const { ok, error, stdout } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
-    env: {
-      GITHUB_ACTIONS: "true", // always true so annotations are parsed
-    },
+    env,
     stdout: chunk => pipeTestStdout(process.stdout, chunk),
     stderr: chunk => pipeTestStdout(process.stderr, chunk),
   });

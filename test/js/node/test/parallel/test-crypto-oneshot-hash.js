@@ -36,7 +36,6 @@ for (const method of methods) {
   if (method.startsWith('shake') && hasOpenSSL(3, 4))
     continue;
   for (const outputEncoding of ['buffer', 'hex', 'base64', undefined]) {
-    if (method === 'SHA512-224') continue;
     const oldDigest = crypto.createHash(method).update(input).digest(outputEncoding || 'hex');
     const digestFromBuffer = crypto.hash(method, input, outputEncoding);
     assert.deepStrictEqual(digestFromBuffer, oldDigest,

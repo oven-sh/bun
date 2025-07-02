@@ -1384,7 +1384,10 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
-        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
+        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject) catch |err| {
+            this.dispatch(.onError, this.globalThis.takeException(err));
+            return;
+        };
 
         if (emitError) {
             if (rstCode != .NO_ERROR) {
@@ -1461,7 +1464,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
-        log("HTTP_FRAME_SETTINGS ack true", .{});
+        log("send HTTP_FRAME_SETTINGS ack true", .{});
         var buffer: [FrameHeader.byteSize]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1688,7 +1691,7 @@ pub const H2FrameParser = struct {
                             this.writeBuffer.clearRetainingCapacity();
                         }
                     }
-                    const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
+                    const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
                     const result = this.call(.onWrite, output_value);
                     if (result.isBoolean() and !result.toBoolean()) {
                         this.has_nonnative_backpressure = true;
@@ -1721,7 +1724,7 @@ pub const H2FrameParser = struct {
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
+                const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
                 const result = this.call(.onWrite, output_value);
                 const code = if (result.isNumber()) result.to(i32) else -1;
                 switch (code) {
@@ -2000,7 +2003,7 @@ pub const H2FrameParser = struct {
             data_needed -= padding;
             log("data received {} {}", .{ padding, payload.len });
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
-            const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
+            const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
             this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
@@ -2048,7 +2051,7 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             const error_code = u32FromBytes(payload[4..8]);
-            const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject);
+            const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.readBuffer.reset();
             this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             return content.end;
@@ -2207,7 +2210,7 @@ pub const H2FrameParser = struct {
             } else {
                 this.outStandingPings -|= 1;
             }
-            const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
+            const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.dispatchWithExtra(.onPing, buffer, JSC.JSValue.jsBoolean(!isNotACK));
             return content.end;
         }
@@ -2386,7 +2389,7 @@ pub const H2FrameParser = struct {
                 if (this.remoteSettings == null) {
 
                     // ok empty settings so default settings
-                    const remoteSettings: FullSettingsPayload = .{};
+                    var remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
 
@@ -2399,6 +2402,7 @@ pub const H2FrameParser = struct {
                             }
                         }
                     }
+                    this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
                 }
             }
 
@@ -2878,9 +2882,9 @@ pub const H2FrameParser = struct {
             var stream = std.io.fixedBufferStream(&buffer);
             const writer = stream.writer();
             stream.seekTo(FrameHeader.byteSize) catch {};
-            var value_iter = origin_arg.arrayIterator(globalObject);
+            var value_iter = try origin_arg.arrayIterator(globalObject);
 
-            while (value_iter.next()) |item| {
+            while (try value_iter.next()) |item| {
                 if (!item.isString()) {
                     return globalObject.throwInvalidArguments("Expected origin to be a string or an array of strings", .{});
                 }
@@ -3446,7 +3450,7 @@ pub const H2FrameParser = struct {
 
             if (js_value.jsType().isArray()) {
                 // https://github.com/oven-sh/bun/issues/8940
-                var value_iter = js_value.arrayIterator(globalObject);
+                var value_iter = try js_value.arrayIterator(globalObject);
 
                 if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                     if (value_iter.len > 1 or single_value_headers[idx]) {
@@ -3456,7 +3460,7 @@ pub const H2FrameParser = struct {
                     single_value_headers[idx] = true;
                 }
 
-                while (value_iter.next()) |item| {
+                while (try value_iter.next()) |item| {
                     if (item.isEmptyOrUndefinedOrNull()) {
                         const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name});
                         return globalObject.throwValue(exception);
@@ -3785,6 +3789,7 @@ pub const H2FrameParser = struct {
 
     pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
+        log("request", .{});
 
         const args_list = callframe.arguments_old(5);
         if (args_list.len < 4) {
@@ -3889,7 +3894,7 @@ pub const H2FrameParser = struct {
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
                     // https://github.com/oven-sh/bun/issues/8940
-                    var value_iter = js_value.arrayIterator(globalObject);
+                    var value_iter = try js_value.arrayIterator(globalObject);
 
                     if (SingleValueHeaders.indexOf(validated_name)) |idx| {
                         if (value_iter.len > 1 or single_value_headers[idx]) {
@@ -3902,7 +3907,7 @@ pub const H2FrameParser = struct {
                         single_value_headers[idx] = true;
                     }
 
-                    while (value_iter.next()) |item| {
+                    while (try value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
@@ -4107,7 +4112,7 @@ pub const H2FrameParser = struct {
             this.rejectedStreams += 1;
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
             if (this.rejectedStreams >= this.maxRejectedStreams) {
-                const chunk = this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
+                const chunk = try this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
                 this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.ENHANCE_YOUR_CALM)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             }
             return JSC.JSValue.jsNumber(stream_id);

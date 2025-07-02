@@ -391,6 +391,12 @@ pub fn build(b: *Build) !void {
         }, &.{ .Debug, .ReleaseFast });
     }
     {
+        const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+        }, &.{.Debug});
+    }
+    {
         const step = b.step("check-macos", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .mac, .arch = .x86_64 },
@@ -398,11 +404,25 @@ pub fn build(b: *Build) !void {
         }, &.{ .Debug, .ReleaseFast });
     }
     {
+        const step = b.step("check-macos-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+        }, &.{.Debug});
+    }
+    {
         const step = b.step("check-linux", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
         }, &.{ .Debug, .ReleaseFast });
+    }
+    {
+        const step = b.step("check-linux-debug", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+        }, &.{.Debug});
     }
 
     // zig build translate-c-headers

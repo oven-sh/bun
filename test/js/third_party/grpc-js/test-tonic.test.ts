@@ -1,7 +1,8 @@
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmod, cp, mkdir, rm } from "fs/promises";
+import { rmSync } from "fs";
+import { chmod, cp, mkdir } from "fs/promises";
 import { tmpdirSync } from "harness";
 import path, { join } from "path";
 import unzipper from "unzipper";
@@ -74,7 +75,7 @@ async function startServer(): Promise<Server> {
           address: address?.trim(),
           kill: async () => {
             server.kill();
-            await rm(tmpDir, { recursive: true, force: true });
+            rmSync(tmpDir, { recursive: true, force: true });
           },
         });
         break;
@@ -95,8 +96,10 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
     server = await startServer();
   });
 
-  afterAll(async () => {
-    await server.kill();
+  afterAll(() => {
+    try {
+      server.kill();
+    } catch {}
   });
 
   test("flow control should work in both directions", async () => {

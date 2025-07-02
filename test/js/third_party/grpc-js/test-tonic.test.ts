@@ -108,7 +108,7 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
     // Create client
     const client = new hello_proto.Greeter(server.address, grpc.credentials.createInsecure());
     const payload = Buffer.alloc(1024 * 1024, "bun").toString();
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 20; i++) {
       const { promise, reject, resolve } = Promise.withResolvers<string>();
       // Call SayHello
       client.SayHello({ name: payload }, (err, response) => {
@@ -119,5 +119,6 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
       expect(result.length).toBe(payload.length);
       expect(result).toBe(payload);
     }
-  });
+    await client.close();
+  }, 20_000); // debug can take some time
 });

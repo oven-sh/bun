@@ -357,6 +357,7 @@ pub const Command = struct {
         only: bool = false,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
+        test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
 
         file_reporter: ?TestCommand.FileReporter = null,

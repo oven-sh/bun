@@ -649,7 +649,7 @@ function watchFile(filename, options, listener) {
   }
 
   if (typeof listener !== "function") {
-    throw new TypeError("listener must be a function");
+    throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
   }
 
   var stat = statWatchers.get(filename);

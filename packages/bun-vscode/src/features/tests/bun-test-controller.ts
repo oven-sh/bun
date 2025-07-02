@@ -238,7 +238,7 @@ export class BunTestController implements vscode.Disposable {
 
   private parseTestBlocks(fileContent: string): TestNode[] {
     const cleanContent = fileContent
-      .replace(/\/\*[\s\S]*?\*\//g, match => " ".repeat(match.length))
+      .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n\r]/g, " "))
       .replace(/\/\/.*$/gm, match => " ".repeat(match.length));
 
     const testRegex =
@@ -1152,7 +1152,16 @@ function parseBunTestOutput(output: string, workspacePath: string, reporterOutfi
             : undefined;
 
         const children = parseXmlSuite(childSuite, [...parentChain, describeName]);
-        const status = children.some(c => c.status === "failed") ? "failed" : "passed";
+
+        let status: BunTestResult["status"] = "failed";
+        if (children.some(c => c.status === "failed")) {
+          status = "failed";
+        } else if (children.every(c => c.status === "skipped")) {
+          status = "skipped";
+        } else {
+          status = "passed";
+        }
+
         results.push({
           name: describeName,
           status,
@@ -1207,7 +1216,7 @@ function parseBunTestOutput(output: string, workspacePath: string, reporterOutfi
               errorMsg = testcase.failure.trim();
             }
           }
-          if (!errorMsg) errorMsg = `Test "${name}" failed (no error message available)`;
+          if (!errorMsg) errorMsg = `Test "${name}" failed (check "test result" output console for details)`;
         }
 
         results.push({

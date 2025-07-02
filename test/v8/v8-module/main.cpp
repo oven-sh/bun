@@ -604,31 +604,31 @@ void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
 
 void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, key)...\n");
-  
+
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
-  
+
   // Create an object and set multiple properties
   Local<Object> obj = Object::New(isolate);
-  
+
   // Test string property
   auto str_key = String::NewFromUtf8(isolate, "stringProp").ToLocalChecked();
   auto str_val = String::NewFromUtf8(isolate, "test_value").ToLocalChecked();
   Maybe<bool> set_result = obj->Set(context, str_key, str_val);
   LOG_EXPR(set_result.FromJust());
-  
-  // Test number property  
+
+  // Test number property
   auto num_key = String::NewFromUtf8(isolate, "numberProp").ToLocalChecked();
   auto num_val = Number::New(isolate, 42.5);
   set_result = obj->Set(context, num_key, num_val);
   LOG_EXPR(set_result.FromJust());
-  
+
   // Test boolean property
   auto bool_key = String::NewFromUtf8(isolate, "boolProp").ToLocalChecked();
   auto bool_val = Boolean::New(isolate, true);
   set_result = obj->Set(context, bool_key, bool_val);
   LOG_EXPR(set_result.FromJust());
-  
+
   // Get the properties back using Object::Get(context, key)
   MaybeLocal<Value> str_result = obj->Get(context, str_key);
   if (str_result.IsEmpty()) {
@@ -636,21 +636,21 @@ void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   }
   Local<Value> str_retrieved = str_result.ToLocalChecked();
   LOG_EXPR(describe(isolate, str_retrieved));
-  
+
   MaybeLocal<Value> num_result = obj->Get(context, num_key);
   if (num_result.IsEmpty()) {
     return fail(info, "Object::Get returned empty for number property");
   }
   Local<Value> num_retrieved = num_result.ToLocalChecked();
   LOG_EXPR(describe(isolate, num_retrieved));
-  
+
   MaybeLocal<Value> bool_result = obj->Get(context, bool_key);
   if (bool_result.IsEmpty()) {
     return fail(info, "Object::Get returned empty for boolean property");
   }
   Local<Value> bool_retrieved = bool_result.ToLocalChecked();
   LOG_EXPR(describe(isolate, bool_retrieved));
-  
+
   // Verify values are strictly equal
   if (!str_retrieved->StrictEquals(str_val)) {
     return fail(info, "String property not strictly equal after Get");
@@ -661,32 +661,32 @@ void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   if (!bool_retrieved->StrictEquals(bool_val)) {
     return fail(info, "Boolean property not strictly equal after Get");
   }
-  
+
   printf("✅ Object::Get(context, key) test passed\n");
   return ok(info);
 }
 
 void test_v8_object_get_by_index(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, index)...\n");
-  
+
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
-  
+
   // Create an array and set elements at various indices
   Local<Array> arr = Array::New(isolate, 5);
-  
+
   // Set elements at different indices
   auto val0 = String::NewFromUtf8(isolate, "index_0").ToLocalChecked();
   auto val2 = Number::New(isolate, 123.45);
   auto val4 = Boolean::New(isolate, false);
-  
+
   Maybe<bool> set_result = arr->Set(context, 0, val0);
   LOG_EXPR(set_result.FromJust());
   set_result = arr->Set(context, 2, val2);
   LOG_EXPR(set_result.FromJust());
   set_result = arr->Set(context, 4, val4);
   LOG_EXPR(set_result.FromJust());
-  
+
   // Get elements back using Object::Get(context, index)
   MaybeLocal<Value> result0 = arr->Get(context, 0);
   if (result0.IsEmpty()) {
@@ -694,28 +694,28 @@ void test_v8_object_get_by_index(const FunctionCallbackInfo<Value> &info) {
   }
   Local<Value> retrieved0 = result0.ToLocalChecked();
   LOG_EXPR(describe(isolate, retrieved0));
-  
-  MaybeLocal<Value> result1 = arr->Get(context, 1);  // Should be undefined
+
+  MaybeLocal<Value> result1 = arr->Get(context, 1); // Should be undefined
   if (result1.IsEmpty()) {
     return fail(info, "Object::Get returned empty for index 1");
   }
   Local<Value> retrieved1 = result1.ToLocalChecked();
   LOG_EXPR(describe(isolate, retrieved1));
-  
+
   MaybeLocal<Value> result2 = arr->Get(context, 2);
   if (result2.IsEmpty()) {
     return fail(info, "Object::Get returned empty for index 2");
   }
   Local<Value> retrieved2 = result2.ToLocalChecked();
   LOG_EXPR(describe(isolate, retrieved2));
-  
+
   MaybeLocal<Value> result4 = arr->Get(context, 4);
   if (result4.IsEmpty()) {
     return fail(info, "Object::Get returned empty for index 4");
   }
   Local<Value> retrieved4 = result4.ToLocalChecked();
   LOG_EXPR(describe(isolate, retrieved4));
-  
+
   // Verify values are correct
   if (!retrieved0->StrictEquals(val0)) {
     return fail(info, "Index 0 value not strictly equal after Get");
@@ -729,93 +729,332 @@ void test_v8_object_get_by_index(const FunctionCallbackInfo<Value> &info) {
   if (!retrieved4->StrictEquals(val4)) {
     return fail(info, "Index 4 value not strictly equal after Get");
   }
-  
+
   printf("✅ Object::Get(context, index) test passed\n");
   return ok(info);
 }
 
 void test_v8_strict_equals(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Value::StrictEquals()...\n");
-  
+
   Isolate *isolate = info.GetIsolate();
-  
+
   // Test number equality
   auto num1 = Number::New(isolate, 123.45);
   auto num2 = Number::New(isolate, 123.45);
   auto num3 = Number::New(isolate, 67.89);
-  
-  LOG_EXPR(num1->StrictEquals(num2));  // Should be true
-  LOG_EXPR(num1->StrictEquals(num3));  // Should be false
-  
+
+  LOG_EXPR(num1->StrictEquals(num2)); // Should be true
+  LOG_EXPR(num1->StrictEquals(num3)); // Should be false
+
   if (!num1->StrictEquals(num2)) {
     return fail(info, "Same numbers should be strictly equal");
   }
   if (num1->StrictEquals(num3)) {
     return fail(info, "Different numbers should not be strictly equal");
   }
-  
+
   // Test string equality
   auto str1 = String::NewFromUtf8(isolate, "hello").ToLocalChecked();
   auto str2 = String::NewFromUtf8(isolate, "hello").ToLocalChecked();
   auto str3 = String::NewFromUtf8(isolate, "world").ToLocalChecked();
-  
-  LOG_EXPR(str1->StrictEquals(str2));  // Should be true
-  LOG_EXPR(str1->StrictEquals(str3));  // Should be false
-  
+
+  LOG_EXPR(str1->StrictEquals(str2)); // Should be true
+  LOG_EXPR(str1->StrictEquals(str3)); // Should be false
+
   if (!str1->StrictEquals(str2)) {
     return fail(info, "Same strings should be strictly equal");
   }
   if (str1->StrictEquals(str3)) {
     return fail(info, "Different strings should not be strictly equal");
   }
-  
+
   // Test boolean equality
   auto bool1 = Boolean::New(isolate, true);
   auto bool2 = Boolean::New(isolate, true);
   auto bool3 = Boolean::New(isolate, false);
-  
-  LOG_EXPR(bool1->StrictEquals(bool2));  // Should be true
-  LOG_EXPR(bool1->StrictEquals(bool3));  // Should be false
-  
+
+  LOG_EXPR(bool1->StrictEquals(bool2)); // Should be true
+  LOG_EXPR(bool1->StrictEquals(bool3)); // Should be false
+
   if (!bool1->StrictEquals(bool2)) {
     return fail(info, "Same booleans should be strictly equal");
   }
   if (bool1->StrictEquals(bool3)) {
     return fail(info, "Different booleans should not be strictly equal");
   }
-  
+
   // Test different types are not equal
-  LOG_EXPR(num1->StrictEquals(str1));  // Should be false
-  
+  LOG_EXPR(num1->StrictEquals(str1)); // Should be false
+
   if (num1->StrictEquals(str1)) {
     return fail(info, "Number and string should not be strictly equal");
   }
-  
+
   // Test null and undefined
   auto null_val = Null(isolate);
   auto undef_val = Undefined(isolate);
-  
-  LOG_EXPR(null_val->StrictEquals(undef_val));  // Should be false
-  
+
+  LOG_EXPR(null_val->StrictEquals(undef_val)); // Should be false
+
   if (null_val->StrictEquals(undef_val)) {
     return fail(info, "null and undefined should not be strictly equal");
   }
-  
+
   // Test same null/undefined values
   auto null_val2 = Null(isolate);
   auto undef_val2 = Undefined(isolate);
-  
+
   LOG_EXPR(null_val->StrictEquals(null_val2));   // Should be true
   LOG_EXPR(undef_val->StrictEquals(undef_val2)); // Should be true
-  
+
   if (!null_val->StrictEquals(null_val2)) {
     return fail(info, "null values should be strictly equal");
   }
   if (!undef_val->StrictEquals(undef_val2)) {
     return fail(info, "undefined values should be strictly equal");
   }
-  
+
   printf("✅ Value::StrictEquals() test passed\n");
+  return ok(info);
+}
+
+// Test Array::New with just length parameter
+void test_v8_array_new_with_length(const FunctionCallbackInfo<Value> &info) {
+  printf("Testing Array::New(isolate, length)...\n");
+  Isolate *isolate = info.GetIsolate();
+
+  // Test creating array with length 0
+  Local<Array> empty_array = Array::New(isolate, 0);
+  LOG_EXPR(empty_array->Length());
+  if (empty_array->Length() != 0) {
+    return fail(info, "Empty array should have length 0");
+  }
+
+  // Test creating array with positive length
+  Local<Array> array_with_length = Array::New(isolate, 10);
+  LOG_EXPR(array_with_length->Length());
+  if (array_with_length->Length() != 10) {
+    return fail(info, "Array should have length 10");
+  }
+
+  // Check that all elements are undefined
+  Local<Context> context = isolate->GetCurrentContext();
+  for (uint32_t i = 0; i < 10; i++) {
+    Local<Value> element = array_with_length->Get(context, i).ToLocalChecked();
+    if (!element->IsUndefined()) {
+      return fail(info, "Array elements should be undefined initially");
+    }
+  }
+
+  // Test negative length (should be treated as 0)
+  Local<Array> array_negative = Array::New(isolate, -5);
+  LOG_EXPR(array_negative->Length());
+  if (array_negative->Length() != 0) {
+    return fail(info, "Array with negative length should have length 0");
+  }
+
+  printf("✅ Array::New(isolate, length) test passed\n");
+  return ok(info);
+}
+
+// Test Array::Length method
+void test_v8_array_length(const FunctionCallbackInfo<Value> &info) {
+  printf("Testing Array::Length()...\n");
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // Create arrays with different lengths and verify
+  Local<Array> arr1 = Array::New(isolate, 0);
+  Local<Array> arr2 = Array::New(isolate, 5);
+  Local<Array> arr3 = Array::New(isolate, 100);
+
+  LOG_EXPR(arr1->Length());
+  LOG_EXPR(arr2->Length());
+  LOG_EXPR(arr3->Length());
+
+  if (arr1->Length() != 0) {
+    return fail(info, "Array 1 should have length 0");
+  }
+  if (arr2->Length() != 5) {
+    return fail(info, "Array 2 should have length 5");
+  }
+  if (arr3->Length() != 100) {
+    return fail(info, "Array 3 should have length 100");
+  }
+
+  // Test with array created from elements
+  Local<Value> elements[3] = {Number::New(isolate, 1), Number::New(isolate, 2),
+                              Number::New(isolate, 3)};
+  Local<Array> arr_from_elements = Array::New(isolate, elements, 3);
+  LOG_EXPR(arr_from_elements->Length());
+
+  if (arr_from_elements->Length() != 3) {
+    return fail(info, "Array from elements should have length 3");
+  }
+
+  printf("✅ Array::Length() test passed\n");
+  return ok(info);
+}
+
+// Test Array::Iterate method
+void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
+  printf("Testing Array::Iterate()...\n");
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // Create an array with known values
+  Local<Value> elements[5] = {
+      Number::New(isolate, 10),
+      String::NewFromUtf8(isolate, "hello").ToLocalChecked(),
+      Boolean::New(isolate, true), Null(isolate), Number::New(isolate, 42)};
+  Local<Array> array = Array::New(isolate, elements, 5);
+
+  // Test normal iteration
+  struct IterationData {
+    int count;
+    bool values_match;
+    Local<Value> *expected_values;
+  } iter_data = {0, true, elements};
+
+  Maybe<bool> result = array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element,
+         void *data) -> Array::CallbackResult {
+        IterationData *iter_data = static_cast<IterationData *>(data);
+        printf("Iterating index %u\n", index);
+
+        if (index != iter_data->count) {
+          iter_data->values_match = false;
+          return Array::CallbackResult::kException;
+        }
+
+        if (!element->StrictEquals(iter_data->expected_values[index])) {
+          iter_data->values_match = false;
+          return Array::CallbackResult::kException;
+        }
+
+        iter_data->count++;
+        return Array::CallbackResult::kContinue;
+      },
+      &iter_data);
+
+  if (result.IsNothing() || !result.ToChecked()) {
+    return fail(info, "Array iteration failed");
+  }
+
+  if (iter_data.count != 5) {
+    return fail(info, "Should have iterated over all 5 elements");
+  }
+
+  if (!iter_data.values_match) {
+    return fail(info, "Array elements did not match expected values");
+  }
+
+  // Test early exit with kBreak
+  struct BreakData {
+    int count;
+  } break_data = {0};
+
+  result = array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element,
+         void *data) -> Array::CallbackResult {
+        BreakData *break_data = static_cast<BreakData *>(data);
+        break_data->count++;
+
+        if (index == 2) {
+          return Array::CallbackResult::kBreak; // Exit early
+        }
+
+        return Array::CallbackResult::kContinue;
+      },
+      &break_data);
+
+  if (result.IsNothing() || !result.ToChecked()) {
+    return fail(info, "Array iteration with break failed");
+  }
+
+  LOG_EXPR(break_data.count);
+  if (break_data.count != 3) { // Should have processed indices 0, 1, 2
+    return fail(info, "Should have stopped at index 2");
+  }
+
+  printf("✅ Array::Iterate() test passed\n");
+  return ok(info);
+}
+
+// Test MaybeLocal functionality
+void test_v8_maybe_local(const FunctionCallbackInfo<Value> &info) {
+  printf("Testing MaybeLocal...\n");
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // Test with Array::New callback that can fail
+  size_t counter = 0;
+
+  // Test successful creation
+  MaybeLocal<Array> maybe_array =
+      Array::New(context, 3, [&counter, isolate]() -> MaybeLocal<Value> {
+        counter++;
+        return Number::New(isolate, counter * 10);
+      });
+
+  if (maybe_array.IsEmpty()) {
+    return fail(info, "Array creation should have succeeded");
+  }
+
+  Local<Array> array = maybe_array.ToLocalChecked();
+  LOG_EXPR(array->Length());
+
+  if (array->Length() != 3) {
+    return fail(info, "Array should have length 3");
+  }
+
+  // Verify elements
+  for (uint32_t i = 0; i < 3; i++) {
+    Local<Value> element = array->Get(context, i).ToLocalChecked();
+    double expected = (i + 1) * 10.0;
+    if (!element->IsNumber() || element.As<Number>()->Value() != expected) {
+      return fail(info, "Array element has wrong value");
+    }
+  }
+
+  // Test ToLocal pattern
+  counter = 0;
+  MaybeLocal<Array> maybe_array2 =
+      Array::New(context, 2, [&counter, isolate]() -> MaybeLocal<Value> {
+        counter++;
+        return String::NewFromUtf8(isolate, counter == 1 ? "first" : "second");
+      });
+
+  Local<Array> array2;
+  if (!maybe_array2.ToLocal(&array2)) {
+    return fail(info, "ToLocal should have succeeded");
+  }
+
+  LOG_EXPR(array2->Length());
+  if (array2->Length() != 2) {
+    return fail(info, "Array2 should have length 2");
+  }
+
+  // Test empty MaybeLocal
+  MaybeLocal<Array> empty_maybe;
+  if (!empty_maybe.IsEmpty()) {
+    return fail(info, "Empty MaybeLocal should be empty");
+  }
+
+  Local<Array> empty_result;
+  if (empty_maybe.ToLocal(&empty_result)) {
+    return fail(info, "ToLocal on empty MaybeLocal should return false");
+  }
+
+  // Verify that empty_result was set to nullptr
+  if (!empty_result.IsEmpty()) {
+    return fail(info, "ToLocal should set output to nullptr when empty");
+  }
+
+  printf("✅ MaybeLocal test passed\n");
   return ok(info);
 }
 
@@ -850,9 +1089,16 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
-  NODE_SET_METHOD(exports, "test_v8_object_get_by_key", test_v8_object_get_by_key);
-  NODE_SET_METHOD(exports, "test_v8_object_get_by_index", test_v8_object_get_by_index);
+  NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
+                  test_v8_object_get_by_key);
+  NODE_SET_METHOD(exports, "test_v8_object_get_by_index",
+                  test_v8_object_get_by_index);
   NODE_SET_METHOD(exports, "test_v8_strict_equals", test_v8_strict_equals);
+  NODE_SET_METHOD(exports, "test_v8_array_new_with_length",
+                  test_v8_array_new_with_length);
+  NODE_SET_METHOD(exports, "test_v8_array_length", test_v8_array_length);
+  NODE_SET_METHOD(exports, "test_v8_array_iterate", test_v8_array_iterate);
+  NODE_SET_METHOD(exports, "test_v8_maybe_local", test_v8_maybe_local);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

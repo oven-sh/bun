@@ -198,6 +198,15 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can create an array from a C array of Locals", async () => {
       await checkSameOutput("test_v8_array_new", []);
     });
+    it("can create an array with a specific length", async () => {
+      await checkSameOutput("test_v8_array_new_with_length", []);
+    });
+    it("correctly reports array length", async () => {
+      await checkSameOutput("test_v8_array_length", []);
+    });
+    it("can iterate over array elements with callbacks", async () => {
+      await checkSameOutput("test_v8_array_iterate", []);
+    });
   });
 
   describe("ObjectTemplate", () => {
@@ -255,6 +264,12 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   describe("EscapableHandleScope", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope", []);
+    });
+  });
+
+  describe("MaybeLocal", () => {
+    it("correctly handles ToLocal and ToLocalChecked operations", async () => {
+      await checkSameOutput("test_v8_maybe_local", []);
     });
   });
 

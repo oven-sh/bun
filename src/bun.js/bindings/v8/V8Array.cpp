@@ -102,7 +102,7 @@ uint32_t Array::Length() const
 // Cast implementation
 void Array::CheckCast(Value* obj)
 {
-    // In debug builds, verify that the object is actually an array
+    // Verify that the object is actually an array
     if (obj && obj->localToJSValue().isCell()) {
         JSC::JSCell* cell = obj->localToJSValue().asCell();
         if (!cell->inherits<JSArray>()) {
@@ -112,7 +112,7 @@ void Array::CheckCast(Value* obj)
     }
 }
 
-// Iterate implementation using forEachInIterable
+// Iterate implementation using manual iteration
 Maybe<bool> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
 {
     const JSArray* jsArray = localToObjectPointer<JSArray>();
@@ -120,30 +120,22 @@ Maybe<bool> Array::Iterate(Local<Context> context, IterationCallback callback, v
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    CallbackResult finalResult = CallbackResult::kContinue;
-    uint32_t index = 0;
+    // Manual iteration to support early exit
+    for (unsigned index = 0; index < jsArray->length(); ++index) {
+        JSValue element = jsArray->getIndex(globalObject, index);
+        RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
-    // Use JSC's forEachInIterable for proper array iteration
-    JSC::forEachInIterable(globalObject, jsArray, [&](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue element) -> void {
         Local<Value> localElement = context->GetIsolate()->currentHandleScope()->createLocal<Value>(vm, element);
-
-        CallbackResult result = callback(index++, localElement, callback_data);
+        CallbackResult result = callback(index, localElement, callback_data);
 
         switch (result) {
         case CallbackResult::kException:
+            return Nothing<bool>();
         case CallbackResult::kBreak:
-            finalResult = result;
-            return; // Break out of iteration
+            return Just(true); // Early exit without error
         case CallbackResult::kContinue:
             break;
         }
-    });
-
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
-
-    // Check if we should return an exception or success
-    if (finalResult == CallbackResult::kException) {
-        return Nothing<bool>();
     }
 
     return Just(true);

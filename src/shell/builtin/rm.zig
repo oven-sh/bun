@@ -14,7 +14,7 @@ state: union(enum) {
         // task: RmTask,
         filepath_args: []const [*:0]const u8,
         total_tasks: usize,
-        err: ?Syscall.Error = null,
+        errno: ?ExitCode = null,
         lock: bun.Mutex = bun.Mutex{},
         error_signal: std.atomic.Value(bool) = .{ .raw = false },
         output_done: std.atomic.Value(usize) = .{ .raw = 0 },
@@ -306,7 +306,8 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
         log("Rm(0x{x}) output done={d} output count={d}", .{ @intFromPtr(this), this.state.exec.getOutputCount(.output_done), this.state.exec.getOutputCount(.output_count) });
         this.state.exec.incrementOutputCount(.output_done);
         if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
-            const code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+            // rm seems to just use exit code 1
+            const code: ExitCode = if (this.state.exec.errno != null) @as(ExitCode, 1) else @as(ExitCode, 0);
             return this.bltn().done(code);
         }
         return .suspended;
@@ -322,7 +323,7 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) Yield {
 }
 
 pub fn deinit(this: *Rm) void {
-    this.alloc_scope.endScope();
+    this.alloc_scope.endScopeWithPoisonCheck();
 }
 
 pub inline fn bltn(this: *Rm) *Builtin {
@@ -408,12 +409,15 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         .waiting => brk: {
             exec.state.waiting.tasks_done += 1;
             const amt = exec.state.waiting.tasks_done;
-            if (task.err) |err| {
-                exec.err = err;
+            if (bun.take(&task.err)) |_err| {
+                var err: Syscall.Error = _err;
+                exec.errno = @intFromEnum(err.getErrno());
                 const error_string = this.bltn().taskErrorToString(.rm, err);
+                err.deinitWithAllocator(this.alloc_scope.allocator());
                 if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                     exec.incrementOutputCount(.output_count);
+                    task.deinit();
                     this.bltn().stderr.enqueue(this, error_string, safeguard).run();
                     return;
                 } else {
@@ -429,13 +433,16 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
-        this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
+        this.state = .{ .done = .{ .exit_code = if (exec.errno) |theerr| theerr else 0 } };
         task.deinit();
         this.next().run();
+    } else {
+        task.deinit();
     }
 }
 
 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
+    defer verbose.deinit();
     if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
         defer buf.deinit();
@@ -444,10 +451,17 @@ fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
     _ = this.bltn().writeNoIO(.stdout, verbose.deleted_entries.items);
     _ = this.state.exec.incrementOutputCount(.output_done);
     if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
-        return this.bltn().done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
+        return this.bltn().done(if (this.state.exec.errno) |theerr| theerr else 0);
     }
     return .done;
 }
+
+const PostRunAction = enum {
+    done,
+    done_no_decrement,
+    waiting_for_children,
+    nothing,
+};
 
 pub const ShellRmTask = struct {
     const debug = bun.Output.scoped(.AsyncRmTask, true);
@@ -528,7 +542,7 @@ pub const ShellRmTask = struct {
         deleted_entries: std.ArrayList(u8),
         concurrent_task: JSC.EventLoopTask,
 
-        do_post_run_from_toplevel: bool = true,
+        post_run_action: ?PostRunAction = null,
 
         const EntryKindHint = enum { idk, dir, file };
 
@@ -555,10 +569,15 @@ pub const ShellRmTask = struct {
 
         fn runFromThreadPoolImpl(this: *DirTask) void {
             defer {
-                if (this.do_post_run_from_toplevel) {
-                    this.postRun();
+                const post_run_action: PostRunAction = bun.take(&this.post_run_action).?;
+                switch (post_run_action) {
+                    .done => this.postRun(),
+                    .done_no_decrement => this.postRunImpl(false),
+                    .waiting_for_children => {},
+                    .nothing => {},
                 }
             }
+
             // Root, get cwd path on windows
             if (bun.Environment.isWindows) {
                 if (this.parent_task == null) {
@@ -572,6 +591,8 @@ pub const ShellRmTask = struct {
                             if (this.task_manager.err == null) {
                                 this.task_manager.err = err;
                                 this.task_manager.error_signal.store(true, .seq_cst);
+                            } else {
+                                err.deinitWithAllocator(this.task_manager.rm.alloc_scope.allocator());
                             }
                             return;
                         },
@@ -592,7 +613,7 @@ pub const ShellRmTask = struct {
                         this.task_manager.error_signal.store(true, .seq_cst);
                     } else {
                         var err2 = err;
-                        err2.deinit();
+                        err2.deinitWithAllocator(this.task_manager.rm.alloc_scope.allocator());
                     }
                 },
                 .result => {},
@@ -678,14 +699,15 @@ pub const ShellRmTask = struct {
             }
 
             switch (this.task_manager.removeEntryDirAfterChildren(this)) {
-                .err => |e| {
+                .err => |e_| {
+                    var e = e_;
                     debug("[deleteAfterWaitingForChildren] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
                     this.task_manager.err_mutex.lock();
                     defer this.task_manager.err_mutex.unlock();
                     if (this.task_manager.err == null) {
                         this.task_manager.err = e;
                     } else {
-                        this.task_manager.rm.alloc_scope.allocator().free(e.path);
+                        e.deinitWithAllocator(this.task_manager.rm.alloc_scope.allocator());
                     }
                 },
                 .result => |deleted| {
@@ -833,6 +855,8 @@ pub const ShellRmTask = struct {
     }
 
     fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
+        dir_task.post_run_action = .done;
+
         const path = dir_task.path;
         const dirfd = this.cwd;
         debug("removeEntryDir({s})", .{path});
@@ -953,16 +977,16 @@ pub const ShellRmTask = struct {
         //   >1: then there are still sub-tasks running
         const previous_subtask_value = dir_task.subtask_count.fetchSub(1, .acq_rel);
         bun.assert(previous_subtask_value >= 1);
-        dir_task.do_post_run_from_toplevel = false;
 
         // Need to wait for children to finish
         if (previous_subtask_value > 1) {
+            dir_task.post_run_action = .waiting_for_children;
             close_fd = true;
             return Maybe(void).success;
         }
 
         // We'll post run ourselves
-        defer dir_task.postRunImpl(false);
+        dir_task.post_run_action = .done_no_decrement;
 
         if (this.error_signal.load(.seq_cst)) return Maybe(void).success;
 
@@ -1131,6 +1155,10 @@ pub const ShellRmTask = struct {
                 return Maybe(void).success;
             }
         };
+
+        // const is_root_task = &this.root_task == parent_dir_task;
+        this.root_task.post_run_action = .done;
+
         const dirfd = this.cwd;
         switch (ShellSyscall.unlinkatWithFlags(dirfd, path, 0)) {
             .result => return this.verboseDeleted(parent_dir_task, path),
@@ -1220,6 +1248,9 @@ pub const ShellRmTask = struct {
     }
 
     pub fn deinit(this: *ShellRmTask) void {
+        if (this.err) |*err| {
+            err.deinitWithAllocator(this.rm.alloc_scope.allocator());
+        }
         this.rm.alloc_scope.allocator().destroy(this);
     }
 };

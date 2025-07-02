@@ -17,6 +17,12 @@ pub fn endScope(this: *AllocScope) void {
     }
 }
 
+pub fn endScopeWithPoisonCheck(this: *AllocScope) void {
+    if (comptime bun.Environment.enableAllocScopes) {
+        this.__scope.deinitImpl(true);
+    }
+}
+
 pub fn leakSlice(this: *AllocScope, memory: anytype) void {
     if (comptime bun.Environment.enableAllocScopes) {
         _ = @typeInfo(@TypeOf(memory)).pointer;

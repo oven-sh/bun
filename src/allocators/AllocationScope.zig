@@ -4,6 +4,22 @@ const AllocationScope = @This();
 
 pub const enabled = bun.Environment.enableAllocScopes;
 
+pub const checkIsPoisoned = if (bun.Environment.enableAsan)
+    struct {
+        extern "c" fn __asan_address_is_poisoned(addr: *const anyopaque) c_int;
+        pub fn checkIsPoisoned(addr: *const anyopaque) bool {
+            const result = __asan_address_is_poisoned(addr) == 1;
+            debug("checkIsPoisoned(0x{x}) = {any}", .{ addr, result });
+            return result;
+        }
+    }.checkIsPoisoned
+else
+    struct {
+        pub fn checkIsPoisoned(_: *const anyopaque) bool {
+            return true;
+        }
+    }.checkIsPoisoned;
+
 parent: Allocator,
 state: if (enabled) struct {
     mutex: bun.Mutex,
@@ -52,6 +68,10 @@ pub fn init(parent: Allocator) AllocationScope {
 }
 
 pub fn deinit(scope: *AllocationScope) void {
+    return deinitImpl(scope, false);
+}
+
+pub fn deinitImpl(scope: *AllocationScope, check_poisoned: bool) void {
     if (enabled) {
         scope.state.mutex.lock();
         defer scope.state.allocations.deinit(scope.parent);
@@ -64,7 +84,13 @@ pub fn deinit(scope: *AllocationScope) void {
         var it = scope.state.allocations.iterator();
         var n: usize = 0;
         while (it.next()) |entry| {
-            Output.prettyErrorln("- {any}, len {d}, at:", .{ entry.key_ptr.*, entry.value_ptr.len });
+            // It's possible it got freed but we accidentally used the actual
+            // underlying allocator and NOT this allocation scope.
+            if (check_poisoned and bun.Environment.enableAsan and checkIsPoisoned(entry.key_ptr.*)) {
+                Output.prettyErrorln("- {any}, len {d}, (poisoned; did you free this pointer but forget to use the allocation scope to do so?) at:", .{ entry.key_ptr.*, entry.value_ptr.len });
+            } else {
+                Output.prettyErrorln("- {any}, len {d}, at:", .{ entry.key_ptr.*, entry.value_ptr.len });
+            }
             bun.crash_handler.dumpStackTrace(entry.value_ptr.allocated_at.trace(), trace_limits);
 
             switch (entry.value_ptr.extra) {
@@ -251,6 +277,7 @@ pub inline fn downcast(a: Allocator) ?*AllocationScope {
         null;
 }
 
+const debug = bun.Output.scoped(.AllocationScope, false);
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");

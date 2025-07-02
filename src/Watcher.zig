@@ -466,7 +466,7 @@ fn appendDirectoryAssumeCapacity(
     } else if (Environment.isLinux) {
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
-        const path = if (comptime copy_file_path) file_path_[0 .. file_path_.len - 1 :0] else brk: {
+        const path = if (comptime copy_file_path) file_path_[0..file_path_.len :0] else brk: {
             @memcpy(buf[0..file_path_.len], file_path_);
             buf[file_path_.len] = 0;
             break :brk buf[0..file_path.len :0];

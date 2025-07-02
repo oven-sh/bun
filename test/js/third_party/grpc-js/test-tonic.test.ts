@@ -32,7 +32,7 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
   oneofs: true,
 });
 
-type Server = { address: string; kill: () => void };
+type Server = { address: string; kill: () => Promise<void> };
 
 const cargoBin = Bun.which("cargo") as string;
 async function startServer(): Promise<Server> {
@@ -63,6 +63,13 @@ async function startServer(): Promise<Server> {
     const { promise, reject, resolve } = Promise.withResolvers<Server>();
     const reader = server.stdout.getReader();
     const decoder = new TextDecoder();
+    async function killServer() {
+      try {
+        server.kill();
+        await server.exited;
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {}
+    }
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
@@ -73,14 +80,11 @@ async function startServer(): Promise<Server> {
         const [_, address] = text.split("Listening on ");
         resolve({
           address: address?.trim(),
-          kill: async () => {
-            server.kill();
-            rmSync(tmpDir, { recursive: true, force: true });
-          },
+          kill: killServer,
         });
         break;
       } else {
-        server.kill();
+        await killServer();
         reject(new Error("Server not started"));
         break;
       }
@@ -97,9 +101,7 @@ describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   });
 
   afterAll(() => {
-    try {
-      server.kill();
-    } catch {}
+    server.kill();
   });
 
   test("flow control should work in both directions", async () => {

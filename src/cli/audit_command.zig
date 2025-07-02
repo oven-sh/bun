@@ -334,6 +334,8 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     defer allocator.free(url_str);
     const url = URL.parse(url_str);
 
+    const http_proxy = pm.env.getHttpProxyFor(url);
+
     var response_buf = try MutableString.init(allocator, 1024);
     var req = http.AsyncHTTP.initSync(
         allocator,
@@ -343,7 +345,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.content.ptr.?[0..headers.content.len],
         &response_buf,
         final_compressed_body,
-        null,
+        http_proxy,
         null,
         .follow,
     );

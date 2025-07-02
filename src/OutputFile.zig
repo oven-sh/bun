@@ -321,7 +321,7 @@ pub fn toJS(
 ) bun.JSC.JSValue {
     return switch (this.value) {
         .move, .pending => @panic("Unexpected pending output file"),
-        .noop => JSC.JSValue.undefined,
+        .noop => .js_undefined,
         .copy => |copy| brk: {
             const file_blob = JSC.WebCore.Blob.Store.initFile(
                 if (copy.fd.isValid())

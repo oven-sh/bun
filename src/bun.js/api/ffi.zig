@@ -538,10 +538,10 @@ pub const FFI = struct {
         }
 
         pub fn fromJSArray(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
-            var iter = value.arrayIterator(globalThis);
+            var iter = try value.arrayIterator(globalThis);
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
 
-            while (iter.next()) |val| {
+            while (try iter.next()) |val| {
                 if (!val.isString()) {
                     for (items.items) |item| {
                         bun.default_allocator.free(@constCast(item));
@@ -558,7 +558,7 @@ pub const FFI = struct {
         }
 
         pub fn fromJSString(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, comptime property: []const u8) bun.JSError!StringArray {
-            if (value == .undefined) return .{};
+            if (value.isUndefined()) return .{};
             if (!value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
@@ -595,7 +595,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
+        const symbols_object: JSValue = try object.getOwn(globalThis, "symbols") orelse .js_undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -615,7 +615,7 @@ pub const FFI = struct {
             return globalThis.throw("Expected at least one exported symbol", .{});
         }
 
-        if (object.getOwn(globalThis, "library")) |library_value| {
+        if (try object.getOwn(globalThis, "library")) |library_value| {
             compile_c.libraries = try StringArray.fromJS(globalThis, library_value, "library");
         }
 
@@ -625,13 +625,13 @@ pub const FFI = struct {
 
         if (try object.getTruthy(globalThis, "flags")) |flags_value| {
             if (flags_value.isArray()) {
-                var iter = flags_value.arrayIterator(globalThis);
+                var iter = try flags_value.arrayIterator(globalThis);
 
                 var flags = std.ArrayList(u8).init(allocator);
                 defer flags.deinit();
                 flags.appendSlice(CompileC.default_tcc_options) catch bun.outOfMemory();
 
-                while (iter.next()) |value| {
+                while (try iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("flags", "array of strings", value);
                     }
@@ -668,7 +668,7 @@ pub const FFI = struct {
                 while (try iter.next()) |entry| {
                     const key = entry.toOwnedSliceZ(allocator) catch bun.outOfMemory();
                     var owned_value: [:0]const u8 = "";
-                    if (iter.value != .zero and iter.value != .undefined) {
+                    if (!iter.value.isUndefinedOrNull()) {
                         if (iter.value.isString()) {
                             const value = try iter.value.getZigString(globalThis);
                             if (value.len > 0) {
@@ -698,11 +698,11 @@ pub const FFI = struct {
             return error.JSError;
         }
 
-        if (object.getOwn(globalThis, "source")) |source_value| {
+        if (try object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
-                var iter = source_value.arrayIterator(globalThis);
-                while (iter.next()) |value| {
+                var iter = try source_value.arrayIterator(globalThis);
+                while (try iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
@@ -805,9 +805,9 @@ pub const FFI = struct {
     }
 
     pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
-        var function = ctx.asPtr(Function);
+        var function: *Function = @ptrFromInt(ctx.asPtrAddress());
         function.deinit(globalThis);
-        return JSValue.jsUndefined();
+        return .js_undefined;
     }
 
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
@@ -866,7 +866,7 @@ pub const FFI = struct {
     ) bun.JSError!JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return .undefined;
+            return .js_undefined;
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -894,7 +894,7 @@ pub const FFI = struct {
         //     bun.default_allocator.free(relocated_bytes_to_free);
         // }
 
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
@@ -1143,7 +1143,7 @@ pub const FFI = struct {
 
     pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
-        return .undefined;
+        return .js_undefined;
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object_value: JSC.JSValue) JSC.JSValue {
@@ -1249,15 +1249,15 @@ pub const FFI = struct {
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
-        if (value.getOwn(global, "args")) |args| {
+        if (try value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
 
-            var array = args.arrayIterator(global);
+            var array = try args.arrayIterator(global);
 
             try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
-            while (array.next()) |val| {
+            while (try array.next()) |val| {
                 if (val.isEmptyOrUndefinedOrNull()) {
                     abi_types.clearAndFree(allocator);
                     return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);

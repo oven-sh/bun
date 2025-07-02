@@ -192,7 +192,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-        if (!Environment.enable_logs)
+        if (Environment.enable_logs)
             log("{} read event {} {} {} {}", .{
                 this.fd,
                 event.watch_descriptor,

@@ -182,6 +182,17 @@ pub const S3Credentials = struct {
                         new_credentials.options.partSize = @intCast(pageSize);
                     }
                 }
+                if (try opts.getOptional(globalObject, "partSize", i64)) |partSize| {
+                    if (partSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE and partSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
+                        return globalObject.throwRangeError(partSize, .{
+                            .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE),
+                            .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE),
+                            .field_name = "partSize",
+                        });
+                    } else {
+                        new_credentials.options.partSize = @intCast(partSize);
+                    }
+                }
 
                 if (try opts.getOptional(globalObject, "queueSize", i32)) |queueSize| {
                     if (queueSize < 1) {

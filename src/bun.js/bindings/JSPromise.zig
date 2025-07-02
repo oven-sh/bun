@@ -189,17 +189,22 @@ pub const JSPromise = opaque {
             args: Args,
 
             pub fn call(this: *@This(), g: *JSC.JSGlobalObject) callconv(.c) JSC.JSValue {
-                return JSC.toJSHostValue(g, @call(.auto, Fn, this.args));
+                return JSC.toJSHostCall(g, @src(), Fn, this.args);
             }
         };
 
+        var scope: JSC.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
         var ctx = Wrapper{ .args = args };
-        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        return promise;
     }
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
         if (value == .zero) {
-            return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
+            return resolvedPromiseValue(globalObject, .js_undefined);
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }
@@ -265,7 +270,7 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__resolve(this, globalThis, value);
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__resolve, .{ this, globalThis, value }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
@@ -279,7 +284,7 @@ pub const JSPromise = opaque {
 
         const err = value catch |err| globalThis.takeException(err);
 
-        JSC__JSPromise__reject(this, globalThis, err);
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSPromise__reject, .{ this, globalThis, err }) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {

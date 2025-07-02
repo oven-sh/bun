@@ -43,7 +43,6 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 49 },
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 280 },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 174 },
-
   "global.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 28 },
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 47 },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead.", limit: 140 },

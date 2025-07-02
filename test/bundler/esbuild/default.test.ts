@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect } from "bun:test";
-import { isMacOS, isMusl, osSlashes } from "harness";
+import { osSlashes } from "harness";
 import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
@@ -5313,7 +5313,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: isMacOS || isMusl,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5375,13 +5374,12 @@ describe("bundler", () => {
           number 567
           string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
           string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-          object {"default":123,"module.exports":123}
-          object {"default":567,"module.exports":567}
+          object {"default":123}
+          object {"default":567}
         `,
     },
   });
   itBundled("default/RequireShimSubstitutionNode", {
-    todo: isMacOS || isMusl,
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     target: "node",
@@ -5402,8 +5400,8 @@ describe("bundler", () => {
         number 567
         string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
         string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
-        object {"default":123,"module.exports":123}
-        object {"default":567,"module.exports":567}
+        object {"default":123}
+        object {"default":567}
       `,
     },
   });

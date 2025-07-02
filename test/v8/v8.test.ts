@@ -19,13 +19,9 @@ enum BuildMode {
 // test environment
 delete bunEnv.CC;
 delete bunEnv.CXX;
-
-// Node.js 24.3.0 requires C++20
-bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
-  bunEnv.CXXFLAGS += " -std=gnu++20";
-} else {
-  bunEnv.CXXFLAGS += " -std=c++20";
+  bunEnv.CXXFLAGS ??= "";
+  bunEnv.CXXFLAGS += "-std=gnu++17";
 }
 // https://github.com/isaacs/node-tar/blob/bef7b1e4ffab822681fea2a9b22187192ed14717/lib/get-write-flag.js
 // prevent node-tar from using UV_FS_O_FILEMAP
@@ -76,7 +72,7 @@ async function build(
             "-j",
             "max",
           ]
-        : [bunExe(), "x", "node-gyp@11", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : [bunExe(), "x", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",

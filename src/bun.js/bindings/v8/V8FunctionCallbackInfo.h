@@ -9,13 +9,15 @@ class Context;
 class Value;
 
 struct ImplicitArgs {
-    // v8-function-callback.h:149-154
-    void* unused; // kUnusedIndex = 0
-    Isolate* isolate; // kIsolateIndex = 1
-    void* context; // kContextIndex = 2
-    TaggedPointer return_value; // kReturnValueIndex = 3
-    TaggedPointer target; // kTargetIndex = 4
-    void* new_target; // kNewTargetIndex = 5
+    // v8-function-callback.h:168
+    void* holder;
+    Isolate* isolate;
+    void* unused;
+    // overwritten by the callback
+    TaggedPointer return_value;
+    // holds the value passed for data in FunctionTemplate::New
+    TaggedPointer data;
+    void* new_target;
 };
 
 // T = return value

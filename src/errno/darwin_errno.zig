@@ -193,7 +193,6 @@ pub const UV_E = struct {
     pub const SOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
     pub const NODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
     pub const UNATCH: i32 = -bun.windows.libuv.UV_EUNATCH;
-    pub const NOEXEC: i32 = @intFromEnum(SystemErrno.ENOEXEC);
 };
 pub fn getErrno(rc: anytype) E {
     if (rc == -1) {

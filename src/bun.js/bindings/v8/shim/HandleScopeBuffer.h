@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../v8.h"
-#include "../V8Isolate.h"
 #include "TaggedPointer.h"
 #include "Map.h"
 #include "Handle.h"
@@ -9,6 +8,7 @@
 
 namespace v8 {
 
+class Isolate;
 class EscapableHandleScopeBase;
 
 namespace shim {

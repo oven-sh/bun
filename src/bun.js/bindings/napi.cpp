@@ -1735,7 +1735,7 @@ extern "C" napi_status napi_get_all_property_names(
                 // Climb up the prototype chain to find inherited properties
                 JSObject* current_object = object;
                 while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
-                    JSObject* proto = current_object->getPrototype(JSC::getVM(globalObject), globalObject).getObject();
+                    JSObject* proto = current_object->getPrototype(globalObject).getObject();
                     if (!proto) {
                         break;
                     }

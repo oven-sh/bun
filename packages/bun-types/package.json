@@ -10,9 +10,6 @@
   },
   "files": [
     "./*.d.ts",
-    "docs/**/*.md",
-    "docs/*.md",
-    "CLAUDE.md",
     "README.md"
   ],
   "homepage": "https://bun.sh",

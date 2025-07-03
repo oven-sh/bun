@@ -116,8 +116,16 @@ pub const Flags = struct {
 };
 
 pub const ClauseItem = struct {
+    /// The local alias used for the imported/exported symbol in the current module.
+    /// For imports: `import { foo as bar }` - "bar" is the alias
+    /// For exports: `export { foo as bar }` - "bar" is the alias
+    /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     alias: string,
     alias_loc: logger.Loc = logger.Loc.Empty,
+    /// Reference to the actual symbol being imported/exported.
+    /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
+    /// For exports: `export { foo as bar }` - ref to the local symbol "foo"
+    /// For re-exports: `export { foo as bar } from 'path'` - ref to an intermediate symbol
     name: LocRef,
 
     /// This is the original name of the symbol stored in "Name". It's needed for

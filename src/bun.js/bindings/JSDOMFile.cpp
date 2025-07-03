@@ -85,7 +85,7 @@ public:
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
 
-        if (UNLIKELY(!ptr)) {
+        if (!ptr) [[unlikely]] {
             return JSValue::encode(JSC::jsUndefined());
         }
 

@@ -162,8 +162,8 @@ function header() {
                 static size_t memoryCost(void* sinkPtr);
 
                 void* m_sinkPtr;
-                mutable WriteBarrier<JSC::Unknown> m_onPull;
-                mutable WriteBarrier<JSC::Unknown> m_onClose;
+                mutable WriteBarrier<JSC::JSObject> m_onPull;
+                mutable WriteBarrier<JSC::JSObject> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
 
                 uintptr_t m_onDestroy { 0 };
@@ -380,7 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -391,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -825,8 +825,16 @@ DEFINE_VISIT_CHILDREN(${className});
 
 void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
-    this->m_onPull.set(globalObject->vm(), this, onPull);
-    this->m_onClose.set(globalObject->vm(), this, onClose);
+    if (onPull) {
+        if (auto* object = onPull.getObject()) {
+            this->m_onPull.set(globalObject->vm(), this, object);
+        }
+    }
+    if (onClose) {
+        if (auto* object = onClose.getObject()) {
+            this->m_onClose.set(globalObject->vm(), this, object);
+        }
+    }
 }
 
 void ${className}::destroy(JSCell* cell)

@@ -137,7 +137,7 @@ console.log(contents); // => "Hello, world!"
 import html from "./index.html" with { type: "text" };
 ```
 
-When referenced during a build, the contents are into the bundle as a string.
+When referenced during a build, the contents are inlined into the bundle as a string.
 
 ```ts
 var contents = `Hello, world!`;
@@ -261,6 +261,20 @@ Currently, the list of selectors is:
 - `source[srcset]`
 - `video[poster]`
 - `video[src]`
+
+{% callout %}
+
+**HTML Loader Behavior in Different Contexts**
+
+The `html` loader behaves differently depending on how it's used:
+
+1. **Static Build:** When you run `bun build ./index.html`, Bun produces a static site with all assets bundled and hashed.
+
+2. **Runtime:** When you run `bun run server.ts` (where `server.ts` imports an HTML file), Bun bundles assets on-the-fly during development, enabling features like hot module replacement.
+
+3. **Full-stack Build:** When you run `bun build --target=bun server.ts` (where `server.ts` imports an HTML file), the import resolves to a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets in production.
+
+{% /callout %}
 
 ### `sh` loader
 

@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = bun.Mutex;
@@ -9,21 +8,16 @@ const FSEvents = @import("./fs_events.zig");
 const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
-const StoredFileDescriptorType = bun.FD;
 const FD = bun.FD;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-
-const sync = @import("../../sync.zig");
-const Semaphore = sync.Semaphore;
 
 var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
 const FSWatcher = bun.api.node.fs.Watcher;
 const Event = FSWatcher.Event;
-const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
 const Watcher = bun.Watcher;
 
@@ -503,7 +497,7 @@ pub const PathWatcherManager = struct {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err },
+                            .err => |err| return .{ .err = err.withPath(child_path.path) },
                             .result => {},
                         }
                     }
@@ -543,7 +537,7 @@ pub const PathWatcherManager = struct {
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.JSC.Maybe(void) {
         const fd = path.fd;
         switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
-            .err => |err| return .{ .err = err },
+            .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
 
@@ -884,7 +878,9 @@ pub const PathWatcher = struct {
         }
 
         this.needs_flush = true;
-        if (this.isClosed()) return;
+        if (this.isClosed()) {
+            return;
+        }
         this.callback(this.ctx, event, is_file);
     }
 

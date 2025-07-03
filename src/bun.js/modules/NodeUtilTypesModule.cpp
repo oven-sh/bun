@@ -132,7 +132,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
                     String tag = asString(value)->value(globalObject);
-                    if (UNLIKELY(scope.exception()))
+                    if (scope.exception()) [[unlikely]]
                         scope.clearException();
                     if (tag == "Error"_s)
                         return JSValue::encode(jsBoolean(true));
@@ -140,7 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
             }
         }
 
-        JSValue proto = object->getPrototype(vm, globalObject);
+        JSValue proto = object->getPrototype(globalObject);
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }
@@ -193,8 +193,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = JSC::getVM(globalObject);
-    auto proto = function->getPrototype(vm, globalObject);
+    auto proto = function->getPrototype(globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
     }

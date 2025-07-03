@@ -50,6 +50,10 @@ declare module "bun" {
     enableAutoPipelining?: boolean;
   }
 
+  export namespace RedisClient {
+    type KeyLike = string | ArrayBufferView | Blob;
+  }
+
   export class RedisClient {
     /**
      * Creates a new Redis client
@@ -112,14 +116,14 @@ declare module "bun" {
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a string, or null if the key doesn't exist
      */
-    get(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    get(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the value of a key as a Uint8Array
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a Uint8Array, or null if the key doesn't exist
      */
-    getBuffer(key: string | ArrayBufferView | Blob): Promise<Uint8Array<ArrayBuffer> | null>;
+    getBuffer(key: RedisClient.KeyLike): Promise<Uint8Array<ArrayBuffer> | null>;
 
     /**
      * Set key to hold the string value
@@ -127,7 +131,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration
@@ -136,12 +140,7 @@ declare module "bun" {
      * @param ex Set the specified expire time, in seconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      ex: "EX",
-      seconds: number,
-    ): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ex: "EX", seconds: number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration
@@ -150,12 +149,7 @@ declare module "bun" {
      * @param px Set the specified expire time, in milliseconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      px: "PX",
-      milliseconds: number,
-    ): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, px: "PX", milliseconds: number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration at a specific Unix timestamp
@@ -164,12 +158,7 @@ declare module "bun" {
      * @param exat Set the specified Unix time at which the key will expire, in seconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      exat: "EXAT",
-      timestampSeconds: number,
-    ): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, exat: "EXAT", timestampSeconds: number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration at a specific Unix timestamp
@@ -179,8 +168,8 @@ declare module "bun" {
      * @returns Promise that resolves with "OK" on success
      */
     set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
       pxat: "PXAT",
       timestampMilliseconds: number,
     ): Promise<"OK">;
@@ -192,7 +181,7 @@ declare module "bun" {
      * @param nx Only set the key if it does not already exist
      * @returns Promise that resolves with "OK" on success, or null if the key already exists
      */
-    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob, nx: "NX"): Promise<"OK" | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, nx: "NX"): Promise<"OK" | null>;
 
     /**
      * Set key to hold the string value only if key already exists
@@ -201,7 +190,7 @@ declare module "bun" {
      * @param xx Only set the key if it already exists
      * @returns Promise that resolves with "OK" on success, or null if the key does not exist
      */
-    set(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob, xx: "XX"): Promise<"OK" | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, xx: "XX"): Promise<"OK" | null>;
 
     /**
      * Set key to hold the string value and return the old value
@@ -210,11 +199,7 @@ declare module "bun" {
      * @param get Return the old string stored at key, or null if key did not exist
      * @returns Promise that resolves with the old value, or null if key did not exist
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      get: "GET",
-    ): Promise<string | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, get: "GET"): Promise<string | null>;
 
     /**
      * Set key to hold the string value and retain the time to live
@@ -223,11 +208,7 @@ declare module "bun" {
      * @param keepttl Retain the time to live associated with the key
      * @returns Promise that resolves with "OK" on success
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      keepttl: "KEEPTTL",
-    ): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, keepttl: "KEEPTTL"): Promise<"OK">;
 
     /**
      * Set key to hold the string value with various options
@@ -236,39 +217,35 @@ declare module "bun" {
      * @param options Array of options (EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET)
      * @returns Promise that resolves with "OK" on success, null if NX/XX condition not met, or the old value if GET is specified
      */
-    set(
-      key: string | ArrayBufferView | Blob,
-      value: string | ArrayBufferView | Blob,
-      ...options: string[]
-    ): Promise<"OK" | string | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...options: string[]): Promise<"OK" | string | null>;
 
     /**
-     * Delete a key
-     * @param key The key to delete
+     * Delete a key(s)
+     * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys removed
      */
-    del(key: string | ArrayBufferView | Blob): Promise<number>;
+    del(...keys: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Increment the integer value of a key by one
      * @param key The key to increment
      * @returns Promise that resolves with the new value
      */
-    incr(key: string | ArrayBufferView | Blob): Promise<number>;
+    incr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement
      * @returns Promise that resolves with the new value
      */
-    decr(key: string | ArrayBufferView | Blob): Promise<number>;
+    decr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Determine if a key exists
      * @param key The key to check
      * @returns Promise that resolves with true if the key exists, false otherwise
      */
-    exists(key: string | ArrayBufferView | Blob): Promise<boolean>;
+    exists(key: RedisClient.KeyLike): Promise<boolean>;
 
     /**
      * Set a key's time to live in seconds
@@ -276,14 +253,14 @@ declare module "bun" {
      * @param seconds The number of seconds until expiration
      * @returns Promise that resolves with 1 if the timeout was set, 0 if not
      */
-    expire(key: string | ArrayBufferView | Blob, seconds: number): Promise<number>;
+    expire(key: RedisClient.KeyLike, seconds: number): Promise<number>;
 
     /**
      * Get the time to live for a key in seconds
      * @param key The key to get the TTL for
      * @returns Promise that resolves with the TTL, -1 if no expiry, or -2 if key doesn't exist
      */
-    ttl(key: string | ArrayBufferView | Blob): Promise<number>;
+    ttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Set multiple hash fields to multiple values
@@ -291,7 +268,7 @@ declare module "bun" {
      * @param fieldValues An array of alternating field names and values
      * @returns Promise that resolves with "OK" on success
      */
-    hmset(key: string | ArrayBufferView | Blob, fieldValues: string[]): Promise<string>;
+    hmset(key: RedisClient.KeyLike, fieldValues: string[]): Promise<string>;
 
     /**
      * Get the values of all the given hash fields
@@ -299,7 +276,7 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: string | ArrayBufferView | Blob, fields: string[]): Promise<Array<string | null>>;
+    hmget(key: RedisClient.KeyLike, fields: string[]): Promise<Array<string | null>>;
 
     /**
      * Check if a value is a member of a set
@@ -307,7 +284,7 @@ declare module "bun" {
      * @param member The member to check
      * @returns Promise that resolves with true if the member exists, false otherwise
      */
-    sismember(key: string | ArrayBufferView | Blob, member: string): Promise<boolean>;
+    sismember(key: RedisClient.KeyLike, member: string): Promise<boolean>;
 
     /**
      * Add a member to a set
@@ -315,7 +292,7 @@ declare module "bun" {
      * @param member The member to add
      * @returns Promise that resolves with 1 if the member was added, 0 if it already existed
      */
-    sadd(key: string | ArrayBufferView | Blob, member: string): Promise<number>;
+    sadd(key: RedisClient.KeyLike, member: string): Promise<number>;
 
     /**
      * Remove a member from a set
@@ -323,28 +300,28 @@ declare module "bun" {
      * @param member The member to remove
      * @returns Promise that resolves with 1 if the member was removed, 0 if it didn't exist
      */
-    srem(key: string | ArrayBufferView | Blob, member: string): Promise<number>;
+    srem(key: RedisClient.KeyLike, member: string): Promise<number>;
 
     /**
      * Get all the members in a set
      * @param key The set key
      * @returns Promise that resolves with an array of all members
      */
-    smembers(key: string | ArrayBufferView | Blob): Promise<string[]>;
+    smembers(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
      * Get a random member from a set
      * @param key The set key
      * @returns Promise that resolves with a random member, or null if the set is empty
      */
-    srandmember(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    srandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Remove and return a random member from a set
      * @param key The set key
      * @returns Promise that resolves with the removed member, or null if the set is empty
      */
-    spop(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    spop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Increment the integer value of a hash field by the given number
@@ -353,7 +330,7 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value
      */
-    hincrby(key: string | ArrayBufferView | Blob, field: string, increment: string | number): Promise<number>;
+    hincrby(key: RedisClient.KeyLike, field: string, increment: string | number): Promise<number>;
 
     /**
      * Increment the float value of a hash field by the given amount
@@ -362,35 +339,35 @@ declare module "bun" {
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value as a string
      */
-    hincrbyfloat(key: string | ArrayBufferView | Blob, field: string, increment: string | number): Promise<string>;
+    hincrbyfloat(key: RedisClient.KeyLike, field: string, increment: string | number): Promise<string>;
 
     /**
      * Get all the fields and values in a hash
      * @param key The hash key
      * @returns Promise that resolves with an object containing all fields and values
      */
-    hgetall(key: string | ArrayBufferView | Blob): Promise<Record<string, string> | null>;
+    hgetall(key: RedisClient.KeyLike): Promise<Record<string, string> | null>;
 
     /**
      * Get all field names in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of field names
      */
-    hkeys(key: string | ArrayBufferView | Blob): Promise<string[]>;
+    hkeys(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
      * Get the number of fields in a hash
      * @param key The hash key
      * @returns Promise that resolves with the number of fields
      */
-    hlen(key: string | ArrayBufferView | Blob): Promise<number>;
+    hlen(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get all values in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of values
      */
-    hvals(key: string | ArrayBufferView | Blob): Promise<string[]>;
+    hvals(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
      * Find all keys matching the given pattern
@@ -404,84 +381,84 @@ declare module "bun" {
      * @param key The list key
      * @returns Promise that resolves with the length of the list
      */
-    llen(key: string | ArrayBufferView | Blob): Promise<number>;
+    llen(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Remove and get the first element in a list
      * @param key The list key
      * @returns Promise that resolves with the first element, or null if the list is empty
      */
-    lpop(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    lpop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Remove the expiration from a key
      * @param key The key to persist
      * @returns Promise that resolves with 1 if the timeout was removed, 0 if the key doesn't exist or has no timeout
      */
-    persist(key: string | ArrayBufferView | Blob): Promise<number>;
+    persist(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in milliseconds
      * @param key The key to check
      * @returns Promise that resolves with the timestamp, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    pexpiretime(key: string | ArrayBufferView | Blob): Promise<number>;
+    pexpiretime(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the time to live for a key in milliseconds
      * @param key The key to check
      * @returns Promise that resolves with the TTL in milliseconds, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    pttl(key: string | ArrayBufferView | Blob): Promise<number>;
+    pttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Remove and get the last element in a list
      * @param key The list key
      * @returns Promise that resolves with the last element, or null if the list is empty
      */
-    rpop(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    rpop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the number of members in a set
      * @param key The set key
      * @returns Promise that resolves with the cardinality (number of elements) of the set
      */
-    scard(key: string | ArrayBufferView | Blob): Promise<number>;
+    scard(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the length of the value stored in a key
      * @param key The key to check
      * @returns Promise that resolves with the length of the string value, or 0 if the key doesn't exist
      */
-    strlen(key: string | ArrayBufferView | Blob): Promise<number>;
+    strlen(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the number of members in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the cardinality (number of elements) of the sorted set
      */
-    zcard(key: string | ArrayBufferView | Blob): Promise<number>;
+    zcard(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Remove and return members with the highest scores in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the removed member and its score, or null if the set is empty
      */
-    zpopmax(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    zpopmax(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Remove and return members with the lowest scores in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the removed member and its score, or null if the set is empty
      */
-    zpopmin(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    zpopmin(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get one or multiple random members from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set is empty
      */
-    zrandmember(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    zrandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Append a value to a key
@@ -489,7 +466,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the string after the append operation
      */
-    append(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    append(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Set the value of a key and return its old value
@@ -497,7 +474,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with the old value, or null if the key didn't exist
      */
-    getset(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<string | null>;
+    getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Prepend one or multiple values to a list
@@ -505,7 +482,7 @@ declare module "bun" {
      * @param value The value to prepend
      * @returns Promise that resolves with the length of the list after the push operation
      */
-    lpush(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    lpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Prepend a value to a list, only if the list exists
@@ -513,7 +490,7 @@ declare module "bun" {
      * @param value The value to prepend
      * @returns Promise that resolves with the length of the list after the push operation, or 0 if the list doesn't exist
      */
-    lpushx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    lpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Add one or more members to a HyperLogLog
@@ -521,7 +498,7 @@ declare module "bun" {
      * @param element The element to add
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0 otherwise
      */
-    pfadd(key: string | ArrayBufferView | Blob, element: string): Promise<number>;
+    pfadd(key: RedisClient.KeyLike, element: string): Promise<number>;
 
     /**
      * Append one or multiple values to a list
@@ -529,7 +506,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the list after the push operation
      */
-    rpush(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    rpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Append a value to a list, only if the list exists
@@ -537,7 +514,7 @@ declare module "bun" {
      * @param value The value to append
      * @returns Promise that resolves with the length of the list after the push operation, or 0 if the list doesn't exist
      */
-    rpushx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    rpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Set the value of a key, only if the key does not exist
@@ -545,7 +522,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with 1 if the key was set, 0 if the key was not set
      */
-    setnx(key: string | ArrayBufferView | Blob, value: string | ArrayBufferView | Blob): Promise<number>;
+    setnx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the score associated with the given member in a sorted set
@@ -553,49 +530,49 @@ declare module "bun" {
      * @param member The member to get the score for
      * @returns Promise that resolves with the score of the member as a string, or null if the member or key doesn't exist
      */
-    zscore(key: string | ArrayBufferView | Blob, member: string): Promise<string | null>;
+    zscore(key: RedisClient.KeyLike, member: string): Promise<string | null>;
 
     /**
      * Get the values of all specified keys
      * @param keys The keys to get
      * @returns Promise that resolves with an array of values, with null for keys that don't exist
      */
-    mget(...keys: (string | ArrayBufferView | Blob)[]): Promise<(string | null)[]>;
+    mget(...keys: RedisClient.KeyLike[]): Promise<(string | null)[]>;
 
     /**
      * Count the number of set bits (population counting) in a string
      * @param key The key to count bits in
      * @returns Promise that resolves with the number of bits set to 1
      */
-    bitcount(key: string | ArrayBufferView | Blob): Promise<number>;
+    bitcount(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Return a serialized version of the value stored at the specified key
      * @param key The key to dump
      * @returns Promise that resolves with the serialized value, or null if the key doesn't exist
      */
-    dump(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    dump(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in seconds
      * @param key The key to check
      * @returns Promise that resolves with the timestamp, or -1 if the key has no expiration, or -2 if the key doesn't exist
      */
-    expiretime(key: string | ArrayBufferView | Blob): Promise<number>;
+    expiretime(key: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get the value of a key and delete the key
      * @param key The key to get and delete
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
-    getdel(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    getdel(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the value of a key and optionally set its expiration
      * @param key The key to get
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
-    getex(key: string | ArrayBufferView | Blob): Promise<string | null>;
+    getex(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Increment the integer value of a key by the given number
@@ -603,7 +580,7 @@ declare module "bun" {
      * @param count The amount to increment by
      * @returns Promise that resolves with the new value
      */
-    incrby(key: string | ArrayBufferView | Blob, count: string | number): Promise<number>;
+    incrby(key: RedisClient.KeyLike, count: string | number): Promise<number>;
 
     /**
      * Decrement the integer value of a key by the given number
@@ -611,7 +588,7 @@ declare module "bun" {
      * @param count The amount to decrement by
      * @returns Promise that resolves with the new value
      */
-    decrby(key: string | ArrayBufferView | Blob, count: string | number): Promise<number>;
+    decrby(key: RedisClient.KeyLike, count: string | number): Promise<number>;
 
     /**
      * Increment the float value of a key by the given amount
@@ -619,7 +596,20 @@ declare module "bun" {
      * @param count The amount to increment by (float or integer)
      * @returns Promise that resolves with the new value as a string
      */
-    incrbyfloat(key: string | ArrayBufferView | Blob, count: string | number): Promise<string>;
+    incrbyfloat(key: RedisClient.KeyLike, count: string | number): Promise<string>;
+
+    /**
+     *  Ping the server
+     *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(): Promise<"PONG">;
+
+    /**
+     *  Ping the server with a message
+     *  @param message The message to send to the server
+     *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
+     */
+    ping(message: RedisClient.KeyLike): Promise<string>;
   }
 
   /**

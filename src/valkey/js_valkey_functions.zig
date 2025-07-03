@@ -6,7 +6,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     if (!args_array.isObject() or !args_array.isArray()) {
         return globalObject.throw("Arguments must be an array", .{});
     }
-    var iter = args_array.arrayIterator(globalObject);
+    var iter = try args_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSArgument).initCapacity(bun.default_allocator, iter.len);
     defer {
         for (args.items) |*item| {
@@ -15,7 +15,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
         args.deinit();
     }
 
-    while (iter.next()) |arg_js| {
+    while (try iter.next()) |arg_js| {
         args.appendAssumeCapacity(try fromJS(globalObject, arg_js) orelse {
             return globalObject.throwInvalidArgumentType("sendCommand", "argument", "string or buffer");
         });
@@ -390,7 +390,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Fields must be an array", .{});
     }
 
-    var iter = fields_array.arrayIterator(globalObject);
+    var iter = try fields_array.arrayIterator(globalObject);
     var args = try std.ArrayList(JSC.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
     defer {
         for (args.items) |item| {
@@ -402,7 +402,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(JSC.ZigString.Slice.fromUTF8NeverFree(key.slice()));
 
     // Add field names as arguments
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
 
@@ -495,7 +495,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }
 
-    var iter = array_arg.arrayIterator(globalObject);
+    var iter = try array_arg.arrayIterator(globalObject);
     if (iter.len % 2 != 0) {
         return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
     }
@@ -514,7 +514,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     args.appendAssumeCapacity(key_slice);
 
     // Add field-value pairs
-    while (iter.next()) |field_js| {
+    while (try iter.next()) |field_js| {
         // Add field name
         const field_str = try field_js.toBunString(globalObject);
         defer field_str.deref();
@@ -522,7 +522,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
         args.appendAssumeCapacity(field_slice);
 
         // Add value
-        if (iter.next()) |value_js| {
+        if (try iter.next()) |value_js| {
             const value_str = try value_js.toBunString(globalObject);
             defer value_str.deref();
             const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);
@@ -546,6 +546,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     return promise.toJS();
 }
 
+// Your INCRBY implementation
 pub fn incrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
@@ -571,6 +572,7 @@ pub fn incrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     return promise.toJS();
 }
 
+// Your DECRBY implementation
 pub fn decrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
@@ -596,6 +598,7 @@ pub fn decrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     return promise.toJS();
 }
 
+// Your INCRBYFLOAT implementation
 pub fn incrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
@@ -617,6 +620,38 @@ pub fn incrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, cal
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBYFLOAT command", err);
+    };
+    return promise.toJS();
+}
+
+// Implement ping (send a PING command with an optional message)
+pub fn ping(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    var message_buf: [1]JSArgument = undefined;
+    var args_slice: []JSArgument = &.{};
+
+    if (!callframe.argument(0).isUndefinedOrNull()) {
+        // Only use the first argument if provided, ignore any additional arguments
+        const message = (try fromJS(globalObject, callframe.argument(0))) orelse {
+            return globalObject.throwInvalidArgumentType("ping", "message", "string or buffer");
+        };
+        message_buf[0] = message;
+        args_slice = message_buf[0..1];
+    }
+    defer {
+        for (args_slice) |*item| {
+            item.deinit();
+        }
+    }
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "PING",
+            .args = .{ .args = args_slice },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send PING command", err);
     };
     return promise.toJS();
 }
@@ -644,7 +679,6 @@ pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call;
 pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call;
 pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call;
 pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call;
-pub const ping = compile.@"(key: RedisKey)"("ping", "PING", "message").call;
 
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
@@ -686,7 +720,6 @@ pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;
 // zscore(key: RedisKey, member: RedisValue)
 
 // cluster(subcommand: "KEYSLOT", key: RedisKey)
-const JSFunction = fn (*JSValkeyClient, *JSC.JSGlobalObject, *JSC.CallFrame) bun.JSError!JSValue;
 
 const compile = struct {
     pub fn @"(key: RedisKey)"(
@@ -883,7 +916,7 @@ const Slice = JSC.ZigString.Slice;
 const JSArgument = JSC.Node.BlobOrStringOrBuffer;
 
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
-    if (value == .undefined or value == .null) {
+    if (value.isUndefinedOrNull()) {
         return null;
     }
 

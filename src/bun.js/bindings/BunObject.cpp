@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
@@ -71,6 +70,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 using namespace JSC;
 using namespace WebCore;
@@ -103,7 +103,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-    if (UNLIKELY(!array)) {
+    if (!array) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
         return {};
     }
@@ -111,15 +111,12 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     size_t arrayLength = array->length();
     const auto returnEmptyArrayBufferView = [&]() -> EncodedJSValue {
         if (asUint8Array) {
-            return JSValue::encode(
-                JSC::JSUint8Array::create(
-                    lexicalGlobalObject,
-                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
-                    0));
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0)));
         }
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
     };
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (arrayLength < 1) {
         return returnEmptyArrayBufferView();
@@ -133,7 +130,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     // This is a small optimization
     MarkedArgumentBuffer args;
     args.ensureCapacity(arrayLength);
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
@@ -143,7 +140,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         RETURN_IF_EXCEPTION(throwScope, {});
 
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
-            if (UNLIKELY(typedArray->isDetached())) {
+            if (typedArray->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
             size_t current = typedArray->byteLength();
@@ -155,7 +152,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             }
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
-            if (UNLIKELY(!impl)) {
+            if (!impl) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
 
@@ -179,7 +176,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     }
 
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
-    if (UNLIKELY(!buffer)) {
+    if (!buffer) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
         return {};
     }
@@ -228,6 +225,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
     if (asUint8Array) {
         auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTFMove(buffer), 0, byteLength);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8array);
     }
 
@@ -239,7 +237,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+    if (callFrame->argumentCount() < 1) [[unlikely]] {
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
         return {};
     }
@@ -265,7 +263,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
         asUint8Array = arg2.toBoolean(globalObject);
     }
 
-    return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
+    RELEASE_AND_RETURN(throwScope, flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
@@ -351,7 +349,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(!shell.isObject())) {
+    if (!shell.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
         return {};
     }
@@ -359,7 +357,8 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* bunShell = shell.getObject();
 
     auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
-    if (UNLIKELY(!ShellError.isObject())) {
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!ShellError.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
         return {};
     }
@@ -460,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 }
 
 extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
-extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const UChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const char16_t* ptr, size_t length);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -570,7 +569,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        RETURN_IF_EXCEPTION(throwScope, {});
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
@@ -644,7 +643,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     }
 
     /// cannot turn non-`file://` URLs into file paths
-    if (UNLIKELY(!url.protocolIsFile())) {
+    if (!url.protocolIsFile()) [[unlikely]] {
         Bun::ERR::INVALID_URL_SCHEME(scope, globalObject, "file"_s);
         return {};
     }
@@ -655,7 +654,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 #if !OS(WINDOWS)
     // file://host/path is illegal if `host` is not `localhost`.
     // Should be `file:///` instead
-    if (UNLIKELY(url.host().length() > 0 && url.host() != "localhost"_s)) {
+    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
 
 #if OS(DARWIN)
         Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
@@ -759,6 +758,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
+    randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
@@ -918,7 +918,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* object = globalObject->bunObject();
 
     // :'(
-    if (LIKELY(object->hasNonReifiedStaticProperties())) {
+    if (object->hasNonReifiedStaticProperties()) [[likely]] {
         object->reifyAllStaticProperties(lexicalGlobalObject);
     }
 

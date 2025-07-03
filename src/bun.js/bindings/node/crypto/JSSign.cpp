@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "init"_s);
         return {};
     }
@@ -231,9 +231,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "update"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     JSValue wrappedSign = callFrame->argument(0);
@@ -241,7 +241,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     // Check that we have at least 1 argument (the data)
     if (callFrame->argumentCount() < 2) {
         throwVMError(globalObject, scope, "Sign.prototype.update requires at least 1 argument"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     // Get the data argument
@@ -250,7 +250,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     // if it's a string, using encoding for decode. if it's a buffer, just use the buffer
     if (data.isString()) {
         JSString* dataString = data.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
@@ -264,12 +264,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
 
         JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
 
         updateWithBufferView(globalObject, thisObject, view);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         return JSValue::encode(wrappedSign);
     }
@@ -282,7 +282,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
 
         updateWithBufferView(globalObject, thisObject, view);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         return JSValue::encode(wrappedSign);
     }
@@ -394,7 +394,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     // Get the JSSign object from thisValue and verify it's valid
     JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*lexicalGlobalObject, scope, "Sign"_s, "sign"_s);
         return {};
     }
@@ -403,7 +403,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     JSValue options = callFrame->argument(0);
 
     bool optionsBool = options.toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     // https://github.com/nodejs/node/blob/1b2d2f7e682268228b1352cba7389db01614812a/lib/internal/crypto/sig.js#L116
     if (!optionsBool) {
@@ -416,18 +416,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     JSValue outputEncodingValue = callFrame->argument(1);
     auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Get DSA signature encoding format
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto prepareResult = KeyObject::preparePrivateKey(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
@@ -472,7 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(callSign, (JSC::JSGlobalObject * globalObject, JSC::Cal
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwTypeError(globalObject, scope, "Sign constructor cannot be called as a function"_s);
-    return JSValue::encode({});
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -484,7 +484,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     JSC::Structure* structure = zigGlobalObject->m_JSSignClassStructure.get(zigGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Sign cannot be invoked without 'new'"_s);
             return {};

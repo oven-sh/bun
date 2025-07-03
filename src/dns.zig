@@ -108,10 +108,12 @@ pub const GetAddrInfo = struct {
                     if (!flags.isNumber())
                         return error.InvalidFlags;
 
-                    options.flags = flags.coerce(std.c.AI, globalObject);
+                    options.flags = try flags.coerce(std.c.AI, globalObject);
 
-                    if (!options.flags.ALL and !options.flags.ADDRCONFIG and !options.flags.V4MAPPED)
-                        return error.InvalidFlags;
+                    // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                    const filter = ~@as(u32, @bitCast(std.c.AI{ .ALL = true, .ADDRCONFIG = true, .V4MAPPED = true }));
+                    const int = @as(u32, @bitCast(options.flags));
+                    if (int & filter != 0) return error.InvalidFlags;
                 }
 
                 return options;
@@ -144,7 +146,7 @@ pub const GetAddrInfo = struct {
                 return .unspecified;
 
             if (value.isNumber()) {
-                return switch (value.coerce(i32, globalObject)) {
+                return switch (try value.coerce(i32, globalObject)) {
                     0 => .unspecified,
                     4 => .inet,
                     6 => .inet6,
@@ -327,11 +329,11 @@ pub const GetAddrInfo = struct {
             addrinfo: ?*std.c.addrinfo,
             list: List,
 
-            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) bun.JSError!?JSC.JSValue {
                 return switch (this.*) {
-                    .addrinfo => |addrinfo| addrInfoToJSArray(addrinfo orelse return null, globalThis),
+                    .addrinfo => |addrinfo| try addrInfoToJSArray(addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
-                        const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
+                        const array = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
@@ -442,11 +444,8 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     return count;
 }
 
-pub fn addrInfoToJSArray(
-    addr_info: *std.c.addrinfo,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const array = JSC.JSValue.createEmptyArray(
+pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    const array = try JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
     );

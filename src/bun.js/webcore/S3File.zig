@@ -1,10 +1,8 @@
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const ZigString = JSC.ZigString;
 const Method = bun.http.Method;
 const strings = bun.strings;
 const Output = bun.Output;
@@ -540,14 +538,11 @@ pub fn getBucketName(
     return bucket;
 }
 
-pub fn getBucket(
-    this: *Blob,
-    globalThis: *JSC.JSGlobalObject,
-) callconv(JSC.conv) JSValue {
+pub fn getBucket(this: *Blob, globalThis: *JSC.JSGlobalObject) callconv(JSC.conv) JSValue {
     if (getBucketName(this)) |name| {
         return bun.String.createUTF8ForJS(globalThis, name);
     }
-    return .undefined;
+    return .js_undefined;
 }
 pub fn getPresignUrl(this: *Blob, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const args = callframe.arguments_old(1);

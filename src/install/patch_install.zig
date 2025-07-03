@@ -5,9 +5,6 @@ const string = bun.string;
 const stringZ = bun.stringZ;
 const Output = bun.Output;
 const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
 const Progress = bun.Progress;
 const String = bun.Semver.String;
 
@@ -27,7 +24,6 @@ const ThreadPool = bun.ThreadPool;
 pub const Resolution = @import("./resolution.zig").Resolution;
 
 pub const PackageInstall = bun.install.PackageInstall;
-pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;
 
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
@@ -171,7 +167,7 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
-            const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
+            const fmt = "\n\nErrors occurred while calculating hash for <b>{s}<r>:\n\n";
             const args = .{this.callback.calc_hash.patchfile_path};
             if (log_level.showProgress()) {
                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
@@ -309,7 +305,7 @@ pub const PatchTask = struct {
 
         const pkg_name = this.callback.apply.pkgname;
 
-        const dummy_node_modules: PackageManager.NodeModulesFolder = .{
+        const dummy_node_modules: PackageManager.PackageInstaller.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
             .tree_id = 0,
         };
@@ -322,13 +318,14 @@ pub const PatchTask = struct {
         defer this.manager.allocator.free(resolution_label);
 
         // 3. copy the unpatched files into temp dir
-        var pkg_install = PreparePatchPackageInstall{
+        var pkg_install: PackageInstall = .{
             .allocator = bun.default_allocator,
             .cache_dir = this.callback.apply.cache_dir,
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,
             .destination_dir_subpath_buf = tmpname_buf[0..],
-            .progress = .{},
+            .patch = .{},
+            .progress = null,
             .package_name = pkg_name,
             .package_version = resolution_label,
             // dummy value
@@ -336,7 +333,7 @@ pub const PatchTask = struct {
             .lockfile = this.manager.lockfile,
         };
 
-        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, resolution_tag)) {
+        switch (pkg_install.install(true, system_tmpdir, .copyfile, resolution_tag)) {
             .success => {},
             .failure => |reason| {
                 return try log.addErrorFmtOpts(

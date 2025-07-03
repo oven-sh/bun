@@ -593,7 +593,7 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
   cpp.line(`bool isNullOrUndefined = value.isUndefinedOrNull();`);
   cpp.line(`auto* object = isNullOrUndefined ? nullptr : value.getObject();`);
-  cpp.line(`if (UNLIKELY(!isNullOrUndefined && !object)) {`);
+  cpp.line(`if (!isNullOrUndefined && !object) [[unlikely]] {`);
   cpp.line(`    throwTypeError(global, throwScope);`);
   cpp.line(`    return false;`);
   cpp.line(`}`);
@@ -761,7 +761,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
-  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))`);
+  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
   w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);
   w.line(`}`);
@@ -1363,7 +1363,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostValue(${globalObjectArg}, `);
+          zigInternal.add(`return JSC.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
@@ -1373,7 +1373,12 @@ for (const [filename, { functions, typedefs }] of files) {
           break;
       }
 
-      zigInternal.line(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}(`);
+      zigInternal.add(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}`);
+      if (returnStrategy.type === "jsvalue") {
+        zigInternal.line(", .{");
+      } else {
+        zigInternal.line("(");
+      }
       zigInternal.indent();
       for (const arg of vari.args) {
         const argName = arg.zigMappedName!;
@@ -1421,7 +1426,7 @@ for (const [filename, { functions, typedefs }] of files) {
       zigInternal.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`));`);
+          zigInternal.line(`});`);
           break;
         case "basic-out-param":
         case "void":

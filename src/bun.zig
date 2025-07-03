@@ -26,7 +26,7 @@ pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug)
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
-pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
     debug_allocator_data.allocator
 else
     default_allocator;
@@ -121,6 +121,15 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+};
+
+pub const JSExecutionTerminated = error{
+    /// JavaScript execution has been terminated.
+    /// This condition is indicated by throwing an exception, so most code should still handle it
+    /// with JSError. If you expect that you will not throw any errors other than the termination
+    /// exception, you can catch JSError, assert that the exception is the termination exception,
+    /// and return error.JSExecutionTerminated.
+    JSExecutionTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -772,7 +781,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 }
 
 pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
-pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
@@ -781,7 +790,7 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag)) |val|
+                    const enabled = if (getenvZ(@tagName(flag))) |val|
                         strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
                     else
                         false;
@@ -1265,7 +1274,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
         return buf[0..res.written];
     }
 
@@ -1820,6 +1829,8 @@ pub const StringMap = struct {
 
 pub const DotEnv = @import("./env_loader.zig");
 pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const js_ast = bun.bundle_v2.js_ast;
+pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
@@ -1911,6 +1922,7 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 const _string = @import("./string.zig");
 pub const strings = @import("string_immutable.zig");
 pub const String = _string.String;
+pub const ZigString = JSC.ZigString;
 pub const StringJoiner = _string.StringJoiner;
 pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
 pub const PathString = _string.PathString;
@@ -1986,6 +1998,116 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
+fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+    var i: usize = 0;
+    var offset_in_args: usize = 1;
+    while (i < env.len) {
+        // skip whitespace
+        while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
+        if (i >= env.len) break;
+
+        // Handle all command-line arguments with quotes preserved
+        const start = i;
+        var j = i;
+
+        // Check if this is an option (starts with --)
+        const is_option = j + 2 <= env.len and env[j] == '-' and env[j + 1] == '-';
+
+        if (is_option) {
+            // Find the end of the option flag (--flag)
+            while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
+
+            var found_equals = false;
+
+            // Check for equals sign
+            if (j < env.len and env[j] == '=') {
+                found_equals = true;
+                j += 1; // Move past the equals sign
+            } else if (j < env.len and std.ascii.isWhitespace(env[j])) {
+                j += 1; // Move past the space
+                // Skip any additional whitespace
+                while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Handle quoted values
+            if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
+                const quote_char = env[j];
+                j += 1; // Move past opening quote
+
+                // Find the closing quote
+                while (j < env.len and env[j] != quote_char) : (j += 1) {}
+                if (j < env.len) j += 1; // Move past closing quote
+            } else if (found_equals) {
+                // If we had --flag=value (no quotes), find next whitespace
+                while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+
+            // Copy the entire argument including quotes
+            const arg_len = j - start;
+            const arg = try allocator.allocSentinel(u8, arg_len, 0);
+            @memcpy(arg, env[start..j]);
+            try args.insert(offset_in_args, arg);
+            offset_in_args += 1;
+
+            i = j;
+            continue;
+        }
+
+        // Non-option arguments or standalone values
+        var buf = std.ArrayList(u8).init(allocator);
+
+        var in_single = false;
+        var in_double = false;
+        var escape = false;
+        while (i < env.len) : (i += 1) {
+            const ch = env[i];
+            if (escape) {
+                try buf.append(ch);
+                escape = false;
+                continue;
+            }
+
+            if (ch == '\\') {
+                escape = true;
+                continue;
+            }
+
+            if (in_single) {
+                if (ch == '\'') {
+                    in_single = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (in_double) {
+                if (ch == '"') {
+                    in_double = false;
+                } else {
+                    try buf.append(ch);
+                }
+                continue;
+            }
+
+            if (ch == '\'') {
+                in_single = true;
+            } else if (ch == '"') {
+                in_double = true;
+            } else if (std.ascii.isWhitespace(ch)) {
+                break;
+            } else {
+                try buf.append(ch);
+            }
+        }
+
+        try buf.append(0);
+        const owned = try buf.toOwnedSlice();
+        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        offset_in_args += 1;
+    }
+}
+
 pub fn initArgv(allocator: std.mem.Allocator) !void {
     if (comptime Environment.isPosix) {
         argv = try allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2044,6 +2166,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = out_argv;
     } else {
         argv = try std.process.argsAlloc(allocator);
+    }
+
+    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        try appendOptionsEnv(opts, &argv_list, allocator);
+        argv = argv_list.items;
     }
 }
 
@@ -2857,7 +2985,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
@@ -3590,24 +3718,16 @@ const StackOverflow = error{StackOverflow};
 // We keep up to 4 path buffers alive per thread at a time.
 pub fn PathBufferPoolT(comptime T: type) type {
     return struct {
-        const Pool = ObjectPool(PathBuf, null, true, 4);
-        pub const PathBuf = struct {
-            bytes: T,
-
-            pub fn deinit(this: *PathBuf) void {
-                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-                node.release();
-            }
-        };
+        const Pool = ObjectPool(T, null, true, 4);
 
         pub fn get() *T {
             // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+            return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
         pub fn put(buffer: *T) void {
-            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-            path_buf.deinit();
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+            node.release();
         }
 
         pub fn deleteAll() void {
@@ -3652,3 +3772,5 @@ pub fn move(dest: []u8, src: []const u8) void {
     }
     _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
 }
+
+pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;

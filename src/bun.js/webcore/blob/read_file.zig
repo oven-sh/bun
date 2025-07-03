@@ -13,7 +13,6 @@ const Environment = bun.Environment;
 const bloblog = bun.Output.scoped(.WriteFile, true);
 const JSPromise = JSC.JSPromise;
 const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
 const libuv = bun.windows.libuv;
 
 const log = bun.Output.scoped(.ReadFile, true);
@@ -37,7 +36,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                         blob.size = @min(@as(SizeType, @truncate(bytes.len)), blob.size);
                     const WrappedFn = struct {
                         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-                            return JSC.toJSHostValue(g, Function(b, g, by, .temporary));
+                            return JSC.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
                         }
                     };
 

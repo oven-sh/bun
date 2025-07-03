@@ -1,11 +1,5 @@
-const std = @import("std");
 const bun = @import("bun");
-const C = bun.c;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
 //
@@ -79,3 +73,35 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
 pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
 
 pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
+
+pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const args = callframe.argumentsAsArray(1);
+    const is_ssl = args[0].toBoolean();
+
+    if (!is_ssl) {
+        const socket = bun.api.TCPSocket.new(.{
+            .socket = .detached,
+            .socket_context = null,
+            .ref_count = .init(),
+            .protos = null,
+            .handlers = undefined,
+        });
+        return socket.getThisValue(globalThis);
+    } else {
+        const socket = bun.api.TLSSocket.new(.{
+            .socket = .detached,
+            .socket_context = null,
+            .ref_count = .init(),
+            .protos = null,
+            .handlers = undefined,
+        });
+        return socket.getThisValue(globalThis);
+    }
+}
+
+pub fn doConnect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const prev, const opts = callframe.argumentsAsArray(2);
+    const maybe_tcp = prev.as(bun.api.TCPSocket);
+    const maybe_tls = prev.as(bun.api.TLSSocket);
+    return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
+}

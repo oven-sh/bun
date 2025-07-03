@@ -565,6 +565,26 @@ for (let credentials of allCredentials) {
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
             });
+            it("should be able to upload large files using flush and partSize", async () => {
+              const s3file = file(tmp_filename, options);
+
+              const writer = s3file.writer({
+                //@ts-ignore
+                partSize: mediumPayload.length,
+              });
+              writer.write(mediumPayload);
+              writer.write(mediumPayload);
+              let total = 0;
+              while (true) {
+                const flushed = await writer.flush();
+                if (flushed === 0) break;
+                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                total += flushed;
+              }
+              expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
+              await writer.end();
+              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+            });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
                 await Bun.write(file(tmp_filename, options), bigPayload);
@@ -679,6 +699,26 @@ for (let credentials of allCredentials) {
                 await s3file.delete();
               }
             }, 10_000);
+
+            it("should be able to upload large files using flush and partSize", async () => {
+              const s3file = s3(tmp_filename, options);
+
+              const writer = s3file.writer({
+                partSize: mediumPayload.length,
+              });
+              writer.write(mediumPayload);
+              writer.write(mediumPayload);
+              let total = 0;
+              while (true) {
+                const flushed = await writer.flush();
+                if (flushed === 0) break;
+                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                total += flushed;
+              }
+              expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
+              await writer.end();
+              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+            });
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {

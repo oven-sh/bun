@@ -31,8 +31,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, scope,
-            serialized.releaseException());
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, { 0 });
     }
 
@@ -41,7 +40,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     const Vector<uint8_t>& bytes = serializedValue->wireBytes();
 
     return {
-        bytes.data(),
+        bytes.begin(),
         bytes.size(),
         &serializedValue.leakRef(),
     };

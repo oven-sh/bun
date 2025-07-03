@@ -4,12 +4,8 @@ const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
-const Bin = Install.Bin;
 const PackageManager = Install.PackageManager;
 const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
@@ -24,13 +20,11 @@ const PathBuffer = bun.PathBuffer;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const RunCommand = bun.RunCommand;
-const FileSystem = bun.fs.FileSystem;
 const OOM = bun.OOM;
 const js_printer = bun.js_printer;
 const E = bun.js_parser.E;
 const Progress = bun.Progress;
 const JSON = bun.JSON;
-const BoringSSL = bun.BoringSSL;
 const sha = bun.sha;
 const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
@@ -706,12 +700,12 @@ pub const PackCommand = struct {
                     if (strings.eqlComptime(entry_name, "package.json")) {
                         if (entry.kind != .file) break :root_depth;
                         // find more dependencies to bundle
-                        const source = File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator, .{}).unwrap() catch |err| {
+                        const source = &(File.toSourceAt(dir, entryNameZ(entry_name, entry_subpath), ctx.allocator, .{}).unwrap() catch |err| {
                             Output.err(err, "failed to read package.json: \"{s}\"", .{entry_subpath});
                             Global.crash();
-                        };
+                        });
 
-                        const json = JSON.parsePackageJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch
+                        const json = JSON.parsePackageJSONUTF8(source, ctx.manager.log, ctx.allocator) catch
                             break :root_depth;
 
                         // for each dependency in `dependencies` find the closest node_modules folder
@@ -1767,7 +1761,7 @@ pub const PackCommand = struct {
                 package_name,
                 package_version,
                 &json.root,
-                json.source,
+                &json.source,
                 shasum,
                 integrity,
             );
@@ -2417,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
@@ -2670,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);

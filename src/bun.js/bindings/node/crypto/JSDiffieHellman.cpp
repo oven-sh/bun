@@ -60,7 +60,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGetter_verifyError, (JSC::JSGlobalObject
     JSValue thisValue = callFrame->thisValue();
 
     JSDiffieHellman* thisObject = JSC::jsDynamicCast<JSDiffieHellman*>(thisValue);
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwVMTypeError(globalObject, scope);
         return {};
     }

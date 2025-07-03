@@ -89,7 +89,7 @@ const CrossChunkDependencies = struct {
             const wrapper_ref = deps.wrapper_refs[source_index];
             const _chunks = deps.chunks;
 
-            for (parts) |part| {
+            for (parts) |*part| {
                 if (!part.is_live)
                     continue;
 

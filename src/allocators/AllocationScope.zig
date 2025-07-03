@@ -36,7 +36,7 @@ pub const Extra = union(enum) {
 };
 
 pub fn init(parent: Allocator) AllocationScope {
-    return if (enabled)
+    return if (comptime enabled)
         .{
             .parent = parent,
             .state = .{
@@ -52,7 +52,7 @@ pub fn init(parent: Allocator) AllocationScope {
 }
 
 pub fn deinit(scope: *AllocationScope) void {
-    if (enabled) {
+    if (comptime enabled) {
         scope.state.mutex.lock();
         defer scope.state.allocations.deinit(scope.parent);
         const count = scope.state.allocations.count();
@@ -83,7 +83,7 @@ pub fn deinit(scope: *AllocationScope) void {
 }
 
 pub fn allocator(scope: *AllocationScope) Allocator {
-    return if (enabled) .{ .ptr = scope, .vtable = &vtable } else scope.parent;
+    return if (comptime enabled) .{ .ptr = scope, .vtable = &vtable } else scope.parent;
 }
 
 const vtable: Allocator.VTable = .{
@@ -176,7 +176,7 @@ fn trackFreeAssumeLocked(scope: *AllocationScope, buf: []const u8, ret_addr: usi
 }
 
 pub fn assertOwned(scope: *AllocationScope, ptr: anytype) void {
-    if (!enabled) return;
+    if (comptime !enabled) return;
     const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
         .c, .one, .many => ptr,
         .slice => if (ptr.len > 0) ptr.ptr else return,
@@ -188,7 +188,7 @@ pub fn assertOwned(scope: *AllocationScope, ptr: anytype) void {
 }
 
 pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
-    if (!enabled) return;
+    if (comptime !enabled) return;
     const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
         .c, .one, .many => ptr,
         .slice => if (ptr.len > 0) ptr.ptr else return,
@@ -196,7 +196,7 @@ pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     if (scope.state.allocations.getPtr(cast_ptr)) |owned| {
-        Output.warn("Pointer allocated here:");
+        Output.warn("Owned pointer allocated here:");
         bun.crash_handler.dumpStackTrace(owned.allocated_at.trace(), trace_limits, trace_limits);
     }
     @panic("this pointer was owned by the allocation scope when it was not supposed to be");
@@ -205,7 +205,7 @@ pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
 /// Track an arbitrary pointer. Extra data can be stored in the allocation,
 /// which will be printed when a leak is detected.
 pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_addr: ?usize, extra: Extra) void {
-    if (!enabled) return;
+    if (comptime !enabled) return;
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch bun.outOfMemory();
@@ -215,7 +215,7 @@ pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_add
 /// Call when the pointer from `trackExternalAllocation` is freed.
 /// Returns true if the free was invalid.
 pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usize) bool {
-    if (!enabled) return;
+    if (comptime !enabled) return;
     const ptr: []const u8 = switch (@typeInfo(@TypeOf(slice))) {
         .pointer => |p| switch (p.size) {
             .slice => brk: {
@@ -236,7 +236,7 @@ pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usi
 }
 
 pub fn setPointerExtra(scope: *AllocationScope, ptr: *anyopaque, extra: Extra) void {
-    if (!enabled) return;
+    if (comptime !enabled) return;
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     const allocation = scope.state.allocations.getPtr(ptr) orelse

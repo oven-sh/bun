@@ -83,7 +83,7 @@ pub fn init(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
 
     this.write_result = writeResult;
 
-    js.writeCallbackSetCached(this_value, globalThis, writeCallback);
+    js.writeCallbackSetCached(this_value, globalThis, writeCallback.withAsyncContextIfNeeded(globalThis));
 
     var err = this.stream.init();
     if (err.isError()) {

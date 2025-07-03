@@ -1817,7 +1817,6 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() *anyopaque;
     pub extern fn _ZNK2v85Array6LengthEv() *anyopaque;
     pub extern fn _ZN2v85Array3NewEPNS_7IsolateEi() *anyopaque;
-    pub extern fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() *anyopaque;
     pub extern fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_() *anyopaque;
     pub extern fn _ZN2v85Array9CheckCastEPNS_5ValueE() *anyopaque;
     pub extern fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() *anyopaque;
@@ -1937,6 +1936,18 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
+};
+
+/// V8 API functions whose mangled name differs between Linux and macOS
+const posix_platform_specific_v8_apis = switch (bun.Environment.os) {
+    .mac => struct {
+        pub extern fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() *anyopaque;
+    },
+    .linux => struct {
+        pub extern fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE() *anyopaque;
+    },
+    .windows => struct {},
+    else => unreachable,
 };
 
 // To update this list, use find + multi-cursor in your editor.
@@ -2415,6 +2426,10 @@ pub fn fixDeadCodeElimination() void {
 
     inline for (comptime std.meta.declarations(V8API)) |decl| {
         std.mem.doNotOptimizeAway(&@field(V8API, decl.name));
+    }
+
+    inline for (comptime std.meta.declarations(posix_platform_specific_v8_apis)) |decl| {
+        std.mem.doNotOptimizeAway(&@field(posix_platform_specific_v8_apis, decl.name));
     }
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);

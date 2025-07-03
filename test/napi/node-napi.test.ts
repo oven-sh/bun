@@ -1,7 +1,6 @@
 import { Glob, spawn, spawnSync } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMusl, isWindows } from "harness";
-import os from "node:os";
 import { dirname, join } from "path";
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");

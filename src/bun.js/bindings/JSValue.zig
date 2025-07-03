@@ -90,11 +90,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        var scope: CatchScope = undefined;
-        scope.init(globalThis, @src());
-        defer scope.deinit();
-        JSC__JSValue__forEachPropertyNonIndexed(this, globalThis, ctx, callback);
-        try scope.returnIfException();
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyNonIndexed, .{ this, globalThis, ctx, callback });
     }
 
     pub fn forEachProperty(
@@ -103,11 +99,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        var scope: CatchScope = undefined;
-        scope.init(globalThis, @src());
-        defer scope.deinit();
-        JSC__JSValue__forEachProperty(this, globalThis, ctx, callback);
-        try scope.returnIfException();
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachProperty, .{ this, globalThis, ctx, callback });
     }
 
     pub fn forEachPropertyOrdered(
@@ -116,11 +108,7 @@ pub const JSValue = enum(i64) {
         ctx: ?*anyopaque,
         callback: PropertyIteratorFn,
     ) JSError!void {
-        var scope: CatchScope = undefined;
-        scope.init(globalThis, @src());
-        defer scope.deinit();
-        JSC__JSValue__forEachPropertyOrdered(this, globalThis, ctx, callback);
-        try scope.returnIfException();
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__forEachPropertyOrdered, .{ this, globalThis, ctx, callback });
     }
 
     extern fn Bun__JSValue__toNumber(value: JSValue, global: *JSGlobalObject) f64;
@@ -129,12 +117,7 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `+value`
     /// https://tc39.es/ecma262/#sec-tonumber
     pub fn toNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!f64 {
-        var scope: bun.jsc.CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = Bun__JSValue__toNumber(this, global);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__JSValue__toNumber, .{ this, global });
     }
 
     // ECMA-262 20.1.2.3 Number.isInteger
@@ -789,12 +772,7 @@ pub const JSValue = enum(i64) {
     ///
     /// If the object is not an object, it will crash. **You must check if the object is an object before calling this function.**
     pub fn hasOwnPropertyValue(this: JSValue, global: *JSGlobalObject, key: JSValue) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__hasOwnPropertyValue(this, global, key);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__hasOwnPropertyValue, .{ this, global, key });
     }
 
     pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSError!JSArrayIterator {
@@ -1909,62 +1887,32 @@ pub const JSValue = enum(i64) {
     /// This can throw because it resolves rope strings
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
         if (@intFromEnum(this) == @intFromEnum(other)) return true;
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const same = JSC__JSValue__isSameValue(this, other, global);
-        try scope.returnIfException();
-        return same;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__isSameValue, .{ this, other, global });
     }
 
     extern fn JSC__JSValue__deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__deepEquals(this, other, global);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__deepEquals, .{ this, other, global });
     }
     extern fn JSC__JSValue__jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
     pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__jestDeepEquals(this, other, global);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestDeepEquals, .{ this, other, global });
     }
 
     extern fn JSC__JSValue__strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__strictDeepEquals(this, other, global);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__strictDeepEquals, .{ this, other, global });
     }
     extern fn JSC__JSValue__jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
     /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
     pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__jestStrictDeepEquals(this, other, global);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestStrictDeepEquals, .{ this, other, global });
     }
     extern fn JSC__JSValue__jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool;
     /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
     pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        const result = JSC__JSValue__jestDeepMatch(this, subset, global, replace_props_with_asymmetric_matchers);
-        try scope.returnIfException();
-        return result;
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__jestDeepMatch, .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     pub const DiffMethod = enum(u8) {
@@ -2180,12 +2128,7 @@ pub const JSValue = enum(i64) {
     /// If the property does not exist, this function will return max(f64) instead of 0.
     /// TODO this should probably just return an optional
     pub fn getLengthIfPropertyExistsInternal(this: JSValue, globalThis: *JSGlobalObject) JSError!f64 {
-        var scope: CatchScope = undefined;
-        scope.init(globalThis, @src());
-        defer scope.deinit();
-        const length = JSC__JSValue__getLengthIfPropertyExistsInternal(this, globalThis);
-        try scope.returnIfException();
-        return length;
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__getLengthIfPropertyExistsInternal, .{ this, globalThis });
     }
 
     extern fn JSC__JSValue__isAggregateError(this: JSValue, globalObject: *JSGlobalObject) bool;
@@ -2216,12 +2159,7 @@ pub const JSValue = enum(i64) {
 
     extern fn JSC__JSValue__isIterable(this: JSValue, globalObject: *JSGlobalObject) bool;
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) JSError!bool {
-        var scope: CatchScope = undefined;
-        scope.init(globalObject, @src());
-        defer scope.deinit();
-        const is_iterable = JSC__JSValue__isIterable(this, globalObject);
-        try scope.returnIfException();
-        return is_iterable;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__isIterable, .{ this, globalObject });
     }
 
     extern fn JSC__JSValue__stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool;

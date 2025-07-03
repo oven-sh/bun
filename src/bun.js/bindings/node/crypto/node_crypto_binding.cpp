@@ -123,7 +123,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObjec
     EVP_CIPHER_do_all_sorted(callback, &ctx);
 
     if (ctx.hasException)
-        return JSValue::encode({});
+        return {};
 
     return JSValue::encode(result);
 }

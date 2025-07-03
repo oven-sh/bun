@@ -473,7 +473,7 @@ pub const AsyncModule = struct {
         var specifier = specifier_;
         var referrer = referrer_;
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalThis, @src(), .enabled);
+        scope.init(globalThis, @src());
         defer {
             specifier.deref();
             referrer.deref();
@@ -1358,7 +1358,7 @@ pub fn transpileSourceCode(
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
-                            JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            try JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
                 }

@@ -24,6 +24,9 @@ extern "C" void napi_internal_crash_in_gc(napi_env);
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Napi {
+
+static constexpr int DEFAULT_NAPI_VERSION = 10;
+
 struct AsyncCleanupHook {
     napi_async_cleanup_hook function = nullptr;
     void* data = nullptr;
@@ -392,11 +395,11 @@ public:
         case WeakTypeTag::Primitive:
             return m_value.primitive;
         case WeakTypeTag::Cell:
-            return JSC::JSValue(m_value.cell.get());
+            return m_value.cell.get();
         case WeakTypeTag::String:
-            return JSC::JSValue(m_value.string.get());
+            return m_value.string.get();
         default:
-            return JSC::JSValue();
+            return {};
         }
     }
 

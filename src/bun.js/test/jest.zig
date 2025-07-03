@@ -36,6 +36,7 @@ pub const Tag = enum(u3) {
     only,
     skip,
     todo,
+    skipped_because_label,
 };
 const debug = Output.scoped(.jest, false);
 var max_test_id_for_debugger: u32 = 0;
@@ -84,8 +85,23 @@ pub const TestRunner = struct {
     filter_buffer: MutableString,
 
     unhandled_errors_between_tests: u32 = 0,
+    summary: Summary = Summary{},
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
+
+    pub const Summary = struct {
+        pass: u32 = 0,
+        expectations: u32 = 0,
+        skip: u32 = 0,
+        todo: u32 = 0,
+        fail: u32 = 0,
+        files: u32 = 0,
+        skipped_because_label: u32 = 0,
+
+        pub fn didLabelFilterOutAllTests(this: *const Summary) bool {
+            return this.skipped_because_label > 0 and (this.pass + this.skip + this.todo + this.fail + this.expectations) == 0;
+        }
+    };
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
@@ -178,6 +194,7 @@ pub const TestRunner = struct {
         onTestPass: OnTestUpdate,
         onTestFail: OnTestUpdate,
         onTestSkip: OnTestUpdate,
+        onTestFilteredOut: OnTestUpdate, // when a test is filtered out by a label
         onTestTodo: OnTestUpdate,
     };
 
@@ -199,6 +216,11 @@ pub const TestRunner = struct {
     pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .todo;
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
+    }
+
+    pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+        this.tests.items(.status)[test_id] = .skip;
+        this.callback.onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -250,6 +272,7 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            skipped_because_label,
             /// A test marked as `.failing()` actually passed
             fail_because_failing_test_passed,
             fail_because_todo_passed,
@@ -499,7 +522,7 @@ pub const Jest = struct {
             return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
-        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+        const timeout_ms: u32 = @intCast(@max(try arguments[0].coerce(i32, globalObject), 0));
 
         if (Jest.runner) |test_runner| {
             test_runner.default_timeout_override = timeout_ms;
@@ -1612,6 +1635,7 @@ pub const TestRunnerTask = struct {
                 );
             },
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
+            .skipped_because_label => Jest.runner.?.reportFilteredOut(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
@@ -1673,6 +1697,7 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    skipped_because_label: void,
     fail_because_failing_test_passed: u32,
     fail_because_todo_passed: u32,
     fail_because_expected_has_assertions: void,
@@ -1776,25 +1801,25 @@ inline fn createScope(
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -1815,15 +1840,21 @@ inline fn createScope(
 
     if (is_test) {
         if (!is_skip) {
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(label) catch unreachable;
-                const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
-                if (is_skip) {
-                    tag_to_use = .skip;
+            if (Jest.runner) |runner| {
+                if (runner.filter_regex) |regex| {
+                    var buffer: bun.MutableString = runner.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(label) catch unreachable;
+                    const str = bun.String.fromBytes(buffer.slice());
+                    is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skipped_because_label;
+                        if (comptime is_test) {
+                            // These won't get counted for describe scopes, which means the process will not exit with 1.
+                            runner.summary.skipped_because_label += 1;
+                        }
+                    }
                 }
             }
         }
@@ -1905,7 +1936,7 @@ inline fn createIfScope(
         .pass => .{ Scope.skip, Scope.call },
         .fail => @compileError("unreachable"),
         .only => @compileError("unreachable"),
-        .skip => .{ Scope.call, Scope.skip },
+        .skipped_because_label, .skip => .{ Scope.call, Scope.skip },
         .todo => .{ Scope.call, Scope.todo },
     };
 
@@ -2023,25 +2054,25 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
-        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+        timeout_ms = @as(u32, @intCast(@max(try args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+            timeout_ms = @as(u32, @intCast(@max(try timeout.coerce(i32, globalThis), 0)));
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            // TODO: retry_count = @intCast(u32, @max(try retries.coerce(i32, globalThis), 0));
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
-            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+            // TODO: repeat_count = @intCast(u32, @max(try repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
@@ -2130,6 +2161,11 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 buffer.append(formattedLabel) catch unreachable;
                 const str = bun.String.fromBytes(buffer.slice());
                 is_skip = !regex.matches(str);
+                if (is_skip) {
+                    if (each_data.is_test) {
+                        Jest.runner.?.summary.skipped_because_label += 1;
+                    }
+                }
             }
 
             if (is_skip) {

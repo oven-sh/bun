@@ -869,7 +869,13 @@ pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
-    this.eventLoop().waitForTasks();
+    while (this.isEventLoopAlive()) {
+        this.eventLoop().tick();
+
+        if (this.isEventLoopAlive()) {
+            this.eventLoop().autoTick();
+        }
+    }
 }
 
 pub const MacroMap = std.AutoArrayHashMap(i32, JSC.C.JSObjectRef);
@@ -3602,7 +3608,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        bun.jsc.fromJSHostCallGeneric(vm.global, @src(), Process__dispatchOnBeforeExit, .{ vm.global, this.exit_code }) catch return;
     }
 };
 

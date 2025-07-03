@@ -39,7 +39,7 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
     const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];

@@ -97,17 +97,12 @@ fn onWritable(this: *WindowsNamedPipeContext) void {
 
 fn onError(this: *WindowsNamedPipeContext, err: bun.sys.Error) void {
     if (this.is_open) {
-        if (this.vm.isShuttingDown()) {
-            // dont touch global just wait to close vm is shutting down
-            return;
-        }
-
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleError(err.toJSC(this.globalThis));
+                tls.handleError(err.toJS(this.globalThis));
             },
             .tcp => |tcp| {
-                tcp.handleError(err.toJSC(this.globalThis));
+                tcp.handleError(err.toJS(this.globalThis));
             },
             else => {},
         }

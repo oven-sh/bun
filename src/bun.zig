@@ -1274,7 +1274,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
         return buf[0..res.written];
     }
 
@@ -1922,6 +1922,7 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 const _string = @import("./string.zig");
 pub const strings = @import("string_immutable.zig");
 pub const String = _string.String;
+pub const ZigString = JSC.ZigString;
 pub const StringJoiner = _string.StringJoiner;
 pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
 pub const PathString = _string.PathString;

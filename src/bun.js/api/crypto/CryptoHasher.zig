@@ -839,7 +839,7 @@ fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
             }
         }
 
-        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
+        fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) bun.JSError!JSC.JSValue {
             var output_digest_buf: Hasher.Digest = comptime brk: {
                 var bytes: Hasher.Digest = undefined;
                 var i: usize = 0;

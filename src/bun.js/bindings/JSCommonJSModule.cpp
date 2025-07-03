@@ -450,6 +450,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
 
 JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
@@ -469,6 +472,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto idValue = thisObject->m_id.get();
     if (idValue) {
         auto id = idValue->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (id == "."_s) {
             thisObject->m_overriddenParent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
@@ -1268,14 +1272,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         if (options.isObject()) {
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
-            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+            auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type);
+            REQUIRE_CJS_RETURN_IF_EXCEPTION;
+            if (typeValue) {
                 if (typeValue.isString()) {
                     typeAttribute = typeValue.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(throwScope, {});
+                    REQUIRE_CJS_RETURN_IF_EXCEPTION;
                     typeAttributeStr = Bun::toString(typeAttribute);
                 }
             }
-            REQUIRE_CJS_RETURN_IF_EXCEPTION;
         }
     }
 

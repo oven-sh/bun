@@ -605,7 +605,7 @@ const Handlers = struct {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
-                @field(handlers, pair.@"0") = callback_value;
+                @field(handlers, pair.@"0") = callback_value.withAsyncContextIfNeeded(globalObject);
             }
         }
 
@@ -614,7 +614,7 @@ const Handlers = struct {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
-            handlers.onError = callback_value;
+            handlers.onError = callback_value.withAsyncContextIfNeeded(globalObject);
         }
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
@@ -700,13 +700,13 @@ pub const H2FrameParser = struct {
     // local Window limits the download of data
 
     // current window size for the connection
-    windowSize: u64 = 65535,
+    windowSize: u64 = DEFAULT_WINDOW_SIZE,
     // used window size for the connection
     usedWindowSize: u64 = 0,
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 0,
+    remoteWindowSize: u64 = DEFAULT_WINDOW_SIZE,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -993,13 +993,13 @@ pub const H2FrameParser = struct {
                                 const able_to_send = frame_slice[0..max_size];
                                 client.queuedDataSize -= able_to_send.len;
                                 written.* += able_to_send.len;
-                                this.remoteUsedWindowSize += able_to_send.len;
-                                client.remoteUsedWindowSize += able_to_send.len;
 
-                                log("dataFrame partial flushed {} {} {} {} {} {} {}", .{ able_to_send.len, frame.end_stream, client.queuedDataSize, this.remoteUsedWindowSize, client.remoteUsedWindowSize, this.remoteWindowSize, client.remoteWindowSize });
-
-                                const padding = this.getPadding(able_to_send.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const padding = this.getPadding(able_to_send.len, max_size);
                                 const payload_size = able_to_send.len + (if (padding != 0) padding + 1 else 0);
+
+                                this.remoteUsedWindowSize += payload_size;
+                                client.remoteUsedWindowSize += payload_size;
+
                                 var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -1024,12 +1024,11 @@ pub const H2FrameParser = struct {
                                 // flush with some payload
                                 client.queuedDataSize -= frame_slice.len;
                                 written.* += frame_slice.len;
-                                this.remoteUsedWindowSize += frame_slice.len;
-                                client.remoteUsedWindowSize += frame_slice.len;
-                                log("dataFrame flushed {} {}", .{ frame_slice.len, frame.end_stream });
 
-                                const padding = this.getPadding(frame_slice.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const padding = this.getPadding(frame_slice.len, max_size);
                                 const payload_size = frame_slice.len + (if (padding != 0) padding + 1 else 0);
+                                this.remoteUsedWindowSize += payload_size;
+                                client.remoteUsedWindowSize += payload_size;
                                 var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                                 if (padding != 0) {
                                     flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -1384,7 +1383,10 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
-        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
+        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject) catch |err| {
+            this.dispatch(.onError, this.globalThis.takeException(err));
+            return;
+        };
 
         if (emitError) {
             if (rstCode != .NO_ERROR) {
@@ -1461,7 +1463,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
-        log("HTTP_FRAME_SETTINGS ack true", .{});
+        log("send HTTP_FRAME_SETTINGS ack true", .{});
         var buffer: [FrameHeader.byteSize]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1688,7 +1690,7 @@ pub const H2FrameParser = struct {
                             this.writeBuffer.clearRetainingCapacity();
                         }
                     }
-                    const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
+                    const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
                     const result = this.call(.onWrite, output_value);
                     if (result.isBoolean() and !result.toBoolean()) {
                         this.has_nonnative_backpressure = true;
@@ -1721,7 +1723,7 @@ pub const H2FrameParser = struct {
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
+                const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
                 const result = this.call(.onWrite, output_value);
                 const code = if (result.isNumber()) result.to(i32) else -1;
                 switch (code) {
@@ -2000,7 +2002,7 @@ pub const H2FrameParser = struct {
             data_needed -= padding;
             log("data received {} {}", .{ padding, payload.len });
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
-            const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
+            const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
             this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
@@ -2048,7 +2050,7 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             const error_code = u32FromBytes(payload[4..8]);
-            const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject);
+            const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.readBuffer.reset();
             this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             return content.end;
@@ -2207,7 +2209,7 @@ pub const H2FrameParser = struct {
             } else {
                 this.outStandingPings -|= 1;
             }
-            const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
+            const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.dispatchWithExtra(.onPing, buffer, JSC.JSValue.jsBoolean(!isNotACK));
             return content.end;
         }
@@ -2386,12 +2388,11 @@ pub const H2FrameParser = struct {
                 if (this.remoteSettings == null) {
 
                     // ok empty settings so default settings
-                    const remoteSettings: FullSettingsPayload = .{};
+                    var remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
 
                     if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                        this.remoteWindowSize = remoteSettings.initialWindowSize;
                         var it = this.streams.valueIterator();
                         while (it.next()) |stream| {
                             if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
@@ -2399,6 +2400,7 @@ pub const H2FrameParser = struct {
                             }
                         }
                     }
+                    this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
                 }
             }
 
@@ -2422,7 +2424,6 @@ pub const H2FrameParser = struct {
             this.remoteSettings = remoteSettings;
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                this.remoteWindowSize = remoteSettings.initialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |stream| {
                     if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
@@ -3258,11 +3259,7 @@ pub const H2FrameParser = struct {
                     max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
                 }
                 const size = @min(payload.len - offset, max_size);
-                defer if (!enqueued) {
-                    log("remoteUsedWindowSize += {} {} {} {}", .{ size, stream.remoteUsedWindowSize, this.remoteUsedWindowSize, this.isServer });
-                    stream.remoteUsedWindowSize += size;
-                    this.remoteUsedWindowSize += size;
-                };
+
                 const slice = payload[offset..(size + offset)];
                 offset += size;
                 const end_stream = offset >= payload.len and can_close;
@@ -3273,8 +3270,10 @@ pub const H2FrameParser = struct {
                     // the callback will only be called after the last frame is sended
                     stream.queueFrame(this, slice, if (offset >= payload.len) callback else .js_undefined, offset >= payload.len and close);
                 } else {
-                    const padding = stream.getPadding(size, max_size - 1);
+                    const padding = stream.getPadding(size, max_size);
                     const payload_size = size + (if (padding != 0) padding + 1 else 0);
+                    stream.remoteUsedWindowSize += payload_size;
+                    this.remoteUsedWindowSize += payload_size;
                     var flags: u8 = if (end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                     if (padding != 0) {
                         flags |= @intFromEnum(DataFrameFlags.PADDED);
@@ -3785,6 +3784,7 @@ pub const H2FrameParser = struct {
 
     pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
+        log("request", .{});
 
         const args_list = callframe.arguments_old(5);
         if (args_list.len < 4) {
@@ -4107,7 +4107,7 @@ pub const H2FrameParser = struct {
             this.rejectedStreams += 1;
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
             if (this.rejectedStreams >= this.maxRejectedStreams) {
-                const chunk = this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
+                const chunk = try this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
                 this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.ENHANCE_YOUR_CALM)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             }
             return JSC.JSValue.jsNumber(stream_id);
@@ -4423,8 +4423,6 @@ pub const H2FrameParser = struct {
         this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
-        this.windowSize = this.localSettings.initialWindowSize;
-        log("windowSize: {d} isServer: {}", .{ this.windowSize, is_server });
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

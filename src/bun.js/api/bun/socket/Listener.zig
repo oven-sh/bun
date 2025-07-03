@@ -90,10 +90,11 @@ pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JS
         return globalObject.throw("Expected \"socket\" object", .{});
     };
 
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+    var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
     var prev_handlers = &this.handlers;
     prev_handlers.unprotect();
+    handlers.withAsyncContextIfNeeded(globalObject);
     this.handlers = handlers; // TODO: this is a memory leak
     this.handlers.protect();
 

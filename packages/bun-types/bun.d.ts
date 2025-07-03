@@ -45,6 +45,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -345,6 +346,17 @@ declare module "bun" {
   }
 
   type WorkerType = "classic" | "module";
+
+  /**
+   * This type-only interface is identical at runtime to {@link ReadableStream},
+   * and exists to document types that do not exist yet in libdom.
+   */
+  interface BunReadableStream<T = any> extends ReadableStream<T> {
+    text(): Promise<string>;
+    bytes(): Promise<Uint8Array>;
+    json(): Promise<any>;
+    blob(): Promise<Blob>;
+  }
 
   interface AbstractWorker {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
@@ -1242,7 +1254,7 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: ReadableStream;
+    readonly readable: BunReadableStream;
 
     // TODO: writable: WritableStream;
 
@@ -3296,7 +3308,7 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T> | HTMLBundle;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>
@@ -5859,7 +5871,7 @@ declare module "bun" {
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime.
+   * Used when importing an HTML file at runtime or at build time.
    *
    * @example
    *
@@ -5867,10 +5879,34 @@ declare module "bun" {
    * import app from "./index.html";
    * ```
    *
-   * Bun.build support for this isn't imlpemented yet.
    */
+
   interface HTMLBundle {
     index: string;
+
+    /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
+    files?: Array<{
+      /** Original source file path. */
+      input?: string;
+      /** Generated output file path (with content hash, if included in naming) */
+      path: string;
+      /** File type/loader used (js, css, html, file, etc.) */
+      loader: Loader;
+      /** Whether this file is an entry point */
+      isEntry: boolean;
+      /** HTTP headers including ETag and Content-Type */
+      headers: {
+        /** ETag for caching */
+        etag: string;
+        /** MIME type with charset */
+        "content-type": string;
+
+        /**
+         * Additional headers may be added in the future.
+         */
+        [key: string]: string;
+      };
+    }>;
   }
 
   /**
@@ -6767,7 +6803,7 @@ declare module "bun" {
        *
        * For stdout and stdin you may pass:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6793,7 +6829,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6805,7 +6841,7 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
+       * - `"pipe"`, `undefined`: The process will have a {@link BunReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
@@ -6968,7 +7004,7 @@ declare module "bun" {
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Uint8Array>
+      ? BunReadableStream
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;

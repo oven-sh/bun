@@ -204,7 +204,7 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
         } else if (name_value.asArrayBuffer(globalThis)) |array_buffer| {
             break :brk JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.byteSlice());
         } else {
-            return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be a string or buffer", .{}).throw();
+            return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be of type string or BufferSource", .{}).throw();
         }
     };
     defer name.deinit();

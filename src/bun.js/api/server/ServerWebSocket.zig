@@ -100,7 +100,7 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
             this_value.unprotect();
         }
 
-        handler.runErrorCallback(vm, globalObject, err_value);
+        handler.runErrorCallback(vm, globalObject, this.getThisValue(), err_value);
     }
 }
 
@@ -160,7 +160,7 @@ pub fn onMessage(
     if (result.isEmptyOrUndefinedOrNull()) return;
 
     if (result.toError()) |err_value| {
-        this.handler.runErrorCallback(vm, globalObject, err_value);
+        this.handler.runErrorCallback(vm, globalObject, this.getThisValue(), err_value);
         return;
     }
 
@@ -203,7 +203,7 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
         const result = corker.result;
 
         if (result.toError()) |err_value| {
-            handler.runErrorCallback(vm, globalObject, err_value);
+            handler.runErrorCallback(vm, globalObject, this.getThisValue(), err_value);
         }
     }
 }
@@ -248,7 +248,7 @@ pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPing error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        handler.runErrorCallback(vm, globalThis, this.getThisValue(), err);
     };
 }
 
@@ -276,7 +276,7 @@ pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) voi
     ) catch |e| {
         const err = globalThis.takeException(e);
         log("onPong error", .{});
-        handler.runErrorCallback(vm, globalThis, err);
+        handler.runErrorCallback(vm, globalThis, this.getThisValue(), err);
     };
 }
 
@@ -329,7 +329,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         ) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
-            handler.runErrorCallback(vm, globalObject, err);
+            handler.runErrorCallback(vm, globalObject, this.getThisValue(), err);
         };
     } else if (signal) |sig| {
         const loop = vm.eventLoop();

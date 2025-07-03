@@ -965,7 +965,14 @@ export class Client extends EventEmitter {
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
       this.suppressInteractivePrompt = true;
-      const hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
+      let retries = 0;
+      let hasVisibleModal = false;
+      while (retries < 5) {
+        hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
+        if (hasVisibleModal) break;
+        await Bun.sleep(200);
+        retries++;
+      }
       this.suppressInteractivePrompt = false;
       if (errors && errors.length > 0) {
         if (!hasVisibleModal) {

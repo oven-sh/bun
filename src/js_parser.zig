@@ -9017,7 +9017,7 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                item_refs.putAssumeCapacity(name, name_loc.*);
+                item_refs.putAssumeCapacity("default", name_loc.*);
             }
             var end: usize = 0;
 

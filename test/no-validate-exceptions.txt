@@ -243,6 +243,7 @@ test/js/bun/util/inspect-error.test.js
 test/js/bun/util/inspect.test.js
 test/js/bun/util/mmap.test.js
 test/js/bun/util/password.test.ts
+test/js/bun/util/randomUUIDv5.test.ts
 test/js/bun/util/readablestreamtoarraybuffer.test.ts
 test/js/bun/util/stringWidth.test.ts
 test/js/bun/util/text-loader.test.ts

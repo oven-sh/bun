@@ -2843,6 +2843,20 @@ export function printEnvironment() {
           spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
         }
       });
+      startGroup("Disk (df)", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
+        }
+      });
+    }
+    if (isWindows) {
+      startGroup("Disk (win)", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
     }
   }
 

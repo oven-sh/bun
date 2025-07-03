@@ -297,6 +297,12 @@ pub noinline fn computeChunks(
     // to look up the path for this chunk to use with the import.
     for (chunks, 0..) |*chunk, chunk_id| {
         if (chunk.entry_point.is_entry_point) {
+            // JS entry points that import CSS files generate two chunks, a JS chunk
+            // and a CSS chunk. Don't link the CSS chunk to the JS file since the CSS
+            // chunk is secondary (the JS chunk is primary).
+            if (chunk.content == .css and css_asts[chunk.entry_point.source_index] == null) {
+                continue;
+            }
             entry_point_chunk_indices[chunk.entry_point.source_index] = @intCast(chunk_id);
         }
     }

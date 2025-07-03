@@ -118,32 +118,15 @@ pub const PmVersionCommand = struct {
         const new_version_str = try calculateNewVersion(ctx.allocator, current_version orelse "0.0.0", version_type, new_version, pm.options.preid, package_json_dir);
         defer ctx.allocator.free(new_version_str);
 
-        {
-            if (current_version) |version| {
-                if (!pm.options.allow_same_version and strings.eql(version, new_version_str)) {
-                    Output.errGeneric("Version not changed", .{});
-                    Global.exit(1);
-                }
-
-                if (json.asProperty("version")) |version_prop| {
-                    version_prop.expr.data.e_string.data = try ctx.allocator.dupe(u8, new_version_str);
-                } else {
-                    unreachable;
-                }
-            } else {
-                const properties = json.data.e_object.properties.slice();
-                var new_properties = try ctx.allocator.alloc(bun.JSAst.G.Property, properties.len + 1);
-                @memcpy(new_properties[0..properties.len], properties);
-                new_properties[properties.len] = .{
-                    .key = bun.JSAst.Expr.allocate(ctx.allocator, bun.JSAst.E.String, .{
-                        .data = try ctx.allocator.dupe(u8, "version"),
-                    }, bun.logger.Loc.Empty),
-                    .value = bun.JSAst.Expr.allocate(ctx.allocator, bun.JSAst.E.String, .{
-                        .data = try ctx.allocator.dupe(u8, new_version_str),
-                    }, bun.logger.Loc.Empty),
-                };
-                json.data.e_object.properties = bun.JSAst.G.Property.List.init(new_properties);
+        if (current_version) |version| {
+            if (!pm.options.allow_same_version and strings.eql(version, new_version_str)) {
+                Output.errGeneric("Version not changed", .{});
+                Global.exit(1);
             }
+        }
+
+        {
+            try json.data.e_object.putString(ctx.allocator, "version", new_version_str);
 
             var buffer_writer = JSPrinter.BufferWriter.init(ctx.allocator);
             buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
@@ -159,7 +142,7 @@ pub const PmVersionCommand = struct {
                     .mangled_props = null,
                 },
             ) catch |err| {
-                Output.errGeneric("Failed to print package.json: {s}", .{@errorName(err)});
+                Output.errGeneric("Failed to save package.json: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
 

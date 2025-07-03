@@ -9,12 +9,7 @@ import { parseArgs } from "node:util";
 // -c <URL to the bun-cores.tar.gz.age artifact for the appropriate platform>
 // -d <debugger> (default: lldb)
 const {
-  values: {
-    pid: stringPid,
-    ["build-url"]: buildUrl,
-    ["cores-url"]: coresUrl,
-    debugger: debuggerPath,
-  },
+  values: { pid: stringPid, ["build-url"]: buildUrl, ["cores-url"]: coresUrl, debugger: debuggerPath },
 } = parseArgs({
   options: {
     pid: { type: "string", short: "p" },

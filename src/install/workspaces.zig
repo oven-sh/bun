@@ -17,7 +17,6 @@ const Semver = bun.Semver;
 const String = Semver.String;
 const invalid_package_id = install.invalid_package_id;
 const invalid_dependency_id = install.invalid_dependency_id;
-const FileSystem = bun.fs.FileSystem;
 const string = bun.string;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;

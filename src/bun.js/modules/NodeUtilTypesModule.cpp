@@ -193,7 +193,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = JSC::getVM(globalObject);
     auto proto = function->getPrototype(globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));

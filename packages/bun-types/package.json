@@ -19,7 +19,11 @@
   "dependencies": {
     "@types/node": "*"
   },
+  "peerDependencies": {
+    "@types/react": "^19"
+  },
   "devDependencies": {
+    "@types/react": "^19",
     "typescript": "^5.0.2"
   },
   "scripts": {

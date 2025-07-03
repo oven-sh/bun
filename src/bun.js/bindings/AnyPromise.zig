@@ -81,7 +81,7 @@ pub const AnyPromise = union(enum) {
         };
 
         var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject, @src(), .enabled);
+        scope.init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         JSC__AnyPromise__wrap(globalObject, this.asValue(), &ctx, @ptrCast(&Wrapper.call));

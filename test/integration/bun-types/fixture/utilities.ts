@@ -26,7 +26,7 @@ export function expectType<T>(arg: T): {
    * expectType(my_Uint8Array).is<Uint8Array>(); // pass
    * ```
    */
-  is<X extends T>(...args: IfEquals<X, T> extends true ? [] : [expected: X, butGot: T]): void;
+  is<X extends T>(...args: IfEquals<X, T> extends true ? [] : [expected: X, but_got: T]): void;
 };
 export function expectType<T>(arg?: T) {
   return { is() {} };

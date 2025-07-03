@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const AuthenticationState = union(enum) {
     pending: void,
     none: void,
@@ -17,5 +15,5 @@ pub const AuthenticationState = union(enum) {
         this.* = .{ .none = {} };
     }
 };
-
+// @sortImports
 const SASL = @import("./SASL.zig");

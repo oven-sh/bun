@@ -734,8 +734,14 @@ src/sourcemap/sourcemap.zig
 src/sourcemap/VLQ.zig
 src/sql/postgres.zig
 src/sql/postgres/AnyPostgresError.zig
+src/sql/postgres/AuthenticationState.zig
+src/sql/postgres/CommandTag.zig
+src/sql/postgres/ConnectionFlags.zig
 src/sql/postgres/Data.zig
 src/sql/postgres/DataCell.zig
+src/sql/postgres/DebugSocketMonitorReader.zig
+src/sql/postgres/DebugSocketMonitorWriter.zig
+src/sql/postgres/ObjectIterator.zig
 src/sql/postgres/PostgresCachedStructure.zig
 src/sql/postgres/PostgresProtocol.zig
 src/sql/postgres/PostgresRequest.zig
@@ -747,8 +753,11 @@ src/sql/postgres/PostgresSQLStatement.zig
 src/sql/postgres/PostgresTypes.zig
 src/sql/postgres/QueryBindingIterator.zig
 src/sql/postgres/Signature.zig
+src/sql/postgres/SASL.zig
 src/sql/postgres/SocketMonitor.zig
 src/sql/postgres/SSLMode.zig
+src/sql/postgres/Status.zig
+src/sql/postgres/TLSStatus.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig
 src/string_immutable.zig

@@ -576,14 +576,10 @@ pub const PmVersionCommand = struct {
             },
         }
 
-        const commit_message =
-            if (custom_message) |msg|
-                if (strings.indexOf(msg, "%s")) |_|
-                    try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
-                else
-                    try allocator.dupe(u8, msg)
-            else
-                try std.fmt.allocPrint(allocator, "v{s}", .{version});
+        const commit_message = if (custom_message) |msg|
+            try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
+        else
+            try std.fmt.allocPrint(allocator, "v{s}", .{version});
         defer allocator.free(commit_message);
 
         const commit_proc = bun.spawnSync(&.{

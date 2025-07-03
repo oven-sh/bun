@@ -28,12 +28,6 @@ using namespace v8;
 
 namespace v8tests {
 
-static void run_gc(const FunctionCallbackInfo<Value> &info) {
-  auto *isolate = info.GetIsolate();
-  auto context = isolate->GetCurrentContext();
-  (void)info[0].As<Function>()->Call(context, Null(isolate), 0, nullptr);
-}
-
 static void log_buffer(const char *buf, int len) {
   for (int i = 0; i < len; i++) {
     printf("buf[%d] = 0x%02x\n", i, buf[i]);
@@ -662,7 +656,6 @@ void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "Boolean property not strictly equal after Get");
   }
 
-  printf("✅ Object::Get(context, key) test passed\n");
   return ok(info);
 }
 
@@ -730,7 +723,6 @@ void test_v8_object_get_by_index(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "Index 4 value not strictly equal after Get");
   }
 
-  printf("✅ Object::Get(context, index) test passed\n");
   return ok(info);
 }
 
@@ -815,7 +807,6 @@ void test_v8_strict_equals(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "undefined values should be strictly equal");
   }
 
-  printf("✅ Value::StrictEquals() test passed\n");
   return ok(info);
 }
 
@@ -854,7 +845,6 @@ void test_v8_array_new_with_length(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "Array with negative length should have length 0");
   }
 
-  printf("✅ Array::New(isolate, length) test passed\n");
   return ok(info);
 }
 
@@ -862,7 +852,6 @@ void test_v8_array_new_with_length(const FunctionCallbackInfo<Value> &info) {
 void test_v8_array_length(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Array::Length()...\n");
   Isolate *isolate = info.GetIsolate();
-  Local<Context> context = isolate->GetCurrentContext();
 
   // Create arrays with different lengths and verify
   Local<Array> arr1 = Array::New(isolate, 0);
@@ -893,7 +882,6 @@ void test_v8_array_length(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "Array from elements should have length 3");
   }
 
-  printf("✅ Array::Length() test passed\n");
   return ok(info);
 }
 
@@ -912,7 +900,7 @@ void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
 
   // Test normal iteration
   struct IterationData {
-    int count;
+    uint32_t count;
     bool values_match;
     Local<Value> *expected_values;
   } iter_data = {0, true, elements};
@@ -980,7 +968,6 @@ void test_v8_array_iterate(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "Should have stopped at index 2");
   }
 
-  printf("✅ Array::Iterate() test passed\n");
   return ok(info);
 }
 
@@ -1054,7 +1041,6 @@ void test_v8_maybe_local(const FunctionCallbackInfo<Value> &info) {
     return fail(info, "ToLocal should set output to nullptr when empty");
   }
 
-  printf("✅ MaybeLocal test passed\n");
   return ok(info);
 }
 

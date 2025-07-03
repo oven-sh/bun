@@ -1583,16 +1583,20 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode)
+void throwBoringSSLError(JSGlobalObject* globalObject, int errorCode)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char buf[256] = { 0 };
     ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
     auto message = String::fromUTF8(buf);
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
 }
 
-void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+void throwCryptoOperationFailed(JSGlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
 }
 

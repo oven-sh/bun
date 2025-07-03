@@ -6,12 +6,12 @@ describe("randomUUIDv5", () => {
   const urlNamespace = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
 
   test("basic functionality", () => {
-    const uuid = Bun.randomUUIDv5("www.example.com", dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const result = Bun.randomUUIDv5("www.example.com", dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
     // Check that it's version 5
-    expect(uuid[14]).toBe("5");
+    expect(result[14]).toBe("5");
   });
 
   test("deterministic output", () => {
@@ -44,27 +44,27 @@ describe("randomUUIDv5", () => {
   });
 
   test("empty name", () => {
-    const uuid = Bun.randomUUIDv5("", dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+    const result = Bun.randomUUIDv5("", dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result[14]).toBe("5");
   });
 
   test("long name", () => {
     const longName = "a".repeat(1000);
-    const uuid = Bun.randomUUIDv5(longName, dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+    const result = Bun.randomUUIDv5(longName, dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result[14]).toBe("5");
   });
 
   test("unicode name", () => {
     const unicodeName = "测试.example.com";
-    const uuid = Bun.randomUUIDv5(unicodeName, dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+    const result = Bun.randomUUIDv5(unicodeName, dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result[14]).toBe("5");
 
     // Should be deterministic
     const uuid2 = Bun.randomUUIDv5(unicodeName, dnsNamespace);
-    expect(uuid).toBe(uuid2);
+    expect(result).toBe(uuid2);
   });
 
   test("name as ArrayBuffer", () => {
@@ -108,8 +108,8 @@ describe("randomUUIDv5", () => {
   });
 
   test("variant bits are correct", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace);
-    const bytes = uuid.replace(/-/g, "");
+    const result = Bun.randomUUIDv5("test", dnsNamespace);
+    const bytes = result.replace(/-/g, "");
 
     // Extract the variant byte (17th hex character, index 16)
     const variantByte = parseInt(bytes.substr(16, 2), 16);
@@ -119,8 +119,8 @@ describe("randomUUIDv5", () => {
   });
 
   test("version bits are correct", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace);
-    const bytes = uuid.replace(/-/g, "");
+    const result = Bun.randomUUIDv5("test", dnsNamespace);
+    const bytes = result.replace(/-/g, "");
 
     // Extract the version byte (13th hex character, index 12)
     const versionByte = parseInt(bytes.substr(12, 2), 16);
@@ -152,9 +152,9 @@ describe("randomUUIDv5", () => {
     expect(oidUuid).not.toBe(x500Uuid);
 
     // All should be valid UUIDs
-    [dnsUuid, urlUuid, oidUuid, x500Uuid].forEach(uuid => {
-      expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-      expect(uuid[14]).toBe("5");
+    [dnsUuid, urlUuid, oidUuid, x500Uuid].forEach(result => {
+      expect(result).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(result[14]).toBe("5");
     });
   });
 
@@ -175,27 +175,27 @@ describe("randomUUIDv5", () => {
   });
 
   test("hex encoding (default)", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace);
-    expect(uuid).toMatch(/^[0-9a-f-]+$/);
-    expect(uuid.length).toBe(36); // Standard UUID string length
+    const result = Bun.randomUUIDv5("test", dnsNamespace);
+    expect(result).toMatch(/^[0-9a-f-]+$/);
+    expect(result.length).toBe(36); // Standard UUID string length
   });
 
   test("buffer encoding", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace, "buffer");
-    expect(uuid).toBeInstanceOf(Uint8Array);
-    expect(uuid.byteLength).toBe(16);
+    const result = Bun.randomUUIDv5("test", dnsNamespace, "buffer");
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.byteLength).toBe(16);
   });
 
   test("base64 encoding", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace, "base64");
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid).toMatch(/^[A-Za-z0-9+/=]+$/);
+    const result = Bun.randomUUIDv5("test", dnsNamespace, "base64");
+    expect(result).toBeTypeOf("string");
+    expect(result).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
 
   test("base64url encoding", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace, "base64url");
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid).toMatch(/^[A-Za-z0-9_-]+$/);
+    const result = Bun.randomUUIDv5("test", dnsNamespace, "base64url");
+    expect(result).toBeTypeOf("string");
+    expect(result).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
   test("namespace as Buffer", () => {
@@ -220,10 +220,75 @@ describe("randomUUIDv5", () => {
     expect(uuid1).toBe(uuid2);
   });
 
-  test("empty name", () => {
-    const uuid = Bun.randomUUIDv5("", dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+  // Ported v5 tests from uuid library test suite
+  test("v5 - hello.example.com with DNS namespace", () => {
+    expect(Bun.randomUUIDv5("hello.example.com", dnsNamespace)).toBe("fdda765f-fc57-5604-a269-52a7df8164ec");
+  });
+
+  test("v5 - http://example.com/hello with URL namespace", () => {
+    expect(Bun.randomUUIDv5("http://example.com/hello", urlNamespace)).toBe("3bbcee75-cecc-5b56-8031-b6641c1ed1f1");
+  });
+
+  test("v5 - hello with custom namespace", () => {
+    expect(Bun.randomUUIDv5("hello", "0f5abcd1-c194-47f3-905b-2df7263a084b")).toBe(
+      "90123e1c-7512-523e-bb28-76fab9f2f73d",
+    );
+  });
+
+  test("v5 namespace.toUpperCase", () => {
+    expect(Bun.randomUUIDv5("hello.example.com", dnsNamespace.toUpperCase())).toBe(
+      "fdda765f-fc57-5604-a269-52a7df8164ec",
+    );
+    expect(Bun.randomUUIDv5("http://example.com/hello", urlNamespace.toUpperCase())).toBe(
+      "3bbcee75-cecc-5b56-8031-b6641c1ed1f1",
+    );
+    expect(Bun.randomUUIDv5("hello", "0f5abcd1-c194-47f3-905b-2df7263a084b".toUpperCase())).toBe(
+      "90123e1c-7512-523e-bb28-76fab9f2f73d",
+    );
+  });
+
+  test("v5 namespace string validation", () => {
+    expect(() => {
+      Bun.randomUUIDv5("hello.example.com", "zyxwvuts-rqpo-nmlk-jihg-fedcba000000");
+    }).toThrow();
+
+    expect(() => {
+      Bun.randomUUIDv5("hello.example.com", "invalid uuid value");
+    }).toThrow();
+
+    expect(Bun.randomUUIDv5("hello.example.com", "00000000-0000-0000-0000-000000000000")).toBeTypeOf("string");
+  });
+
+  test("v5 namespace buffer validation", () => {
+    expect(() => {
+      Bun.randomUUIDv5("hello.example.com", new Uint8Array(15));
+    }).toThrow();
+
+    expect(() => {
+      Bun.randomUUIDv5("hello.example.com", new Uint8Array(17));
+    }).toThrow();
+
+    expect(Bun.randomUUIDv5("hello.example.com", new Uint8Array(16).fill(0))).toBeTypeOf("string");
+  });
+
+  test("v5 fill buffer", () => {
+    const expectedUuid = Buffer.from([
+      0xfd, 0xda, 0x76, 0x5f, 0xfc, 0x57, 0x56, 0x04, 0xa2, 0x69, 0x52, 0xa7, 0xdf, 0x81, 0x64, 0xec,
+    ]);
+
+    const result = Bun.randomUUIDv5("hello.example.com", dnsNamespace, "buffer");
+    expect(result.toString("hex")).toEqual(expectedUuid.toString("hex"));
+  });
+
+  test("v5 undefined/null", () => {
+    // @ts-expect-error testing invalid input
+    expect(() => Bun.randomUUIDv5()).toThrow();
+    // @ts-expect-error testing invalid input
+    expect(() => Bun.randomUUIDv5("hello")).toThrow();
+    // @ts-expect-error testing invalid input
+    expect(() => Bun.randomUUIDv5("hello.example.com", undefined)).toThrow();
+    // @ts-expect-error testing invalid input
+    expect(() => Bun.randomUUIDv5("hello.example.com", null)).toThrow();
   });
 
   test("RFC 4122 test vectors", () => {
@@ -258,35 +323,41 @@ describe("randomUUIDv5", () => {
 
   test("long names", () => {
     const longName = "a".repeat(10000);
-    const uuid = Bun.randomUUIDv5(longName, dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+    const result = Bun.randomUUIDv5(longName, dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result[14]).toBe("5");
   });
 
   test("unicode names", () => {
     const unicodeName = "测试🌟";
-    const uuid = Bun.randomUUIDv5(unicodeName, dnsNamespace);
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid[14]).toBe("5");
+    const result = Bun.randomUUIDv5(unicodeName, dnsNamespace);
+    expect(result).toBeTypeOf("string");
+    expect(result[14]).toBe("5");
 
     // Should be deterministic
     const uuid2 = Bun.randomUUIDv5(unicodeName, dnsNamespace);
-    expect(uuid).toBe(uuid2);
+    expect(result).toBe(uuid2);
+
+    expect(uuid.v5(unicodeName, dnsNamespace)).toBe(result);
   });
 
   test("variant bits are set correctly", () => {
-    const uuid = Bun.randomUUIDv5("test", dnsNamespace, "buffer");
+    const result = Bun.randomUUIDv5("test", dnsNamespace, "buffer");
 
     // Check variant bits (bits 6-7 of clock_seq_hi_and_reserved should be 10)
-    const variantByte = uuid[8];
+    const variantByte = result[8];
     const variantBits = (variantByte & 0xc0) >> 6;
     expect(variantBits).toBe(2); // Binary 10
+
+    expect(uuid.v5("test", dnsNamespace).replace(/-/g, "")).toEqual(result.toString("hex"));
   });
 
   test("url namespace", () => {
-    const uuid = Bun.randomUUIDv5("test", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
-    expect(uuid).toBeTypeOf("string");
-    expect(uuid).toEqual("da5b8893-d6ca-5c1c-9a9c-91f40a2a3649");
+    const result = Bun.randomUUIDv5("test", "6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+    expect(result).toBeTypeOf("string");
+    expect(result).toEqual("da5b8893-d6ca-5c1c-9a9c-91f40a2a3649");
+
+    expect(uuid.v5("test", urlNamespace)).toEqual(result);
   });
 
   test("dns namespace", () => {

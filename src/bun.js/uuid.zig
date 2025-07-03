@@ -211,46 +211,49 @@ pub const UUID7 = struct {
 pub const UUID5 = struct {
     bytes: [16]u8,
 
+    pub const namespaces = struct {
+        pub const dns: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const url: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const oid: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+        pub const x500: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
+
+        pub fn get(namespace: []const u8) ?*const [16]u8 {
+            if (bun.strings.eqlCaseInsensitiveASCII(namespace, "dns", true)) {
+                return dns;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "url", true)) {
+                return url;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "oid", true)) {
+                return oid;
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "x500", true)) {
+                return x500;
+            }
+
+            return null;
+        }
+    };
+
     /// Generate a UUID v5 from a namespace UUID and name data
     pub fn init(namespace: *const [16]u8, name: []const u8) UUID5 {
-        var sha1_hasher = bun.sha.SHA1.init();
-        defer sha1_hasher.deinit();
+        const hash = brk: {
+            var sha1_hasher = bun.sha.SHA1.init();
+            defer sha1_hasher.deinit();
 
-        // Convert namespace to network byte order and hash it
-        var net_namespace: [16]u8 = undefined;
-        
-        // time_low (bytes 0-3) - convert to big-endian
-        net_namespace[0] = namespace[3];
-        net_namespace[1] = namespace[2];
-        net_namespace[2] = namespace[1];
-        net_namespace[3] = namespace[0];
-        
-        // time_mid (bytes 4-5) - convert to big-endian  
-        net_namespace[4] = namespace[5];
-        net_namespace[5] = namespace[4];
-        
-        // time_hi_and_version (bytes 6-7) - convert to big-endian
-        net_namespace[6] = namespace[7];
-        net_namespace[7] = namespace[6];
-        
-        // clock_seq and node (bytes 8-15) - already in network order
-        @memcpy(net_namespace[8..16], namespace[8..16]);
+            sha1_hasher.update(namespace);
+            sha1_hasher.update(name);
 
-        // Hash namespace + name
-        sha1_hasher.update(&net_namespace);
-        sha1_hasher.update(name);
+            var hash: [20]u8 = undefined;
+            sha1_hasher.final(&hash);
 
-        var hash: [20]u8 = undefined;
-        sha1_hasher.final(&hash);
+            break :brk hash;
+        };
 
-        var bytes: [16]u8 = undefined;
-        // Take first 16 bytes of the 20-byte SHA-1 hash
-        @memcpy(bytes[0..16], hash[0..16]);
+        // Take first 16 bytes of the hash
+        var bytes: [16]u8 = hash[0..16].*;
 
         // Set version to 5 (bits 12-15 of time_hi_and_version)
         bytes[6] = (bytes[6] & 0x0F) | 0x50;
 
-        // Set variant bits (bits 6-7 of clock_seq_hi_and_reserved)  
+        // Set variant bits (bits 6-7 of clock_seq_hi_and_reserved)
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
 
         return UUID5{
@@ -285,13 +288,13 @@ pub const UUID5 = struct {
 pub const namespaces = struct {
     /// DNS namespace: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
     pub const DNS: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
-    
-    /// URL namespace: 6ba7b811-9dad-11d1-80b4-00c04fd430c8  
+
+    /// URL namespace: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     pub const URL: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
-    
+
     /// ISO OID namespace: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
     pub const OID: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
-    
+
     /// X.500 DN namespace: 6ba7b814-9dad-11d1-80b4-00c04fd430c8
     pub const X500: [16]u8 = .{ 0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
 };

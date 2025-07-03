@@ -7717,6 +7717,45 @@ declare module "bun" {
   ): Buffer;
 
   /**
+   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "dns");
+   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   *
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url");
+   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding?: "hex" | "base64" | "base64url",
+  ): string;
+
+  /**
+   * Generate a UUIDv5 as a Buffer
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding: "buffer",
+  ): Buffer;
+
+  /**
    * Types for `bun.lock`
    */
   type BunLockFile = {

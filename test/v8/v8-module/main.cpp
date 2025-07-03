@@ -848,6 +848,26 @@ void test_v8_array_new_with_length(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_array_new_with_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  uint32_t i = 0;
+
+  // TODO: check returning empty from the callback (we can't right now because
+  // V8 asserts that you have also thrown an exception when you do that, but Bun
+  // doesn't implement the V8 APIs to throw exceptions
+  Local<Array> array =
+      Array::New(context, 10, [&i, isolate]() -> MaybeLocal<Value> {
+        return Number::New(isolate, ++i);
+      }).ToLocalChecked();
+
+  LOG_EXPR(i);
+  LOG_EXPR(array->Length());
+  for (i = 0; i < 10; i++) {
+    LOG_EXPR(describe(isolate, array->Get(context, i).ToLocalChecked()));
+  }
+}
+
 // Test Array::Length method
 void test_v8_array_length(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Array::Length()...\n");
@@ -1082,6 +1102,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_strict_equals", test_v8_strict_equals);
   NODE_SET_METHOD(exports, "test_v8_array_new_with_length",
                   test_v8_array_new_with_length);
+  NODE_SET_METHOD(exports, "test_v8_array_new_with_callback",
+                  test_v8_array_new_with_callback);
   NODE_SET_METHOD(exports, "test_v8_array_length", test_v8_array_length);
   NODE_SET_METHOD(exports, "test_v8_array_iterate", test_v8_array_iterate);
   NODE_SET_METHOD(exports, "test_v8_maybe_local", test_v8_maybe_local);

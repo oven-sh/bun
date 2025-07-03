@@ -198,6 +198,9 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can create an array with a specific length", async () => {
       await checkSameOutput("test_v8_array_new_with_length", []);
     });
+    it("can create an array from a callback", async () => {
+      await checkSameOutput("test_v8_array_new_with_callback", []);
+    });
     it("correctly reports array length", async () => {
       await checkSameOutput("test_v8_array_length", []);
     });

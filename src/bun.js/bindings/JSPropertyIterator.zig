@@ -116,12 +116,7 @@ const JSPropertyIteratorImpl = opaque {
         own_properties_only: bool,
         only_non_index_properties: bool,
     ) bun.JSError!?*JSPropertyIteratorImpl {
-        var scope: JSC.CatchScope = undefined;
-        scope.init(globalObject, @src());
-        defer scope.deinit();
-        const iter = Bun__JSPropertyIterator__create(globalObject, object.toJS(), count, own_properties_only, only_non_index_properties);
-        try scope.returnIfException();
-        return iter;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__JSPropertyIterator__create, .{ globalObject, object.toJS(), count, own_properties_only, only_non_index_properties });
     }
 
     pub const deinit = Bun__JSPropertyIterator__deinit;

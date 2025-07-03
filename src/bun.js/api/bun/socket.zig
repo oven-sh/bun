@@ -1362,6 +1362,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var prev_handlers = this.handlers;
             prev_handlers.unprotect();
             this.handlers.* = handlers; // TODO: this is a memory leak
+            this.handlers.withAsyncContextIfNeeded(globalObject);
             this.handlers.protect();
 
             return .js_undefined;
@@ -1404,7 +1405,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -1459,6 +1460,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
             var tls = bun.new(TLSSocket, .{
@@ -1980,6 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
+    handlers_ptr.withAsyncContextIfNeeded(globalObject);
     handlers_ptr.protect();
     var tls = bun.new(TLSSocket, .{
         .ref_count = .init(),

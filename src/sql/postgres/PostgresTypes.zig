@@ -5,8 +5,6 @@ const Data = postgres.Data;
 const String = bun.String;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const short = postgres.short;
-const int4 = postgres.int4;
 const AnyPostgresError = postgres.AnyPostgresError;
 
 //     select b.typname,  b.oid, b.typarray
@@ -552,3 +550,10 @@ pub const bytea = struct {
         return JSValue.createBuffer(globalObject, value.slice(), null);
     }
 };
+
+pub const int4 = u32;
+pub const PostgresInt32 = int4;
+pub const int8 = i64;
+pub const PostgresInt64 = int8;
+pub const short = u16;
+pub const PostgresShort = u16;

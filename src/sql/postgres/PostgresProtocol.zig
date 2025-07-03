@@ -1,20 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const postgres = bun.api.Postgres;
-const Data = postgres.Data;
-const protocol = @This();
-const PostgresInt32 = postgres.PostgresInt32;
-const PostgresShort = postgres.PostgresShort;
-const String = bun.String;
-const debug = postgres.debug;
-const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const short = postgres.short;
-const int4 = postgres.int4;
-const int8 = postgres.int8;
-const PostgresInt64 = postgres.PostgresInt64;
-const types = postgres.types;
-const AnyPostgresError = postgres.AnyPostgresError;
 pub const ArrayList = struct {
     array: *std.ArrayList(u8),
 
@@ -1549,3 +1532,20 @@ pub const CopyOutResponse = struct {
 fn TODO(comptime Type: type) !void {
     bun.Output.panic("TODO: not implemented {s}", .{bun.meta.typeBaseName(@typeName(Type))});
 }
+const std = @import("std");
+const bun = @import("bun");
+const postgres = bun.api.Postgres;
+const Data = postgres.Data;
+const protocol = @This();
+const PostgresInt32 = postgres.PostgresInt32;
+const PostgresShort = postgres.PostgresShort;
+const String = bun.String;
+const JSValue = JSC.JSValue;
+const JSC = bun.JSC;
+const short = postgres.short;
+const int4 = postgres.int4;
+const int8 = postgres.int8;
+const PostgresInt64 = postgres.PostgresInt64;
+const types = postgres.types;
+const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;
+const debug = bun.Output.scoped(.Postgres, false);

@@ -13,7 +13,6 @@ const {
     pid: stringPid,
     ["build-url"]: buildUrl,
     ["cores-url"]: coresUrl,
-    ["identity-file"]: identityFile,
     debugger: debuggerPath,
   },
 } = parseArgs({
@@ -21,7 +20,6 @@ const {
     pid: { type: "string", short: "p" },
     ["build-url"]: { type: "string", short: "b" },
     ["cores-url"]: { type: "string", short: "c" },
-    ["identity-file"]: { type: "string", short: "i" },
     debugger: { type: "string", short: "d", default: "lldb" },
   },
 });

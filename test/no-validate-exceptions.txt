@@ -155,6 +155,7 @@ test/js/bun/s3/s3-list-objects.test.ts
 test/js/bun/s3/s3-storage-class.test.ts
 test/js/bun/s3/s3.test.ts
 test/js/bun/shell/bunshell-default.test.ts
+test/js/bun/shell/epipe.test.ts
 test/js/bun/shell/bunshell-file.test.ts
 test/js/bun/shell/bunshell-instance.test.ts
 test/js/bun/shell/commands/basename.test.ts

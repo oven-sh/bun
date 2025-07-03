@@ -97,7 +97,7 @@ const uniqueDirectories = Array.from(new Set(directories));
 
 describe("build", () => {
   for (const dir of uniqueDirectories) {
-    it(`${dir}`, async () => {
+    it(`${dir.slice(import.meta.dir.length + 1)}`, async () => {
       const child = spawn({
         cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max"],
         cwd: dir,

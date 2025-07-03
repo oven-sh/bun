@@ -17,6 +17,7 @@ const Semver = bun.Semver;
 const String = Semver.String;
 const invalid_package_id = install.invalid_package_id;
 const invalid_dependency_id = install.invalid_dependency_id;
+const FileSystem = bun.fs.FileSystem;
 const string = bun.string;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const Tree = Lockfile.Tree;
@@ -387,10 +388,13 @@ pub fn installIsolatedPackages(
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
+        var res_fmt_buf: std.ArrayList(u8) = .init(lockfile.allocator);
+        defer res_fmt_buf.deinit();
+
         const nodes_slice = nodes.slice();
         const node_pkg_ids = nodes_slice.items(.pkg_id);
         const node_dep_ids = nodes_slice.items(.dep_id);
-        const node_peers = nodes_slice.items(.peers);
+        const node_peers: []const Store.Node.Peers = nodes_slice.items(.peers);
         const node_nodes = nodes_slice.items(.nodes);
 
         var store: Store.Entry.List = .empty;
@@ -470,6 +474,23 @@ pub fn installIsolatedPackages(
                 // nothing matched - create a new entry
             }
 
+            const new_entry_peer_hash: Store.Entry.PeerHash = peer_hash: {
+                const peers = node_peers[entry.node_id.get()];
+                if (peers.len() == 0) {
+                    break :peer_hash .none;
+                }
+                var hasher = bun.Wyhash11.init(0);
+                for (peers.slice()) |peer_ids| {
+                    const pkg_name = pkg_names[peer_ids.pkg_id];
+                    hasher.update(pkg_name.slice(string_buf));
+                    const pkg_res = pkg_resolutions[peer_ids.pkg_id];
+                    res_fmt_buf.clearRetainingCapacity();
+                    try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                    hasher.update(res_fmt_buf.items);
+                }
+                break :peer_hash .from(hasher.final());
+            };
+
             const new_entry_dep_id = node_dep_ids[entry.node_id.get()];
 
             const new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
@@ -487,9 +508,10 @@ pub fn installIsolatedPackages(
                 .node_id = entry.node_id,
                 .dependencies = new_entry_dependencies,
                 .parents = new_entry_parents,
+                .peer_hash = new_entry_peer_hash,
             };
 
-            const entry_id: Store.Entry.Id = .from(@intCast(store.len));
+            const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {
@@ -505,13 +527,13 @@ pub fn installIsolatedPackages(
                     .dependencies = dependencies,
                 };
                 entry_dependencies[entry_parent_id].insertAssumeCapacity(
-                    .{ .entry_id = entry_id, .dep_id = new_entry_dep_id },
+                    .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                     &ctx,
                 );
             }
 
             try dedupe_entry.value_ptr.append(lockfile.allocator, .{
-                .entry_id = entry_id,
+                .entry_id = new_entry_id,
                 .dep_id = new_entry_dep_id,
                 .peers = node_peers[entry.node_id.get()],
             });
@@ -519,7 +541,7 @@ pub fn installIsolatedPackages(
             for (node_nodes[entry.node_id.get()].items) |node_id| {
                 try entry_queue.writeItem(.{
                     .node_id = node_id,
-                    .entry_parent_id = entry_id,
+                    .entry_parent_id = new_entry_id,
                 });
             }
         }
@@ -741,7 +763,7 @@ pub fn installIsolatedPackages(
                 },
                 .root => {
                     if (entry_id == .root) {
-                        entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                        entry_steps[entry_id.get()].store(.@"symlink dependencies", .monotonic);
                         installer.startTask(entry_id);
                         continue;
                     }
@@ -751,7 +773,7 @@ pub fn installIsolatedPackages(
                 },
                 .workspace => {
                     if (!(try seen_workspace_ids.getOrPut(lockfile.allocator, pkg_id)).found_existing) {
-                        entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                        entry_steps[entry_id.get()].store(.@"symlink dependencies", .monotonic);
                         installer.startTask(entry_id);
                         continue;
                     }
@@ -1383,7 +1405,7 @@ pub const Store = struct {
                     }
                 }
 
-                entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
+                entry_steps[entry_id.get()].store(.@"symlink dependency binaries", .monotonic);
                 this.resumeTask(entry_id);
             }
         }
@@ -1405,10 +1427,11 @@ pub const Store = struct {
 
             pub const Step = enum(u8) {
                 link_package,
+                @"symlink dependencies",
 
                 // blocked can only happen here
 
-                @"symlink dependencies and their binaries",
+                @"symlink dependency binaries",
                 @"run preinstall",
 
                 // pause here while preinstall runs
@@ -1479,7 +1502,6 @@ pub const Store = struct {
                 const nodes = installer.store.nodes.slice();
                 const node_pkg_ids = nodes.items(.pkg_id);
                 const node_dep_ids = nodes.items(.dep_id);
-                const node_peers = nodes.items(.peers);
 
                 const node_id = entry_node_ids[this.entry_id.get()];
                 const pkg_id = node_pkg_ids[node_id.get()];
@@ -1683,11 +1705,14 @@ pub const Store = struct {
 
                         unreachable;
                     },
-                    .@"symlink dependencies and their binaries" => {
+                    .@"symlink dependencies" => {
+                        installer.linkDependencies(this.entry_id);
+                        continue :next_step this.nextStep();
+                    },
+                    .@"symlink dependency binaries" => {
                         {
-                            // before dependencies can be symlinked to the node_modules for this package, the dependencies
-                            // need to have their binaries linked. Before their binaries can be linked, they need to run their
-                            // preinstall scripts. Stop here if any dependencies are not `done`
+                            // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
+                            // of this entry are not finished. Do not count cycles towards blocking.
 
                             var parent_dedupe: std.AutoArrayHashMap(Entry.Id, void) = .init(bun.default_allocator);
                             defer parent_dedupe.deinit();
@@ -1706,7 +1731,6 @@ pub const Store = struct {
                             }
                         }
 
-                        installer.linkDependencies(this.entry_id);
                         installer.linkDependencyBins(this.entry_id);
 
                         switch (pkg_res.tag) {
@@ -1726,7 +1750,7 @@ pub const Store = struct {
                             .local_tarball,
                             .remote_tarball,
                             => hoisted_symlink: {
-                                const string_buf = installer.lockfile.buffers.string_bytes.items;
+                                const string_buf = lockfile.buffers.string_bytes.items;
 
                                 var hidden_hoisted_node_modules: bun.RelPath(.{}) = .init();
                                 defer hidden_hoisted_node_modules.deinit();
@@ -1744,18 +1768,10 @@ pub const Store = struct {
                                     target.append("..");
                                 }
 
-                                {
-                                    const peers = node_peers[node_id.get()];
-                                    target.appendFmt(
-                                        "{s}@{}{}/node_modules/{s}",
-                                        .{
-                                            pkg_name.fmtStorePath(string_buf),
-                                            pkg_res.fmt(string_buf, .posix),
-                                            Node.TransitivePeer.fmtStorePath(peers.slice(), string_buf, pkg_names, pkg_resolutions),
-                                            pkg_name.slice(string_buf),
-                                        },
-                                    );
-                                }
+                                target.appendFmt("{}/node_modules/{s}", .{
+                                    Entry.fmtStorePath(this.entry_id, installer.store, installer.lockfile),
+                                    pkg_name.slice(string_buf),
+                                });
 
                                 if (comptime Environment.isWindows) {
                                     var full_target: bun.AbsPath(.{}) = .initTopLevelDir();
@@ -2212,14 +2228,11 @@ pub const Store = struct {
 
             const nodes = this.store.nodes.slice();
             const node_pkg_ids = nodes.items(.pkg_id);
-            const node_peers = nodes.items(.peers);
 
             const pkgs = this.lockfile.packages.slice();
-            const pkg_names = pkgs.items(.name);
             const pkg_resolutions = pkgs.items(.resolution);
 
             const node_id = entry_node_ids[entry_id.get()];
-            const peers = node_peers[node_id.get()];
             const pkg_id = node_pkg_ids[node_id.get()];
             const pkg_res = pkg_resolutions[pkg_id];
 
@@ -2232,11 +2245,8 @@ pub const Store = struct {
                     buf.append("node_modules");
                 },
                 else => {
-                    const pkg_name = pkg_names[pkg_id];
-                    buf.appendFmt("node_modules/" ++ modules_dir_name ++ "/{s}@{}{}/node_modules", .{
-                        pkg_name.fmtStorePath(string_buf),
-                        pkg_res.fmt(string_buf, .posix),
-                        Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
+                    buf.appendFmt("node_modules/" ++ modules_dir_name ++ "/{}/node_modules", .{
+                        Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                     });
                 },
             }
@@ -2250,14 +2260,14 @@ pub const Store = struct {
 
             const nodes = this.store.nodes.slice();
             const node_pkg_ids = nodes.items(.pkg_id);
-            const node_peers = nodes.items(.peers);
+            // const node_peers = nodes.items(.peers);
 
             const pkgs = this.lockfile.packages.slice();
             const pkg_names = pkgs.items(.name);
             const pkg_resolutions = pkgs.items(.resolution);
 
             const node_id = entry_node_ids[entry_id.get()];
-            const peers = node_peers[node_id.get()];
+            // const peers = node_peers[node_id.get()];
             const pkg_id = node_pkg_ids[node_id.get()];
             const pkg_res = pkg_resolutions[pkg_id];
 
@@ -2276,10 +2286,8 @@ pub const Store = struct {
                 },
                 else => {
                     const pkg_name = pkg_names[pkg_id];
-                    buf.appendFmt("node_modules/" ++ modules_dir_name ++ "/{s}@{}{}/node_modules/{s}", .{
-                        pkg_name.fmtStorePath(string_buf),
-                        pkg_res.fmt(string_buf, .posix),
-                        Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
+                    buf.appendFmt("node_modules/" ++ modules_dir_name ++ "/{}/node_modules/{s}", .{
+                        Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                         pkg_name.slice(string_buf),
                     });
                 },
@@ -2304,7 +2312,63 @@ pub const Store = struct {
         parents: std.ArrayListUnmanaged(Id) = .empty,
         step: std.atomic.Value(Installer.Task.Step) = .init(.link_package),
 
+        peer_hash: PeerHash,
+
         scripts: ?*Package.Scripts.List = null,
+
+        pub const PeerHash = enum(u64) {
+            none = 0,
+            _,
+
+            pub fn from(int: u64) @This() {
+                return @enumFromInt(int);
+            }
+
+            pub fn cast(this: @This()) u64 {
+                return @intFromEnum(this);
+            }
+        };
+
+        const StorePathFormatter = struct {
+            entry_id: Id,
+            store: *const Store,
+            lockfile: *const Lockfile,
+
+            pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+                const store = this.store;
+                const entries = store.entries.slice();
+                const entry_peer_hashes = entries.items(.peer_hash);
+                const entry_node_ids = entries.items(.node_id);
+
+                const peer_hash = entry_peer_hashes[this.entry_id.get()];
+                const node_id = entry_node_ids[this.entry_id.get()];
+                const pkg_id = store.nodes.items(.pkg_id)[node_id.get()];
+
+                const string_buf = this.lockfile.buffers.string_bytes.items;
+
+                const pkgs = this.lockfile.packages.slice();
+                const pkg_names = pkgs.items(.name);
+                const pkg_resolutions = pkgs.items(.resolution);
+
+                const pkg_name = pkg_names[pkg_id];
+                const pkg_res = pkg_resolutions[pkg_id];
+
+                try writer.print("{}@{}", .{
+                    pkg_name.fmtStorePath(string_buf),
+                    pkg_res.fmt(string_buf, .posix),
+                });
+
+                if (peer_hash != .none) {
+                    try writer.print("_{}", .{
+                        bun.fmt.hexIntLower(peer_hash.cast()),
+                    });
+                }
+            }
+        };
+
+        pub fn fmtStorePath(entry_id: Id, store: *const Store, lockfile: *const Lockfile) StorePathFormatter {
+            return .{ .entry_id = entry_id, .store = store, .lockfile = lockfile };
+        }
 
         pub fn debugGatherAllParents(entry_id: Id, store: *const Store) []const Id {
             var i: usize = 0;
@@ -2454,6 +2518,10 @@ pub const Store = struct {
                 return this.list.items;
             }
 
+            pub fn len(this: *const @This()) usize {
+                return this.list.items.len;
+            }
+
             pub fn eql(l: *const @This(), r: *const @This(), ctx: *const Ctx) bool {
                 if (l.list.items.len != r.list.items.len) {
                     return false;
@@ -2523,7 +2591,7 @@ pub const Store = struct {
         // each node in this list becomes a symlink in the package's node_modules
         nodes: std.ArrayListUnmanaged(Id) = .empty,
 
-        const Peers = OrderedArraySet(TransitivePeer, TransitivePeer.OrderedArraySetCtx);
+        pub const Peers = OrderedArraySet(TransitivePeer, TransitivePeer.OrderedArraySetCtx);
 
         const TransitivePeer = struct {
             dep_id: DependencyID,
@@ -2554,38 +2622,6 @@ pub const Store = struct {
                     return l_pkg_name.order(&r_pkg_name, string_buf, string_buf);
                 }
             };
-
-            const StorePathFormatter = struct {
-                peers: []const TransitivePeer,
-                string_buf: string,
-                pkg_names: []const String,
-                pkg_resolutions: []const Resolution,
-
-                pub fn format(this: StorePathFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-                    if (this.peers.len > 0) {
-                        try writer.writeByte('_');
-                    }
-                    for (this.peers, 0..) |peer, i| {
-                        try writer.print("{}@{}", .{
-                            this.pkg_names[peer.pkg_id].fmtStorePath(this.string_buf),
-                            this.pkg_resolutions[peer.pkg_id].fmtStorePath(this.string_buf),
-                        });
-
-                        if (i != this.peers.len - 1) {
-                            try writer.writeByte('+');
-                        }
-                    }
-                }
-            };
-
-            pub fn fmtStorePath(peers: []const TransitivePeer, string_buf: string, pkg_names: []const String, pkg_resolutions: []const Resolution) StorePathFormatter {
-                return .{
-                    .peers = peers,
-                    .string_buf = string_buf,
-                    .pkg_names = pkg_names,
-                    .pkg_resolutions = pkg_resolutions,
-                };
-            }
         };
 
         pub const List = bun.MultiArrayList(Node);

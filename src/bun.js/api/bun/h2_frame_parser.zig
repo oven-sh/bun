@@ -605,7 +605,7 @@ const Handlers = struct {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
-                @field(handlers, pair.@"0") = callback_value;
+                @field(handlers, pair.@"0") = callback_value.withAsyncContextIfNeeded(globalObject);
             }
         }
 
@@ -614,7 +614,7 @@ const Handlers = struct {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }
 
-            handlers.onError = callback_value;
+            handlers.onError = callback_value.withAsyncContextIfNeeded(globalObject);
         }
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)

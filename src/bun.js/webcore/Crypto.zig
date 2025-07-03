@@ -181,14 +181,11 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
         return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be specified", .{}).throw();
     }
 
-    var encoding_value: JSC.JSValue = .js_undefined;
-
     // Third argument: encoding (optional, defaults to "hex")
     const encoding: JSC.Node.Encoding = brk: {
         if (arguments.len > 2 and !arguments[2].isUndefined()) {
             if (arguments[2].isString()) {
-                encoding_value = arguments[2];
-                break :brk try JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                break :brk try JSC.Node.Encoding.fromJS(arguments[2], globalThis) orelse {
                     return globalThis.ERR(.UNKNOWN_ENCODING, "Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
                 };
             }

@@ -45,6 +45,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -8066,82 +8067,4 @@ declare module "bun" {
      */
     [Symbol.iterator](): IterableIterator<[string, string]>;
   }
-
-  /**
-   * Type for the params object passed to SSG pages
-   */
-  interface SSGParams {
-    slug: string;
-  }
-
-  /**
-   * Type for the path object returned by getStaticPaths
-   */
-  interface SSGPath {
-    params: SSGParams;
-  }
-
-  /**
-   * Return type for getStaticPaths function
-   */
-  interface SSGPathsResult {
-    paths: SSGPath[];
-  }
-
-  /**
-   * Type for the getStaticPaths function used in Static Site Generation (SSG).
-   *
-   * This function is called at build time to determine which dynamic routes should be
-   * pre-rendered as static pages. It returns an array of path parameters that will be
-   * used to generate static pages for dynamic routes (e.g., [slug].tsx).
-   *
-   * @returns An object containing an array of paths to be statically generated
-   *
-   * @example
-   * ```tsx
-   * // In pages/blog/[slug].tsx
-   * export const getStaticPaths: Bun.GetStaticPaths = async () => {
-   *   // Fetch all blog posts at build time
-   *   const posts = await fetchBlogPosts();
-   *
-   *   return {
-   *     paths: posts.map(post => ({
-   *       params: { slug: post.slug }
-   *     }))
-   *   };
-   * };
-   * ```
-   *
-   * @example
-   * ```tsx
-   * // Reading from filesystem
-   * export const getStaticPaths: Bun.GetStaticPaths = async () => {
-   *   const glob = new Bun.Glob("**\/*.md");
-   *   const postsDir = path.join(process.cwd(), "posts");
-   *   const paths = [];
-   *
-   *   for (const file of glob.scanSync({ cwd: postsDir })) {
-   *     const slug = file.replace(/\.md$/, "");
-   *     paths.push({
-   *       params: { slug }
-   *     });
-   *   }
-   *
-   *   return { paths };
-   * };
-   * ```
-   */
-  type GetStaticPaths = () => SSGPathsResult | Promise<SSGPathsResult>;
-
-  /**
-   * Props passed to SSG components
-   */
-  interface SSGProps<TParams = SSGParams> {
-    params: TParams;
-  }
-
-  /**
-   * Type for SSG React components
-   */
-  type SSGPage<TParams = SSGParams> = React.ComponentType<SSGProps<TParams>>;
 }

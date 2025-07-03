@@ -284,6 +284,15 @@ pub const PmVersionCommand = struct {
             Output.prettyln("Current package version: <green>v{s}<r>", .{version});
         }
 
+        const patch_version = try calculateNewVersion(ctx.allocator, current_version, .patch, null, pm.options.preid, cwd);
+        const minor_version = try calculateNewVersion(ctx.allocator, current_version, .minor, null, pm.options.preid, cwd);
+        const major_version = try calculateNewVersion(ctx.allocator, current_version, .major, null, pm.options.preid, cwd);
+        const prerelease_version = try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, pm.options.preid, cwd);
+        defer ctx.allocator.free(patch_version);
+        defer ctx.allocator.free(minor_version);
+        defer ctx.allocator.free(major_version);
+        defer ctx.allocator.free(prerelease_version);
+
         const increment_help_text =
             \\
             \\<b>Increment<r>:
@@ -294,13 +303,20 @@ pub const PmVersionCommand = struct {
             \\
         ;
         Output.pretty(increment_help_text, .{
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .patch, null, pm.options.preid, cwd),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .minor, null, pm.options.preid, cwd),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .major, null, pm.options.preid, cwd),
-            current_version, try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, pm.options.preid, cwd),
+            current_version, patch_version,
+            current_version, minor_version,
+            current_version, major_version,
+            current_version, prerelease_version,
         });
 
         if (strings.indexOfChar(current_version, '-') != null or pm.options.preid.len > 0) {
+            const prepatch_version = try calculateNewVersion(ctx.allocator, current_version, .prepatch, null, pm.options.preid, cwd);
+            const preminor_version = try calculateNewVersion(ctx.allocator, current_version, .preminor, null, pm.options.preid, cwd);
+            const premajor_version = try calculateNewVersion(ctx.allocator, current_version, .premajor, null, pm.options.preid, cwd);
+            defer ctx.allocator.free(prepatch_version);
+            defer ctx.allocator.free(preminor_version);
+            defer ctx.allocator.free(premajor_version);
+
             const prerelease_help_text =
                 \\  <cyan>prepatch<r>   <d>{s} → {s}<r>
                 \\  <cyan>preminor<r>   <d>{s} → {s}<r>
@@ -308,11 +324,14 @@ pub const PmVersionCommand = struct {
                 \\
             ;
             Output.pretty(prerelease_help_text, .{
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .prepatch, null, pm.options.preid, cwd),
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .preminor, null, pm.options.preid, cwd),
-                current_version, try calculateNewVersion(ctx.allocator, current_version, .premajor, null, pm.options.preid, cwd),
+                current_version, prepatch_version,
+                current_version, preminor_version,
+                current_version, premajor_version,
             });
         }
+
+        const beta_prerelease_version = try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, "beta", cwd);
+        defer ctx.allocator.free(beta_prerelease_version);
 
         const set_specific_version_help_text =
             \\  <cyan>from-git<r>   <d>Use version from latest git tag<r>
@@ -333,9 +352,7 @@ pub const PmVersionCommand = struct {
             \\More info: <magenta>https://bun.sh/docs/cli/pm#version<r>
             \\
         ;
-        Output.pretty(set_specific_version_help_text, .{
-            try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, "beta", cwd),
-        });
+        Output.pretty(set_specific_version_help_text, .{beta_prerelease_version});
         Output.flush();
     }
 
@@ -559,13 +576,14 @@ pub const PmVersionCommand = struct {
             },
         }
 
-        const commit_message = if (custom_message) |msg|
-            if (strings.indexOf(msg, "%s")) |_|
-                try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
+        const commit_message =
+            if (custom_message) |msg|
+                if (strings.indexOf(msg, "%s")) |_|
+                    try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
+                else
+                    try allocator.dupe(u8, msg)
             else
-                try allocator.dupe(u8, msg)
-        else
-            try std.fmt.allocPrint(allocator, "v{s}", .{version});
+                try std.fmt.allocPrint(allocator, "v{s}", .{version});
         defer allocator.free(commit_message);
 
         const commit_proc = bun.spawnSync(&.{

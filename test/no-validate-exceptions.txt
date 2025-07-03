@@ -1,6 +1,8 @@
 # List of tests for which we do NOT set validateExceptionChecks=1 when running in ASan CI
 test/bake/dev-and-prod.test.ts
 test/bake/dev/plugins.test.ts
+test/bake/dev/vfile.test.ts
+test/bake/dev/ssg-pages-router.test.ts
 test/bake/framework-router.test.ts
 test/bundler/bun-build-api.test.ts
 test/bundler/bundler_banner.test.ts

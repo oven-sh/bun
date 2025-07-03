@@ -78,6 +78,8 @@ pub const SavedMappings = struct {
     }
 };
 
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+
 /// ParsedSourceMap is the canonical form for sourcemaps,
 ///
 /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
@@ -86,6 +88,7 @@ pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
     SavedMappings,
     SourceProviderMap,
+    BakeSourceProvider,
 });
 
 pub const MissingSourceMapNoteInfo = struct {
@@ -101,6 +104,10 @@ pub const MissingSourceMapNoteInfo = struct {
         }
     }
 };
+
+pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
+    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+}
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
@@ -120,7 +127,7 @@ pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *a
         }
     } else if (old_value.get(ParsedSourceMap)) |map| {
         if (map.underlying_provider.provider()) |prov| {
-            if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+            if (@intFromPtr(prov.ptr()) == @intFromPtr(opaque_source_provider)) {
                 this.map.removeByPtr(entry.key_ptr);
                 map.deref();
             }
@@ -246,11 +253,39 @@ fn getWithContent(
             MissingSourceMapNoteInfo.path = storage;
             return .{};
         },
+        @field(Value.Tag, @typeName(BakeSourceProvider)) => {
+            // TODO: This is a copy-paste of above branch
+            const ptr: *BakeSourceProvider = Value.from(mapping.value_ptr.*).as(BakeSourceProvider);
+            this.unlock();
+
+            // Do not lock the mutex while we're parsing JSON!
+            if (ptr.getSourceMap(path, .none, hint)) |parse| {
+                if (parse.map) |map| {
+                    map.ref();
+                    // The mutex is not locked. We have to check the hash table again.
+                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+
+                    return parse;
+                }
+            }
+
+            this.lock();
+            defer this.unlock();
+            // does not have a valid source map. let's not try again
+            _ = this.map.remove(hash);
+
+            // Store path for a user note.
+            const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+            @memcpy(storage, path);
+            MissingSourceMapNoteInfo.path = storage;
+            return .{};
+        },
         else => {
             if (Environment.allow_assert) {
                 @panic("Corrupt pointer tag");
             }
             this.unlock();
+
             return .{};
         },
     }

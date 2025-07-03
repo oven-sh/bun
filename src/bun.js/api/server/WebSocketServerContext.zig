@@ -50,71 +50,27 @@ pub const Handler = struct {
 
         var valid = false;
 
-        if (try object.getTruthyComptime(globalObject, "message")) |message_| {
-            if (!message_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
+        inline for (.{
+            .{ "error", "onError" },
+            .{ "message", "onMessage" },
+            .{ "open", "onOpen" },
+            .{ "close", "onClose" },
+            .{ "drain", "onDrain" },
+            .{ "ping", "onPing" },
+            .{ "pong", "onPong" },
+        }, 0..) |pair, i| {
+            if (try object.getTruthy(globalObject, pair[0])) |value| {
+                if (!value.isCell() or !value.isCallable()) {
+                    return globalObject.throwInvalidArguments("websocket expects a function for the '{s}' option", .{pair[0]});
+                }
+                const cb = value.withAsyncContextIfNeeded(globalObject);
+                @field(handler, pair[1]) = cb;
+                cb.ensureStillAlive();
+                if (i > 0) {
+                    // anything other than "error" is considered valid.
+                    valid = true;
+                }
             }
-            const message = message_.withAsyncContextIfNeeded(globalObject);
-            handler.onMessage = message;
-            message.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "open")) |open_| {
-            if (!open_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
-            }
-            const open = open_.withAsyncContextIfNeeded(globalObject);
-            handler.onOpen = open;
-            open.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "close")) |close_| {
-            if (!close_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
-            }
-            const close = close_.withAsyncContextIfNeeded(globalObject);
-            handler.onClose = close;
-            close.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "drain")) |drain_| {
-            if (!drain_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
-            }
-            const drain = drain_.withAsyncContextIfNeeded(globalObject);
-            handler.onDrain = drain;
-            drain.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "onError")) |onError_| {
-            if (!onError_.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
-            }
-            const onError = onError_.withAsyncContextIfNeeded(globalObject);
-            handler.onError = onError;
-            onError.ensureStillAlive();
-        }
-
-        if (try object.getTruthy(globalObject, "ping")) |cb| {
-            if (!cb.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the ping option", .{});
-            }
-            handler.onPing = cb;
-            cb.ensureStillAlive();
-            valid = true;
-        }
-
-        if (try object.getTruthy(globalObject, "pong")) |cb| {
-            if (!cb.isCallable()) {
-                return globalObject.throwInvalidArguments("websocket expects a function for the pong option", .{});
-            }
-            handler.onPong = cb;
-            cb.ensureStillAlive();
-            valid = true;
         }
 
         if (valid)

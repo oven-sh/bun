@@ -60,6 +60,7 @@ test/cli/install/bun-lockb.test.ts
 test/cli/install/bun-pack.test.ts
 test/cli/install/bun-patch.test.ts
 test/cli/install/bun-pm.test.ts
+test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-remove.test.ts
 test/cli/install/bun-update.test.ts
@@ -269,6 +270,7 @@ test/js/junit-reporter/junit.test.js
 test/js/node/assert/assert-promise.test.ts
 test/js/node/assert/assert.spec.ts
 test/js/node/async_hooks/AsyncLocalStorage.test.ts
+test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts
 test/js/node/buffer-concat.test.ts
 test/js/node/buffer.test.js
 test/js/node/child_process/child-process-exec.test.ts
@@ -2051,6 +2053,7 @@ test/js/third_party/grpc-js/test-server-interceptors.test.ts
 test/js/third_party/grpc-js/test-server.test.ts
 test/js/third_party/grpc-js/test-status-builder.test.ts
 test/js/third_party/grpc-js/test-uri-parser.test.ts
+test/js/third_party/grpc-js/test-tonic.test.ts
 test/js/third_party/http2-wrapper/http2-wrapper.test.ts
 test/js/third_party/jsonwebtoken/async_sign.test.js
 test/js/third_party/jsonwebtoken/buffer.test.js

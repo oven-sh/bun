@@ -2847,6 +2847,14 @@ export function printEnvironment() {
         }
       });
     }
+    if (isWindows) {
+      startGroup("Disk (win)", () => {
+        const shell = which(["pwsh"]);
+        if (shell) {
+          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
+        }
+      });
+    }
   }
 
   startGroup("Repository", () => {

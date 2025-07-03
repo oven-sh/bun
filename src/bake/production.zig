@@ -174,10 +174,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initTranspiler(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server);
-    try framework.initTranspiler(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client);
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, .@"inline");
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, .@"inline");
     if (separate_ssr_graph) {
-        try framework.initTranspiler(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr);
+        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, .@"inline");
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
@@ -561,6 +561,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             return vm.global.throwValue(err);
         },
     }
+    vm.waitForTasks();
 }
 
 /// unsafe function, must be run outside of the event loop

@@ -68,15 +68,15 @@ async function build(
       runtime == Runtime.bun
         ? [
             bunExe(),
-            "x",
             "--bun",
+            "run",
             "node-gyp",
             "rebuild",
             buildMode == BuildMode.debug ? "--debug" : "--release",
             "-j",
             "max",
           ]
-        : [bunExe(), "x", "node-gyp@11", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : [bunExe(), "run", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -95,11 +95,12 @@ async function build(
     process.exit(1);
   }
 
-  return {
-    out,
-    err,
-    description: `build ${basename(srcDir)} with ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`,
-  };
+  const description = `build ${basename(srcDir)} with ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
+
+  console.log(description, "stdout:");
+  console.log(out);
+  console.log(description, "stderr:");
+  console.log(err);
 }
 
 describe.todoIf(isBroken && isMusl)("node:v8", () => {
@@ -115,18 +116,10 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     await install(srcDir, directories.node, Runtime.node);
     await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-    const results = await Promise.all([
-      build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-      build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-      build(srcDir, directories.node, Runtime.node, BuildMode.release),
-      build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-    ]);
-    for (const r of results) {
-      console.log(r.description, "stdout:");
-      console.log(r.out);
-      console.log(r.description, "stderr:");
-      console.log(r.err);
-    }
+    await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
+    await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
+    await build(srcDir, directories.node, Runtime.node, BuildMode.release);
+    await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
   });
 
   describe("module lifecycle", () => {

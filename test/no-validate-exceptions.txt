@@ -23,6 +23,7 @@ test/bundler/bundler_minify.test.ts
 test/bundler/bundler_naming.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/bundler_regressions.test.ts
+test/bundler/bundler_splitting.test.ts
 test/bundler/bundler_string.test.ts
 test/bundler/css/css-modules.test.ts
 test/bundler/css/wpt/background-computed.test.ts

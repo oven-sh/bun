@@ -3,6 +3,8 @@
 #include "BunClientData.h"
 #include "root.h"
 
+typedef struct napi_env__* napi_env;
+
 namespace Bun {
 
 // An array of write barriers (so that newly-added objects are not lost by GC) to JSValues. Unlike
@@ -31,16 +33,24 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNapiHandleScopeImpl.get(); },
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNapiHandleScopeImpl; });
     }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    static constexpr JSC::DestructionMode needsDestruction = JSC::DestructionMode::NeedsDestruction;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<NapiHandleScopeImpl*>(cell)->~NapiHandleScopeImpl();
+    }
+    ~NapiHandleScopeImpl() = default;
 
     // Store val in the handle scope
     void append(JSC::JSValue val);
@@ -80,14 +90,14 @@ private:
 };
 
 // Create a new handle scope in the given environment
-extern "C" NapiHandleScopeImpl* NapiHandleScope__open(Zig::GlobalObject* globalObject, bool escapable);
+extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable);
 
 // Pop the most recently created handle scope in the given environment and restore the old one.
 // Asserts that `current` is the active handle scope.
-extern "C" void NapiHandleScope__close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current);
 
 // Store a value in the active handle scope in the given environment
-extern "C" void NapiHandleScope__append(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value);
+extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value);
 
 // Put a value from the current handle scope into its escape slot reserved in the outer handle
 // scope. Returns false if the current handle scope is not escapable or if escape has already been

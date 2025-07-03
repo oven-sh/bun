@@ -225,6 +225,7 @@ const values = [
       const errLines = stderr.trim().split(/[\r\n]+/);
       const errLine = errLines.find((l) => /^error/.exec(l));
       assert.strictEqual(errLine, `error: ${fixture}`);
+      assert.strictEqual(errLines.length, 10);
     })
   );
 }
@@ -274,6 +275,8 @@ const values = [
     }, {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
+      message: 'The last argument must be of type function.' +
+                common.invalidArgTypeHelper(value)
     });
   });
 }
@@ -287,6 +290,7 @@ const values = [
   const cbPromiseFn = callbackify(promiseFn);
 
   cbPromiseFn(null, (err) => {
+    assert.strictEqual(err.message, 'Promise was rejected with a falsy value');
     assert.strictEqual(err.code, 'ERR_FALSY_VALUE_REJECTION');
     assert.strictEqual(err.reason, null);
     // skipped, bun doesn't hide callbackifyOnRejected from the stack trace

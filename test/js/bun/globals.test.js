@@ -27,7 +27,7 @@ it("ERR_INVALID_THIS", () => {
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
     expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request, but received Boop");
+    expect(e.message).toBe("Expected this to be instanceof Request, but received an instance of Boop");
   }
 
   try {
@@ -36,7 +36,7 @@ it("ERR_INVALID_THIS", () => {
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
     expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request, but received a string");
+    expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ('hellooo')`);
   }
 });
 
@@ -100,6 +100,13 @@ describe("File", () => {
     expect(file.type).toBe("text/plain;charset=utf-8");
     expect(file.size).toBe(3);
     expect(file.lastModified).toBeGreaterThan(0);
+  });
+
+  it("constructor with empty array", () => {
+    const file = new File([], "empty.txt", { type: "text/plain;charset=utf-8" });
+    expect(file.name).toBe("empty.txt");
+    expect(file.size).toBe(0);
+    expect(file.type).toBe("text/plain;charset=utf-8");
   });
 
   it("constructor with lastModified", () => {

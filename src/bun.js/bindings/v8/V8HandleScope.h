@@ -20,9 +20,9 @@ public:
     {
         // TODO(@190n) handle more types
         if (value.isString()) {
-            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::string_map, vm));
+            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::string_map(), vm));
         } else if (value.isCell()) {
-            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::object_map, vm));
+            return Local<T>(m_buffer->createHandle(value.asCell(), &shim::Map::object_map(), vm));
         } else if (value.isInt32()) {
             return Local<T>(m_buffer->createSmiHandle(value.asInt32()));
         } else if (value.isNumber()) {

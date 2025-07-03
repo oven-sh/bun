@@ -1,7 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-
-pub usingnamespace std.meta;
+const bun = @import("bun");
 
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
@@ -286,6 +284,7 @@ pub fn isSimpleEqlType(comptime T: type) bool {
         .int => true,
         .float => true,
         .@"enum" => true,
+        .@"struct" => |struct_info| struct_info.layout == .@"packed",
         else => false,
     };
 }
@@ -330,4 +329,12 @@ pub fn Tagged(comptime U: type, comptime T: type) type {
     info.tag_type = T;
     info.decls = &.{};
     return @Type(.{ .@"union" = info });
+}
+
+pub fn SliceChild(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
+    if (tyinfo == .pointer and tyinfo.pointer.size == .slice) {
+        return tyinfo.pointer.child;
+    }
+    return T;
 }

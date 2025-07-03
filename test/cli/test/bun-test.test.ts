@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -113,6 +113,32 @@ describe("bun test", () => {
     });
     expect(stderr).toContain(path);
   });
+
+  describe("when filters are provided", () => {
+    let dir: string;
+    beforeAll(() => {
+      const makeTest = (name: string, pass = true) => `
+      import { test, expect } from "bun:test";
+      test("${name}", () => {
+        expect(1).toBe(${pass ? 1 : 0});
+      });
+      `;
+      dir = tempDirWithFiles("bun-test-filtering", {
+        "foo.test.js": makeTest("foo"),
+        bar: {
+          "bar1.spec.tsx": makeTest("bar1"),
+          "bar2.spec.ts": makeTest("bar2"),
+        },
+      });
+    });
+
+    it("if that filter is a path to a directory, will run all tests in that directory", () => {
+      const stderr = runTest({ cwd: dir, args: ["./bar"] });
+      expect(stderr).toContain("2 pass");
+      expect(stderr).not.toContain("foo");
+    });
+  });
+
   test("works with require", () => {
     const stderr = runTest({
       args: [],
@@ -857,6 +883,61 @@ describe("bun test", () => {
     test.todo("check formatting for %p", () => {});
   });
 
+  test("Prints error when no test matches", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("test", () => {});
+      `,
+      expectExitCode: 1,
+    });
+    expect(
+      stderr
+        .replace(/bun-test-(.*)\.test\.ts/, "bun-test-*.test.ts")
+        .trim()
+        .replace(/\[.*\ms\]/, "[xx ms]"),
+    ).toMatchInlineSnapshot(`
+      "bun-test-*.test.ts:
+
+      error: regex "not-a-test" matched 0 tests. Searched 1 file (skipping 1 test) [xx ms]"
+    `);
+  });
+
+  test("Does not print the regex error when a test fails", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("not-a-test", () => {
+          expect(false).toBe(true);
+        });
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).not.toContain("error: regex");
+    expect(stderr).toContain("1 fail");
+  });
+
+  test("Does not print the regex error when a test matches and a test passes", () => {
+    const stderr = runTest({
+      args: ["-t", "not-a-test"],
+      input: `
+        import { test, expect } from "bun:test";
+        test("not-a-test", () => {
+          expect(false).toBe(true); 
+        });
+        test("not-a-test", () => {
+          expect(true).toBe(true);
+        });
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).not.toContain("error: regex");
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("1 pass");
+  });
+
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({
       args: ["./index.ts"],
@@ -918,21 +999,26 @@ function runTest({
   cwd,
   args = [],
   env = {},
+  expectExitCode = undefined,
 }: {
   input?: string | (string | { filename: string; contents: string })[];
   cwd?: string;
   args?: string[];
   env?: Record<string, string | undefined>;
+  expectExitCode?: number;
 } = {}): string {
   cwd ??= createTest(input);
   try {
-    const { stderr } = spawnSync({
+    const { stderr, exitCode } = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
       env: { ...bunEnv, ...env },
       stderr: "pipe",
       stdout: "ignore",
     });
+    if (expectExitCode !== undefined) {
+      expect(exitCode).toBe(expectExitCode);
+    }
     return stderr.toString();
   } finally {
     rmSync(cwd, { recursive: true });

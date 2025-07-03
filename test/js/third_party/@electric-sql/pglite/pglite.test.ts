@@ -1,7 +1,11 @@
 import { PGlite } from "@electric-sql/pglite";
+import { isCI, isLinux } from "harness";
 
 describe("pglite", () => {
-  it("can initialize successfully", async () => {
+  // TODO(@190n) linux-x64 sometimes fails due to JavaScriptCore bug
+  // https://github.com/oven-sh/bun/issues/17841#issuecomment-2695792567
+  // https://bugs.webkit.org/show_bug.cgi?id=289009
+  it.todoIf(isCI && isLinux && process.arch == "x64")("can initialize successfully", async () => {
     const db = new PGlite();
     expect(await db.query("SELECT version()")).toEqual({
       rows: [

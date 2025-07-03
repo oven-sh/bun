@@ -1,16 +1,16 @@
 get_filename_component(SCRIPT_NAME ${CMAKE_CURRENT_LIST_FILE} NAME)
 message(STATUS "Running script: ${SCRIPT_NAME}")
 
-if(NOT ZIG_PATH OR NOT ZIG_COMMIT OR NOT ZIG_VERSION)
-  message(FATAL_ERROR "ZIG_PATH, ZIG_COMMIT, and ZIG_VERSION are required")
+if(NOT ZIG_PATH OR NOT ZIG_COMMIT)
+  message(FATAL_ERROR "ZIG_PATH and ZIG_COMMIT required")
 endif()
 
 if(CMAKE_HOST_APPLE)
-  set(ZIG_OS "macos")
+  set(ZIG_OS_ABI "macos-none")
 elseif(CMAKE_HOST_WIN32)
-  set(ZIG_OS "windows")
+  set(ZIG_OS_ABI "windows-gnu")
 elseif(CMAKE_HOST_UNIX)
-  set(ZIG_OS "linux")
+  set(ZIG_OS_ABI "linux-musl")
 else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_HOST_SYSTEM_NAME}")
 endif()
@@ -28,22 +28,19 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 endif()
 
-set(ZIG_ASAN "")
-if(ENABLE_ASAN)
-  set(ZIG_ASAN "+asan")
+set(ZIG_NAME bootstrap-${ZIG_ARCH}-${ZIG_OS_ABI})
+if(ZIG_COMPILER_SAFE)
+  set(ZIG_NAME ${ZIG_NAME}-ReleaseSafe)
 endif()
-
-set(ZIG_NAME zig-${ZIG_OS}-${ZIG_ARCH}-${ZIG_VERSION}${ZIG_ASAN})
+set(ZIG_FILENAME ${ZIG_NAME}.zip)
 
 if(CMAKE_HOST_WIN32)
   set(ZIG_EXE "zig.exe")
-  set(ZIG_FILENAME ${ZIG_NAME}.zip)
 else()
   set(ZIG_EXE "zig")
-  set(ZIG_FILENAME ${ZIG_NAME}.tar.xz)
 endif()
 
-set(ZIG_DOWNLOAD_URL https://bun-ci-assets.bun.sh/${ZIG_FILENAME})
+set(ZIG_DOWNLOAD_URL https://github.com/oven-sh/zig/releases/download/autobuild-${ZIG_COMMIT}/${ZIG_FILENAME})
 
 execute_process(
   COMMAND
@@ -67,35 +64,8 @@ if(NOT EXISTS ${ZIG_PATH}/${ZIG_EXE})
 endif()
 
 # Tools like VSCode need a stable path to the zig executable, on both Unix and Windows
-# To workaround this, we create a `bun.exe` symlink on Unix.
+# To workaround this, we create a `zig.exe` & `zls.exe` symlink on Unix.
 if(NOT WIN32)
   file(CREATE_LINK ${ZIG_PATH}/${ZIG_EXE} ${ZIG_PATH}/zig.exe SYMBOLIC)
+  file(CREATE_LINK ${ZIG_PATH}/zls ${ZIG_PATH}/zls.exe SYMBOLIC)
 endif()
-
-set(ZIG_REPOSITORY_PATH ${ZIG_PATH}/repository)
-
-execute_process(
-  COMMAND
-    ${CMAKE_COMMAND}
-      -DGIT_PATH=${ZIG_REPOSITORY_PATH}
-      -DGIT_REPOSITORY=oven-sh/zig
-      -DGIT_COMMIT=${ZIG_COMMIT}
-      -P ${CMAKE_CURRENT_LIST_DIR}/GitClone.cmake
-  ERROR_STRIP_TRAILING_WHITESPACE
-  ERROR_VARIABLE
-    ZIG_REPOSITORY_ERROR
-  RESULT_VARIABLE
-    ZIG_REPOSITORY_RESULT
-)
-
-if(NOT ZIG_REPOSITORY_RESULT EQUAL 0)
-  message(FATAL_ERROR "Download failed: ${ZIG_REPOSITORY_ERROR}")
-endif()
-
-file(REMOVE_RECURSE ${ZIG_PATH}/lib)
-
-# Use copy_directory instead of file(RENAME) because there were
-# race conditions in CI where some files were not copied.
-execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${ZIG_REPOSITORY_PATH}/lib ${ZIG_PATH}/lib)
-
-file(REMOVE_RECURSE ${ZIG_REPOSITORY_PATH})

@@ -284,6 +284,13 @@ exports[`should not deduplicate bundled packages with un-bundled packages 1`] = 
 ]
 `;
 
+exports[`should not deduplicate bundled packages with un-bundled packages 2`] = `
+[
+  "",
+  "Saved bun.lock (5 packages)",
+]
+`;
+
 exports[`should not change formatting unexpectedly 1`] = `
 [
   "preinstall",
@@ -403,4 +410,79 @@ exports[`should not change formatting unexpectedly 3`] = `
   "",
   "13 packages installed",
 ]
+`;
+
+exports[`should sort overrides before comparing 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "pkg-with-overrides",
+      "dependencies": {
+        "one-dep": "1.0.0",
+        "uses-what-bin": "1.5.0",
+      },
+      "peerDependencies": {
+        "no-deps": "2.0.0",
+        "what-bin": "1.0.0",
+      },
+      "optionalPeers": [
+        "no-deps",
+        "what-bin",
+      ],
+    },
+  },
+  "overrides": {
+    "no-deps": "2.0.0",
+    "what-bin": "1.0.0",
+  },
+  "packages": {
+    "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],
+
+    "one-dep": ["one-dep@1.0.0", "http://localhost:1234/one-dep/-/one-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.1" } }, "sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg=="],
+
+    "uses-what-bin": ["uses-what-bin@1.5.0", "http://localhost:1234/uses-what-bin/-/uses-what-bin-1.5.0.tgz", { "dependencies": { "what-bin": "1.5.0" } }, "sha512-EI+uMDESinRewWTFhsyzibkzFV+j5LmLM7T1jEpb2X82TmzhSQRzCBTBURflt5dGvNEIY7l563P9Su01Tpe++g=="],
+
+    "what-bin": ["what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ=="],
+  }
+}
+"
+`;
+
+exports[`should include unused resolutions in the lockfile 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "pkg-with-unused-override",
+      "dependencies": {
+        "one-dep": "1.0.0",
+        "uses-what-bin": "1.5.0",
+      },
+      "peerDependencies": {
+        "no-deps": "2.0.0",
+        "what-bin": "1.0.0",
+      },
+      "optionalPeers": [
+        "no-deps",
+        "what-bin",
+      ],
+    },
+  },
+  "overrides": {
+    "jquery": "4.0.0",
+    "no-deps": "2.0.0",
+    "what-bin": "1.0.0",
+  },
+  "packages": {
+    "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],
+
+    "one-dep": ["one-dep@1.0.0", "http://localhost:1234/one-dep/-/one-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.1" } }, "sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg=="],
+
+    "uses-what-bin": ["uses-what-bin@1.5.0", "http://localhost:1234/uses-what-bin/-/uses-what-bin-1.5.0.tgz", { "dependencies": { "what-bin": "1.5.0" } }, "sha512-EI+uMDESinRewWTFhsyzibkzFV+j5LmLM7T1jEpb2X82TmzhSQRzCBTBURflt5dGvNEIY7l563P9Su01Tpe++g=="],
+
+    "what-bin": ["what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ=="],
+  }
+}
+"
 `;

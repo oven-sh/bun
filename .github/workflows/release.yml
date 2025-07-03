@@ -70,7 +70,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.0"
+          bun-version: "1.2.3"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -98,7 +98,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.0"
+          bun-version: "1.2.3"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -127,7 +127,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.0"
+          bun-version: "1.2.3"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -167,12 +167,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout (DefinitelyTyped)
         uses: actions/checkout@v4
         with:
           repository: DefinitelyTyped/DefinitelyTyped
+      - name: Checkout (bun)
+        uses: actions/checkout@v4
+        with:
+          path: bun
       - name: Setup Bun
-        uses: ./.github/actions/setup-bun
+        uses: ./bun/.github/actions/setup-bun
         with:
           bun-version: "1.2.0"
       - id: bun-version
@@ -227,7 +231,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Docker emulator
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       - id: buildx
         name: Setup Docker buildx
         uses: docker/setup-buildx-action@v3
@@ -235,7 +239,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
       - id: metadata
         name: Setup Docker metadata
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: oven/bun
           flavor: |
@@ -252,7 +256,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64

@@ -1,24 +1,14 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
-const C = bun.C;
+
 const options = @import("./options.zig");
 const logger = bun.logger;
 const js_ast = bun.JSAst;
-const js_lexer = bun.js_lexer;
-const Defines = @import("./defines.zig");
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
-const Npm = @import("./install/npm.zig");
-const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
@@ -354,7 +344,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(Api.BunInstall);
@@ -592,6 +582,12 @@ pub const Bunfig = struct {
                             }
                         }
                     }
+
+                    if (install_obj.get("linkWorkspacePackages")) |link_workspace| {
+                        if (link_workspace.asBool()) |value| {
+                            install.link_workspace_packages = value;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -658,28 +654,98 @@ pub const Bunfig = struct {
 
                         // TODO: accept entire config object.
                         this.bunfig.serve_plugins = plugins;
-                        if (serve_obj.get("minify")) |minify| {
-                            if (minify.asBool()) |value| {
-                                this.bunfig.serve_minify_syntax = value;
-                                this.bunfig.serve_minify_whitespace = value;
-                                this.bunfig.serve_minify_identifiers = value;
-                            } else if (minify.isObject()) {
-                                if (minify.get("syntax")) |syntax| {
-                                    this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
-                                }
+                    }
 
-                                if (minify.get("whitespace")) |whitespace| {
-                                    this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
-                                }
-
-                                if (minify.get("identifiers")) |identifiers| {
-                                    this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
-                                }
-                            } else {
-                                try this.addError(minify.loc, "Expected minify to be boolean or object");
-                            }
+                    if (serve_obj.get("hmr")) |hmr| {
+                        if (hmr.asBool()) |value| {
+                            this.bunfig.serve_hmr = value;
                         }
-                        this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    }
+
+                    if (serve_obj.get("minify")) |minify| {
+                        if (minify.asBool()) |value| {
+                            this.bunfig.serve_minify_syntax = value;
+                            this.bunfig.serve_minify_whitespace = value;
+                            this.bunfig.serve_minify_identifiers = value;
+                        } else if (minify.isObject()) {
+                            if (minify.get("syntax")) |syntax| {
+                                this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
+                            }
+
+                            if (minify.get("whitespace")) |whitespace| {
+                                this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
+                            }
+
+                            if (minify.get("identifiers")) |identifiers| {
+                                this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
+                            }
+                        } else {
+                            try this.addError(minify.loc, "Expected minify to be boolean or object");
+                        }
+                    }
+
+                    if (serve_obj.get("define")) |expr| {
+                        try this.expect(expr, .e_object);
+                        var valid_count: usize = 0;
+                        const properties = expr.data.e_object.properties.slice();
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            valid_count += 1;
+                        }
+                        var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                        var keys = buffer[0..valid_count];
+                        var values = buffer[valid_count..];
+                        var i: usize = 0;
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
+                            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                            i += 1;
+                        }
+                        this.bunfig.serve_define = Api.StringMap{
+                            .keys = keys,
+                            .values = values,
+                        };
+                    }
+                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+
+                    if (serve_obj.get("publicPath")) |public_path| {
+                        if (public_path.asString(allocator)) |value| {
+                            this.bunfig.serve_public_path = value;
+                        }
+                    }
+
+                    if (serve_obj.get("env")) |env| {
+                        switch (env.data) {
+                            .e_null => {
+                                this.bunfig.serve_env_behavior = .disable;
+                            },
+                            .e_boolean => |boolean| {
+                                this.bunfig.serve_env_behavior = if (boolean.value) .load_all else .disable;
+                            },
+                            .e_string => |str| {
+                                if (str.eqlComptime("inline")) {
+                                    this.bunfig.serve_env_behavior = .load_all;
+                                } else if (str.eqlComptime("disable")) {
+                                    this.bunfig.serve_env_behavior = .disable;
+                                } else {
+                                    const slice = try str.string(allocator);
+                                    if (strings.indexOfChar(slice, '*')) |asterisk| {
+                                        if (asterisk > 0) {
+                                            this.bunfig.serve_env_prefix = slice[0..asterisk];
+                                            this.bunfig.serve_env_behavior = .prefix;
+                                        } else {
+                                            this.bunfig.serve_env_behavior = .load_all;
+                                        }
+                                    } else {
+                                        try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                                    }
+                                }
+                            },
+                            else => {
+                                try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                            },
+                        }
                     }
                 }
             }
@@ -788,7 +854,6 @@ pub const Bunfig = struct {
                     .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
-                    .react_fast_refresh = false,
                 };
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;
@@ -916,21 +981,21 @@ pub const Bunfig = struct {
         }
     };
 
-    pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
-                    .source = &source,
+                    .source = source,
                     .redact_sensitive_information = true,
                 });
             }
@@ -941,7 +1006,7 @@ pub const Bunfig = struct {
             .json = expr,
             .log = ctx.log,
             .allocator = allocator,
-            .source = &source,
+            .source = source,
             .bunfig = &ctx.args,
             .ctx = ctx,
         };

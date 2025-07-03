@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { gcTick, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
+import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -43,19 +44,43 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
-  it("async error inside element handler", async () => {
+  it("fast async error inside element handler", () => {
+    let caught = false;
     try {
-      await new HTMLRewriter()
+      new HTMLRewriter()
         .on("div", {
           async element(element) {
-            await Bun.sleep(0);
+            await setImmediatePromise();
             throw new Error("test");
           },
         })
         .transform(new Response("<div>hello</div>"));
       expect.unreachable();
     } catch (e) {
+      caught = true;
       expect(e.message).toBe("test");
+    } finally {
+      expect(caught).toBeTrue();
+    }
+  });
+
+  it("slow async error inside element handler", () => {
+    let caught = false;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Bun.sleep(1);
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect.unreachable();
+    } catch (e) {
+      caught = true;
+      expect(e.message).toBe("test");
+    } finally {
+      expect(caught).toBeTrue();
     }
   });
 

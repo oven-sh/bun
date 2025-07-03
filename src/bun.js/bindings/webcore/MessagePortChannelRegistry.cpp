@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include <wtf/IsoMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include "MessagePortChannelRegistry.h"
 
 // #include "Logging.h"
@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(MessagePortChannelRegistry);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePortChannelRegistry);
 
 MessagePortChannelRegistry::MessagePortChannelRegistry() = default;
 
@@ -112,8 +112,8 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
         return;
 
 #ifndef NDEBUG
-        // if (channel && channel->hasAnyMessagesPendingOrInFlight())
-        //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
+    // if (channel && channel->hasAnyMessagesPendingOrInFlight())
+    //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
 #endif
 
     channel->closePort(port);

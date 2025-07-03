@@ -43,7 +43,7 @@
 #include <wtf/CallbackAggregator.h>
 #include <wtf/Identified.h>
 #include <wtf/HashMap.h>
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/Scope.h>
 
@@ -51,7 +51,7 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(BroadcastChannel);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
 static UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
@@ -267,8 +267,8 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, std::nullopt, WTFMove(dummyPorts));
-        if (UNLIKELY(scope.exception())) {
+        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, nullptr, WTFMove(dummyPorts));
+        if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());
             return;

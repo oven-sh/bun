@@ -4,12 +4,12 @@ import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  readdirSorted,
   runBunInstall,
+  stderrForInstall,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
-  stderrForInstall,
-  readdirSorted,
 } from "harness";
 import { basename, join } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";

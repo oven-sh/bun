@@ -1,9 +1,9 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
 import { familySync } from "detect-libc";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
+import { basename, join, resolve } from "path";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -237,7 +237,7 @@ it("process.uptime()", () => {
 
 it("process.umask()", () => {
   expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
-  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received 'string'`); // prettier-ignore
   expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
   expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
   expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');
@@ -269,7 +269,7 @@ it("process.umask()", () => {
 
 const generated_versions_list = join(import.meta.dir, "../../../../src/generated_versions_list.zig");
 const versions = existsSync(generated_versions_list);
-(versions ? it : it.skip)("process.versions", () => {
+it.skipIf(!versions)("process.versions", () => {
   // Generate a list of all the versions in the versions object
   // example:
   // pub const boringssl = "b275c5ce1c88bc06f5a967026d3c0ce1df2be815";
@@ -305,13 +305,9 @@ const versions = existsSync(generated_versions_list);
 });
 
 it("process.config", () => {
-  expect(process.config).toEqual({
-    variables: {
-      enable_lto: false,
-      v8_enable_i8n_support: 1,
-    },
-    target_defaults: {},
-  });
+  expect(process.config.variables.clang).toBeNumber();
+  expect(process.config.variables.host_arch).toBeDefined();
+  expect(process.config.variables.target_arch).toBeDefined();
 });
 
 it("process.execArgv", () => {
@@ -327,9 +323,9 @@ it("process.binding", () => {
   expect(() => process.binding("contextify")).toThrow();
   expect(() => process.binding("crypto")).toThrow();
   expect(() => process.binding("crypto/x509")).not.toThrow();
-  expect(() => process.binding("fs")).toThrow();
+  expect(() => process.binding("fs")).not.toThrow();
   expect(() => process.binding("fs_event_wrap")).toThrow();
-  expect(() => process.binding("http_parser")).toThrow();
+  expect(() => process.binding("http_parser")).not.toThrow();
   expect(() => process.binding("icu")).toThrow();
   expect(() => process.binding("inspector")).toThrow();
   expect(() => process.binding("js_stream")).toThrow();
@@ -374,7 +370,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ("potato")`,
+      `The "code" argument must be of type number. Received type string ('potato')`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,
@@ -1097,4 +1093,57 @@ it("process.memoryUsage.arrayBuffers", () => {
   const array = new ArrayBuffer(1024 * 1024 * 16);
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+});
+
+it("should handle user assigned `default` properties", async () => {
+  process.default = 1;
+  process.hello = 2;
+  const { promise, resolve } = Promise.withResolvers();
+  import("node:process").then(processModule => {
+    expect(processModule.default).toBe(process);
+    expect(processModule.default.default).toBe(1);
+    expect(processModule.hello).toBe(2);
+    expect(processModule.default.hello).toBe(2);
+    resolve();
+  });
+
+  await promise;
+});
+
+it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle exceptions without crashing", stream => {
+  expect([
+    /* js */ `
+      const old = process;
+      process = null;
+      try {
+        old.${stream};
+      } catch {}
+      if (typeof old.${stream} !== "undefined") {
+        console.log("wrong");
+      }
+    `,
+    "",
+    1,
+  ]).toRunInlineFixture();
+});
+
+it("process.versions", () => {
+  expect(process.versions.node).toEqual("24.3.0");
+  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.napi).toEqual("10");
+  expect(process.versions.modules).toEqual("137");
+});
+
+it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
+  const subprocess = Bun.spawn({
+    cmd: ["node", "--version"],
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
+  expect(out.trim()).toEqual("v24.3.0");
+  expect(exited).toBe(0);
 });

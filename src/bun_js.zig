@@ -1,31 +1,18 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
 
-const sync = @import("./sync.zig");
-const Api = @import("api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const transpiler = bun.transpiler;
-const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
@@ -68,6 +55,7 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
+                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -205,6 +193,7 @@ pub const Run = struct {
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
+                    .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
                 },
             ),
             .arena = arena,
@@ -296,16 +285,40 @@ pub const Run = struct {
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         this.addConditionalGlobals();
+        do_redis_preconnect: {
+            // This must happen within the API lock, which is why it's not in the "doPreconnect" function
+            if (this.ctx.runtime_options.redis_preconnect) {
+                // Go through the global object's getter because Bun.redis is a
+                // PropertyCallback which means we don't have a WriteBarrier we can access
+                const global = vm.global;
+                const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const redis = bun_object.get(global, "redis") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                } orelse break :do_redis_preconnect;
+                const client = redis.as(bun.valkey.JSValkeyClient) orelse break :do_redis_preconnect;
+                // If connection fails, this will become an unhandled promise rejection, which is fine.
+                _ = client.doConnect(vm.global, redis) catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_redis_preconnect;
+                };
+            }
+        }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
-            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
             else => {},
         }
 
         if (strings.eqlComptime(this.entry_path, ".") and vm.transpiler.fs.top_level_dir.len > 0) {
             this.entry_path = vm.transpiler.fs.top_level_dir;
         }
+
+        var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
@@ -320,6 +333,7 @@ pub const Run = struct {
                     vm.onExit();
 
                     if (run.any_unhandled) {
+                        printed_sourcemap_warning_and_version = true;
                         bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                         Output.prettyErrorln(
@@ -350,6 +364,7 @@ pub const Run = struct {
             vm.exit_handler.exit_code = 1;
             vm.onExit();
             if (run.any_unhandled) {
+                printed_sourcemap_warning_and_version = true;
                 bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                 Output.prettyErrorln(
@@ -365,7 +380,7 @@ pub const Run = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
+            _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
             vm.tick();
         }
@@ -398,11 +413,11 @@ pub const Run = struct {
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
                     const to_print = brk: {
-                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        const result: JSC.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
                                 .pending => {
-                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -437,7 +452,7 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         vm.onExit();
 
-        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+        if (this.any_unhandled and !printed_sourcemap_warning_and_version) {
             this.vm.exit_handler.exit_code = 1;
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
@@ -448,7 +463,8 @@ pub const Run = struct {
             );
         }
 
-        JSC.napi.fixDeadCodeElimination();
+        bun.api.napi.fixDeadCodeElimination();
+        bun.crash_handler.fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -474,7 +490,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
@@ -482,7 +498,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
-    return .undefined;
+    return .js_undefined;
 }
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {

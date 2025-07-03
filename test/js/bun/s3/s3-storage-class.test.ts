@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { s3, S3Client, type S3Options } from "bun";
+import { describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 
 describe("s3 - Storage class", () => {
@@ -175,7 +175,7 @@ describe("s3 - Storage class", () => {
     const smallFile = Buffer.alloc(10 * 1024);
 
     for (let i = 0; i < 10; i++) {
-      await writer.write(smallFile);
+      writer.write(smallFile);
     }
     await writer.end();
 
@@ -249,7 +249,7 @@ describe("s3 - Storage class", () => {
       const bigFile = Buffer.alloc(10 * 1024 * 1024);
 
       for (let i = 0; i < 10; i++) {
-        await writer.write(bigFile);
+        writer.write(bigFile);
       }
       await writer.end();
 

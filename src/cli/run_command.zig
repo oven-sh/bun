@@ -1,38 +1,25 @@
-const bun = @import("root").bun;
-const Async = bun.Async;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
-const uws = bun.uws;
 const JSC = bun.JSC;
-const WaiterThread = JSC.Subprocess.WaiterThread;
 const OOM = bun.OOM;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
 const clap = bun.clap;
 const CLI = bun.CLI;
 const Arguments = CLI.Arguments;
 const Command = CLI.Command;
 
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
@@ -49,12 +36,6 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const PosixSpawn = bun.posix.spawn;
-
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
-
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const windows = std.os.windows;
 
@@ -327,10 +308,10 @@ pub const RunCommand = struct {
             copy_script.items,
         };
 
-        const ipc_fd = if (!Environment.isWindows) blk: {
+        const ipc_fd: ?bun.FD = if (!Environment.isWindows) blk: {
             const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
-            const fd = std.fmt.parseInt(u32, node_ipc_fd, 10) catch break :blk null;
-            break :blk bun.toFD(@as(i32, @intCast(fd)));
+            const fd = std.fmt.parseInt(u31, node_ipc_fd, 10) catch break :blk null;
+            break :blk bun.FD.fromNative(fd);
         } else null; // TODO: implement on Windows
 
         const spawn_result = switch ((bun.spawnSync(&.{
@@ -588,11 +569,11 @@ pub const RunCommand = struct {
                                 const is_probably_trying_to_run_a_pkg_script =
                                     original_script_for_bun_run != null and
                                     ((code == 1 and bun.strings.eqlComptime(original_script_for_bun_run.?, "test")) or
-                                    (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
-                                    "install",
-                                    "kill",
-                                    "link",
-                                }) and ctx.positionals.len == 1));
+                                        (code == 2 and bun.strings.eqlAnyComptime(original_script_for_bun_run.?, &.{
+                                            "install",
+                                            "kill",
+                                            "link",
+                                        }) and ctx.positionals.len == 1));
 
                                 if (is_probably_trying_to_run_a_pkg_script) {
                                     // if you run something like `bun run test`, you get a confusing message because
@@ -1288,7 +1269,7 @@ pub const RunCommand = struct {
         // TODO: optimize this pass for Windows. we can make better use of system apis available
         var file_path = script_name_to_search;
         {
-            const file = bun.toLibUVOwnedFD(((brk: {
+            const file = bun.FD.fromStdFile((brk: {
                 if (std.fs.path.isAbsolute(script_name_to_search)) {
                     var win_resolver = resolve_path.PosixToWinNormalizer{};
                     var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
@@ -1323,8 +1304,8 @@ pub const RunCommand = struct {
                     const file_pathZ = script_name_buf[0..file_path.len :0];
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 }
-            }) catch return false).handle) catch return false;
-            defer _ = bun.sys.close(file);
+            }) catch return false).makeLibUVOwnedForSyscall(.open, .close_on_fail).unwrap() catch return false;
+            defer file.close();
 
             switch (bun.sys.fstat(file)) {
                 .result => |stat| {
@@ -1441,6 +1422,11 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
+            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            passthrough_list.appendAssumeCapacity("-");
+            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+            ctx.passthrough = passthrough_list.items;
+
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};
 
@@ -1522,9 +1508,26 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
-        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run) catch
-            this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved|
-        {
+        const resolution = brk: {
+            const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
+            defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
+            this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
+                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
+                    bun.strings.eqlComptime(env, "1")
+                else
+                    false;
+            break :brk this_transpiler.resolver.resolve(
+                this_transpiler.fs.top_level_dir,
+                target_name,
+                .entry_point_run,
+            ) catch
+                this_transpiler.resolver.resolve(
+                    this_transpiler.fs.top_level_dir,
+                    try std.mem.join(ctx.allocator, "", &.{ "./", target_name }),
+                    .entry_point_run,
+                );
+        };
+        if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
@@ -1639,13 +1642,13 @@ pub const RunCommand = struct {
             Global.exit(1);
         }
 
-        // TODO(@paperdave): merge windows branch
+        // TODO(@paperclover): merge windows branch
         // var win_resolver = resolve_path.PosixToWinNormalizer{};
 
         const filename = ctx.positionals[0];
 
         const normalized_filename = if (std.fs.path.isAbsolute(filename))
-            // TODO(@paperdave): merge windows branch
+            // TODO(@paperclover): merge windows branch
             // try win_resolver.resolveCWD("/dev/bun/test/etc.js");
             filename
         else brk: {
@@ -1719,7 +1722,7 @@ pub const BunXFastPath = struct {
         };
 
         if (Environment.isDebug) {
-            debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+            debug("run_ctx.handle: '{}'", .{bun.FD.fromSystem(handle)});
             debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
             debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
             debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});

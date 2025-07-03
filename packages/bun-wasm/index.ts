@@ -77,10 +77,8 @@ const Wasi = {
   },
   proc_exit() {},
 
-  fd_seek(fd: number, offset_bigint: bigint, whence: unknown, newOffset: unknown) {
-  },
-  fd_write(fd: unknown, iov: unknown, iovcnt: unknown, pnum: unknown) {
-  },
+  fd_seek(fd: number, offset_bigint: bigint, whence: unknown, newOffset: unknown) {},
+  fd_write(fd: unknown, iov: unknown, iovcnt: unknown, pnum: unknown) {},
 };
 
 const env = {

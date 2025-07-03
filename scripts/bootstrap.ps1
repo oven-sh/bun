@@ -1,4 +1,4 @@
-# Version: 7
+# Version: 9
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -240,11 +240,11 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Package nodejs -Command node -Version "22.9.0"
+  Install-Package nodejs -Command node -Version "24.3.0"
 }
 
 function Install-Bun {
-  Install-Package bun -Version "1.1.30"
+  Install-Package bun -Version "1.2.17"
 }
 
 function Install-Cygwin {
@@ -345,7 +345,7 @@ function Install-Rust {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "18.1.8"
+    -Version "19.1.7"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

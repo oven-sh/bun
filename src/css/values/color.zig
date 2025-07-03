@@ -1,8 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
+const bits = bun.bits;
 
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
@@ -497,15 +496,15 @@ pub const CssColor = union(enum) {
 
         var res = css.SmallList(CssColor, 2){};
 
-        if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) {
+        if (fallbacks.rgb) {
             res.appendAssumeCapacity(this.toRGB(allocator).?);
         }
 
-        if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
+        if (fallbacks.p3) {
             res.appendAssumeCapacity(this.toP3(allocator).?);
         }
 
-        if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
+        if (fallbacks.lab) {
             const foo = this.toLAB(allocator).?;
             this.* = foo;
         }
@@ -526,49 +525,49 @@ pub const CssColor = union(enum) {
         // below and including the authored color space, and remove the ones that aren't
         // compatible with our browser targets.
         var fallbacks = switch (this.*) {
-            .current_color, .rgba, .float, .system => return ColorFallbackKind.empty(),
+            .current_color, .rgba, .float, .system => return ColorFallbackKind{},
             .lab => |lab| brk: {
                 if (lab.* == .lab or lab.* == .lch and targets.shouldCompileSame(.lab_colors))
                     break :brk ColorFallbackKind.andBelow(.{ .lab = true });
                 if (lab.* == .oklab or lab.* == .oklch and targets.shouldCompileSame(.oklab_colors))
                     break :brk ColorFallbackKind.andBelow(.{ .oklab = true });
-                return ColorFallbackKind.empty();
+                return ColorFallbackKind{};
             },
             .predefined => |predefined| brk: {
                 if (predefined.* == .display_p3 and targets.shouldCompileSame(.p3_colors)) break :brk ColorFallbackKind.andBelow(.{ .p3 = true });
                 if (targets.shouldCompileSame(.color_function)) break :brk ColorFallbackKind.andBelow(.{ .lab = true });
-                return ColorFallbackKind.empty();
+                return ColorFallbackKind{};
             },
             .light_dark => |*ld| {
-                return ld.light.getPossibleFallbacks(targets).bitwiseOr(ld.dark.getPossibleFallbacks(targets));
+                return bun.bits.@"or"(ColorFallbackKind, ld.light.getPossibleFallbacks(targets), ld.dark.getPossibleFallbacks(targets));
             },
         };
 
-        if (fallbacks.contains(.{ .oklab = true })) {
+        if (fallbacks.oklab) {
             if (!targets.shouldCompileSame(.oklab_colors)) {
-                fallbacks.remove(ColorFallbackKind.andBelow(.{ .lab = true }));
+                fallbacks = fallbacks.difference(ColorFallbackKind.andBelow(.{ .lab = true }));
             }
         }
 
-        if (fallbacks.contains(.{ .lab = true })) {
+        if (fallbacks.lab) {
             if (!targets.shouldCompileSame(.lab_colors)) {
                 fallbacks = fallbacks.difference(ColorFallbackKind.andBelow(.{ .p3 = true }));
             } else if (targets.browsers != null and css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.lab_colors, targets.browsers.?)) {
                 // We don't need P3 if Lab is supported by some of our targets.
                 // No browser implements Lab but not P3.
-                fallbacks.remove(.{ .p3 = true });
+                fallbacks.p3 = false;
             }
         }
 
-        if (fallbacks.contains(.{ .p3 = true })) {
+        if (fallbacks.p3) {
             if (!targets.shouldCompileSame(.p3_colors)) {
-                fallbacks.remove(.{ .rgb = true });
-            } else if (fallbacks.highest().asBits() != ColorFallbackKind.asBits(.{ .p3 = true }) and
+                fallbacks.rgb = false;
+            } else if (fallbacks.highest() != ColorFallbackKind.P3 and
                 (targets.browsers == null or !css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.p3_colors, targets.browsers.?)))
             {
                 // Remove P3 if it isn't supported by any targets, and wasn't the
                 // original authored color.
-                fallbacks.remove(.{ .p3 = true });
+                fallbacks.p3 = false;
             }
         }
 
@@ -673,7 +672,7 @@ pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, in
                 fn callback(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
                     const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
                     if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
-                        return CssColor{ .rgba = hsl.intoRGBA() };
+                        return CssColor{ .rgba = hsl.into(.RGBA) };
                     } else {
                         return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hsl = hsl }) };
                     }
@@ -683,7 +682,7 @@ pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, in
                 fn callback(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
                     const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
                     if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
-                        return CssColor{ .rgba = hwb.intoRGBA() };
+                        return CssColor{ .rgba = hwb.into(.RGBA) };
                     } else {
                         return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
                     }
@@ -818,12 +817,12 @@ pub fn parseHSLHWBComponents(comptime T: type, input: *css.Parser, parser: *Comp
 }
 
 pub fn mapGamut(comptime T: type, color: T) T {
-    const conversion_function_name = "into" ++ comptime bun.meta.typeName(T);
+    const conversion_target = comptime ConvertTo.fromType(T);
     const JND: f32 = 0.02;
     const EPSILON: f32 = 0.00001;
 
     // https://www.w3.org/TR/css-color-4/#binsearch
-    var current: OKLCH = color.intoOKLCH();
+    var current: OKLCH = color.into(.OKLCH);
 
     // If lightness is >= 100%, return pure white.
     if (@abs(current.l - 1.0) < EPSILON or current.l > 1.0) {
@@ -833,7 +832,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        return @call(.auto, @field(OKLCH, conversion_function_name), .{&oklch});
+        return oklch.into(conversion_target);
     }
 
     // If lightness <= 0%, return pure black.
@@ -844,7 +843,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
             .h = 0.0,
             .alpha = current.alpha,
         };
-        return @call(.auto, @field(OKLCH, conversion_function_name), .{&oklch});
+        return oklch.into(conversion_target);
     }
 
     var min: f32 = 0.0;
@@ -854,7 +853,7 @@ pub fn mapGamut(comptime T: type, color: T) T {
         const chroma = (min + max) / 2.0;
         current.c = chroma;
 
-        const converted = @call(.auto, @field(OKLCH, conversion_function_name), .{&current});
+        const converted = current.into(conversion_target);
         if (converted.inGamut()) {
             min = chroma;
             continue;
@@ -869,13 +868,13 @@ pub fn mapGamut(comptime T: type, color: T) T {
         max = chroma;
     }
 
-    return @call(.auto, @field(OKLCH, conversion_function_name), .{&current});
+    return current.into(conversion_target);
 }
 
 pub fn deltaEok(comptime T: type, _a: T, _b: OKLCH) f32 {
     // https://www.w3.org/TR/css-color-4/#color-difference-OK
-    const a = T.intoOKLAB(&_a);
-    const b: OKLAB = _b.intoOKLAB();
+    const a: OKLAB = _a.into(.OKLAB);
+    const b: OKLAB = _b.into(.OKLAB);
 
     const delta_l = a.l - b.l;
     const delta_a = a.a - b.a;
@@ -1337,8 +1336,15 @@ pub const RGBA = struct {
     /// The alpha component.
     alpha: u8,
 
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace color_conversions.convert_RGBA;
+    /// Convert the color into another color format.
+    pub const into = ColorIntoMixin(@This(), .RGBA).into;
+
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
 
     pub fn new(red: u8, green: u8, blue: u8, alpha: f32) RGBA {
         return RGBA{
@@ -1620,15 +1626,33 @@ pub const LAB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const types = colorspace_impl.types;
+    pub const channels = colorspace_impl.channels;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace AdjustPowerlessLAB(@This());
-    pub usingnamespace DeriveInterpolate(@This(), "l", "a", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "l", "a", "b");
+    pub const adjustPowerlessComponents = AdjustPowerlessLAB(@This()).adjustPowerlessComponents;
+    const interpolate_impl = DeriveInterpolate(@This(), "l", "a", "b");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "l", "a", "b");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_LAB;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .LAB).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .LAB);
 
     pub const ChannelTypeMap = .{
         .l = ChannelType{ .percentage = true },
@@ -1650,14 +1674,32 @@ pub const SRGB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace DeriveInterpolate(@This(), "r", "g", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "r", "g", "b");
+    const interpolate_impl = DeriveInterpolate(@This(), "r", "g", "b");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "r", "g", "b");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_SRGB;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .SRGB).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .SRGB);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .percentage = true },
@@ -1690,14 +1732,32 @@ pub const HSL = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace HslHwbColorGamut(@This(), "s", "l");
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = HslHwbColorGamut(@This(), "s", "l");
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace PolarPremultiply(@This(), "s", "l");
-    pub usingnamespace DeriveInterpolate(@This(), "h", "s", "l");
+    const polar_impl = PolarPremultiply(@This(), "s", "l");
+    pub const premultiply = polar_impl.premultiply;
+    pub const unpremultiply = polar_impl.unpremultiply;
+    const interpolate_impl = DeriveInterpolate(@This(), "h", "s", "l");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
 
-    pub usingnamespace color_conversions.convert_HSL;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .HSL).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .HSL);
 
     pub const ChannelTypeMap = .{
         .h = ChannelType{ .angle = true },
@@ -1734,14 +1794,32 @@ pub const HWB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace HslHwbColorGamut(@This(), "w", "b");
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = HslHwbColorGamut(@This(), "w", "b");
+    pub const inGamut = gamut_impl.inGamut;
+    pub const clip = gamut_impl.clip;
 
-    pub usingnamespace PolarPremultiply(@This(), "w", "b");
-    pub usingnamespace DeriveInterpolate(@This(), "h", "w", "b");
+    const polar_impl = PolarPremultiply(@This(), "w", "b");
+    pub const premultiply = polar_impl.premultiply;
+    pub const unpremultiply = polar_impl.unpremultiply;
+    const interpolate_impl = DeriveInterpolate(@This(), "h", "w", "b");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
 
-    pub usingnamespace color_conversions.convert_HWB;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .HWB).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .HWB);
 
     pub const ChannelTypeMap = .{
         .h = ChannelType{ .angle = true },
@@ -1773,14 +1851,32 @@ pub const SRGBLinear = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace DeriveInterpolate(@This(), "r", "g", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "r", "g", "b");
+    const interpolate_impl = DeriveInterpolate(@This(), "r", "g", "b");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "r", "g", "b");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_SRGBLinear;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .SRGBLinear).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .SRGBLinear);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .angle = true },
@@ -1803,11 +1899,25 @@ pub const P3 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace color_conversions.convert_P3;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .P3).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .P3);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .percentage = true },
@@ -1827,11 +1937,25 @@ pub const A98 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace color_conversions.convert_A98;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .A98).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .A98);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .percentage = true },
@@ -1851,11 +1975,25 @@ pub const ProPhoto = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace color_conversions.convert_ProPhoto;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .ProPhoto).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .ProPhoto);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .percentage = true },
@@ -1875,11 +2013,25 @@ pub const Rec2020 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace BoundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = BoundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace color_conversions.convert_Rec2020;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .Rec2020).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .Rec2020);
 
     pub const ChannelTypeMap = .{
         .r = ChannelType{ .percentage = true },
@@ -1899,14 +2051,32 @@ pub const XYZd50 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace DeriveInterpolate(@This(), "x", "y", "z");
-    pub usingnamespace RecangularPremultiply(@This(), "x", "y", "z");
+    const interpolate_impl = DeriveInterpolate(@This(), "x", "y", "z");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "x", "y", "z");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_XYZd50;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .XYZd50).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .XYZd50);
 
     pub const ChannelTypeMap = .{
         .x = ChannelType{ .percentage = true },
@@ -1926,14 +2096,32 @@ pub const XYZd65 = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace DeriveInterpolate(@This(), "x", "y", "z");
-    pub usingnamespace RecangularPremultiply(@This(), "x", "y", "z");
+    const interpolate_impl = DeriveInterpolate(@This(), "x", "y", "z");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "x", "y", "z");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_XYZd65;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .XYZd65).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .XYZd65);
 
     pub const ChannelTypeMap = .{
         .x = ChannelType{ .percentage = true },
@@ -1956,15 +2144,35 @@ pub const LCH = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace AdjustPowerlessLCH(@This());
-    pub usingnamespace DeriveInterpolate(@This(), "l", "c", "h");
-    pub usingnamespace RecangularPremultiply(@This(), "l", "c", "h");
+    const powerless_lch_impl = AdjustPowerlessLCH(@This());
+    pub const adjustPowerlessComponents = powerless_lch_impl.adjustPowerlessComponents;
+    pub const adjustHue = powerless_lch_impl.adjustHue;
+    const interpolate_impl = DeriveInterpolate(@This(), "l", "c", "h");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "l", "c", "h");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_LCH;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .LCH).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .LCH);
 
     pub const ChannelTypeMap = .{
         .l = ChannelType{ .percentage = true },
@@ -1984,15 +2192,33 @@ pub const OKLAB = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace AdjustPowerlessLAB(@This());
-    pub usingnamespace DeriveInterpolate(@This(), "l", "a", "b");
-    pub usingnamespace RecangularPremultiply(@This(), "l", "a", "b");
+    pub const adjustPowerlessComponents = AdjustPowerlessLAB(@This()).adjustPowerlessComponents;
+    const interpolate_impl = DeriveInterpolate(@This(), "l", "a", "b");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
+    const recangular_impl = RecangularPremultiply(@This(), "l", "a", "b");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
 
-    pub usingnamespace color_conversions.convert_OKLAB;
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .OKLAB).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .OKLAB);
 
     pub const ChannelTypeMap = .{
         .l = ChannelType{ .percentage = true },
@@ -2014,15 +2240,36 @@ pub const OKLCH = struct {
     /// The alpha component.
     alpha: f32,
 
-    pub usingnamespace DefineColorspace(@This(), ChannelTypeMap);
-    pub usingnamespace ColorspaceConversions(@This());
-    pub usingnamespace UnboundedColorGamut(@This());
+    const colorspace_impl = DefineColorspace(@This(), ChannelTypeMap);
+    pub const components = colorspace_impl.components;
+    pub const channels = colorspace_impl.channels;
+    pub const types = colorspace_impl.types;
+    pub const resolveMissing = colorspace_impl.resolveMissing;
+    pub const resolve = colorspace_impl.resolve;
+    const conversions_impl = ColorspaceConversions(@This());
+    pub const fromLABColor = conversions_impl.fromLABColor;
+    pub const fromPredefinedColor = conversions_impl.fromPredefinedColor;
+    pub const fromFloatColor = conversions_impl.fromFloatColor;
+    pub const tryFromCssColor = conversions_impl.tryFromCssColor;
+    pub const hash = conversions_impl.hash;
+    const gamut_impl = UnboundedColorGamut(@This());
+    pub const clip = gamut_impl.clip;
+    pub const inGamut = gamut_impl.inGamut;
 
-    pub usingnamespace AdjustPowerlessLCH(@This());
-    pub usingnamespace DeriveInterpolate(@This(), "l", "c", "h");
-    pub usingnamespace RecangularPremultiply(@This(), "l", "c", "h");
+    const powerless_lch_impl = AdjustPowerlessLCH(@This());
+    pub const adjustPowerlessComponents = powerless_lch_impl.adjustPowerlessComponents;
+    pub const adjustHue = powerless_lch_impl.adjustHue;
+    const interpolate_impl = DeriveInterpolate(@This(), "l", "c", "h");
+    pub const fillMissingComponents = interpolate_impl.fillMissingComponents;
+    pub const interpolate = interpolate_impl.interpolate;
 
-    pub usingnamespace color_conversions.convert_OKLCH;
+    const recangular_impl = RecangularPremultiply(@This(), "l", "c", "h");
+    pub const premultiply = recangular_impl.premultiply;
+    pub const unpremultiply = recangular_impl.unpremultiply;
+
+    /// Convert this color into another color format.
+    pub const into = ColorIntoMixin(@This(), .OKLCH).into;
+    pub const intoCssColor = ImplementIntoCssColor(@This(), .OKLCH);
 
     pub const ChannelTypeMap = .{
         .l = ChannelType{ .percentage = true },
@@ -2455,19 +2702,25 @@ const RelativeComponentParser = struct {
         ident: []const u8,
         allowed_types: ChannelType,
     ) ?f32 {
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[0]) and allowed_types.intersects(this.types[0])) {
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[0]) and
+            bits.intersects(ChannelType, allowed_types, this.types[0]))
+        {
             return this.components[0];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[1]) and allowed_types.intersects(this.types[1])) {
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[1]) and
+            bits.intersects(ChannelType, allowed_types, this.types[1]))
+        {
             return this.components[1];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[2]) and allowed_types.intersects(this.types[2])) {
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[2]) and
+            bits.intersects(ChannelType, allowed_types, this.types[2]))
+        {
             return this.components[2];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "alpha") and allowed_types.intersects(ChannelType{ .percentage = true })) {
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "alpha") and allowed_types.percentage) {
             return this.components[3];
         }
 
@@ -2485,8 +2738,6 @@ pub const ChannelType = packed struct(u8) {
     /// Channel represents a number.
     number: bool = false,
     __unused: u5 = 0,
-
-    pub usingnamespace css.Bitflags(@This());
 };
 
 pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
@@ -2707,24 +2958,30 @@ pub const ColorFallbackKind = packed struct(u8) {
     pub const LAB = ColorFallbackKind{ .lab = true };
     pub const OKLAB = ColorFallbackKind{ .oklab = true };
 
-    pub usingnamespace css.Bitflags(@This());
-
     pub fn lowest(this: @This()) ColorFallbackKind {
-        return this.bitwiseAnd(ColorFallbackKind.fromBitsTruncate(bun.wrappingNegation(this.asBits())));
+        return bun.bits.@"and"(
+            ColorFallbackKind,
+            this,
+            fromBitsTruncate(bun.wrappingNegation(@as(u8, @bitCast(this)))),
+        );
     }
 
     pub fn highest(this: @This()) ColorFallbackKind {
         // This finds the highest set bit.
-        if (this.isEmpty()) return ColorFallbackKind.empty();
+        if (this.isEmpty()) return ColorFallbackKind{};
 
-        const zeroes: u3 = @intCast(@as(u4, 7) - this.leadingZeroes());
-        return ColorFallbackKind.fromBitsTruncate(@as(u8, 1) << zeroes);
+        const zeroes: u3 = @intCast(@as(u4, 7) - bun.bits.leadingZeros(ColorFallbackKind, this));
+        return fromBitsTruncate(@as(u8, 1) << zeroes);
+    }
+
+    pub fn difference(left: @This(), right: @This()) ColorFallbackKind {
+        return @bitCast(@as(u8, @bitCast(left)) - @as(u8, @bitCast(right)));
     }
 
     pub fn andBelow(this: @This()) ColorFallbackKind {
-        if (this.isEmpty()) return ColorFallbackKind.empty();
+        if (this.isEmpty()) return .{};
 
-        return this.bitwiseOr(ColorFallbackKind.fromBitsTruncate(this.asBits() - 1));
+        return bun.bits.@"or"(ColorFallbackKind, this, fromBitsTruncate(@as(u8, @bitCast(this)) - 1));
     }
 
     pub fn supportsCondition(this: @This()) css.SupportsCondition {
@@ -2740,6 +2997,20 @@ pub const ColorFallbackKind = packed struct(u8) {
                 .value = s,
             },
         };
+    }
+
+    pub fn isEmpty(cfk: ColorFallbackKind) bool {
+        return @as(u8, @bitCast(cfk)) == 0;
+    }
+
+    pub inline fn fromBitsTruncate(b: u8) ColorFallbackKind {
+        var cfk: ColorFallbackKind = @bitCast(b);
+        cfk.__unused = 0;
+        return cfk;
+    }
+
+    pub fn asBits(this: @This()) u8 {
+        return @bitCast(this);
     }
 };
 
@@ -2937,91 +3208,30 @@ fn rectangularToPolar(l: f32, a: f32, b: f32) struct { f32, f32, f32 } {
 }
 
 pub fn ColorspaceConversions(comptime T: type) type {
-    // e.g. T = LAB, so then: into_this_function_name = "intoLAB"
-    const into_this_function_name = "into" ++ comptime bun.meta.typeName(T);
-
     return struct {
+        const convert_type: ConvertTo = .fromType(T);
+
         pub fn fromLABColor(color: *const LABColor) T {
             return switch (color.*) {
-                .lab => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .lch => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .oklab => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .oklch => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
+                inline else => |*v| v.into(convert_type),
             };
         }
 
         pub fn fromPredefinedColor(color: *const PredefinedColor) T {
             return switch (color.*) {
-                .srgb => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .srgb_linear => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .display_p3 => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .a98 => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .prophoto => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .rec2020 => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .xyz_d50 => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .xyz_d65 => |*v| {
-                    if (comptime @TypeOf(v.*) == T) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
+                inline else => |*v| v.into(convert_type),
             };
         }
 
         pub fn fromFloatColor(color: *const FloatColor) T {
             return switch (color.*) {
-                .rgb => |*v| {
-                    if (comptime T == SRGB) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .hsl => |*v| {
-                    if (comptime T == HSL) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
-                .hwb => |*v| {
-                    if (comptime T == HWB) return v.*;
-                    return @call(.auto, @field(@TypeOf(v.*), into_this_function_name), .{v});
-                },
+                inline else => |*v| v.into(convert_type),
             };
         }
 
         pub fn tryFromCssColor(color: *const CssColor) ?T {
             return switch (color.*) {
-                .rgba => |*rgba| {
-                    if (comptime T == RGBA) return rgba.*;
-                    return @call(.auto, @field(@TypeOf(rgba.*), into_this_function_name), .{rgba});
-                },
+                .rgba => |*rgba| rgba.into(convert_type),
                 .lab => |lab| fromLABColor(lab),
                 .predefined => |predefined| fromPredefinedColor(predefined),
                 .float => |float| fromFloatColor(float),
@@ -3038,7 +3248,7 @@ pub fn ColorspaceConversions(comptime T: type) type {
 }
 
 pub fn DefineColorspace(comptime T: type, comptime ChannelTypeMap: anytype) type {
-    const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
+    const fields: []const std.builtin.Type.StructField = @typeInfo(T).@"struct".fields;
     const a = fields[0].name;
     const b = fields[1].name;
     const c = fields[2].name;
@@ -3471,16 +3681,11 @@ pub fn polarToRectangular(l: f32, c: f32, h: f32) struct { f32, f32, f32 } {
 const D50: []const f32 = &.{ @floatCast(@as(f64, 0.3457) / @as(f64, 0.3585)), 1.00000, @floatCast((@as(f64, 1.0) - @as(f64, 0.3457) - @as(f64, 0.3585)) / @as(f64, 0.3585)) };
 // const D50: []const f32 = &.{ 0.9642956, 1.0, 0.82510453 };
 
+const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
 const color_conversions = struct {
-    const generated = @import("./color_generated.zig").generated_color_conversions;
-
-    pub const convert_RGBA = struct {
-        pub usingnamespace generated.convert_RGBA;
-    };
+    pub const convert_RGBA = struct {};
 
     pub const convert_LAB = struct {
-        pub usingnamespace generated.convert_LAB;
-
         pub fn intoCssColor(c: *const LAB, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
@@ -3543,12 +3748,10 @@ const color_conversions = struct {
     };
 
     pub const convert_SRGB = struct {
-        pub usingnamespace generated.convert_SRGB;
-
         pub fn intoCssColor(srgb: *const SRGB, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
-            return CssColor{ .rgba = srgb.intoRGBA() };
+            return CssColor{ .rgba = srgb.into(.RGBA) };
         }
 
         pub fn intoSRGBLinear(rgb: *const SRGB) SRGBLinear {
@@ -3605,7 +3808,7 @@ const color_conversions = struct {
 
         pub fn intoHWB(_rgb: *const SRGB) HWB {
             const rgb = _rgb.resolve();
-            const hsl = rgb.intoHSL();
+            const hsl = rgb.into(.HSL);
             const r = rgb.r;
             const g = rgb.g;
             const _b = rgb.b;
@@ -3621,12 +3824,10 @@ const color_conversions = struct {
     };
 
     pub const convert_HSL = struct {
-        pub usingnamespace generated.convert_HSL;
-
         pub fn intoCssColor(c: *const HSL, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
-            return CssColor{ .rgba = c.intoRGBA() };
+            return CssColor{ .rgba = c.into(.RGBA) };
         }
 
         pub fn intoSRGB(hsl_: *const HSL) SRGB {
@@ -3644,12 +3845,10 @@ const color_conversions = struct {
     };
 
     pub const convert_HWB = struct {
-        pub usingnamespace generated.convert_HWB;
-
         pub fn intoCssColor(c: *const HWB, _: Allocator) CssColor {
             // TODO: should we serialize as color(srgb, ...)?
             // would be more precise than 8-bit color.
-            return CssColor{ .rgba = c.intoRGBA() };
+            return CssColor{ .rgba = c.into(.RGBA) };
         }
 
         pub fn intoSRGB(_hwb: *const HWB) SRGB {
@@ -3669,7 +3868,7 @@ const color_conversions = struct {
                 };
             }
 
-            var rgba = (HSL{ .h = h, .s = 1.0, .l = 0.5, .alpha = hwb.alpha }).intoSRGB();
+            var rgba = (HSL{ .h = h, .s = 1.0, .l = 0.5, .alpha = hwb.alpha }).into(.SRGB);
             const x = 1.0 - w - b;
             rgba.r = rgba.r * x + w;
             rgba.g = rgba.g * x + w;
@@ -3679,8 +3878,6 @@ const color_conversions = struct {
     };
 
     pub const convert_SRGBLinear = struct {
-        pub usingnamespace generated.convert_SRGBLinear;
-
         pub fn intoPredefinedColor(rgb: *const SRGBLinear) PredefinedColor {
             return PredefinedColor{ .srgb_linear = rgb.* };
         }
@@ -3690,7 +3887,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -3734,8 +3931,6 @@ const color_conversions = struct {
     };
 
     pub const convert_P3 = struct {
-        pub usingnamespace generated.convert_P3;
-
         pub fn intoPredefinedColor(rgb: *const P3) PredefinedColor {
             return PredefinedColor{ .display_p3 = rgb.* };
         }
@@ -3745,7 +3940,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -3780,8 +3975,6 @@ const color_conversions = struct {
     };
 
     pub const convert_A98 = struct {
-        pub usingnamespace generated.convert_A98;
-
         pub fn intoPredefinedColor(rgb: *const A98) PredefinedColor {
             return PredefinedColor{ .a98 = rgb.* };
         }
@@ -3791,7 +3984,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -3843,8 +4036,6 @@ const color_conversions = struct {
     };
 
     pub const convert_ProPhoto = struct {
-        pub usingnamespace generated.convert_ProPhoto;
-
         pub fn intoPredefinedColor(rgb: *const ProPhoto) PredefinedColor {
             return PredefinedColor{ .prophoto = rgb.* };
         }
@@ -3854,7 +4045,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -3911,8 +4102,6 @@ const color_conversions = struct {
     };
 
     pub const convert_Rec2020 = struct {
-        pub usingnamespace generated.convert_Rec2020;
-
         pub fn intoPredefinedColor(rgb: *const Rec2020) PredefinedColor {
             return PredefinedColor{ .rec2020 = rgb.* };
         }
@@ -3922,7 +4111,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -3984,8 +4173,6 @@ const color_conversions = struct {
     };
 
     pub const convert_XYZd50 = struct {
-        pub usingnamespace generated.convert_XYZd50;
-
         pub fn intoPredefinedColor(rgb: *const XYZd50) PredefinedColor {
             return PredefinedColor{ .xyz_d50 = rgb.* };
         }
@@ -3995,7 +4182,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -4101,8 +4288,6 @@ const color_conversions = struct {
     };
 
     pub const convert_XYZd65 = struct {
-        pub usingnamespace generated.convert_XYZd65;
-
         pub fn intoPredefinedColor(rgb: *const XYZd65) PredefinedColor {
             return PredefinedColor{ .xyz_d65 = rgb.* };
         }
@@ -4112,7 +4297,7 @@ const color_conversions = struct {
                 .predefined = bun.create(
                     allocator,
                     PredefinedColor,
-                    rgb.intoPredefinedColor(),
+                    rgb.into(.PredefinedColor),
                 ),
             };
         }
@@ -4319,8 +4504,6 @@ const color_conversions = struct {
     };
 
     pub const convert_LCH = struct {
-        pub usingnamespace generated.convert_LCH;
-
         pub fn intoCssColor(c: *const LCH, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
@@ -4342,8 +4525,6 @@ const color_conversions = struct {
     };
 
     pub const convert_OKLAB = struct {
-        pub usingnamespace generated.convert_OKLAB;
-
         pub fn intoCssColor(c: *const OKLAB, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
@@ -4412,8 +4593,6 @@ const color_conversions = struct {
     };
 
     pub const convert_OKLCH = struct {
-        pub usingnamespace generated.convert_OKLCH;
-
         pub fn intoCssColor(c: *const OKLCH, allocator: Allocator) CssColor {
             return CssColor{ .lab = bun.create(
                 allocator,
@@ -4438,3 +4617,93 @@ const color_conversions = struct {
         }
     };
 };
+
+pub const ConvertTo = enum {
+    RGBA,
+    LAB,
+    SRGB,
+    HSL,
+    HWB,
+    SRGBLinear,
+    P3,
+    A98,
+    ProPhoto,
+    Rec2020,
+    XYZd50,
+    XYZd65,
+    LCH,
+    OKLAB,
+    OKLCH,
+    PredefinedColor,
+    pub fn fromType(comptime T: type) ConvertTo {
+        return @field(ConvertTo, bun.meta.typeName(T));
+    }
+    pub fn Type(comptime space: ConvertTo) type {
+        return switch (space) {
+            .RGBA => RGBA,
+            .LAB => LAB,
+            .SRGB => SRGB,
+            .HSL => HSL,
+            .HWB => HWB,
+            .SRGBLinear => SRGBLinear,
+            .P3 => P3,
+            .A98 => A98,
+            .ProPhoto => ProPhoto,
+            .Rec2020 => Rec2020,
+            .XYZd50 => XYZd50,
+            .XYZd65 => XYZd65,
+            .LCH => LCH,
+            .OKLAB => OKLAB,
+            .OKLCH => OKLCH,
+            .PredefinedColor => PredefinedColor,
+        };
+    }
+};
+pub fn ColorIntoMixin(T: type, space: ConvertTo) type {
+    return struct {
+        pub const into_names = struct {
+            const RGBA = "intoRGBA";
+            const LAB = "intoLAB";
+            const SRGB = "intoSRGB";
+            const HSL = "intoHSL";
+            const HWB = "intoHWB";
+            const SRGBLinear = "intoSRGBLinear";
+            const P3 = "intoP3";
+            const A98 = "intoA98";
+            const ProPhoto = "intoProPhoto";
+            const Rec2020 = "intoRec2020";
+            const XYZd50 = "intoXYZd50";
+            const XYZd65 = "intoXYZd65";
+            const LCH = "intoLCH";
+            const OKLAB = "intoOKLAB";
+            const OKLCH = "intoOKLCH";
+            const PredefinedColor = "intoPredefinedColor";
+        };
+        const ns = "convert_" ++ @tagName(space);
+
+        const handwritten_conversions = @field(color_conversions, ns);
+        const generated_conversions = @field(generated_color_conversions, ns);
+
+        pub fn into(color: *const T, comptime target_space: ConvertTo) target_space.Type() {
+            if (target_space == space) return color.*;
+
+            const name = @field(into_names, @tagName(target_space));
+
+            const function = if (@hasDecl(handwritten_conversions, name))
+                @field(handwritten_conversions, name)
+            else if (@hasDecl(generated_conversions, name))
+                @field(generated_conversions, name)
+            else if (@hasDecl(T, name))
+                @field(T, name)
+            else
+                @compileError("No conversion from " ++ @tagName(space) ++ " to " ++ @tagName(target_space));
+
+            return function(color);
+        }
+    };
+}
+
+pub fn ImplementIntoCssColor(comptime T: type, space: ConvertTo) fn (*const T, Allocator) CssColor {
+    const ns = "convert_" ++ @tagName(space);
+    return @field(color_conversions, ns).intoCssColor;
+}

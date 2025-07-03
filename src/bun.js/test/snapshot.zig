@@ -1,8 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const default_allocator = bun.default_allocator;
+const bun = @import("bun");
 const string = bun.string;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const logger = bun.logger;
 const jest = @import("./jest.zig");
@@ -11,7 +9,6 @@ const TestRunner = jest.TestRunner;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const Expect = @import("./expect.zig").Expect;
 
@@ -137,12 +134,12 @@ pub const Snapshots = struct {
         remain[0] = 0;
         const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-        const source = logger.Source.initPathString(snapshot_file_path, this.file_buf.items);
+        const source = &logger.Source.initPathString(snapshot_file_path, this.file_buf.items);
 
         var parser = try js_parser.Parser.init(
             opts,
             &temp_log,
-            &source,
+            source,
             vm.transpiler.options.define,
             this.allocator,
         );
@@ -253,13 +250,13 @@ pub const Snapshots = struct {
             };
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 
             const file_text = try file.file.readToEndAlloc(arena, std.math.maxInt(usize));
 
-            var source = bun.logger.Source.initPathString(test_filename, file_text);
+            const source = &bun.logger.Source.initPathString(test_filename, file_text);
 
             var result_text = std.ArrayList(u8).init(arena);
 
@@ -271,14 +268,14 @@ pub const Snapshots = struct {
             var last_col: c_ulong = 1;
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
-                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
                     continue;
                 }
 
                 inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
                 const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
                     inline_snapshot_dbg("-> Could not find byte", .{});
-                    try log.addErrorFmt(&source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
+                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
                     continue;
                 };
 
@@ -300,7 +297,7 @@ pub const Snapshots = struct {
                     };
                     const fn_name = ils.kind;
                     if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
-                        try log.addErrorFmt(&source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
+                        try log.addErrorFmt(source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
                         continue;
                     }
                     next_start += fn_name.len;
@@ -313,14 +310,14 @@ pub const Snapshots = struct {
                     }
                     try lexer.next();
                     var parser: bun.js_parser.TSXParser = undefined;
-                    try bun.js_parser.TSXParser.init(arena, &log, &source, vm.transpiler.options.define, lexer, opts, &parser);
+                    try bun.js_parser.TSXParser.init(arena, &log, source, vm.transpiler.options.define, lexer, opts, &parser);
 
                     try parser.lexer.expect(.t_open_paren);
                     const after_open_paren_loc = parser.lexer.loc().start;
                     if (parser.lexer.token == .t_close_paren) {
                         // zero args
                         if (ils.has_matchers) {
-                            try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot has matchers and yet has no arguments", .{});
+                            try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot has matchers and yet has no arguments", .{});
                             continue;
                         }
                         const close_paren_loc = parser.lexer.loc().start;
@@ -328,7 +325,7 @@ pub const Snapshots = struct {
                         break :blk .{ after_open_paren_loc, close_paren_loc, false };
                     }
                     if (parser.lexer.token == .t_dot_dot_dot) {
-                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
+                        try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
                         continue;
                     }
 
@@ -349,7 +346,7 @@ pub const Snapshots = struct {
                             break :blk .{ after_expr_loc, after_comma_loc, true };
                         } else {
                             if (expr_1.data != .e_string) {
-                                try log.addErrorFmt(&source, expr_1.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
+                                try log.addErrorFmt(source, expr_1.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
                                 continue;
                             }
                             break :blk .{ before_expr_loc, after_expr_loc, false };
@@ -357,7 +354,7 @@ pub const Snapshots = struct {
                     }
 
                     if (parser.lexer.token == .t_dot_dot_dot) {
-                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
+                        try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Spread is not allowed", .{});
                         continue;
                     }
 
@@ -366,11 +363,11 @@ pub const Snapshots = struct {
                     const after_expr_2_loc = parser.lexer.loc().start;
 
                     if (!ils.has_matchers) {
-                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot does not have matchers and yet has two arguments", .{});
+                        try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot does not have matchers and yet has two arguments", .{});
                         continue;
                     }
                     if (expr_2.data != .e_string) {
-                        try log.addErrorFmt(&source, expr_2.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
+                        try log.addErrorFmt(source, expr_2.loc, arena, "Failed to update inline snapshot: Argument must be a string literal", .{});
                         continue;
                     }
 
@@ -378,7 +375,7 @@ pub const Snapshots = struct {
                         try parser.lexer.expect(.t_comma);
                     }
                     if (parser.lexer.token != .t_close_paren) {
-                        try log.addErrorFmt(&source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot expects at most two arguments", .{});
+                        try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot expects at most two arguments", .{});
                         continue;
                     }
                     try parser.lexer.expect(.t_close_paren);
@@ -390,7 +387,7 @@ pub const Snapshots = struct {
                 inline_snapshot_dbg("  -> Found update range {}-{}", .{ final_start_usize, final_end_usize });
 
                 if (final_end_usize < final_start_usize or final_start_usize < uncommitted_segment_end) {
-                    try log.addErrorFmt(&source, .{ .start = final_start }, arena, "Failed to update inline snapshot: Did not advance.", .{});
+                    try log.addErrorFmt(source, .{ .start = final_start }, arena, "Failed to update inline snapshot: Did not advance.", .{});
                     continue;
                 }
 
@@ -455,12 +452,12 @@ pub const Snapshots = struct {
 
             // 4. write out result_text to the file
             file.file.seekTo(0) catch |e| {
-                try log.addErrorFmt(&source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Seek file error: {s}", .{@errorName(e)});
+                try log.addErrorFmt(source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Seek file error: {s}", .{@errorName(e)});
                 continue;
             };
 
             file.file.writeAll(result_text.items) catch |e| {
-                try log.addErrorFmt(&source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Write file error: {s}", .{@errorName(e)});
+                try log.addErrorFmt(source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Write file error: {s}", .{@errorName(e)});
                 continue;
             };
             if (result_text.items.len < file_text.len) {
@@ -521,7 +518,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 

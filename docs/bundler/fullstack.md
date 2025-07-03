@@ -1,36 +1,48 @@
-Using `Bun.serve()`'s `static` option, you can run your frontend and backend in the same app with no extra steps.
-
-To get started, import HTML files and pass them to the `static` option in `Bun.serve()`.
+To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts
+import { sql, serve } from "bun";
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
-const server = Bun.serve({
-  // Add HTML imports to `static`
-  static: {
-    // Bundle & route index.html to "/"
+const server = serve({
+  routes: {
+    // ** HTML imports **
+    // Bundle & route index.html to "/". This uses HTMLRewriter to scan the HTML for `<script>` and `<link>` tags, run's Bun's JavaScript & CSS bundler on them, transpiles any TypeScript, JSX, and TSX, downlevels CSS with Bun's CSS parser and serves the result.
     "/": homepage,
     // Bundle & route dashboard.html to "/dashboard"
     "/dashboard": dashboard,
+
+    // ** API endpoints ** (Bun v1.2.3+ required)
+    "/api/users": {
+      async GET(req) {
+        const users = await sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] =
+          await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
+    },
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
   },
 
   // Enable development mode for:
   // - Detailed error messages
-  // - Rebuild on request
+  // - Hot reloading (Bun v1.2.3+ required)
   development: true,
 
-  // Handle API requests
-  async fetch(req) {
-    // ...your API code
-    if (req.url.endsWith("/api/users")) {
-      const users = await Bun.sql`SELECT * FROM users`;
-      return Response.json(users);
-    }
-
-    // Return 404 for unmatched routes
-    return new Response("Not Found", { status: 404 });
-  },
+  // Prior to v1.2.3, the `fetch` option was used to handle all API requests. It is now optional.
+  // async fetch(req) {
+  //   // Return 404 for unmatched routes
+  //   return new Response("Not Found", { status: 404 });
+  // },
 });
 
 console.log(`Listening on ${server.url}`);
@@ -55,7 +67,7 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 
 ```ts
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -113,7 +125,7 @@ import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-  static: {
+  routes: {
     "/": dashboard,
   },
 
@@ -171,7 +183,7 @@ import homepage from "./index.html";
 import dashboard from "./dashboard.html";
 
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -189,10 +201,123 @@ When `development` is `true`, Bun will:
 - Include the `SourceMap` header in the response so that devtools can show the original source code
 - Disable minification
 - Re-bundle assets on each request to a .html file
+- Enable hot module reloading (unless `hmr: false` is set)
+
+#### Echo console logs from browser to terminal
+
+Bun.serve() supports echoing console logs from the browser to the terminal.
+
+To enable this, pass `console: true` in the `development` object in `Bun.serve()`.
+
+```ts
+import homepage from "./index.html";
+
+Bun.serve({
+  // development can also be an object.
+  development: {
+    // Enable Hot Module Reloading
+    hmr: true,
+
+    // Echo console logs from the browser to the terminal
+    console: true,
+  },
+
+  routes: {
+    "/": homepage,
+  },
+});
+```
+
+When `console: true` is set, Bun will stream console logs from the browser to the terminal. This reuses the existing WebSocket connection from HMR to send the logs.
 
 #### Production mode
 
-When serving your app in production, set `development: false` in `Bun.serve()`.
+Hot reloading and `development: true` helps you iterate quickly, but in production, your server should be as fast as possible and have as few external dependencies as possible.
+
+##### Ahead of time bundling (recommended)
+
+As of Bun v1.2.17, you can use `Bun.build` or `bun build` to bundle your full-stack application ahead of time.
+
+```sh
+$ bun build --target=bun --production --outdir=dist ./src/index.ts
+```
+
+When Bun's bundler sees an HTML import from server-side code, it will bundle the referenced JavaScript/TypeScript/TSX/JSX and CSS files into a manifest object that Bun.serve() can use to serve the assets.
+
+```ts
+import { serve } from "bun";
+import index from "./index.html";
+
+serve({
+  routes: { "/": index },
+});
+```
+
+{% details summary="Internally, the `index` variable is a manifest object that looks something like this" %}
+
+```json
+{
+  "index": "./index.html",
+  "files": [
+    {
+      "input": "index.html",
+      "path": "./index-f2me3qnf.js",
+      "loader": "js",
+      "isEntry": true,
+      "headers": {
+        "etag": "eet6gn75",
+        "content-type": "text/javascript;charset=utf-8"
+      }
+    },
+    {
+      "input": "index.html",
+      "path": "./index.html",
+      "loader": "html",
+      "isEntry": true,
+      "headers": {
+        "etag": "r9njjakd",
+        "content-type": "text/html;charset=utf-8"
+      }
+    },
+    {
+      "input": "index.html",
+      "path": "./index-gysa5fmk.css",
+      "loader": "css",
+      "isEntry": true,
+      "headers": {
+        "etag": "50zb7x61",
+        "content-type": "text/css;charset=utf-8"
+      }
+    },
+    {
+      "input": "logo.svg",
+      "path": "./logo-kygw735p.svg",
+      "loader": "file",
+      "isEntry": false,
+      "headers": {
+        "etag": "kygw735p",
+        "content-type": "application/octet-stream"
+      }
+    },
+    {
+      "input": "react.svg",
+      "path": "./react-ck11dneg.svg",
+      "loader": "file",
+      "isEntry": false,
+      "headers": {
+        "etag": "ck11dneg",
+        "content-type": "application/octet-stream"
+      }
+    }
+  ]
+}
+```
+
+{% /details %}
+
+##### Runtime bundling
+
+When adding a build step is too complicated, you can set `development: false` in `Bun.serve()`.
 
 - Enable in-memory caching of bundled assets. Bun will bundle assets lazily on the first request to an `.html` file, and cache the result in memory until the server restarts.
 - Enables `Cache-Control` headers and `ETag` headers
@@ -249,12 +374,13 @@ plugins = ["./my-plugin-implementation.ts"]
 
 Bun will lazily resolve and load each plugin and use them to bundle your routes.
 
+Note: this is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in the CLI.
+
 ## How this works
 
 Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for [Bun's bundler](/docs/bundler), generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
 
 1. **`<script>` processing**
-
    - Transpiles TypeScript, JSX, and TSX in `<script>` tags
    - Bundles imported dependencies
    - Generates sourcemaps for debugging
@@ -265,7 +391,6 @@ Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<
    ```
 
 2. **`<link>` processing**
-
    - Processes CSS imports and `<link>` tags
    - Concatenates CSS files
    - Rewrites `url` and asset paths to include content-addressable hashes in URLs
@@ -275,23 +400,19 @@ Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<
    ```
 
 3. **`<img>` & asset processing**
-
    - Links to assets are rewritten to include content-addressable hashes in URLs
    - Small assets in CSS files are inlined into `data:` URLs, reducing the total number of HTTP requests sent over the wire
 
 4. **Rewrite HTML**
-
    - Combines all `<script>` tags into a single `<script>` tag with a content-addressable hash in the URL
    - Combines all `<link>` tags into a single `<link>` tag with a content-addressable hash in the URL
    - Outputs a new HTML file
 
 5. **Serve**
-
    - All the output files from the bundler are exposed as static routes, using the same mechanism internally as when you pass a `Response` object to [`static` in `Bun.serve()`](/docs/api/http#static-routes).
 
 This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/html).
 
 ## This is a work in progress
 
-- Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.

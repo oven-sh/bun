@@ -30,6 +30,14 @@ type PropertyDef = {
     css_modules: boolean;
   };
   eval_branch_quota?: number;
+  /**
+   * If parsing a property fails, we fallback to parsing it as `UnparsedProperty`. This is just
+   * the raw tokens. This is helpful for certain minify property handlers.
+   *
+   * In other cases, it's more helpful to throw an error. For example, if the `composes` property,
+   * is used incorrectly, it is more useful for the user to know about that error.
+   */
+  parse_dont_make_unparsed?: boolean;
 };
 
 const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
@@ -103,7 +111,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   const required_functions = ["deepClone", "parse", "toCss", "eql"];
 
   return `
-  pub usingnamespace PropertyImpl();
+  // Copy manually implemented functions.
+  pub const toCss = properties_impl.property_mixin.toCss
 
   // Sanity check to make sure all types have the following functions:
   // - deepClone()
@@ -112,7 +121,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   // - toCss()
   // 
   // We do this string concatenation thing so we get all the errors at once,
-  // instead of relying on Zig semantic analysis which usualy stops at the first error.
+  // instead of relying on Zig semantic analysis which usually stops at the first error.
   comptime {
   const compile_error: []const u8 = compile_error: {
       var compile_error: []const u8 = "";
@@ -313,6 +322,15 @@ function generatePropertyImplParseCases(property_defs: Record<string, PropertyDe
         meta.valid_prefixes === undefined
           ? `.{ .${escapeIdent(name)} = c }`
           : `.{ .${escapeIdent(name)} = .{ c, pre } }`;
+      if (meta.parse_dont_make_unparsed === true) {
+        return `.${escapeIdent(name)} => ${capture} {
+    ${meta.eval_branch_quota !== undefined ? `@setEvalBranchQuota(${meta.eval_branch_quota});` : ""}
+  return switch (css.generic.parseWithOptions(${meta.ty}, input, options)) {
+    .result => |c| return .{ .result = ${ret} },
+    .err => |e| return .{ .err = e },
+  };
+},`;
+      }
       return `.${escapeIdent(name)} => ${capture} {
     ${meta.eval_branch_quota !== undefined ? `@setEvalBranchQuota(${meta.eval_branch_quota});` : ""}
   if (css.generic.parseWithOptions(${meta.ty}, input, options).asValue()) |c| {
@@ -341,7 +359,11 @@ ${Object.entries(property_defs)
   unparsed,
   custom: CustomPropertyName,
 
-pub usingnamespace PropertyIdImpl();
+  // Copy manually implemented functions.
+  pub const toCss = properties_impl.property_id_mixin.toCss;
+  pub const parse = properties_impl.property_id_mixin.toCss;
+  pub const fromString = properties_impl.property_id_mixin.toCss;
+  pub const fromStr = fromString;
 
 ${generatePropertyIdImpl(property_defs)}
 };`;
@@ -366,7 +388,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn prefix(this: *const PropertyId) VendorPrefix {
     return switch (this.*) {
       ${generatePropertyIdImplPrefix(property_defs)}
-      .all, .custom, .unparsed => VendorPrefix.empty(),
+      .all, .custom, .unparsed => VendorPrefix{},
     };
   }
 
@@ -458,7 +480,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
 function generatePropertyIdImplPrefix(property_defs: Record<string, PropertyDef>): string {
   return Object.entries(property_defs)
     .map(([name, meta]) => {
-      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix.empty(),`;
+      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix{},`;
       return `.${escapeIdent(name)} => |p| p,`;
     })
     .join("\n");
@@ -1549,6 +1571,7 @@ generateCode({
   composes: {
     ty: "Composes",
     conditional: { css_modules: true },
+    parse_dont_make_unparsed: true,
   },
   // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // fill: {
@@ -1762,7 +1785,7 @@ generateCode({
 
 function prelude() {
   return /* zig */ `const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
@@ -1771,9 +1794,7 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
-
-const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
-const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
+const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

@@ -17,7 +17,7 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "groups" argument must be an instance of Array. ' +
+    message: 'The "groups" argument must be of type Array. ' +
              'Received undefined'
   }
 );

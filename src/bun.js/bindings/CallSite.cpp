@@ -139,7 +139,7 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
 
             if (className.length() > 0) {
                 sb.append(className);
-                sb.append("."_s);
+                sb.append('.');
             }
         }
 
@@ -152,7 +152,7 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         }
         sb.append("native"_s);
         if (functionName.length() > 0) {
-            sb.append(")"_s);
+            sb.append(')');
         }
     } else {
         if (functionName.length() > 0) {

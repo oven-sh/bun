@@ -1,14 +1,7 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
+const bun = @import("bun");
 const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 pub const Shell = enum {
     unknown,
@@ -17,15 +10,15 @@ pub const Shell = enum {
     fish,
     pwsh,
 
-    const bash_completions = @import("root").completions.bash;
-    const zsh_completions = @import("root").completions.zsh;
-    const fish_completions = @import("root").completions.fish;
+    const bash_completions = @embedFile("completions-bash");
+    const zsh_completions = @embedFile("completions-zsh");
+    const fish_completions = @embedFile("completions-fish");
 
     pub fn completions(this: Shell) []const u8 {
         return switch (this) {
-            .bash => bun.asByteSlice(bash_completions),
-            .zsh => bun.asByteSlice(zsh_completions),
-            .fish => bun.asByteSlice(fish_completions),
+            .bash => bash_completions,
+            .zsh => zsh_completions,
+            .fish => fish_completions,
             else => "",
         };
     }

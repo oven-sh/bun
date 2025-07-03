@@ -75,14 +75,16 @@ bun build --compile --target=bun-darwin-x64 ./path/to/my/app.ts --outfile myapp
 
 The order of the `--target` flag does not matter, as long as they're delimited by a `-`.
 
-| --target              | Operating System | Architecture | Modern | Baseline |
-| --------------------- | ---------------- | ------------ | ------ | -------- |
-| bun-linux-x64         | Linux            | x64          | ✅     | ✅       |
-| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      |
-| bun-windows-x64       | Windows          | x64          | ✅     | ✅       |
-| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       |
-| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       |
-| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      |
+| --target              | Operating System | Architecture | Modern | Baseline | Libc  |
+| --------------------- | ---------------- | ------------ | ------ | -------- | ----- |
+| bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
+| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
+| bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
+| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       | -     |
+| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
+| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
+| bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
+| bun-linux-arm64-musl  | Linux            | arm64        | ✅     | N/A      | musl  |
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 
@@ -123,6 +125,81 @@ The `--minify` argument optimizes the size of the transpiled output code. If you
 The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
+
+## Full-stack executables
+
+{% note %}
+
+New in Bun v1.2.17
+
+{% /note %}
+
+Bun's `--compile` flag can create standalone executables that contain both server and client code, making it ideal for full-stack applications. When you import an HTML file in your server code, Bun automatically bundles all frontend assets (JavaScript, CSS, etc.) and embeds them into the executable. When Bun sees the HTML import on the server, it kicks off a frontend build process to bundle JavaScript, CSS, and other assets.
+
+{% codetabs %}
+
+```ts#server.ts
+import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    "/": index,
+    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
+  },
+});
+
+console.log(`Server running at http://localhost:${server.port}`);
+```
+
+```html#index.html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My App</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <h1>Hello World</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>
+```
+
+```js#app.js
+console.log("Hello from the client!");
+```
+
+```css#styles.css
+body {
+  background-color: #f0f0f0;
+}
+```
+
+{% /codetabs %}
+
+To build this into a single executable:
+
+```sh
+bun build --compile ./server.ts --outfile myapp
+```
+
+This creates a self-contained binary that includes:
+
+- Your server code
+- The Bun runtime
+- All frontend assets (HTML, CSS, JavaScript)
+- Any npm packages used by your server
+
+The result is a single file that can be deployed anywhere without needing Node.js, Bun, or any dependencies installed. Just run:
+
+```sh
+./myapp
+```
+
+Bun automatically handles serving the frontend assets with proper MIME types and cache headers. The HTML import is replaced with a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets.
+
+For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
 
 ## Worker
 
@@ -172,7 +249,7 @@ $ ./hello
 
 Standalone executables support embedding files.
 
-To embed files into an executable with `bun build --compile`, import the file in your code
+To embed files into an executable with `bun build --compile`, import the file in your code.
 
 ```ts
 // this becomes an internal file path
@@ -294,6 +371,55 @@ These flags currently cannot be used when cross-compiling because they depend on
 
 {% /callout %}
 
+## Code signing on macOS
+
+To codesign a standalone executable on macOS (which fixes Gatekeeper warnings), use the `codesign` command.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" ./myapp
+```
+
+We recommend including an `entitlements.plist` file with JIT permissions.
+
+```xml#entitlements.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+To codesign with JIT support, pass the `--entitlements` flag to `codesign`.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" --entitlements entitlements.plist ./myapp
+```
+
+After codesigning, verify the executable:
+
+```sh
+$ codesign -vvv --verify ./myapp
+./myapp: valid on disk
+./myapp: satisfies its Designated Requirement
+```
+
+{% callout %}
+
+Codesign support requires Bun v1.2.4 or newer.
+
+{% /callout %}
+
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
@@ -302,5 +428,4 @@ Currently, the `--compile` flag can only accept a single entrypoint at a time an
 - `--splitting`
 - `--public-path`
 - `--target=node` or `--target=browser`
-- `--format` - always outputs a binary executable. Internally, it's almost esm.
 - `--no-bundle` - we always bundle everything into the executable.

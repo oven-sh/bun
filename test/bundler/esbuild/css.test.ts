@@ -1,7 +1,6 @@
 import { describe } from "bun:test";
-import { itBundled } from "../expectBundled";
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -12,19 +11,19 @@ describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
     files: {
       "/entry.css": /* css */ `
-        body {
-          background: white;
-          color: black }
-      `,
+          body {
+            background: white;
+            color: black }
+        `,
     },
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */
-body {
-        color: #000;
-        background: #fff;
-}`);
+  /* entry.css */
+  body {
+          color: #000;
+          background: #fff;
+  }`);
     },
   });
 
@@ -35,7 +34,7 @@ body {
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */`);
+  /* entry.css */`);
     },
   });
 
@@ -43,22 +42,22 @@ body {
     target: "bun",
     files: {
       "/entry.css": /* css */ `
-body {
-	h1 {
-		color: white;
-	}
-}`,
+  body {
+  	h1 {
+  		color: white;
+  	}
+  }`,
     },
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */
-body {
-	&h1 {
-		color: #fff;
-	}
-}
-`);
+  /* entry.css */
+  body {
+  	&h1 {
+  		color: #fff;
+  	}
+  }
+  `);
     },
   });
 
@@ -75,21 +74,21 @@ body {
     // GENERATED
     files: {
       "/entry.css": /* css */ `
-        @import "./internal.css";
-      `,
+          @import "./internal.css";
+        `,
       "/internal.css": /* css */ `
-        .before { color: red }
-      `,
+          .before { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* internal.css */
-.before {
-  color: red;
-}
-/* entry.css */
-`);
+  /* internal.css */
+  .before {
+    color: red;
+  }
+  /* entry.css */
+  `);
     },
   });
 
@@ -97,84 +96,691 @@ body {
     // GENERATED
     files: {
       "/a.css": /* css */ `
-        @import "./b.css";
-        @import "./c.css";
-        .last { color: red }
-      `,
+          @import "./b.css";
+          @import "./c.css";
+          .last { color: red }
+        `,
       "/b.css": /* css */ `
-        @import "./d.css";
-        .first { color: red }
-      `,
+          @import "./d.css";
+          .first { color: red }
+        `,
       "/c.css": /* css */ `
-        @import "./d.css";
-        .third { color: red }
-      `,
+          @import "./d.css";
+          .third { color: red }
+        `,
       "/d.css": /* css */ `
-        .second { color: red }
-      `,
+          .second { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* b.css */
-.first {
-  color: red;
-}
-/* d.css */
-.second {
-  color: red;
-}
-/* c.css */
-.third {
-  color: red;
-}
-/* a.css */
-.last {
-  color: red;
-}
-`);
+  /* b.css */
+  .first {
+    color: red;
+  }
+  /* d.css */
+  .second {
+    color: red;
+  }
+  /* c.css */
+  .third {
+    color: red;
+  }
+  /* a.css */
+  .last {
+    color: red;
+  }
+  `);
     },
   });
 
   itBundled("css/CSSAtImportCycle", {
     files: {
       "/a.css": /* css */ `
-        @import "./a.css";
-        .hehe { color: red }
-      `,
+          @import "./a.css";
+          .hehe { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* a.css */
-.hehe {
-  color: red;
-}
-`);
+  /* a.css */
+  .hehe {
+    color: red;
+  }
+  `);
     },
   });
 
   itBundled("css/CSSUrlImport", {
     files: {
       "/a.css": /* css */ `
-        .hello {
-          background-image: url(./hi.svg)
-        }
-      `,
+          .hello {
+            background-image: url(./hi.svg)
+          }
+        `,
       "/hi.svg": /* svg */ `
-<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="50" cy="50" r="40" fill="blue" />
-</svg>
-      `,
+  <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="40" fill="blue" />
+  </svg>
+        `,
     },
     outdir: "/out",
     onAfterBundle(api) {
       api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
-/* a.css */
-.hello {
-  background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
-}
-`);
+  /* a.css */
+  .hello {
+    background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
+  }
+  `);
+    },
+  });
+
+  // TODO: re-enable these tests when we do minify local css identifiers
+  // itBundled("css/TestImportLocalCSSFromJSMinifyIdentifiersAvoidGlobalNames", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       import "./global.css";
+  //       import "./local.module.css";
+  //     `,
+  //     "/global.css": /* css */ `
+  //     :is(.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z),
+  //     :is(.A, .B, .C, .D, .E, .F, .G, .H, .I, .J, .K, .L, .M, .N, .O, .P, .Q, .R, .S, .T, .U, .V, .W, .X, .Y, .Z),
+  //     ._ { color: red }
+  //   `,
+  //     "/local.module.css": /* css */ `
+  //     .rename-this { color: blue }
+  //   `,
+  //   },
+  //   entryPoints: ["/entry.js"],
+  //   outdir: "/out",
+  //   minifyIdentifiers: true,
+  // });
+
+  // // See: https://github.com/evanw/esbuild/issues/3295
+  // itBundled("css/ImportLocalCSSFromJSMinifyIdentifiersMultipleEntryPoints", {
+  //   files: {
+  //     "/a.js": /* js */ `
+  //       import { foo, bar } from "./a.module.css";
+  //       console.log(foo, bar);
+  //     `,
+  //     "/a.module.css": /* css */ `
+  //       .foo { color: #001; }
+  //       .bar { color: #002; }
+  //     `,
+  //     "/b.js": /* js */ `
+  //       import { foo, bar } from "./b.module.css";
+  //       console.log(foo, bar);
+  //     `,
+  //     "/b.module.css": /* css */ `
+  //       .foo { color: #003; }
+  //       .bar { color: #004; }
+  //     `,
+  //   },
+  //   entryPoints: ["/a.js", "/b.js"],
+  //   outdir: "/out",
+  //   minifyIdentifiers: true,
+  // });
+
+  // TODO: some classes are commented out bc we don't support :global or :local yet
+  itBundled("css/ImportCSSFromJSComposes", {
+    files: {
+      "/entry.js": /* js */ `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/global.css": /* css */ `
+          .GLOBAL1 {
+            color: black;
+          }
+        `,
+      "/styles.module.css": /* css */ `
+          @import "global.css";
+          /* .local0 {
+            composes: local1;
+            :global {
+              composes: GLOBAL1 GLOBAL2;
+            }
+          } */
+          .local0 {
+            composes: GLOBAL2 GLOBAL3 from global;
+            composes: local1 local2;
+            background: green;
+          }
+          /* .local0 :global {
+            composes: GLOBAL4;
+          } */
+          .local3 {
+            border: 1px solid black;
+            composes: local4;
+          }
+          .local4 {
+            opacity: 0.5;
+          }
+          .local1 {
+            color: red;
+            composes: local3;
+          }
+          .fromOtherFile {
+            composes: local0 from "other1.module.css";
+            composes: local0 from "other2.module.css";
+          }
+        `,
+      "/other1.module.css": /* css */ `
+          .local0 {
+            composes: base1 base2 from "base.module.css";
+            color: blue;
+          }
+        `,
+      "/other2.module.css": /* css */ `
+          .local0 {
+            composes: base1 base3 from "base.module.css";
+            background: purple;
+          }
+        `,
+      "/base.module.css": /* css */ `
+          .base1 {
+            cursor: pointer;
+          }
+          .base2 {
+            display: inline;
+          }
+          .base3 {
+            float: left;
+          }
+        `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.module.css": [
+        'The name "local2" never appears in "styles.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+      ],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+          "// styles.module.css
+          var styles_module_default = {
+            local0: "GLOBAL2 GLOBAL3 local4_-MSaAA local3_-MSaAA local1_-MSaAA local0_-MSaAA",
+            local3: "local4_-MSaAA local3_-MSaAA",
+            local4: "local4_-MSaAA",
+            local1: "local4_-MSaAA local3_-MSaAA local1_-MSaAA",
+            fromOtherFile: "base1_1Cz41w base2_1Cz41w local0_qwJuwA base3_1Cz41w local0_AgBO5Q fromOtherFile_-MSaAA"
+          };
+
+          // entry.js
+          console.log(styles_module_default);
+          "
+        `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+          "/* global.css */
+          .GLOBAL1 {
+            color: #000;
+          }
+
+          /* other1.module.css */
+          .local0_qwJuwA {
+            color: #00f;
+          }
+
+          /* base.module.css */
+          .base1_1Cz41w {
+            cursor: pointer;
+          }
+
+          .base2_1Cz41w {
+            display: inline;
+          }
+
+          .base3_1Cz41w {
+            float: left;
+          }
+
+          /* other2.module.css */
+          .local0_AgBO5Q {
+            background: purple;
+          }
+
+          /* styles.module.css */
+          .local0_-MSaAA {
+            background: green;
+          }
+
+          .local3_-MSaAA {
+            border: 1px solid #000;
+          }
+
+          .local4_-MSaAA {
+            opacity: .5;
+          }
+
+          .local1_-MSaAA {
+            color: red;
+          }
+
+          .fromOtherFile_-MSaAA {
+          }
+          "
+        `);
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromMissingImport", {
+    files: {
+      "/entry.js": `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/styles.module.css": `
+          .foo {
+            composes: x from "file.module.css";
+            composes: y from "file.module.css";
+            composes: z from "file.module.css";
+            composes: x from "file.css";
+          }
+        `,
+      "/file.module.css": `
+          .x {
+            color: red;
+          }
+          :global(.y) {
+            color: blue;
+          }
+        `,
+      "/file.css": `
+          .x {
+            color: red;
+          }
+        `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.module.css": [
+        // TODO: renable when we support :local and :global
+        // 'Cannot use global name "y" with "composes"',
+        // 'Cannot use global name "x" with "composes"',
+      ],
+      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
+      "/file.css": ['The name "x" never appears in "file.css"'],
+    },
+    bundleWarnings: {
+      "/styles.module.css": [
+        // TODO: renable when we support :local and :global
+        // 'The global name "y" is defined in file.module.css. Use the ":local" selector to change "y" into a local name.',
+        // 'The global name "x" is defined in file.css. Use the "local-css" loader for "file.css" to enable local names.',
+      ],
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromNotCSS", {
+    files: {
+      "/entry.js": `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/styles.module.css": `
+          .foo {
+            composes: bar from "file.txt";
+          }
+        `,
+      "/file.txt": `
+          .bar {
+            color: red;
+          }
+        `,
+    },
+    loader: {
+      ".txt": "text",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.module.css": ['Cannot use the "composes" property with the "file.txt" file (it is not a CSS file)'],
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesCircular", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": `
+        .foo {
+          composes: bar;
+        }
+        .bar {
+          composes: foo;
+        }
+        .baz {
+          composes: baz;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          foo: "bar_-MSaAA foo_-MSaAA",
+          bar: "foo_-MSaAA bar_-MSaAA",
+          baz: "baz_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .foo_-MSaAA {
+        }
+
+        .bar_-MSaAA {
+        }
+
+        .baz_-MSaAA {
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromCircular", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": `
+        .foo {
+          composes: bar from "other.module.css";
+        }
+        .bar {
+          composes: bar from "styles.module.css";
+        }
+      `,
+      "/other.module.css": `
+        .bar {
+          composes: foo from "styles.module.css";
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          foo: "bar_NlEjJA foo_-MSaAA",
+          bar: "bar_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* other.module.css */
+        .bar_NlEjJA {
+        }
+
+        /* styles.module.css */
+        .foo_-MSaAA {
+        }
+
+        .bar_-MSaAA {
+        }
+        "
+      `);
+    },
+  });
+
+  // Define all the invalid cases
+  const invalidComposesTests = [
+    {
+      name: "IDSelector",
+      cssContent: `
+        /* Invalid: ID selector */
+        .withId {
+          composes: #invalid;
+          color: red;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ElementSelector",
+      cssContent: `
+        /* Invalid: Element selector */
+        .withElement {
+          composes: div;
+          color: blue;
+        }
+      `,
+      expectedError:
+        'The name "div" never appears in "styles.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+    },
+    {
+      name: "CompoundSelector",
+      cssContent: `
+        /* Invalid: Compound selector */
+        .withCompound {
+          composes: .valid.invalid;
+          color: green;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ComplexSelector",
+      cssContent: `
+        /* Invalid: Complex selector */
+        .withComplex {
+          composes: .parent > .child;
+          color: purple;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "PseudoClass",
+      cssContent: `
+        /* Invalid: Pseudo-class */
+        .withPseudo {
+          composes: .valid:hover;
+          color: orange;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "AttributeSelector",
+      cssContent: `
+        /* Invalid: Attribute selector */
+        .withAttribute {
+          composes: [disabled];
+          color: yellow;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ImportedNonClass",
+      cssContent: `
+        /* Invalid: Imported non-class */
+        .withImportedNonClass {
+          composes: element from "other.module.css";
+          color: magenta;
+        }
+      `,
+      expectedError:
+        'The name "element" never appears in "other.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+    },
+  ];
+
+  // Create a separate test for each invalid case
+  for (const testCase of invalidComposesTests) {
+    itBundled(`css/ImportCSSFromJSComposes${testCase.name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+        "/styles.module.css": /* css */ testCase.cssContent,
+        "/other.module.css": /* css */ `
+          /* Non-class selectors in another file */
+          div {
+            color: brown;
+          }
+          
+          #id {
+            color: teal;
+          }
+          
+          .valid {
+            color: pink;
+          }
+          
+          element {
+            color: gray;
+          }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      bundleErrors: testCase.expectedError
+        ? testCase.name === "ImportedNonClass"
+          ? { "/other.module.css": [testCase.expectedError] }
+          : { "/styles.module.css": [testCase.expectedError] }
+        : undefined,
+      bundleWarnings: testCase.expectedWarning ? { "/styles.module.css": [testCase.expectedWarning] } : undefined,
+      onAfterBundle(api) {
+        // Check that the output files were generated correctly
+        api.expectFile("/out/entry.js").toMatchSnapshot();
+        api.expectFile("/out/entry.css").toMatchSnapshot();
+      },
+    });
+  }
+
+  itBundled("css/ComposesWithSharedPropertiesError", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: otherButton from "./other.module.css";
+      }
+    `,
+      "/other.module.css": `
+      .otherButton {
+        color: red;
+        font-size: 16px;
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchSnapshot();
+      api.expectFile("/out/entry.css").toMatchSnapshot();
+    },
+  });
+
+  itBundled("css/ComposesSameFile", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: otherButton from "./styles.module.css";
+      }
+
+      .otherButton {
+        color: red;
+        font-size: 16px;
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "otherButton_-MSaAA button_-MSaAA",
+          otherButton: "otherButton_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+
+        .otherButton_-MSaAA {
+          color: red;
+          font-size: 16px;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ComposesSameFileSameClass", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: button from "./styles.module.css";
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
     },
   });
 });
@@ -247,13 +853,13 @@ describe("esbuild-bundler", () => {
 
 /* internal.css */
 .before {
-  color: red;
-}
+          color: red;
+        }
 
 /* charset1.css */
 .middle {
-  color: green;
-}
+          color: green;
+        }
 
 /* charset2.css */
 .after {
@@ -779,7 +1385,7 @@ c {
         @media (min-width: 768px) and (max-width: 1024px) {
           @layer layer-name {
             body {
-              color: red;
+          color: red;
             }
           }
         }
@@ -803,10 +1409,8 @@ c {
 
         /* empty-2.css */
 
-
         /* empty-3.css */
 
-
         /* foo.css */
         @layer outer {
           @layer inner {
@@ -830,7 +1434,6 @@ c {
 
         /* nested-layer.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @layer inner {
@@ -841,7 +1444,6 @@ c {
         }
 
         /* nested-layer.css */
-
 
         /* foo.css */
         @layer outer {
@@ -866,7 +1468,6 @@ c {
 
         /* nested-supports.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @supports (inner: true) {
@@ -877,7 +1478,6 @@ c {
         }
 
         /* nested-supports.css */
-
 
         /* foo.css */
         @layer outer {
@@ -902,7 +1502,6 @@ c {
 
         /* nested-media.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @media (inner: true) {
@@ -913,10 +1512,9 @@ c {
         }
 
         /* nested-media.css */
-
 
         /* entry.css */
-        `);
+      `);
     },
   });
 

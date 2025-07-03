@@ -7,7 +7,7 @@ namespace Bun {
 
 // Just like WebCore::EventLoopTask but does not take a ScriptExecutionContext
 class EventLoopTaskNoContext {
-    WTF_MAKE_ISO_ALLOCATED(EventLoopTaskNoContext);
+    WTF_MAKE_TZONE_ALLOCATED(EventLoopTaskNoContext);
 
 public:
     EventLoopTaskNoContext(JSC::JSGlobalObject* globalObject, Function<void()>&& task)

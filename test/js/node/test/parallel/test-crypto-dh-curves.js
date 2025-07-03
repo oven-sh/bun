@@ -16,7 +16,9 @@ const p = 'FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74' +
 crypto.createDiffieHellman(p, 'hex');
 
 // Confirm DH_check() results are exposed for optional examination.
-const bad_dh = crypto.createDiffieHellman('02', 'hex');
+// Edited
+// https://github.com/electron/electron/blob/785fe5f3b631c9d451b1f787db1e524f648198a2/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L121
+const bad_dh = crypto.createDiffieHellman('abcd', 'hex', 0);
 assert.notStrictEqual(bad_dh.verifyError, 0);
 
 const availableCurves = new Set(crypto.getCurves());

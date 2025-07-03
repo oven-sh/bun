@@ -2,8 +2,13 @@
 //! Response object, or from globally allocated bytes.
 const StaticRoute = @This();
 
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
 // TODO: Remove optional. StaticRoute requires a server object or else it will
 // not ensure it is alive while sending a large blob.
+ref_count: RefCount,
 server: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
@@ -12,44 +17,53 @@ has_content_disposition: bool = false,
 headers: Headers = .{
     .allocator = bun.default_allocator,
 },
-ref_count: u32 = 1,
-
-pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
-    server: AnyServer,
-    mime_type: ?bun.http.MimeType = null,
+    server: ?AnyServer,
+    mime_type: ?*const bun.http.MimeType = null,
+    status_code: u16 = 200,
+    headers: ?*JSC.WebCore.FetchHeaders = null,
 };
 
-pub fn initFromAnyBlob(blob: AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+/// Ownership of `blob` is transferred to this function.
+pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
+    var headers = Headers.from(options.headers, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
-    return StaticRoute.new(.{
-        .blob = blob,
+    return bun.new(StaticRoute, .{
+        .ref_count = .init(),
+        .blob = blob.*,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
         .headers = headers,
         .server = options.server,
-        .status_code = 200,
+        .status_code = options.status_code,
     });
+}
+
+/// Create a static route to be used on a single response, freeing the bytes once sent.
+pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: InitFromBytesOptions) void {
+    const temp_route = StaticRoute.initFromAnyBlob(blob, options);
+    defer temp_route.deref();
+    temp_route.on(resp);
 }
 
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();
 
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute {
     var blob = this.blob.toBlob(globalThis);
     this.blob = .{ .Blob = blob };
 
-    return StaticRoute.new(.{
+    return bun.new(StaticRoute, .{
+        .ref_count = .init(),
         .blob = .{ .Blob = blob.dupe() },
         .cached_blob_size = this.cached_blob_size,
         .has_content_disposition = this.has_content_disposition,
@@ -63,7 +77,7 @@ pub fn memoryCost(this: *const StaticRoute) usize {
     return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!*StaticRoute {
+pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*StaticRoute {
     if (argument.as(JSC.WebCore.Response)) |response| {
 
         // The user may want to pass in the same Response object multiple endpoints
@@ -78,7 +92,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 
                 .Null, .Empty => {
                     break :brk .{
-                        .InternalBlob = JSC.WebCore.InternalBlob{
+                        .InternalBlob = .{
                             .bytes = std.ArrayList(u8).init(bun.default_allocator),
                         },
                     };
@@ -123,7 +137,8 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .allocator = bun.default_allocator,
             };
 
-        return StaticRoute.new(.{
+        return bun.new(StaticRoute, .{
+            .ref_count = .init(),
             .blob = blob,
             .cached_blob_size = blob.size(),
             .has_content_disposition = has_content_disposition,
@@ -133,33 +148,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         });
     }
 
-    return globalThis.throwInvalidArguments(
-        \\'static' expects a Record<string, Response | HTMLBundle>
-        \\
-        \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
-        \\
-        \\Example:
-        \\
-        \\```js
-        \\import { serve } from "bun";
-        \\import app from "./app.html";
-        \\
-        \\serve({
-        \\  static: {
-        \\    "/index.json": Response.json({ message: "Hello World" }),
-        \\    "/app": app,
-        \\  },
-        \\
-        \\  fetch(request) {
-        \\    return new Response("fallback response");
-        \\  },
-        \\});
-        \\```
-        \\
-        \\See https://bun.sh/docs/api/http for more information.
-    ,
-        .{},
-    );
+    return null;
 }
 
 // HEAD requests have no body.
@@ -209,7 +198,7 @@ pub fn on(this: *StaticRoute, resp: AnyResponse) void {
 
 fn toAsync(this: *StaticRoute, resp: AnyResponse) void {
     resp.onAborted(*StaticRoute, onAborted, this);
-    resp.onWritable(*StaticRoute, onWritableBytes, this);
+    resp.onWritable(*StaticRoute, onWritable, this);
 }
 
 fn onAborted(this: *StaticRoute, resp: AnyResponse) void {
@@ -220,11 +209,9 @@ fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     resp.clearAborted();
     resp.clearOnWritable();
     resp.clearTimeout();
-
     if (this.server) |server| {
         server.onStaticRequestComplete();
     }
-
     this.deref();
 }
 
@@ -246,34 +233,26 @@ pub fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bo
     this.renderBytes(resp, did_finish);
 }
 
-fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) void {
+fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     if (this.server) |server| {
         resp.timeout(server.config().idleTimeout);
     }
 
     if (!this.onWritableBytes(write_offset, resp)) {
-        this.toAsync(resp);
-        return;
+        return false;
     }
 
     this.onResponseComplete(resp);
+    return true;
 }
 
 fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     const blob = this.blob;
     const all_bytes = blob.slice();
 
-    const bytes = all_bytes[@min(all_bytes.len, @as(usize, @truncate(write_offset)))..];
+    const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
 
-    if (!resp.tryEnd(
-        bytes,
-        all_bytes.len,
-        resp.shouldCloseConnection(),
-    )) {
-        return false;
-    }
-
-    return true;
+    return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
 }
 
 fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
@@ -327,13 +306,13 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Api = @import("../../../api/schema.zig").Api;
 const JSC = bun.JSC;
 const uws = bun.uws;
-const Headers = JSC.WebCore.Headers;
+const Headers = bun.http.Headers;
 const AnyServer = JSC.API.AnyServer;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const writeStatus = @import("../server.zig").writeStatus;
 const AnyResponse = uws.AnyResponse;

@@ -2,9 +2,9 @@
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
-import fs from "node:fs";
-import { describe, beforeAll, afterAll, it, expect } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { isWindows, tempDirWithFiles } from "harness";
+import fs from "node:fs";
 
 let tmp: string;
 beforeAll(() => {
@@ -13,6 +13,10 @@ beforeAll(() => {
     a: {
       "bar.txt": "bar",
       "baz.js": "baz",
+    },
+    "folder.test": {
+      "file.txt": "content",
+      "another-folder": {},
     },
   });
 });
@@ -61,6 +65,11 @@ describe("fs.glob", () => {
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
   });
+
+  it("matches directories", () => {
+    const paths = fs.globSync("*.test", { cwd: tmp });
+    expect(paths).toContain("folder.test");
+  });
 }); // </fs.glob>
 
 describe("fs.globSync", () => {
@@ -102,11 +111,28 @@ describe("fs.globSync", () => {
     expect(fs.globSync("a/*", { cwd: tmp, exclude })).toStrictEqual(expected);
   });
 
+  it("works without providing options", () => {
+    const oldProcessCwd = process.cwd;
+    try {
+      process.cwd = () => tmp;
+
+      const paths = fs.globSync("*.txt");
+      expect(paths).toContain("foo.txt");
+    } finally {
+      process.cwd = oldProcessCwd;
+    }
+  });
+
   describe("invalid arguments", () => {
     // TODO: GlobSet
     it("does not support arrays of patterns yet", () => {
       expect(() => fs.globSync(["*.txt"])).toThrow(TypeError);
     });
+  });
+
+  it("matches directories", () => {
+    const paths = fs.globSync("*.test", { cwd: tmp });
+    expect(paths).toContain("folder.test");
   });
 }); // </fs.globSync>
 
@@ -128,5 +154,35 @@ describe("fs.promises.glob", () => {
     for await (const path of iter) {
       expect(path).toMatch(/\.txt$/);
     }
+  });
+
+  it("works without providing options", async () => {
+    const oldProcessCwd = process.cwd;
+    try {
+      process.cwd = () => tmp;
+
+      const iter = fs.promises.glob("*.txt");
+      expect(iter[Symbol.asyncIterator]).toBeDefined();
+
+      const paths = [];
+      for await (const path of iter) {
+        paths.push(path);
+      }
+
+      expect(paths).toContain("foo.txt");
+    } finally {
+      process.cwd = oldProcessCwd;
+    }
+  });
+
+  it("matches directories", async () => {
+    const iter = fs.promises.glob("*.test", { cwd: tmp });
+    expect(iter[Symbol.asyncIterator]).toBeDefined();
+    let count = 0;
+    for await (const path of iter) {
+      expect(path).toBe("folder.test");
+      count++;
+    }
+    expect(count).toBe(1);
   });
 }); // </fs.promises.glob>

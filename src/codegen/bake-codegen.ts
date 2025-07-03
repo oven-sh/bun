@@ -14,21 +14,35 @@ if (!codegenRoot) {
 const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string) {
-  const startTrigger = "\npub const MessageId = enum(u8) {";
-  const start = zig.indexOf(startTrigger) + startTrigger.length;
-  const endTrigger = /\n    pub (inline )?fn |\n};/g;
-  const end = zig.slice(start).search(endTrigger) + start;
-  const enumText = zig.slice(start, end);
-  const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
-    return `\n  ${name} = ${value.charCodeAt(0)},`;
+function convertZigEnum(zig: string, names: string[]) {
+  let output = "/** Generated from DevServer.zig */\n";
+  for (const name of names) {
+    const startTrigger = `\npub const ${name} = enum(u8) {`;
+    const start = zig.indexOf(startTrigger) + startTrigger.length;
+    const endTrigger = /\n    pub (inline )?fn |\n};/g;
+    const end = zig.slice(start).search(endTrigger) + start;
+    const enumText = zig.slice(start, end);
+    const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
+      return `\n  ${name} = ${value.charCodeAt(0)},`;
+    });
+    output += `export const enum ${name} {${values}}\n`;
+  }
+  return output;
+}
+
+function css(file: string, is_development: boolean): string {
+  const { success, stdout, stderr } = Bun.spawnSync({
+    cmd: [process.execPath, "build", file, "--minify"],
+    cwd: import.meta.dir,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  return `/** Generated from DevServer.zig */\nexport const enum MessageId {${values}}`;
+  if (!success) throw new Error(stderr.toString("utf-8"));
+  return stdout.toString("utf-8");
 }
 
 async function run() {
   const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
@@ -39,11 +53,14 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
+          OVERLAY_CSS: css("../bake/client/overlay.css", !!debug),
         },
         minify: {
           syntax: !debug,
         },
         target: side === "server" ? "bun" : "browser",
+        drop: debug ? [] : ["ASSERT", "DEBUG"],
+        conditions: [side],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -53,7 +70,7 @@ async function run() {
       // A second pass is used to convert global variables into parameters, while
       // allowing for renaming to properly function when minification is enabled.
       const in_names = [
-        file !== "error" && "input_graph",
+        file !== "error" && "unloadedModuleRegistry",
         file !== "error" && "config",
         file === "server" && "server_exports",
         file === "server" && "$separateSSRGraph",
@@ -75,6 +92,7 @@ async function run() {
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
         minify: !debug,
+        drop: debug ? [] : ["DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -116,13 +134,25 @@ async function run() {
             : `${code};return ${outName("server_exports")};`;
 
           const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
-          code = code.replaceAll("import.meta", outName("$importMeta"));
-          code = `let ${outName("input_graph")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
+          code = code
+            .replaceAll("import.meta", outName("$importMeta"))
+            .replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
+          code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {
           code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }
+      }
+
+      if (side === "client" && code.match(/\beval\(|,\s*eval\s*\)/)) {
+        throw new AggregateError([
+          new Error(
+            "eval is not allowed in the HMR runtime. there are problems in all " +
+              "browsers regarding stack traces from eval'd frames and source maps. " +
+              "you must find an alternative solution to your problem.",
+          ),
+        ]);
       }
 
       writeIfNotChanged(join(codegenRoot, `bake.${file}.js`), code);
@@ -167,6 +197,7 @@ async function run() {
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
+    process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 

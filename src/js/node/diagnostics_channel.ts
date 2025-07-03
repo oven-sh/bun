@@ -92,6 +92,10 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
 }
 
 class ActiveChannel {
+  _subscribers;
+  name;
+  _stores;
+
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
@@ -162,6 +166,10 @@ class ActiveChannel {
 }
 
 class Channel {
+  _subscribers;
+  _stores;
+  name;
+
   constructor(name) {
     this._subscribers = undefined;
     this._stores = undefined;
@@ -241,6 +249,12 @@ function assertChannel(value, name) {
 }
 
 class TracingChannel {
+  start;
+  end;
+  asyncStart;
+  asyncEnd;
+  error;
+
   constructor(nameOrChannels) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);

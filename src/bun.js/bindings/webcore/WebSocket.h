@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "WebSocketDeflate.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
@@ -37,6 +38,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
+#include "WebSocketErrorCode.h"
 
 namespace uWS {
 template<bool, bool, typename>
@@ -52,7 +54,7 @@ namespace WebCore {
 
 // class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(WebSocket);
+    WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
 public:
     static ASCIILiteral subprotocolSeparator();
@@ -127,8 +129,8 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
-    void didFailWithErrorCode(int32_t code);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);

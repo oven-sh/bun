@@ -1,14 +1,14 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
 const strings = @import("./string_immutable.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
 pub fn BabyList(comptime Type: type) type {
     return struct {
         const ListType = @This();
-        ptr: [*]Type = undefined,
+        ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
 
@@ -94,7 +94,7 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list_);
         }
 
-        pub fn popOrNull(this: *@This()) ?Type {
+        pub fn pop(this: *@This()) ?Type {
             if (this.len == 0) return null;
             this.len -= 1;
             return this.ptr[this.len];
@@ -174,7 +174,7 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len);
         }
 
-        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
+        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
             return initWithBuffer(try allocator.alloc(Type, len));
         }
 
@@ -316,6 +316,12 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list__);
         }
 
+        pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insertSlice(index, vals);
+            this.update(list__);
+        }
+
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
             var list__ = this.listManaged(allocator);
             try list__.appendSlice(value);
@@ -383,7 +389,18 @@ pub fn BabyList(comptime Type: type) type {
                     const orig_len = list_.items.len;
 
                     const slice_ = list_.items.ptr[orig_len..list_.capacity];
-                    const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len, true);
+                    const result = strings.copyUTF16IntoUTF8WithBufferImpl(
+                        slice_,
+                        []const u16,
+                        remain,
+                        trimmed,
+                        out_len,
+                        // FIXME: Unclear whether or not we should allow
+                        //        incomplete UTF-8 sequences. If you are solving a bug
+                        //        with invalid UTF-8 sequences, this may be the
+                        //        culprit...
+                        true,
+                    );
                     remain = remain[result.read..];
                     list_.items.len += @as(usize, result.written);
                     if (result.read == 0 or result.written == 0) break;
@@ -399,6 +416,57 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len + @sizeOf(Int));
             @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
             this.len += @sizeOf(Int);
+        }
+    };
+}
+
+pub fn OffsetList(comptime Type: type) type {
+    return struct {
+        head: u32 = 0,
+        byte_list: List = .{},
+
+        const List = BabyList(Type);
+        const ThisList = @This();
+
+        pub fn init(head: u32, byte_list: List) ThisList {
+            return .{
+                .head = head,
+                .byte_list = byte_list,
+            };
+        }
+
+        pub fn write(self: *ThisList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+            _ = try self.byte_list.write(allocator, bytes);
+        }
+
+        pub fn slice(this: *ThisList) []u8 {
+            return this.byte_list.slice()[0..this.head];
+        }
+
+        pub fn remaining(this: *ThisList) []u8 {
+            return this.byte_list.slice()[this.head..];
+        }
+
+        pub fn consume(self: *ThisList, bytes: u32) void {
+            self.head +|= bytes;
+            if (self.head >= self.byte_list.len) {
+                self.head = 0;
+                self.byte_list.len = 0;
+            }
+        }
+
+        pub fn len(self: *const ThisList) u32 {
+            return self.byte_list.len - self.head;
+        }
+
+        pub fn clear(self: *ThisList) void {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+
+        pub fn deinit(self: *ThisList, allocator: std.mem.Allocator) void {
+            self.byte_list.deinitWithAllocator(allocator);
+            self.* = .{};
         }
     };
 }

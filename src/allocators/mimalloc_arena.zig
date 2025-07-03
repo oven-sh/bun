@@ -1,5 +1,4 @@
 const mem = @import("std").mem;
-const builtin = @import("std").builtin;
 const std = @import("std");
 
 const mimalloc = @import("./mimalloc.zig");
@@ -7,126 +6,8 @@ const Environment = @import("../env.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = bun.assert;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const log = bun.Output.scoped(.mimalloc, true);
-
-pub const GlobalArena = struct {
-    arena: Arena,
-    fallback_allocator: std.mem.Allocator,
-
-    pub fn initWithCapacity(capacity: usize, fallback: std.mem.Allocator) error{OutOfMemory}!GlobalArena {
-        const arena = try Arena.initWithCapacity(capacity);
-
-        return GlobalArena{
-            .arena = arena,
-            .fallback_allocator = fallback,
-        };
-    }
-
-    pub fn allocator(this: *GlobalArena) Allocator {
-        return .{
-            .ptr = this,
-            .vtable = &.{
-                .alloc = alloc,
-                .resize = resize,
-                .free = free,
-            },
-        };
-    }
-
-    fn alloc(
-        self: *GlobalArena,
-        len: usize,
-        ptr_align: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        return self.arena.alloc(len, ptr_align, len_align, return_address) catch
-            return self.fallback_allocator.rawAlloc(len, ptr_align, return_address) orelse return error.OutOfMemory;
-    }
-
-    fn resize(
-        self: *GlobalArena,
-        buf: []u8,
-        buf_align: u29,
-        new_len: usize,
-        len_align: u29,
-        return_address: usize,
-    ) ?usize {
-        if (self.arena.ownsPtr(buf.ptr)) {
-            return self.arena.resize(buf, buf_align, new_len, len_align, return_address);
-        } else {
-            return self.fallback_allocator.rawResize(buf, buf_align, new_len, len_align, return_address);
-        }
-    }
-
-    fn free(
-        self: *GlobalArena,
-        buf: []u8,
-        buf_align: u29,
-        return_address: usize,
-    ) void {
-        if (self.arena.ownsPtr(buf.ptr)) {
-            return self.arena.free(buf, buf_align, return_address);
-        } else {
-            return self.fallback_allocator.rawFree(buf, buf_align, return_address);
-        }
-    }
-};
-
-const ArenaRegistry = struct {
-    arenas: std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id) = std.AutoArrayHashMap(?*mimalloc.Heap, std.Thread.Id).init(bun.default_allocator),
-    mutex: bun.Mutex = .{},
-
-    var registry = ArenaRegistry{};
-
-    pub fn register(arena: Arena) void {
-        if (comptime Environment.isDebug and Environment.isNative) {
-            registry.mutex.lock();
-            defer registry.mutex.unlock();
-            const entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
-            const received = std.Thread.getCurrentId();
-
-            if (entry.found_existing) {
-                const expected = entry.value_ptr.*;
-                if (expected != received) {
-                    bun.unreachablePanic("Arena created on wrong thread! Expected: {d} received: {d}", .{
-                        expected,
-                        received,
-                    });
-                }
-            }
-            entry.value_ptr.* = received;
-        }
-    }
-
-    pub fn assert(arena: Arena) void {
-        if (comptime Environment.isDebug and Environment.isNative) {
-            registry.mutex.lock();
-            defer registry.mutex.unlock();
-            const expected = registry.arenas.get(arena.heap.?) orelse {
-                bun.unreachablePanic("Arena not registered!", .{});
-            };
-            const received = std.Thread.getCurrentId();
-            if (expected != received) {
-                bun.unreachablePanic("Arena accessed on wrong thread! Expected: {d} received: {d}", .{
-                    expected,
-                    received,
-                });
-            }
-        }
-    }
-
-    pub fn unregister(arena: Arena) void {
-        if (comptime Environment.isDebug and Environment.isNative) {
-            registry.mutex.lock();
-            defer registry.mutex.unlock();
-            if (!registry.arenas.swapRemove(arena.heap.?)) {
-                bun.unreachablePanic("Arena not registered!", .{});
-            }
-        }
-    }
-};
 
 pub const Arena = struct {
     heap: ?*mimalloc.Heap = null,
@@ -147,15 +28,6 @@ pub const Arena = struct {
     pub fn allocator(this: Arena) Allocator {
         @setRuntimeSafety(false);
         return Allocator{ .ptr = this.heap.?, .vtable = &c_allocator_vtable };
-    }
-
-    pub fn deinit(this: *Arena) void {
-        // if (comptime Environment.isDebug) {
-        //     ArenaRegistry.unregister(this.*);
-        // }
-        mimalloc.mi_heap_destroy(this.heap.?);
-
-        this.heap = null;
     }
 
     pub fn dumpThreadStats(_: *Arena) void {
@@ -180,27 +52,22 @@ pub const Arena = struct {
         bun.Output.flush();
     }
 
-    pub fn reset(this: *Arena) void {
-        this.deinit();
-        this.* = init() catch unreachable;
+    pub fn deinit(this: *Arena) void {
+        mimalloc.mi_heap_destroy(bun.take(&this.heap).?);
     }
-
     pub fn init() !Arena {
         const arena = Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
-        // if (comptime Environment.isDebug) {
-        //     ArenaRegistry.register(arena);
-        // }
         return arena;
     }
 
-    pub fn gc(this: Arena, force: bool) void {
-        mimalloc.mi_heap_collect(this.heap orelse return, force);
+    pub fn gc(this: Arena) void {
+        mimalloc.mi_heap_collect(this.heap orelse return, false);
     }
 
     pub inline fn helpCatchMemoryIssues(this: Arena) void {
         if (comptime FeatureFlags.help_catch_memory_issues) {
-            this.gc(true);
-            bun.Mimalloc.mi_collect(true);
+            this.gc();
+            bun.Mimalloc.mi_collect(false);
         }
     }
 
@@ -209,11 +76,11 @@ pub const Arena = struct {
     }
     pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: mem.Alignment) ?[*]u8 {
         log("Malloc: {d}\n", .{len});
 
-        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
-            mimalloc.mi_heap_malloc_aligned(heap, len, alignment)
+        const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment.toByteUnits()))
+            mimalloc.mi_heap_malloc_aligned(heap, len, alignment.toByteUnits())
         else
             mimalloc.mi_heap_malloc(heap, len);
 
@@ -234,15 +101,8 @@ pub const Arena = struct {
         return mimalloc.mi_malloc_usable_size(ptr);
     }
 
-    fn alloc(arena: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
+    fn alloc(arena: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
         const this = bun.cast(*mimalloc.Heap, arena);
-        // if (comptime Environment.isDebug)
-        //     ArenaRegistry.assert(.{ .heap = this });
-        if (comptime FeatureFlags.alignment_tweak) {
-            return alignedAlloc(this, len, log2_align);
-        }
-
-        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
 
         return alignedAlloc(
             this,
@@ -251,23 +111,14 @@ pub const Arena = struct {
         );
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
-        if (new_len <= buf.len) {
-            return true;
-        }
-
-        const full_len = alignedAllocSize(buf.ptr);
-        if (new_len <= full_len) {
-            return true;
-        }
-
-        return false;
+    fn resize(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
+        return mimalloc.mi_expand(buf.ptr, new_len) != null;
     }
 
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u8,
+        alignment: mem.Alignment,
         _: usize,
     ) void {
         // mi_free_size internally just asserts the size
@@ -275,18 +126,44 @@ pub const Arena = struct {
         // but its good to have that assertion
         if (comptime Environment.isDebug) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
-                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+            if (mimalloc.canUseAlignedAlloc(buf.len, alignment.toByteUnits()))
+                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, alignment.toByteUnits())
             else
                 mimalloc.mi_free_size(buf.ptr, buf.len);
         } else {
             mimalloc.mi_free(buf.ptr);
         }
     }
+
+    /// Attempt to expand or shrink memory, allowing relocation.
+    ///
+    /// `memory.len` must equal the length requested from the most recent
+    /// successful call to `alloc`, `resize`, or `remap`. `alignment` must
+    /// equal the same value that was passed as the `alignment` parameter to
+    /// the original `alloc` call.
+    ///
+    /// A non-`null` return value indicates the resize was successful. The
+    /// allocation may have same address, or may have been relocated. In either
+    /// case, the allocation now has size of `new_len`. A `null` return value
+    /// indicates that the resize would be equivalent to allocating new memory,
+    /// copying the bytes from the old memory, and then freeing the old memory.
+    /// In such case, it is more efficient for the caller to perform the copy.
+    ///
+    /// `new_len` must be greater than zero.
+    ///
+    /// `ret_addr` is optionally provided as the first return address of the
+    /// allocation call stack. If the value is `0` it means no return address
+    /// has been provided.
+    fn remap(this: *anyopaque, buf: []u8, alignment: mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
+        const aligned_size = alignment.toByteUnits();
+        const value = mimalloc.mi_heap_realloc_aligned(@ptrCast(this), buf.ptr, new_len, aligned_size);
+        return @ptrCast(value);
+    }
 };
 
 const c_allocator_vtable = Allocator.VTable{
     .alloc = &Arena.alloc,
     .resize = &Arena.resize,
+    .remap = &Arena.remap,
     .free = &Arena.free,
 };

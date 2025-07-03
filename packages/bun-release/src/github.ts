@@ -1,7 +1,7 @@
 import type { Endpoints, RequestParameters, Route } from "@octokit/types";
 import { Octokit } from "octokit";
+import { debug, error, log, warn } from "./console";
 import { fetch } from "./fetch";
-import { debug, log, warn, error } from "./console";
 
 const [owner, repo] = process.env["GITHUB_REPOSITORY"]?.split("/") ?? ["oven-sh", "bun"];
 

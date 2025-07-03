@@ -1,0 +1,120 @@
+# Documentation: http://trac.webkit.org/wiki/TestExpectations
+# Format: [modifier] test-name [[ expectations ]] [# comment]
+
+# Tests that are broken
+test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
+test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
+test/cli/install/bun-run.test.ts [ FAIL ] # should pass arguments correctly in scripts
+test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
+test/regression/issue/17454/destructure_string.test.ts [ FAIL ] # destructure string does not become string
+
+# Tests that are flaky
+test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
+
+# Tests skipped due to different log/line outputs
+[ ASAN ] test/js/web/console/console-log.test.ts [ SKIP ] # log line mismatch
+[ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
+[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
+[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
+[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
+[ ASAN ] test/cli/install/bun-install.test.ts [ FLAKY ] # destroy(Closer) logs
+
+# Tests failed due to ASAN
+[ ASAN ] test/js/node/test/parallel/test-common-gc.js [ FAIL ]
+[ ASAN ] test/js/bun/spawn/spawn-streaming-stdin.test.ts [ FAIL ]
+[ ASAN ] test/regression/issue/17454/destructure_string.test.ts [ FAIL ]
+[ ASAN ] test/js/node/test/parallel/test-http-server-connections-checking-leak.js [ FAIL ]
+[ ASAN ] test/js/node/test/parallel/test-zlib-invalid-input-memory.js [ FAIL ]
+[ ASAN ] test/js/node/test/parallel/test-https-server-connections-checking-leak.js [ FAIL ]
+[ ASAN ] test/js/bun/sqlite/sqlite.test.js [ FAIL ] # can continue to use existing statements after database has been GC'd
+[ ASAN ] test/bake/dev/stress.test.ts [ FLAKY ] # DEV:stress-1: crash #18910
+
+# Tests failed due to ASAN: attempting free on address which was not malloc()-ed
+[ ASAN ] test/js/node/test/parallel/test-http2-removed-header-stays-removed.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-invalidheaderfields-client.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-writehead-array.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-headers-after-destroy.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-writehead.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-trailers.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-headers.js  [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-options-server-request.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-write-empty-string.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-invalidheaderfield.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-options-server-response.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-server-set-header.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-connect-options.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-end.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-utimes.js [ CRASH ]
+[ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
+[ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
+[ ASAN ] test/integration/vite-build/vite-build.test.ts [ CRASH ]
+[ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
+[ ASAN ] test/integration/next-pages/test/next-build.test.ts [ CRASH ]
+[ ASAN ] test/js/third_party/next-auth/next-auth.test.ts [ CRASH ]
+[ ASAN ] test/js/third_party/astro/astro-post.test.js [ CRASH ]
+[ ASAN ] test/js/bun/wasm/wasi.test.js [ CRASH ]
+[ ASAN ] test/regression/issue/ctrl-c.test.ts [ CRASH ]
+[ ASAN ] test/cli/install/bun-repl.test.ts [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-intl.js [ CRASH ]
+[ ASAN ] test/js/node/v8/v8-date-parser.test.js [ CRASH ]
+[ ASAN ] test/cli/hot/hot.test.ts [ CRASH ]
+[ ASAN ] test/js/node/watch/fs.watch.test.ts [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-update-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-linux-parallel-remove.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-update-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
+[ ASAN ] test/cli/hot/watch.test.ts [ CRASH ]
+[ ASAN ] test/js/bun/resolve/load-same-js-file-a-lot.test.ts [ CRASH ]
+[ ASAN ] test/js/third_party/es-module-lexer/es-module-lexer.test.ts [ CRASH ]
+[ ASAN ] test/bundler/esbuild/default.test.ts [ CRASH ]
+[ ASAN ] test/bundler/bundler_edgecase.test.ts [ CRASH ] # After: edgecase/UsingWithSixImports
+[ ASAN ] test/bundler/bundler_loader.test.ts [ CRASH ] # bun/wasm-is-copied-to-outdir
+[ ASAN ] test/bundler/bundler_npm.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/sourcemap.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/hot.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/bundle.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/esm.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/css.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/html.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/react-spa.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/ecosystem.test.ts [ CRASH ]
+[ ASAN ] test/cli/inspect/HTTPServerAgent.test.ts [ CRASH ] # filesystem watcher bug
+
+# Tests failed due to ASAN: SEGV on unknown address
+[ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
+
+# Tests failed due to ASAN: heap-use-after-free
+[ ASAN ] test/js/first_party/ws/ws.test.ts [ CRASH ]
+
+# Tests failed due to ASAN: use-after-poison
+[ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
+[ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
+[ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
+
+# Tests failed due to ASAN: unknown-crash
+[ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions
+
+# Tests failed due to ASAN: assertion failed
+[ ASAN ] test/js/node/test/parallel/test-string-decoder-fuzz.js [ CRASH ] # ASSERTION FAILED: joinedLength
+
+# Tests timed out due to ASAN
+[ ASAN ] test/js/node/util/test-aborted.test.ts [ TIMEOUT ] # aborted with gc cleanup
+[ ASAN ] test/js/node/test/parallel/test-primitive-timer-leak.js [ TIMEOUT ]
+[ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
+[ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
+[ ASAN ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ]
+[ ASAN ] test/cli/inspect/BunFrontendDevServer.test.ts [ TIMEOUT ]
+
+# Tests failed due to memory leaks
+[ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
+[ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
+[ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
+[ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ LEAK ]
+[ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
+[ ASAN ] test/js/bun/spawn/spawn-pipe-leak.test.ts [ LEAK ]
+[ ASAN ] test/js/node/http2/node-http2.test.js [ LEAK ] # should not leak memory
+[ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
+[ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data

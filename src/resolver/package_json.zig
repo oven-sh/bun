@@ -1,14 +1,11 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
@@ -33,7 +30,6 @@ const Dependency = @import("../install/dependency.zig");
 const String = Semver.String;
 const Version = Semver.Version;
 const Install = @import("../install/install.zig");
-const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
@@ -56,22 +52,7 @@ pub const PackageJSON = struct {
         production,
     };
 
-    pub usingnamespace bun.New(@This());
-
-    pub fn generateHash(package_json: *PackageJSON) void {
-        var hashy: [1024]u8 = undefined;
-        @memset(&hashy, 0);
-        var used: usize = 0;
-        bun.copy(u8, &hashy, package_json.name);
-        used = package_json.name.len;
-
-        hashy[used] = '@';
-        used += 1;
-        bun.copy(u8, hashy[used..], package_json.version);
-        used += package_json.version.len;
-
-        package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
-    }
+    pub const new = bun.TrivialNew(@This());
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
@@ -103,7 +84,6 @@ pub const PackageJSON = struct {
     main_fields: MainFieldMap,
     module_type: options.ModuleType,
     version: string = "",
-    hash: u32 = 0xDEADBEEF,
 
     scripts: ?*ScriptsMap = null,
     config: ?*bun.StringArrayHashMap(string) = null,
@@ -116,7 +96,7 @@ pub const PackageJSON = struct {
 
     side_effects: SideEffects = .unspecified,
 
-    // Present if the "browser" field is present. This field is intended to be
+    // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
     // functionality. That way you don't have to rewrite the code for those 3rd-
@@ -172,10 +152,6 @@ pub const PackageJSON = struct {
             };
         }
     };
-
-    pub inline fn isAppPackage(this: *const PackageJSON) bool {
-        return this.hash == 0xDEADBEEF;
-    }
 
     fn loadDefineDefaults(
         env: *options.Env,
@@ -603,9 +579,7 @@ pub const PackageJSON = struct {
         package_id: ?Install.PackageID,
         comptime include_scripts_: enum { ignore_scripts, include_scripts },
         comptime include_dependencies: enum { main, local, none },
-        comptime generate_hash_: enum { generate_hash, no_hash },
     ) ?PackageJSON {
-        const generate_hash = generate_hash_ == .generate_hash;
         const include_scripts = include_scripts_ == .include_scripts;
 
         // TODO: remove this extra copy
@@ -626,7 +600,7 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
             }
 
             return null;
@@ -640,9 +614,9 @@ pub const PackageJSON = struct {
         const key_path = fs.Path.init(package_json_path);
 
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
-        json_source.path.pretty = r.prettyPath(json_source.path);
+        json_source.path.pretty = json_source.path.text;
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, &json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -659,7 +633,6 @@ pub const PackageJSON = struct {
         var package_json = PackageJSON{
             .name = "",
             .version = "",
-            .hash = 0xDEADBEEF,
             .source = json_source,
             .module_type = .unknown,
             .browser_map = BrowserMap.init(allocator, false),
@@ -679,10 +652,10 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(allocator)) |version_str| {
-                if (version_str.len > 0) {
-                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
+        if (json.asProperty("name")) |name_json| {
+            if (name_json.expr.asString(allocator)) |name_str| {
+                if (name_str.len > 0) {
+                    package_json.name = allocator.dupe(u8, name_str) catch unreachable;
                 }
             }
         }
@@ -724,8 +697,11 @@ pub const PackageJSON = struct {
             }
         }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.target == .browser) {
+        // Read the "browser" property
+        // Since we cache parsed package.json in-memory, we have to read the "browser" field
+        // including when `target` is not `browser` since the developer may later
+        // run a build for the browser in the same process (like the DevServer).
+        {
             // We both want the ability to have the option of CJS vs. ESM and the
             // option of having node vs. browser. The way to do this is to use the
             // object literal form of the "browser" field like this:
@@ -769,7 +745,9 @@ pub const PackageJSON = struct {
                                     }
                                 },
                                 else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
+                                    if (!json_source.path.isNodeModule())
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
                                 },
                             }
                         }
@@ -950,8 +928,8 @@ pub const PackageJSON = struct {
                     package_json.dependencies.map = DependencyMap.HashMap{};
                     package_json.dependencies.source_buf = json_source.contents;
                     const ctx = String.ArrayHashContext{
-                        .a_buf = json_source.contents,
-                        .b_buf = json_source.contents,
+                        .arg_buf = json_source.contents,
+                        .existing_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
                         allocator,
@@ -1008,12 +986,6 @@ pub const PackageJSON = struct {
             }
             if (json.asPropertyStringMap("config", allocator)) |config| {
                 package_json.config = config;
-            }
-        }
-
-        if (generate_hash) {
-            if (package_json.name.len > 0 and package_json.version.len > 0) {
-                package_json.generateHash();
             }
         }
 

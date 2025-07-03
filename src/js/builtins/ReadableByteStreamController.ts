@@ -30,36 +30,36 @@ export function initializeReadableByteStreamController(this, stream, underlyingB
   return $privateInitializeReadableByteStreamController.$call(this, stream, underlyingByteSource, highWaterMark);
 }
 
-export function enqueue(this, chunk) {
+export function enqueue(this: ReadableByteStreamController, chunk: ArrayBufferView) {
   if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
-  if ($getByIdDirectPrivate(this, "closeRequested"))
-    throw new TypeError("ReadableByteStreamController is requested to close");
+  if ($getByIdDirectPrivate(this, "closeRequested")) throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
-  if (!$isObject(chunk) || !ArrayBuffer.$isView(chunk)) throw new TypeError("Provided chunk is not a TypedArray");
+  if (!$isObject(chunk) || !ArrayBuffer.$isView(chunk))
+    throw $ERR_INVALID_ARG_TYPE("buffer", "Buffer, TypedArray, or DataView", chunk);
 
   return $readableByteStreamControllerEnqueue(this, chunk);
 }
 
-export function error(this, error) {
+export function error(this: ReadableByteStreamController, error: any) {
   if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   $readableByteStreamControllerError(this, error);
 }
 
-export function close(this) {
+export function close(this: ReadableByteStreamController) {
   if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate(this, "closeRequested")) throw new TypeError("Close has already been requested");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   $readableByteStreamControllerClose(this);
 }

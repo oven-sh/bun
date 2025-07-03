@@ -26,7 +26,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
 
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
+            if (scope.exception()) [[unlikely]] {
                 scope.clearException();
                 value = jsUndefined();
             }
@@ -54,6 +54,9 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
             DontEnumPropertiesMode::Exclude);
         gcUnprotectNullTolerant(object);
 
+        exportNames.append(vm.propertyNames->defaultKeyword);
+        exportValues.append(object);
+
         for (auto& entry : properties) {
             if (entry == vm.propertyNames->defaultKeyword) {
                 continue;
@@ -63,15 +66,12 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
 
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
+            if (scope.exception()) [[unlikely]] {
                 scope.clearException();
                 value = jsUndefined();
             }
             exportValues.append(value);
         }
-
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(object);
     };
 }
 

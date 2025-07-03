@@ -1,8 +1,8 @@
 import { spawn } from "bun";
-import { describe, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tmpdirSync, readdirSorted } from "harness";
-import { readdirSync, copyFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -494,6 +494,26 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
 
   expect(err).not.toContain("error:");
   expect(err).not.toContain("Cannot find module 'exec'");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it("should handle package that requires node 24", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+  expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });

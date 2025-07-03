@@ -81,7 +81,7 @@ class CallTracker {
   }
 
   calls(fn, expected = 1) {
-    if (process._exiting) throw $ERR_UNAVAILABLE_DURING_EXIT("Cannot call function in process exit handler");
+    if (process._exiting) throw $ERR_UNAVAILABLE_DURING_EXIT();
     if (typeof fn === "number") {
       expected = fn;
       fn = noop;
@@ -110,7 +110,7 @@ class CallTracker {
   }
 
   report() {
-    const errors = [];
+    const errors: Error[] = [];
     for (const context of this.#callChecks) {
       const message = context.report();
       if (message !== undefined) {

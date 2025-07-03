@@ -30,11 +30,6 @@ const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURL
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
 
-var _lazyUtil;
-function lazyUtil(): (typeof import("internal/util"))["default"] {
-  return (_lazyUtil ||= require("internal/util"));
-}
-
 function Url() {
   this.protocol = null;
   this.slashes = null;
@@ -79,8 +74,6 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
   hostEndingChars = ["/", "?", "#"],
   hostnameMaxLen = 255,
-  hostnamePartPattern = /^[+a-z0-9A-Z_-]{0,63}$/,
-  hostnamePartStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
     javascript: true,
@@ -106,7 +99,7 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   };
 
 function urlParse(
-  url: string | URL | Url, // really has unknown type but intellisense is nice
+  url: string | URL | typeof Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
@@ -233,8 +226,9 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
    * resolution will treat //foo/bar as host=foo,path=bar because that's
    * how the browser resolves relative URLs.
    */
+  let slashes;
   if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
-    var slashes = rest.substring(0, 2) === "//";
+    slashes = rest.substring(0, 2) === "//";
     if (slashes && !(proto && hostlessProtocol[proto])) {
       rest = rest.substring(2);
       this.slashes = true;

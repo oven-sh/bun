@@ -28,6 +28,7 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
 JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
 {
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
+    if (!stylizeFn) return nullptr;
     JSObject* options = JSC::constructEmptyObject(vm, globalObject->utilInspectOptionsStructure());
     options->putDirectOffset(vm, 0, stylizeFn);
     options->putDirectOffset(vm, 1, jsNumber(max_depth));
@@ -37,12 +38,11 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
-    JSC__JSValue encodedFunctionValue,
-    JSC__JSValue encodedThisValue,
+    JSC::EncodedJSValue encodedFunctionValue,
+    JSC::EncodedJSValue encodedThisValue,
     unsigned depth,
     unsigned max_depth,
-    bool colors,
-    bool* is_exception)
+    bool colors)
 {
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
@@ -50,8 +50,10 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSFunction* inspectFn = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
@@ -59,10 +61,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     arguments.append(inspectFn);
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
-    if (auto exe = scope.exception()) {
-        *is_exception = true;
-        return {};
-    }
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 

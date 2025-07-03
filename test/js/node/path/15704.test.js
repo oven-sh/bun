@@ -1,5 +1,5 @@
-import path from "path";
 import assert from "assert";
+import path from "path";
 
 test("too-long path names do not crash when joined", () => {
   const length = 4096;

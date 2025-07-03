@@ -1,37 +1,23 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const std = @import("std");
-const OOM = bun.OOM;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
+const std = @import("std");
 
 const FileSystem = @import("../fs.zig").FileSystem;
-const PathName = @import("../fs.zig").PathName;
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
@@ -42,8 +28,11 @@ const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;
 const uws = bun.uws;
+
+const Scanner = @import("test/Scanner.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
@@ -176,7 +165,7 @@ pub const JunitReporter = struct {
         );
     }
 
-    pub usingnamespace bun.New(JunitReporter);
+    pub const new = bun.TrivialNew(JunitReporter);
 
     fn generatePropertiesList(this: *JunitReporter) !void {
         const PropertiesList = struct {
@@ -351,9 +340,7 @@ pub const JunitReporter = struct {
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
         const elapsed_seconds = elapsed_ms / std.time.ms_per_s;
-        var time_buf: [32]u8 = undefined;
-        const time_str = try std.fmt.bufPrint(&time_buf, " time=\"{d}\"", .{elapsed_seconds});
-        try this.contents.appendSlice(bun.default_allocator, time_str);
+        try this.contents.writer(bun.default_allocator).print(" time=\"{}\"", .{bun.fmt.trimmedPrecision(elapsed_seconds, 6)});
 
         try this.contents.appendSlice(bun.default_allocator, " file=\"");
         try escapeXml(file, this.contents.writer(bun.default_allocator));
@@ -376,6 +363,14 @@ pub const JunitReporter = struct {
                 //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
                 //     try this.contents.appendSlice(bun.default_allocator, "\"");
                 // }
+            },
+            .fail_because_failing_test_passed => {
+                this.testcases_metrics.failures += 1;
+                try this.contents.writer(bun.default_allocator).print(
+                    \\>
+                    \\      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+                    \\    </testcase>
+                , .{});
             },
             .fail_because_expected_assertion_count => {
                 this.testcases_metrics.failures += 1;
@@ -403,7 +398,7 @@ pub const JunitReporter = struct {
                     \\    </testcase>
                 , .{});
             },
-            .skip => {
+            .skipped_because_label, .skip => {
                 this.testcases_metrics.skipped += 1;
                 try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped />\n    </testcase>\n");
             },
@@ -442,7 +437,7 @@ pub const JunitReporter = struct {
         @memcpy(junit_path_buf[0..path.len], path);
         junit_path_buf[path.len] = 0;
 
-        switch (bun.sys.File.openat(std.fs.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        switch (bun.sys.File.openat(.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .err => |err| {
                 Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
             },
@@ -467,7 +462,6 @@ pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
     last_dot: u32 = 0,
-    summary: Summary = Summary{},
     prev_file: u64 = 0,
     repeat_count: u32 = 1,
 
@@ -479,15 +473,6 @@ pub const CommandLineReporter = struct {
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
-    };
-
-    pub const Summary = struct {
-        pass: u32 = 0,
-        expectations: u32 = 0,
-        skip: u32 = 0,
-        todo: u32 = 0,
-        fail: u32 = 0,
-        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -612,6 +597,10 @@ pub const CommandLineReporter = struct {
         }
     }
 
+    pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
+        return &this.jest.summary;
+    }
+
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
@@ -625,8 +614,8 @@ pub const CommandLineReporter = struct {
         printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
-        this.summary.pass += 1;
-        this.summary.expectations += expectations;
+        this.summary().pass += 1;
+        this.summary().expectations += expectations;
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -651,11 +640,11 @@ pub const CommandLineReporter = struct {
         Output.flush();
 
         // this.updateDots();
-        this.summary.fail += 1;
-        this.summary.expectations += expectations;
+        this.summary().fail += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
-        if (this.jest.bail == this.summary.fail) {
+        if (this.jest.bail == this.summary().fail) {
             this.printSummary();
             Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
             Global.exit(1);
@@ -681,8 +670,18 @@ pub const CommandLineReporter = struct {
         }
 
         // this.updateDots();
-        this.summary.skip += 1;
-        this.summary.expectations += expectations;
+        this.summary().skip += 1;
+        this.summary().expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
+    }
+
+    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, _: string, _: string, expectations: u32, _: u64, _: ?*jest.DescribeScope) void {
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+
+        // this.updateDots();
+        this.summary().skipped_because_label += 1;
+        this.summary().skip += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 
@@ -703,16 +702,23 @@ pub const CommandLineReporter = struct {
         Output.flush();
 
         // this.updateDots();
-        this.summary.todo += 1;
-        this.summary.expectations += expectations;
+        this.summary().todo += 1;
+        this.summary().expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 
     pub fn printSummary(this: *CommandLineReporter) void {
-        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-        const files = this.summary.files;
+        const summary_ = this.summary();
+        const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
+        const files = summary_.files;
 
-        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        Output.prettyError("Ran {d} test{s} across {d} file{s}. ", .{
+            tests,
+            if (tests == 1) "" else "s",
+            files,
+            if (files == 1) "" else "s",
+        });
+
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
@@ -721,9 +727,9 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = bun.sourcemap.ByteRangeMapping.map orelse return;
+        var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -733,28 +739,33 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(
+            bun.sourcemap.coverage.ByteRangeMapping,
+            byte_ranges.items,
+            {},
+            bun.sourcemap.coverage.ByteRangeMapping.isLessThan,
+        );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
     }
 
-    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        _ = this; // autofix
-        const trace = bun.tracy.traceNamed(@src(), comptime brk: {
-            if (reporters.text and reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCovAndText";
-            }
-
-            if (reporters.text) {
-                break :brk "TestCommand.printCodeCoverageText";
-            }
-
-            if (reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCov";
-            }
-
+    pub fn printCodeCoverage(
+        _: *CommandLineReporter,
+        vm: *JSC.VirtualMachine,
+        opts: *TestCommand.CodeCoverageOptions,
+        byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
+        comptime reporters: TestCommand.Reporters,
+        comptime enable_ansi_colors: bool,
+    ) !void {
+        const trace = if (reporters.text and reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text)
+            bun.perf.trace("TestCommand.printCodeCoverageText")
+        else if (reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else
             @compileError("No reporters enabled");
-        });
+
         defer trace.end();
 
         if (comptime !reporters.text and !reporters.lcov) {
@@ -795,7 +806,7 @@ pub const CommandLineReporter = struct {
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
-        var avg = bun.sourcemap.CoverageFraction{
+        var avg = bun.sourcemap.coverage.Fraction{
             .functions = 0.0,
             .lines = 0.0,
             .stmts = 0.0,
@@ -809,7 +820,7 @@ pub const CommandLineReporter = struct {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
-            var fs = bun.JSC.Node.NodeFS{};
+            var fs = bun.JSC.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.JSC.Node.PathLike{
@@ -822,11 +833,11 @@ pub const CommandLineReporter = struct {
             // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
             var base64_bytes: [8]u8 = undefined;
             var shortname_buf: [512]u8 = undefined;
-            bun.rand(&base64_bytes);
-            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            bun.csprng(&base64_bytes);
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
-                std.fs.cwd(),
+                .cwd(),
                 path,
                 bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
                 0o644,
@@ -929,10 +940,11 @@ pub const CommandLineReporter = struct {
         if (comptime reporters.lcov) {
             try lcov_buffered_writer.flush();
             lcov_file.close();
-            bun.C.moveFileZ(
-                bun.toFD(std.fs.cwd()),
+            const cwd = bun.FD.cwd();
+            bun.sys.moveFileZ(
+                cwd,
                 lcov_name,
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 bun.path.joinAbsStringZ(
                     relative_dir,
                     &.{ opts.reports_directory, "lcov.info" },
@@ -946,208 +958,43 @@ pub const CommandLineReporter = struct {
     }
 };
 
-const Scanner = struct {
-    const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
-    exclusion_names: []const []const u8 = &.{},
-    filter_names: []const []const u8 = &.{},
-    dirs_to_scan: Fifo,
-    results: *std.ArrayList(bun.PathString),
-    fs: *FileSystem,
-    open_dir_buf: bun.PathBuffer = undefined,
-    scan_dir_buf: bun.PathBuffer = undefined,
-    options: *options.BundleOptions,
-    has_iterated: bool = false,
-    search_count: usize = 0,
+export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
+    var zig_slice: bun.JSC.ZigString.Slice = .{};
+    defer zig_slice.deinit();
 
-    const ScanEntry = struct {
-        relative_dir: bun.StoredFileDescriptorType,
-        dir_path: string,
-        name: strings.StringOrTinyString,
+    // In this particular case, we don't actually care about non-ascii latin1 characters.
+    // so we skip the ascii check
+    const slice = brk: {
+        zig_slice = test_name_str.toUTF8(bun.default_allocator);
+        break :brk zig_slice.slice();
     };
 
-    fn readDirWithName(this: *Scanner, name: string, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
-        return try this.fs.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
-    }
-
-    pub fn scan(this: *Scanner, path_literal: string) void {
-        const parts = &[_]string{ this.fs.top_level_dir, path_literal };
-        const path = this.fs.absBuf(parts, &this.scan_dir_buf);
-
-        var root = this.readDirWithName(path, null) catch |err| {
-            if (err == error.NotDir) {
-                if (this.isTestFile(path)) {
-                    this.results.append(bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch bun.outOfMemory())) catch bun.outOfMemory();
-                }
-            }
-
-            return;
-        };
-
-        // you typed "." and we already scanned it
-        if (!this.has_iterated) {
-            if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
-                var iter = root.entries.data.iterator();
-                const fd = root.entries.fd;
-                bun.assert(fd != bun.invalid_fd);
-                while (iter.next()) |entry| {
-                    this.next(entry.value_ptr.*, fd);
-                }
-            }
-        }
-
-        while (this.dirs_to_scan.readItem()) |entry| {
-            if (!Environment.isWindows) {
-                const dir = entry.relative_dir.asDir();
-                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
-
-                const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-                this.open_dir_buf[path2.len] = 0;
-                const pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-                const child_dir = bun.openDir(dir, pathZ) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.fd);
-                _ = this.readDirWithName(path2, child_dir) catch continue;
-            } else {
-                const dir = entry.relative_dir.asDir();
-                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
-
-                const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-                const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
-                const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;
-                _ = this.readDirWithName(
-                    this.fs.dirname_store.append(string, path2) catch bun.outOfMemory(),
-                    child_dir,
-                ) catch bun.outOfMemory();
-            }
-        }
-    }
-
-    const test_name_suffixes = [_]string{
-        ".test",
-        "_test",
-        ".spec",
-        "_spec",
-    };
-
-    export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
-        var zig_slice: bun.JSC.ZigString.Slice = .{};
-        defer zig_slice.deinit();
-
-        // In this particular case, we don't actually care about non-ascii latin1 characters.
-        // so we skip the ascii check
-        const slice = brk: {
-            zig_slice = test_name_str.toUTF8(bun.default_allocator);
-            break :brk zig_slice.slice();
-        };
-
-        // always ignore node_modules.
-        if (strings.contains(slice, "/node_modules/") or strings.contains(slice, "\\node_modules\\")) {
-            return false;
-        }
-
-        const ext = std.fs.path.extension(slice);
-        const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
-
-        // allow file loader just incase they use a custom loader with a non-standard extension
-        if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
-            return false;
-        }
-
-        if (jest.Jest.runner) |runner| {
-            if (runner.test_options.coverage.skip_test_files) {
-                const name_without_extension = slice[0 .. slice.len - ext.len];
-                inline for (test_name_suffixes) |suffix| {
-                    if (strings.endsWithComptime(name_without_extension, suffix)) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        return true;
-    }
-
-    pub fn couldBeTestFile(this: *Scanner, name: string) bool {
-        const extname = std.fs.path.extension(name);
-        if (!this.options.loader(extname).isJavaScriptLike()) return false;
-        const name_without_extension = name[0 .. name.len - extname.len];
-        inline for (test_name_suffixes) |suffix| {
-            if (strings.endsWithComptime(name_without_extension, suffix)) return true;
-        }
-
+    // always ignore node_modules.
+    if (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\")) {
         return false;
     }
 
-    pub fn doesAbsolutePathMatchFilter(this: *Scanner, name: string) bool {
-        if (this.filter_names.len == 0) return true;
+    const ext = std.fs.path.extension(slice);
+    const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
 
-        for (this.filter_names) |filter_name| {
-            if (strings.startsWith(name, filter_name)) return true;
-        }
-
+    // allow file loader just incase they use a custom loader with a non-standard extension
+    if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
         return false;
     }
 
-    pub fn doesPathMatchFilter(this: *Scanner, name: string) bool {
-        if (this.filter_names.len == 0) return true;
-
-        for (this.filter_names) |filter_name| {
-            if (strings.contains(name, filter_name)) return true;
-        }
-
-        return false;
-    }
-
-    pub fn isTestFile(this: *Scanner, name: string) bool {
-        return this.couldBeTestFile(name) and this.doesPathMatchFilter(name);
-    }
-
-    pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
-        const name = entry.base_lowercase();
-        this.has_iterated = true;
-        switch (entry.kind(&this.fs.fs, true)) {
-            .dir => {
-                if ((name.len > 0 and name[0] == '.') or strings.eqlComptime(name, "node_modules")) {
-                    return;
+    if (jest.Jest.runner) |runner| {
+        if (runner.test_options.coverage.skip_test_files) {
+            const name_without_extension = slice[0 .. slice.len - ext.len];
+            inline for (Scanner.test_name_suffixes) |suffix| {
+                if (bun.strings.endsWithComptime(name_without_extension, suffix)) {
+                    return false;
                 }
-
-                if (comptime Environment.allow_assert)
-                    bun.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
-
-                for (this.exclusion_names) |exclude_name| {
-                    if (strings.eql(exclude_name, name)) return;
-                }
-
-                this.search_count += 1;
-
-                this.dirs_to_scan.writeItem(.{
-                    .relative_dir = fd,
-                    .name = entry.base_,
-                    .dir_path = entry.dir,
-                }) catch unreachable;
-            },
-            .file => {
-                // already seen it!
-                if (!entry.abs_path.isEmpty()) return;
-
-                this.search_count += 1;
-                if (!this.couldBeTestFile(name)) return;
-
-                const parts = &[_]string{ entry.dir, entry.base() };
-                const path = this.fs.absBuf(parts, &this.open_dir_buf);
-
-                if (!this.doesAbsolutePathMatchFilter(path)) {
-                    const rel_path = bun.path.relative(this.fs.top_level_dir, path);
-                    if (!this.doesPathMatchFilter(rel_path)) return;
-                }
-
-                entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
-                this.results.append(entry.abs_path) catch unreachable;
-            },
+            }
         }
     }
-};
+
+    return true;
+}
 
 pub const TestCommand = struct {
     pub const name = "test";
@@ -1155,7 +1002,7 @@ pub const TestCommand = struct {
         skip_test_files: bool = !Environment.allow_assert,
         reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
-        fractions: bun.sourcemap.CoverageFraction = .{},
+        fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
@@ -1195,7 +1042,7 @@ pub const TestCommand = struct {
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
-        JSC.isBunTest = true;
+        JSC.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -1227,6 +1074,7 @@ pub const TestCommand = struct {
             .onTestFail = CommandLineReporter.handleTestFail,
             .onTestSkip = CommandLineReporter.handleTestSkip,
             .onTestTodo = CommandLineReporter.handleTestTodo,
+            .onTestFilteredOut = CommandLineReporter.handleTestFilteredOut,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
@@ -1256,6 +1104,7 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
+                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             },
         );
         vm.argv = ctx.passthrough;
@@ -1301,29 +1150,36 @@ pub const TestCommand = struct {
             _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
         }
 
-        var results = try std.ArrayList(PathString).initCapacity(ctx.allocator, ctx.positionals.len);
-        defer results.deinit();
-
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
         //
         try vm.ensureDebugger(false);
 
-        const test_files, const search_count = scan: {
-            if (for (ctx.positionals) |arg| {
-                if (std.fs.path.isAbsolute(arg) or
-                    strings.startsWith(arg, "./") or
-                    strings.startsWith(arg, "../") or
-                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
+        defer scanner.deinit();
+        const has_relative_path = for (ctx.positionals) |arg| {
+            if (std.fs.path.isAbsolute(arg) or
+                strings.startsWith(arg, "./") or
+                strings.startsWith(arg, "../") or
+                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
                     strings.startsWith(arg, "..\\")))) break true;
-            } else false) {
-                // One of the files is a filepath. Instead of treating the arguments as filters, treat them as filepaths
-                for (ctx.positionals[1..]) |arg| {
-                    results.appendAssumeCapacity(PathString.init(arg));
-                }
-                break :scan .{ results.items, 0 };
+        } else false;
+        if (has_relative_path) {
+            // One of the files is a filepath. Instead of treating the
+            // arguments as filters, treat them as filepaths
+            const file_or_dirnames = ctx.positionals[1..];
+            for (file_or_dirnames) |arg| {
+                scanner.scan(arg) catch |err| switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    // don't error if multiple are passed; one might fail
+                    // but the others may not
+                    error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        Global.exit(1);
+                    },
+                };
             }
-
+        } else {
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
@@ -1343,14 +1199,8 @@ pub const TestCommand = struct {
                     ctx.allocator.free(i);
                 ctx.allocator.free(filter_names_normalized);
             };
+            scanner.filter_names = filter_names_normalized;
 
-            var scanner = Scanner{
-                .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-                .options = &vm.transpiler.options,
-                .fs = vm.transpiler.fs,
-                .filter_names = filter_names_normalized,
-                .results = &results,
-            };
             const dir_to_scan = brk: {
                 if (ctx.debug.test_directory.len > 0) {
                     break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
@@ -1359,56 +1209,61 @@ pub const TestCommand = struct {
                 break :brk scanner.fs.top_level_dir;
             };
 
-            scanner.scan(dir_to_scan);
-            scanner.dirs_to_scan.deinit();
+            scanner.scan(dir_to_scan) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                error.DoesNotExist => {
+                    Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
+                    Global.exit(1);
+                },
+            };
+        }
 
-            break :scan .{ scanner.results.items, scanner.search_count };
-        };
+        const test_files = scanner.takeFoundTestFiles() catch bun.outOfMemory();
+        defer ctx.allocator.free(test_files);
+        const search_count = scanner.search_count;
 
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
-                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
             }
 
-            // vm.transpiler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        var coverage = ctx.test_options.coverage;
-
-        if (reporter.summary.pass > 20) {
-            if (reporter.summary.skip > 0) {
-                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
+        var coverage_options = ctx.test_options.coverage;
+        if (reporter.summary().pass > 20) {
+            if (reporter.summary().skip > 0) {
+                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
                 error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.todo > 0) {
-                if (reporter.summary.skip > 0) {
+            if (reporter.summary().todo > 0) {
+                if (reporter.summary().skip > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary.todo});
+                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary().todo});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
                 error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
             }
 
-            if (reporter.summary.fail > 0) {
-                if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
+            if (reporter.summary().fail > 0) {
+                if (reporter.summary().skip > 0 or reporter.summary().todo > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary.fail});
+                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary().fail});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
@@ -1418,7 +1273,11 @@ pub const TestCommand = struct {
 
         Output.flush();
 
+        var failed_to_find_any_tests = false;
+
         if (test_files.len == 0) {
+            failed_to_find_any_tests = true;
+
             if (ctx.positionals.len == 0) {
                 Output.prettyErrorln(
                     \\<yellow>No tests found!<r>
@@ -1434,9 +1293,9 @@ pub const TestCommand = struct {
 
                     if (has_file_like == null and
                         (strings.hasSuffixComptime(filter, ".ts") or
-                        strings.hasSuffixComptime(filter, ".tsx") or
-                        strings.hasSuffixComptime(filter, ".js") or
-                        strings.hasSuffixComptime(filter, ".jsx")))
+                            strings.hasSuffixComptime(filter, ".tsx") or
+                            strings.hasSuffixComptime(filter, ".js") or
+                            strings.hasSuffixComptime(filter, ".jsx")))
                     {
                         has_file_like = i;
                     }
@@ -1466,88 +1325,104 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage.enabled) {
+            if (coverage_options.enabled) {
                 switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| switch (coverage.reporters.text) {
-                        inline else => |console| switch (coverage.reporters.lcov) {
+                    inline else => |colors| switch (coverage_options.reporters.text) {
+                        inline else => |console| switch (coverage_options.reporters.lcov) {
                             inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage, .{ .text = console, .lcov = lcov }, colors);
+                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
                             },
                         },
                     },
                 }
             }
 
-            if (reporter.summary.pass > 0) {
-                Output.prettyError("<r><green>", .{});
-            }
+            const summary = reporter.summary();
+            const did_label_filter_out_all_tests = summary.didLabelFilterOutAllTests() and reporter.jest.unhandled_errors_between_tests == 0;
 
-            Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
-
-            if (reporter.summary.skip > 0) {
-                Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{reporter.summary.skip});
-            }
-
-            if (reporter.summary.todo > 0) {
-                Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{reporter.summary.todo});
-            }
-
-            if (reporter.summary.fail > 0) {
-                Output.prettyError("<r><red>", .{});
-            } else {
-                Output.prettyError("<r><d>", .{});
-            }
-
-            Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
-            if (reporter.jest.unhandled_errors_between_tests > 0) {
-                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
-            }
-
-            var print_expect_calls = reporter.summary.expectations > 0;
-            if (reporter.jest.snapshots.total > 0) {
-                const passed = reporter.jest.snapshots.passed;
-                const failed = reporter.jest.snapshots.failed;
-                const added = reporter.jest.snapshots.added;
-
-                var first = true;
-                if (print_expect_calls and added == 0 and failed == 0) {
-                    print_expect_calls = false;
-                    Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary.expectations });
-                } else {
-                    Output.prettyError(" <d>snapshots:<r> ", .{});
-
-                    if (passed > 0) {
-                        Output.prettyError("<d>{d} passed<r>", .{passed});
-                        first = false;
-                    }
-
-                    if (added > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<b>+{d} added<r>", .{added});
-                        } else {
-                            Output.prettyError("<b>, {d} added<r>", .{added});
-                        }
-                    }
-
-                    if (failed > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<red>{d} failed<r>", .{failed});
-                        } else {
-                            Output.prettyError(", <red>{d} failed<r>", .{failed});
-                        }
-                    }
+            if (!did_label_filter_out_all_tests) {
+                if (summary.pass > 0) {
+                    Output.prettyError("<r><green>", .{});
                 }
 
-                Output.prettyError("\n", .{});
-            }
+                Output.prettyError(" {d:5>} pass<r>\n", .{summary.pass});
 
-            if (print_expect_calls) {
-                Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
-            }
+                if (summary.skip > 0) {
+                    Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{summary.skip});
+                } else if (summary.skipped_because_label > 0) {
+                    Output.prettyError(" <r><d>{d:5>} filtered out<r>\n", .{summary.skipped_because_label});
+                }
 
-            reporter.printSummary();
+                if (summary.todo > 0) {
+                    Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{summary.todo});
+                }
+
+                if (summary.fail > 0) {
+                    Output.prettyError("<r><red>", .{});
+                } else {
+                    Output.prettyError("<r><d>", .{});
+                }
+
+                Output.prettyError(" {d:5>} fail<r>\n", .{summary.fail});
+                if (reporter.jest.unhandled_errors_between_tests > 0) {
+                    Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+                }
+
+                var print_expect_calls = reporter.summary().expectations > 0;
+                if (reporter.jest.snapshots.total > 0) {
+                    const passed = reporter.jest.snapshots.passed;
+                    const failed = reporter.jest.snapshots.failed;
+                    const added = reporter.jest.snapshots.added;
+
+                    var first = true;
+                    if (print_expect_calls and added == 0 and failed == 0) {
+                        print_expect_calls = false;
+                        Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary().expectations });
+                    } else {
+                        Output.prettyError(" <d>snapshots:<r> ", .{});
+
+                        if (passed > 0) {
+                            Output.prettyError("<d>{d} passed<r>", .{passed});
+                            first = false;
+                        }
+
+                        if (added > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<b>+{d} added<r>", .{added});
+                            } else {
+                                Output.prettyError("<b>, {d} added<r>", .{added});
+                            }
+                        }
+
+                        if (failed > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<red>{d} failed<r>", .{failed});
+                            } else {
+                                Output.prettyError(", <red>{d} failed<r>", .{failed});
+                            }
+                        }
+                    }
+
+                    Output.prettyError("\n", .{});
+                }
+
+                if (print_expect_calls) {
+                    Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary().expectations});
+                }
+
+                reporter.printSummary();
+            } else {
+                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
+                    summary.files,
+                    if (summary.files == 1) "" else "s",
+                    summary.skipped_because_label,
+                    if (summary.skipped_because_label == 1) "" else "s",
+                });
+                Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            }
         }
 
         Output.prettyError("\n", .{});
@@ -1567,11 +1442,14 @@ pub const TestCommand = struct {
         if (vm.hot_reload == .watch) {
             vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
+        const summary = reporter.summary();
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage) or !write_snapshots_success) {
+        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        } else {
+            vm.runWithAPILock(JSC.VirtualMachine, vm, JSC.VirtualMachine.globalExit);
         }
     }
 
@@ -1678,14 +1556,14 @@ pub const TestCommand = struct {
             Output.flush();
 
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary.files += 1;
+            reporter.summary().files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
-                    reporter.summary.fail += 1;
+                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                    reporter.summary().fail += 1;
 
-                    if (reporter.jest.bail == reporter.summary.fail) {
+                    if (reporter.jest.bail == reporter.summary().fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
@@ -1719,7 +1597,7 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                while (vm.active_tasks > 0) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
                         jest.Jest.runner.?.drain();
                     }
@@ -1739,7 +1617,7 @@ pub const TestCommand = struct {
                     }
                 }
 
-                vm.eventLoop().flushImmediateQueue();
+                vm.eventLoop().tickImmediateTasks(vm);
 
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},
@@ -1786,4 +1664,8 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
         }
     }
     Global.exit(1);
+}
+
+pub fn @"export"() void {
+    _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }

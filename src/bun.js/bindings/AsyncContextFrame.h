@@ -25,11 +25,24 @@ public:
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&, NakedPtr<JSC::Exception>& returnedException);
 
+    // Alias of call.
+    static JSC::JSValue profiledCall(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
+
+    // Alias of call.
+    static JSC::JSValue profiledCall(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&, NakedPtr<JSC::Exception>& returnedException);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
     mutable JSC::WriteBarrier<JSC::Unknown> callback;
     mutable JSC::WriteBarrier<JSC::Unknown> context;
+
+    /**
+     * When you have a **specific** AsyncContextFrame to run the function in, use this
+     *
+     * Usually, you do not want to use this. Usually, you want to use `call` or `profiledCall`.
+     */
+    JSC::JSValue run(JSC::JSGlobalObject* globalObject, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList& args);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

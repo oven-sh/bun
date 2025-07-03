@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 9
+# Version: 12
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -130,7 +130,7 @@ create_directory() {
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
 	path="$(execute "$mktemp" -d)"
-	grant_to_user "$path"	
+	grant_to_user "$path"
 	print "$path"
 }
 
@@ -191,7 +191,7 @@ download_file() {
 
 	fetch "$file_url" >"$file_tmp_path"
 	grant_to_user "$file_tmp_path"
-	
+
 	print "$file_tmp_path"
 }
 
@@ -317,7 +317,7 @@ check_operating_system() {
 			distro="$("$sw_vers" -productName)"
 			release="$("$sw_vers" -productVersion)"
 		fi
-	
+
 		case "$arch" in
 		x64)
 			sysctl="$(which sysctl)"
@@ -534,7 +534,7 @@ check_ulimit() {
 		append_file "$dpkg_conf" "force-unsafe-io"
 		append_file "$dpkg_conf" "no-debsig"
 
-		apt_conf="/etc/apt/apt.conf.d/99-ci-options" 
+		apt_conf="/etc/apt/apt.conf.d/99-ci-options"
 		execute_sudo create_directory "$(dirname "$apt_conf")"
 		append_file "$apt_conf" 'Acquire::Languages "none";'
 		append_file "$apt_conf" 'Acquire::GzipIndexes "true";'
@@ -711,12 +711,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	# https://unofficial-builds.nodejs.org/download/release/
-	if ! [ "$abi" = "musl" ] && [ -n "$abi_version" ] && ! [ "$(compare_version "$abi_version" "2.27")" = "1" ]; then
-		print "16.9.1"
-	else
-		print "22.9.0"
-	fi
+	print "24.3.0"
 }
 
 nodejs_version() {
@@ -756,16 +751,68 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$(nodejs_version_exact)/node-v$(nodejs_version_exact)-headers.tar.gz")"
+	nodejs_version="$(nodejs_version_exact)"
+	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
 	execute tar -xzf "$nodejs_headers_tar" -C "$nodejs_headers_dir"
 
-	nodejs_headers_include="$nodejs_headers_dir/node-v$(nodejs_version_exact)/include"
+	nodejs_headers_include="$nodejs_headers_dir/node-v$nodejs_version/include"
 	execute_sudo cp -R "$nodejs_headers_include/" "/usr"
+
+	# Also install to node-gyp cache locations for different node-gyp versions
+	# This ensures node-gyp finds headers without downloading them
+	setup_node_gyp_cache "$nodejs_version" "$nodejs_headers_dir/node-v$nodejs_version"
+}
+
+setup_node_gyp_cache() {
+	nodejs_version="$1"
+	headers_source="$2"
+
+	# Common node-gyp cache locations
+	cache_locations="
+		$HOME/.node-gyp/$nodejs_version
+		$HOME/.cache/node-gyp/$nodejs_version
+		$HOME/.npm/_cacache/node-gyp/$nodejs_version
+		$current_home/.node-gyp/$nodejs_version
+		$current_home/.cache/node-gyp/$nodejs_version
+	"
+
+	for cache_dir in $cache_locations; do
+		if ! [ -z "$cache_dir" ]; then
+			create_directory "$cache_dir"
+
+			# Copy headers
+			if [ -d "$headers_source/include" ]; then
+				cp -R "$headers_source/include" "$cache_dir/" 2>/dev/null || true
+			fi
+
+			# Create installVersion file (node-gyp expects this)
+			echo "11" > "$cache_dir/installVersion" 2>/dev/null || true
+
+			# For Linux, we don't need .lib files like Windows
+			# but create the directory structure node-gyp expects
+			case "$arch" in
+			x86_64|amd64)
+				create_directory "$cache_dir/lib/x64" 2>/dev/null || true
+				;;
+			aarch64|arm64)
+				create_directory "$cache_dir/lib/arm64" 2>/dev/null || true
+				;;
+			*)
+				create_directory "$cache_dir/lib" 2>/dev/null || true
+				;;
+			esac
+
+			# Set proper ownership for buildkite user
+			if [ "$ci" = "1" ] && [ "$user" = "buildkite-agent" ]; then
+				execute_sudo chown -R "$user:$user" "$cache_dir" 2>/dev/null || true
+			fi
+		fi
+	done
 }
 
 bun_version_exact() {
-	print "1.2.0"
+	print "1.2.17"
 }
 
 install_bun() {
@@ -897,7 +944,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "18.1.8"
+	print "19.1.7"
 }
 
 llvm_version() {
@@ -910,25 +957,28 @@ install_llvm() {
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
-		install_packages \
-			"lld$(llvm_version)" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
+			"lld" \
+			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
+	then
 		return
 	fi
 
@@ -966,7 +1016,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="18"
+	llvm_v="19"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -996,6 +1046,8 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
+	# Make sure llvm-symbolizer is available for ASAN
+	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
 install_ccache() {
@@ -1128,6 +1180,35 @@ install_tailscale() {
 		install_packages go
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
+		;;
+	esac
+}
+
+install_fuse_python() {
+	# only linux needs this
+	case "$pm" in
+	apk)
+		# Build and install from source (https://github.com/libfuse/python-fuse/blob/master/INSTALL)
+		install_packages \
+			python3-dev \
+			fuse-dev \
+			pkgconf \
+			py3-setuptools
+		python_fuse_version="1.0.9"
+		python_fuse_tarball=$(download_file "https://github.com/libfuse/python-fuse/archive/refs/tags/v$python_fuse_version.tar.gz")
+		python_fuse_tmpdir="$(dirname "$python_fuse_tarball")"
+		execute tar -xzf "$python_fuse_tarball" -C "$python_fuse_tmpdir"
+		execute sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py build"
+		execute_sudo sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py install"
+
+		# For Alpine we also need to make sure the kernel module is automatically loaded
+		execute_sudo sh -c "echo fuse >> /etc/modules-load.d/fuse.conf"
+
+		# Check that it was actually installed
+		execute python -c 'import fuse'
+		;;
+	apt | dnf | yum)
+		install_packages python3-fuse
 		;;
 	esac
 }
@@ -1323,6 +1404,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
+	install_fuse_python
 	clean_system
 }
 

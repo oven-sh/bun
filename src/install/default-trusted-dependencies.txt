@@ -267,6 +267,7 @@ nodent-runtime
 nx
 odiff-bin
 oniguruma
+opencode-ai
 optipng-bin
 oracledb
 os-dns-native

@@ -131,6 +131,7 @@ export const hashesFixture = [
     "fixtures/rsa_public.pem",
     "sMwPPWMz4TcQbyImUs7GHwlop5Gx34s9kBmaHGoygU+dp7sdWq5+dF/iKKCJcaDWzv07IpWl/ksNRDjT6iUTjiDO+mHiMoKMYA5eVrwy+aO4PqXHkJYkRcefs9JgkXjd0xmalxPRRjGcdTYSpwlr6RQvOdcHXxVkuvaV9qurnWbOey8Uyl0MFSjAMdc9wWMUdWW5uxVMosFXb+ISpGwmyh3Ti6fYL92WYmOEyTlJSuxNA2R+yj+VmmzWxs6roonHvszR0ab2+YDxc2MxoWxzVIVeP4fiXuSa/nZx9hT9BB1EEaJxLOtSRBhQXHaY8CafZ3VoNfj2YgjbOX1wgXntQw==",
   ],
+  /* Using ncrypto and boringssl means we lose support for these algorithms
   [
     "ripemd160WithRSA",
     "fixtures/rsa_private.pem",
@@ -143,6 +144,7 @@ export const hashesFixture = [
     "fixtures/rsa_public.pem",
     "Yu8F0migkeBsXPX8whGaFfL48wOnC3SNQ0m6gC9T/GjdLXzzmIj29CF/9MV51uSZ/Ih1dnox/dieW+1nLBK+sK1i185i+DlPevcZST+XWMF1CtPr36GwBJBD4+TgBzQHqgI5BUtm7pjBV14Iykolek9gwX/LUO0Ft0k4Pk8HAtJ8zLCqNbGEngtbmasRUSVfcuZTrjm194AR7eLERvoo4c8/3pdoyUCoh49cwbEgtIzTCR04xv00yF6PTnAg71XkgCDjwENCrMeTNxf9vQ6PC177C3QyWA3ARFSIjh8rhpS77hqFCTmoHPKMepbC6iAHtxSSA3PZXQ9zWQsDLGp2Pg==",
   ],
+  */
   [
     "md5WithRSAEncryption",
     "fixtures/rsa_private.pem",

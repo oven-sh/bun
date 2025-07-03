@@ -122,7 +122,7 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string | Buffer | Blob>;
+  files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
@@ -205,6 +205,7 @@ export interface BundlerTestInput {
   sourceMap?: "inline" | "external" | "linked" | "none" | "linked";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
+  production?: boolean;
 
   // pass subprocess.env
   env?: Record<string, any>;
@@ -343,7 +344,7 @@ export interface BundlerTestRunOptions {
   stderr?: string;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
-  /** match exact error message, example "ReferenceError: Can't find variable: bar" */
+  /** match exact error message, example "ReferenceError: bar is not defined" */
   error?: string;
   /**
    * for extra confidence the error is correctly tested for, a regex for the line it was
@@ -470,6 +471,7 @@ function expectBundled(
     ignoreDCEAnnotations,
     bytecode = false,
     emitDCEAnnotations,
+    production,
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
@@ -638,7 +640,7 @@ function expectBundled(
         typeof contents === "string"
           ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
           : contents;
-      writeFileSync(filename, formattedContents);
+      writeFileSync(filename, formattedContents as any);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -719,6 +721,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              production && "--production",
             ]
           : [
               ESBUILD_PATH,
@@ -823,10 +826,13 @@ function expectBundled(
       }
 
       const bundlerEnv = { ...bunEnv, ...env };
-      // remove undefined keys instead of passing "undefined"
+      // remove undefined keys instead of passing "undefined" and resolve {{root}}
       for (const key in bundlerEnv) {
-        if (bundlerEnv[key] === undefined) {
+        const value = bundlerEnv[key];
+        if (value === undefined) {
           delete bundlerEnv[key];
+        } else if (typeof value === "string") {
+          bundlerEnv[key] = value.replaceAll("{{root}}", root);
         }
       }
 

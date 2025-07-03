@@ -189,6 +189,7 @@ public:
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
+    WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
     WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
     WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String &value);

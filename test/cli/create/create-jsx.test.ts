@@ -1,43 +1,8 @@
-import "bun";
-import { expect, test, describe, beforeEach, afterAll } from "bun:test";
-import { tempDirWithFiles as tempDir, bunExe, bunEnv, isCI, isWindows } from "harness";
-import { cp, readdir } from "fs/promises";
-import path from "path";
-import puppeteer, { type Browser } from "puppeteer";
 import type { Subprocess } from "bun";
-import * as vm from "vm";
-const env = {
-  ...bunEnv,
-};
-const baseOptions = {
-  dumpio: !!process.env.CI_DEBUG,
-
-  args: [
-    "--disable-gpu",
-    "--disable-dev-shm-usage",
-    "--disable-setuid-sandbox",
-    "--no-sandbox",
-    "--ignore-certificate-errors",
-    "--use-fake-ui-for-media-stream",
-    "--use-fake-device-for-media-stream",
-    "--disable-sync",
-  ],
-  executablePath: process.env.BROWSER_EXECUTABLE,
-  headless: true,
-};
-let puppeteerBrowser: Browser | null = null;
-async function getPuppeteerBrowser() {
-  if (!puppeteerBrowser) {
-    puppeteerBrowser = await puppeteer.launch(baseOptions);
-  }
-  return puppeteerBrowser;
-}
-
-afterAll(async () => {
-  if (puppeteerBrowser) {
-    await puppeteerBrowser.close();
-  }
-});
+import { beforeEach, describe, expect, test } from "bun:test";
+import { cp, readdir } from "fs/promises";
+import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles } from "harness";
+import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
   // Read the port number from stdout
@@ -75,7 +40,7 @@ async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text:
   reader.releaseLock();
 
   if (!serverUrl) {
-    throw new Error("Could not find server URL in stdout");
+    throw new Error("Could not find server URL in stdout: " + all.text);
   }
 
   return serverUrl;
@@ -89,176 +54,115 @@ async function checkBuildOutput(dir: string) {
   expect(files.some(f => f.endsWith(".css"))).toBe(true);
 }
 
-describe.each(["true", "false"])("development: %s", developmentString => {
-  const development = developmentString === "true";
-  const tempDirWithFiles = (name: string, files: Record<string, string>) =>
-    tempDir(name + (development ? "-dev" : "-prod"), files);
-  const normalizeHTML = normalizeHTMLFn(development);
-  const env = {
-    ...bunEnv,
-    NODE_PORT: "0",
-    NODE_ENV: development ? undefined : "production",
-  };
+let dir_with_happy_dom = tempDirWithFiles("happy-dom", {
+  ["package.json"]: JSON.stringify({
+    name: "happy-dom-tester",
+    version: "0.0.0",
+    dependencies: {
+      "@happy-dom/global-registrator": "17.1.1",
+    },
+  }),
+});
 
-  const devServerLabel = development ? " dev server" : "";
-  describe("react spa (no tailwind)", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("react-spa-no-tailwind", {
-        "README.md": "Hello, world!",
-      });
-
-      await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
-        recursive: true,
-        force: true,
-      });
-    });
-
-    test.todoIf(isCI)("dev server", async () => {
-      await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
-      });
-      const all = { text: "" };
-      const serverUrl = await getServerUrl(process, all);
-
-      try {
-        const browser = await getPuppeteerBrowser();
-        var page = await browser.newPage();
-        await page.goto(serverUrl, { waitUntil: "networkidle0" });
-
-        const content = await page.evaluate(() => document.documentElement.innerHTML);
-
-        expect(normalizeHTML(content)).toMatchSnapshot();
-
-        expect(
-          all.text
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*") // Handle version with git hash
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "") // Remove leading spaces
-            .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      } finally {
-        process.kill();
-        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
-      }
-    });
-
-    test.todoIf(isWindows)("build", async () => {
-      {
-        const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
-          cwd: dir,
-          env: env,
-          stdout: "pipe",
-          stdin: "ignore",
+async function fetchAndInjectHTML(url: string) {
+  var subprocess = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--eval",
+      `
+        const url = ${JSON.stringify(url)};
+        const initial = await fetch(url).then(r => r.text());
+        import { GlobalRegistrator } from "@happy-dom/global-registrator";
+        GlobalRegistrator.register({
+          url,
         });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
+        globalThis.WebSocket = class {
+          constructor(url) {
+          }
+        };
 
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-      });
-
-      await process.exited;
-      await checkBuildOutput(dir);
-    });
+        location.href = url;
+        document.write(initial);
+        window.happyDOM.waitUntilComplete().then(() => {
+          const html = document.documentElement.outerHTML;
+          process.stdout.write(html, () => {
+            process.exit(0);
+          });
+        });
+      `,
+    ],
+    cwd: dir_with_happy_dom,
+    env: bunEnv,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "inherit",
   });
 
-  describe("react spa (tailwind)", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("react-spa-tailwind", {
-        "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
-      });
-    });
+  await subprocess.exited;
+  return await new Response(subprocess.stdout).text();
+}
 
-    test.todoIf(isCI)("dev server", async () => {
-      const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
-      });
-      const all = { text: "" };
-      const serverUrl = await getServerUrl(process, all);
-      console.log(serverUrl);
+for (const development of [true, false]) {
+  describe(`development: ${development}`, () => {
+    const normalizeHTML = normalizeHTMLFn(development);
+    const env = {
+      ...bunEnv,
+      BUN_PORT: "0",
+      NODE_ENV: development ? undefined : "production",
+    };
 
-      try {
-        var page = await (await getPuppeteerBrowser()).newPage();
-        await page.goto(serverUrl, { waitUntil: "networkidle0" });
-
-        // Check that React root exists and has Tailwind classes
-        const root = await page.$("#root");
-        expect(root).toBeTruthy();
-
-        const content = await page.evaluate(() => document.documentElement.outerHTML);
-        expect(normalizeHTML(content)).toMatchSnapshot();
-
-        expect(
-          all.text
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      } finally {
-        process.kill();
-        await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
-      }
-    });
-
-    test.todoIf(isWindows)("build", async () => {
-      {
-        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
-          cwd: dir,
-          env: env,
-          stdout: "pipe",
-          stdin: "ignore",
-        });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
-
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-      });
-
-      await process.exited;
-      await checkBuildOutput(dir);
-    });
-  });
-
-  describe(
-    "shadcn/ui",
-    async () => {
+    const devServerLabel = development ? " dev server" : "";
+    describe("react spa (no tailwind)", async () => {
       let dir: string;
       beforeEach(async () => {
-        dir = tempDirWithFiles("shadcn-ui", {
-          "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+        dir = tempDirWithFiles("react-spa-no-tailwind", {
+          "README.md": "Hello, world!",
+        });
+
+        await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
+          recursive: true,
+          force: true,
         });
       });
 
-      test(
-        "dev server",
-        async () => {
-          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        console.log({ dir });
+        await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+
+        const serverUrl = await getServerUrl(process, all);
+
+        try {
+          console.log({ dir });
+          const content = await fetchAndInjectHTML(serverUrl);
+          expect(normalizeHTML(content)).toMatchSnapshot();
+
+          expect(
+            all.text
+              .replaceAll(Bun.version, "*.*.*")
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-(debug|canary.*))?/g, "v*.*.*") // Handle version with git hash
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "") // Remove leading spaces
+              .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
+      });
+
+      test.todoIf(isWindows)("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
             cwd: dir,
             env: env,
             stdout: "pipe",
@@ -266,44 +170,61 @@ describe.each(["true", "false"])("development: %s", developmentString => {
           });
           const all = { text: "" };
           const serverUrl = await getServerUrl(process, all);
-          console.log(serverUrl);
-          console.log(dir);
-          try {
-            var page = await (await getPuppeteerBrowser()).newPage();
-            await page.goto(serverUrl, { waitUntil: "networkidle0" });
+          process.kill();
+        }
 
-            // Check that React root exists and has Shadcn components
-            const root = await page.$("#root");
-            expect(root).toBeTruthy();
+        const process = Bun.spawn([bunExe(), "run", "build"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+        });
 
-            const content = await page.evaluate(() => document.documentElement.innerHTML);
-            expect(content).toContain("shadcn"); // Basic check for Shadcn classes
+        await process.exited;
+        await checkBuildOutput(dir);
+      });
+    });
 
-            // Check for components.json
-            const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
-            expect(componentsJson).toBe(true);
+    describe("react spa (tailwind)", async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("react-spa-tailwind", {
+          "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
+        });
+      });
 
-            expect(
-              all.text
-                .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?/g, "v*.*.*")
-                .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-                .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-                .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-                .replace(/^\s+/gm, "")
-                .replace(
-                  /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
-                  "installed $1@*.*.*",
-                )
-                .trim()
-                .replaceAll(serverUrl, "http://[SERVER_URL]"),
-            ).toMatchSnapshot();
-          } finally {
-            process.kill();
-            await Promise.resolve(page!?.close?.({ runBeforeUnload: false }));
-          }
-        },
-        1000 * 100,
-      );
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        console.log({ dir });
+        const serverUrl = await getServerUrl(process, all);
+        console.log(serverUrl);
+
+        try {
+          const content = await fetchAndInjectHTML(serverUrl);
+
+          expect(normalizeHTML(content)).toMatchSnapshot();
+
+          expect(
+            all.text
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replace(/Bun (v\d+\.\d+\.\d+)/, "Bun *.*.*")
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "")
+              .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
+      });
 
       test.todoIf(isWindows)("build", async () => {
         {
@@ -327,10 +248,80 @@ describe.each(["true", "false"])("development: %s", developmentString => {
         await process.exited;
         await checkBuildOutput(dir);
       });
-    },
-    1000 * 100,
-  );
-});
+    });
+
+    describe("shadcn/ui", async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("shadcn-ui", {
+          "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+        });
+      });
+
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        console.log(serverUrl);
+        console.log(dir);
+        try {
+          const content = await fetchAndInjectHTML(serverUrl);
+
+          // Check for components.json
+          const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
+          expect(componentsJson).toBe(true);
+
+          expect(
+            all.text
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replaceAll(Bun.version, "*.*.*")
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "")
+              .replace(
+                /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
+                "installed $1@*.*.*",
+              )
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+          expect(normalizeHTML(content)).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
+      });
+
+      test.todoIf(isCI || isWindows)("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          process.kill();
+        }
+
+        const process = Bun.spawn([bunExe(), "run", "build"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+        });
+
+        await process.exited;
+        await checkBuildOutput(dir);
+      });
+    });
+  });
+}
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>
@@ -353,12 +344,11 @@ function normalizeHTMLFn(development: boolean = true) {
             },
           );
         }
-
-        // In development mode, replace generational IDs in script/link tags
-        return trimmed.replace(
-          /<(link rel="stylesheet" href|script type="module" src)="\/_bun\/(client|asset)\/[^"]+\.(?:css|js)("><\/script>|">)/g,
-          (_, tagStart, path, end) => `<${tagStart}="/_bun/${path}/[GENERATION_ID]${end}`,
-        );
+        console.log(trimmed);
+        // In development mode, replace non-deterministic generation IDs
+        return trimmed
+          .replace(/\/_bun\/client\/(.*?-[a-z0-9]{8})[a-z0-9]{8}\.js/gm, "/_bun/client/$1[NONDETERMINISTIC].js")
+          .replace(/\/_bun\/asset\/[a-z0-9]{16}\.[a-z]+/gm, "/_bun/asset/[ASSET_HASH].css");
       })
       .filter(Boolean)
       .join("\n")

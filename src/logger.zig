@@ -2,23 +2,17 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const js = bun.JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
-const unicode = std.unicode;
-const Ref = @import("./ast/base.zig").Ref;
-const expect = std.testing.expect;
 const assert = bun.assert;
-const StringBuilder = @import("./string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 const Index = @import("./ast/base.zig").Index;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
@@ -394,7 +388,7 @@ pub const Data = struct {
     }
 };
 
-pub const BabyString = packed struct {
+pub const BabyString = packed struct(u32) {
     offset: u16,
     len: u16,
 
@@ -426,12 +420,12 @@ pub const Msg = struct {
         return cost;
     }
 
-    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) bun.JSError!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
-            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
+            zig_exception_holder.zigException().message = try err.toBunString(globalObject);
         }
 
         return Msg{
@@ -446,10 +440,10 @@ pub const Msg = struct {
         };
     }
 
-    pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+    pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.OOM!JSC.JSValue {
         return switch (this.metadata) {
-            .build => JSC.BuildMessage.create(globalObject, allocator, this),
-            .resolve => JSC.ResolveMessage.create(globalObject, allocator, this, ""),
+            .build => bun.api.BuildMessage.create(globalObject, allocator, this),
+            .resolve => bun.api.ResolveMessage.create(globalObject, allocator, this, ""),
         };
     }
 
@@ -703,7 +697,7 @@ pub const Log = struct {
         });
 
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) JSError!?Level {
-            if (value == .zero or value == .undefined) {
+            if (value == .zero or value.isUndefined()) {
                 return null;
             }
 
@@ -748,25 +742,25 @@ pub const Log = struct {
         }
     }
 
-    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) JSC.JSValue {
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) bun.OOM!JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]JSC.JSValue = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return .undefined,
+            0 => return .js_undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {
-                    .build => JSC.BuildMessage.create(global, allocator, msg),
-                    .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
+                    .build => bun.api.BuildMessage.create(global, allocator, msg),
+                    .resolve => bun.api.ResolveMessage.create(global, allocator, msg, ""),
                 };
             },
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
                     errors_stack[i] = switch (msg.metadata) {
-                        .build => JSC.BuildMessage.create(global, allocator, msg),
-                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
+                        .build => try bun.api.BuildMessage.create(global, allocator, msg),
+                        .resolve => try bun.api.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
                 const out = JSC.ZigString.init(message);
@@ -777,16 +771,16 @@ pub const Log = struct {
     }
 
     /// unlike toJS, this always produces an AggregateError object
-    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) JSC.JSValue {
-        return global.createAggregateErrorWithArray(message, this.toJSArray(global, bun.default_allocator));
+    pub fn toJSAggregateError(this: Log, global: *JSC.JSGlobalObject, message: bun.String) bun.JSError!JSC.JSValue {
+        return global.createAggregateErrorWithArray(message, try this.toJSArray(global, bun.default_allocator));
     }
 
-    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+    pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
 
-        const arr = JSC.JSValue.createEmptyArray(global, msgs.len);
+        const arr = try JSC.JSValue.createEmptyArray(global, msgs.len);
         for (msgs, 0..) |msg, i| {
-            arr.putIndex(global, @as(u32, @intCast(i)), msg.toJS(global, allocator));
+            arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
         }
 
         return arr;
@@ -863,8 +857,10 @@ pub const Log = struct {
         return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
-    pub fn deinit(self: *Log) void {
-        self.msgs.clearAndFree();
+    pub fn deinit(log: *Log) void {
+        log.msgs.clearAndFree();
+        // log.warnings = 0;
+        // log.errors = 0;
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
@@ -881,7 +877,7 @@ pub const Log = struct {
         });
     }
 
-    inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
+    pub inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
@@ -1070,6 +1066,11 @@ pub const Log = struct {
 
     pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @branchHint(.cold);
+        return log.addWarningFmtLineColWithNotes(filepath, line, col, allocator, text, args, &[_]Data{});
+    }
+
+    pub fn addWarningFmtLineColWithNotes(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype, notes: []Data) OOM!void {
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -1077,16 +1078,54 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = try Data.cloneLineText(Data{
-                .text = try allocPrint(allocator, text, args),
-                .location = Location{
-                    .file = filepath,
-                    .line = @intCast(line),
-                    .column = @intCast(col),
+            .data = try Data.cloneLineText(
+                Data{
+                    .text = try allocPrint(allocator, text, args),
+                    .location = Location{
+                        .file = filepath,
+                        .line = @intCast(line),
+                        .column = @intCast(col),
+                    },
                 },
-            }, log.clone_line_text, allocator),
+                log.clone_line_text,
+                allocator,
+            ),
+            .notes = notes,
         });
     }
+
+    // pub fn addWarningFmtLineColWithNote(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype, comptime note_fmt: string, note_args: anytype, note_range: Range) OOM!void {
+    //     @branchHint(.cold);
+    //     if (!Kind.shouldPrint(.warn, log.level)) return;
+    //     log.warnings += 1;
+
+    //     var notes = try allocator.alloc(Data, 1);
+    //     notes[0] = Data{
+    //         .text = try allocPrint(allocator, note_fmt, note_args),
+    //         .lcoation = Location{
+    //             .file = filepath,
+    //             .line = @intCast(line),
+    //             .column = @intCast(col),
+    //         },
+    //     };
+
+    //     try log.addMsg(.{
+    //         .kind = .warn,
+    //         .data = try Data.cloneLineText(
+    //             Data{
+    //                 .text = try allocPrint(allocator, text, args),
+    //                 .location = Location{
+    //                     .file = filepath,
+    //                     .line = @intCast(line),
+    //                     .column = @intCast(col),
+    //                 },
+    //             },
+    //             log.clone_line_text,
+    //             allocator,
+    //         ),
+    //         .notes = notes,
+    //     });
+    // }
 
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @branchHint(.cold);

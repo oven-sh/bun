@@ -55,3 +55,5 @@ $ bun patch --commit react --patches-dir=mypatches
 # `patch-commit` is available for compatibility with pnpm
 $ bun patch-commit react
 ```
+
+{% bunCLIUsage command="patch" /%}

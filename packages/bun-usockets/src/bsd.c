@@ -408,7 +408,7 @@ static int bsd_socket_set_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct s
         mreq.ipv6mr_interface = iface->sin6_scope_id;
     }
     int option = drop ? IPV6_LEAVE_GROUP : IPV6_JOIN_GROUP;
-    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+    return setsockopt(fd, IPPROTO_IPV6, option, &mreq, sizeof(mreq));
 }
 
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {
@@ -726,6 +726,20 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
 }
 
 #if !defined(_WIN32)
+ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t ret = recvmsg(fd, msg, flags);
+
+        if (UNLIKELY(IS_EINTR(ret))) {
+            continue;
+        }
+
+        return ret;
+    }
+}
+#endif
+
+#if !defined(_WIN32)
 #include <sys/uio.h>
 
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
@@ -748,9 +762,9 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #else
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t written = bsd_send(fd, header, header_length, 0);
+    ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {
-        ssize_t second_write = bsd_send(fd, payload, payload_length, 0);
+        ssize_t second_write = bsd_send(fd, payload, payload_length);
         if (second_write > 0) {
             written += second_write;
         }
@@ -759,7 +773,7 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #endif
 
-ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -767,13 +781,8 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
 #define MSG_NOSIGNAL 0
 #endif
 
-        #ifdef MSG_MORE
-            // for Linux we do not want signals
-            ssize_t rc = send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
-        #else
-            // use TCP_NOPUSH
-            ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
-        #endif
+        // use TCP_NOPUSH
+        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -782,6 +791,20 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int ms
         return rc;
     }
 }
+
+#if !defined(_WIN32)
+ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
+    while (1) {
+        ssize_t rc = sendmsg(fd, msg, flags);
+
+        if (UNLIKELY(IS_EINTR(rc))) {
+            continue;
+        }
+
+        return rc;
+    }
+}
+#endif
 
 int bsd_would_block() {
 #ifdef _WIN32

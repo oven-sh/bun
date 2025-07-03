@@ -1,20 +1,8 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
 const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
-const LayerName = css.css_rules.layer.LayerName;
-const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
 
 pub fn StyleRule(comptime R: type) type {
@@ -58,7 +46,7 @@ pub fn StyleRule(comptime R: type) type {
 
         pub fn updatePrefix(this: *This, context: *css.MinifyContext) void {
             this.vendor_prefix = css.selector.getPrefix(&this.selectors);
-            if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and
+            if (this.vendor_prefix.none and
                 context.targets.shouldCompileSelectors())
             {
                 this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.slice_mut(), context.targets.*);
@@ -91,7 +79,7 @@ pub fn StyleRule(comptime R: type) type {
                     }
                 }
 
-                dest.vendor_prefix = css.VendorPrefix.empty();
+                dest.vendor_prefix = .{};
             }
         }
 
@@ -99,9 +87,9 @@ pub fn StyleRule(comptime R: type) type {
             // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
             const supports_nesting = this.rules.v.items.len == 0 or
                 !css.Targets.shouldCompileSame(
-                &dest.targets,
-                .nesting,
-            );
+                    &dest.targets,
+                    .nesting,
+                );
 
             const len = this.declarations.declarations.items.len + this.declarations.important_declarations.items.len;
             const has_declarations = supports_nesting or len > 0 or this.rules.v.items.len == 0;
@@ -127,17 +115,18 @@ pub fn StyleRule(comptime R: type) type {
                         if (decl.* == .composes) {
                             const composes = &decl.composes;
                             if (dest.isNested() and dest.css_module != null) {
-                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc);
+                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.cssparser_loc);
                             }
 
                             if (dest.css_module) |*css_module| {
                                 if (css_module.handleComposes(
-                                    dest.allocator,
+                                    W,
+                                    dest,
                                     &this.selectors,
                                     composes,
                                     this.loc.source_index,
                                 ).asErr()) |error_kind| {
-                                    return dest.newError(error_kind, composes.loc);
+                                    return dest.newError(error_kind, composes.cssparser_loc);
                                 }
                                 continue;
                             }
@@ -198,7 +187,7 @@ pub fn StyleRule(comptime R: type) type {
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
             var unused = false;
             if (context.unused_symbols.count() > 0) {
-                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, parent_is_unused)) {
+                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, &context.extra.symbols, parent_is_unused)) {
                     if (this.rules.v.items.len == 0) {
                         return true;
                     }
@@ -245,16 +234,16 @@ pub fn StyleRule(comptime R: type) type {
             return this.declarations.len() == other.declarations.len() and
                 this.selectors.eql(&other.selectors) and
                 brk: {
-                var len = @min(this.declarations.declarations.items.len, other.declarations.declarations.items.len);
-                for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
-                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
-                }
-                len = @min(this.declarations.important_declarations.items.len, other.declarations.important_declarations.items.len);
-                for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
-                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
-                }
-                break :brk true;
-            };
+                    var len = @min(this.declarations.declarations.items.len, other.declarations.declarations.items.len);
+                    for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
+                        if (!a.propertyId().eql(&b.propertyId())) break :brk false;
+                    }
+                    len = @min(this.declarations.important_declarations.items.len, other.declarations.important_declarations.items.len);
+                    for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
+                        if (!a.propertyId().eql(&b.propertyId())) break :brk false;
+                    }
+                    break :brk true;
+                };
         }
     };
 }

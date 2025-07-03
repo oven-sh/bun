@@ -53,17 +53,17 @@ $ brew install bun
 
 ## Install LLVM
 
-Bun requires LLVM 18 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@18
+$ brew install llvm@19
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 18 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
 ```
 
 ```bash#Arch
@@ -71,21 +71,21 @@ $ sudo pacman -S llvm clang lld
 ```
 
 ```bash#Fedora
-$ sudo dnf install llvm18 clang18 lld18-devel
+$ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang18 lld18 llvm18
+$ sudo zypper install clang19 lld19 llvm19
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-18.1.8).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
 
-Make sure Clang/LLVM 18 is in your path:
+Make sure Clang/LLVM 19 is in your path:
 
 ```bash
-$ which clang-18
+$ which clang-19
 ```
 
 If not, run this to manually add it:
@@ -94,13 +94,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@18)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@18)/bin:$PATH"
+# use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm18/bin"
+$ export PATH="$PATH:/usr/lib/llvm19/bin"
 ```
 
 {% /codetabs %}
@@ -133,6 +133,24 @@ We recommend adding `./build/debug` to your `$PATH` so that you can run `bun-deb
 ```sh
 $ bun-debug
 ```
+
+## Running debug builds
+
+The `bd` package.json script compiles and runs a debug build of Bun, only printing the output of the build process if it fails.
+
+```sh
+$ bun bd <args>
+$ bun bd test foo.test.ts
+$ bun bd ./foo.ts
+```
+
+Bun generally takes about 2.5 minutes to compile a debug build when there are Zig changes. If your development workflow is "change one line, save, rebuild", you will spend too much time waiting for the build to finish. Instead:
+
+- Batch up your changes
+- Ensure zls is running with incremental watching for LSP errors (if you use VSCode and install Zig and run `bun run build` once to download Zig, this should just work)
+- Prefer using the debugger ("CodeLLDB" in VSCode) to step through the code.
+- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, false)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug lgos into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
+- src/js/\*\*.ts changes are pretty much instant to rebuild. C++ changes are a bit slower, but still much faster than the Zig code (Zig is one compilation unit, C++ is many).
 
 ## Code generation scripts
 
@@ -169,6 +187,7 @@ To run a release build from a pull request, you can use the `bun-pr` npm package
 bunx bun-pr <pr-number>
 bunx bun-pr <branch-name>
 bunx bun-pr "https://github.com/oven-sh/bun/pull/1234566"
+bunx bun-pr --asan <pr-number> # Linux x64 only
 ```
 
 This will download the release build from the pull request and add it to `$PATH` as `bun-${pr-number}`. You can then run the build with `bun-${pr-number}`.
@@ -179,23 +198,17 @@ bun-1234566 --version
 
 This works by downloading the release build from the GitHub Actions artifacts on the linked pull request. You may need the `gh` CLI installed to authenticate with GitHub.
 
-## Valgrind
+## AddressSanitizer
 
-On Linux, valgrind can help find memory issues.
+[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) helps find memory issues, and is enabled by default in debug builds of Bun on Linux and macOS. This includes the Zig code and all dependencies. It makes the Zig code take about 2x longer to build, if that's stopping you from being productive you can disable it by setting `-Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>` to `-Denable_asan=false` in the `cmake/targets/BuildBun.cmake` file, but generally we recommend batching your changes up between builds.
 
-Keep in mind:
-
-- JavaScriptCore doesn't support valgrind. It will report spurious errors.
-- Valgrind is slow
-- Mimalloc will sometimes cause spurious errors when debug build is enabled
-
-You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You may need to manually compile Valgrind instead of using it from your Linux package manager.
-
-`--fair-sched=try` is necessary if running multithreaded code in Bun (such as the bundler). Otherwise it will hang.
+To build a release build with Address Sanitizer, run:
 
 ```bash
-$ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
+$ bun run build:release:asan
 ```
+
+In CI, we run our test suite with at least one target that is built with Address Sanitizer.
 
 ## Building WebKit locally + Debug mode of JSC
 
@@ -205,17 +218,32 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
+# Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
+$ git -C vendor/WebKit checkout <commit_hash>
+
 # Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
 # Optionally, you can use `make jsc` for a release build
-$ make jsc-debug
+$ make jsc-debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
+
+# After an initial run of `make jsc-debug`, you can rebuild JSC with:
+$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
 # Build bun with the local JSC build
 $ bun run build:local
 ```
 
+Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+
+- The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
+- The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
+- In [`build.zig`](/build.zig), the `codegen_path` option should be `build/debug-local/codegen` (instead of `build/debug/codegen`)
+- In [`.vscode/launch.json`](/.vscode/launch.json), many configurations use `./build/debug/`, change them as you see fit
+
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+
+Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 
@@ -238,7 +266,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-18"
+  "/usr/bin/clang++-19"
 
 is not able to compile a simple test program.
 ```

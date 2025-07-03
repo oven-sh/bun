@@ -19,7 +19,6 @@ function check(isTTY, colorMode, expectedColorMode, inspectOptions) {
   let i = 0;
   const stream = new Writable({
     write: common.mustCall((chunk, enc, cb) => {
-      console.log("testing case", isTTY, colorMode, expectedColorMode, inspectOptions);
       assert.strictEqual(chunk.trim(),
                          util.inspect(items[i++], {
                            colors: expectedColorMode,
@@ -60,21 +59,7 @@ check(false, false, false);
     write: common.mustNotCall()
   });
 
-  assert.throws(
-    () => {
-      new Console({
-        stdout: stream,
-        ignoreErrors: false,
-        colorMode: 'true'
-      });
-    },
-    {
-      message: `The argument 'colorMode' must be one of: 'auto', true, false. Received "true"`,
-      code: 'ERR_INVALID_ARG_VALUE'
-    }
-  );
-
-  [0, null, {}, [], () => {}].forEach((colorMode) => {
+  [0, 'true', null, {}, [], () => {}].forEach((colorMode) => {
     const received = util.inspect(colorMode);
     assert.throws(
       () => {

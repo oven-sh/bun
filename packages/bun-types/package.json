@@ -1,8 +1,7 @@
 {
   "name": "bun-types",
   "license": "MIT",
-  "main": "",
-  "types": "index.d.ts",
+  "types": "./index.d.ts",
   "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",
   "repository": {
     "type": "git",
@@ -10,25 +9,27 @@
     "directory": "packages/bun-types"
   },
   "files": [
-    "*.d.ts",
+    "./*.d.ts",
     "docs/**/*.md",
-    "docs/*.md"
+    "docs/*.md",
+    "CLAUDE.md",
+    "README.md"
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
-    "@types/node": "*",
-    "@types/ws": "~8.5.10"
+    "@types/node": "*"
+  },
+  "peerDependencies": {
+    "@types/react": "^19"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.5.3",
-    "@definitelytyped/dtslint": "^0.0.199",
-    "@definitelytyped/eslint-plugin": "^0.0.197",
+    "@types/react": "^19",
     "typescript": "^5.0.2"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v:-1.0.0}\"'/g' {} +",
-    "build": "bun run copy-docs && bun scripts/build.ts && bun run fmt",
+    "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v}\"'/g' {} +",
+    "build": "bun run copy-docs && cp ../../src/init/rule.md CLAUDE.md && bun scripts/build.ts",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."
   },

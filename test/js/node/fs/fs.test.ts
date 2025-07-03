@@ -20,8 +20,6 @@ import fs, {
   openAsBlob,
   openSync,
   promises,
-  statfsSync,
-  statfs,
   readdirSync,
   readFile,
   readFileSync,
@@ -33,6 +31,7 @@ import fs, {
   rmdir,
   rmdirSync,
   rmSync,
+  statfsSync,
   Stats,
   statSync,
   symlinkSync,
@@ -3645,4 +3644,18 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
       expect(success).toBeTrue();
     });
   }
+});
+
+it("overflowing mode doesn't crash", () => {
+  // this is easiest to test on windows since mode_t is a u16 there
+  expect(() => openSync("./a.txt", 65 * 1024)).toThrow(
+    expect.objectContaining({
+      name: "Error",
+      message: `ENOENT: no such file or directory, open './a.txt'`,
+      code: "ENOENT",
+      syscall: "open",
+      // errno: -4058,
+      path: "./a.txt",
+    }),
+  );
 });

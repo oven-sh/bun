@@ -1,20 +1,13 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Dependency = css.Dependency;
 const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
 
 pub const import = @import("./import.zig");
 pub const layer = @import("./layer.zig");
@@ -482,7 +475,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 if (rule.* == .import) {
                     if (dest.remove_imports) {
                         const dep = if (dest.dependencies != null) Dependency{
-                            .import = dependencies.ImportDependency.new(dest.allocator, &rule.import, dest.filename()),
+                            .import = dependencies.ImportDependency.new(dest.allocator, &rule.import, dest.filename(), dest.local_names, dest.symbols),
                         } else null;
 
                         if (dest.dependencies) |*deps| {
@@ -497,7 +490,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 } else {
                     if (!dest.minify and
                         !(last_without_block and
-                        (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
+                            (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
                     {
                         try dest.writeChar('\n');
                     }
@@ -523,6 +516,7 @@ pub const MinifyContext = struct {
     handler_context: css.PropertyHandlerContext,
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
     custom_media: ?std.StringArrayHashMapUnmanaged(custom_media.CustomMediaRule),
+    extra: *const css.StylesheetExtra,
     css_modules: bool,
     err: ?css.MinifyError = null,
 };
@@ -612,6 +606,7 @@ fn mergeStyleRules(
     context: *MinifyContext,
 ) bool {
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
+    // Does not apply if css modules are enabled
     if (sty.selectors.eql(&last_style_rule.selectors) and
         sty.isCompatible(context.targets.*) and
         last_style_rule.isCompatible(context.targets.*) and
@@ -649,10 +644,10 @@ fn mergeStyleRules(
         {
             // If the new rule is unprefixed, replace the prefixes of the last rule.
             // Otherwise, add the new prefix.
-            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+            if (sty.vendor_prefix.none and context.targets.shouldCompileSelectors()) {
                 last_style_rule.vendor_prefix = sty.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                bun.bits.insert(css.VendorPrefix, &last_style_rule.vendor_prefix, sty.vendor_prefix);
             }
             return true;
         }
@@ -664,10 +659,10 @@ fn mergeStyleRules(
                 sty.selectors.v.slice(),
             );
             sty.selectors.v.clearRetainingCapacity();
-            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+            if (sty.vendor_prefix.none and context.targets.shouldCompileSelectors()) {
                 last_style_rule.vendor_prefix = sty.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                bun.bits.insert(css.VendorPrefix, &last_style_rule.vendor_prefix, sty.vendor_prefix);
             }
             return true;
         }

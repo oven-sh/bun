@@ -1,8 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
-const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -42,6 +41,10 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
     }
 
     if (comptime T == []const u8) {
+        return this.*;
+    }
+
+    if (comptime T == bun.logger.Loc) {
         return this.*;
     }
 
@@ -108,6 +111,9 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     }
     if (comptime T == VendorPrefix) {
         return VendorPrefix.eql(this.*, other.*);
+    }
+    if (comptime T == bun.logger.Loc) {
+        return this.*.start == other.*.start;
     }
     return switch (tyinfo) {
         .optional => @compileError("Handled above, this means Zack wrote a bug."),
@@ -444,8 +450,11 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
         CSSInteger => lhs.* == rhs.*,
         CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.v, rhs.v),
         []const u8 => bun.strings.eql(lhs.*, rhs.*),
-        // css.VendorPrefix => css.VendorPrefix.eq(lhs.*, rhs.*),
-        else => T.eql(lhs, rhs),
+        bun.logger.Loc => lhs.eql(rhs.*),
+        else => if (@typeInfo(T) == .@"struct" and @typeInfo(T).@"struct".layout == .@"packed")
+            lhs.* == rhs.*
+        else
+            T.eql(lhs, rhs),
     };
 }
 

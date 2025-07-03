@@ -16,6 +16,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGeneratedClasses.h"
+#include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
 
@@ -131,7 +132,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {
                     String tag = asString(value)->value(globalObject);
-                    if (UNLIKELY(scope.exception()))
+                    if (scope.exception()) [[unlikely]]
                         scope.clearException();
                     if (tag == "Error"_s)
                         return JSValue::encode(jsBoolean(true));
@@ -139,7 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
             }
         }
 
-        JSValue proto = object->getPrototype(vm, globalObject);
+        JSValue proto = object->getPrototype(globalObject);
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }
@@ -192,8 +193,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
         return JSValue::encode(jsBoolean(true));
     }
 
-    auto& vm = JSC::getVM(globalObject);
-    auto proto = function->getPrototype(vm, globalObject);
+    auto proto = function->getPrototype(globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
     }
@@ -445,29 +445,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsKeyObject,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-
-    if (!cell->isObject()) {
-        return JSValue::encode(jsBoolean(false));
-    }
-
-    auto* object = cell->getObject();
-
-    auto& vm = JSC::getVM(globalObject);
-    const auto& names = WebCore::builtinNames(vm);
-
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    if (auto val = object->getIfPropertyExists(globalObject,
-            names.bunNativePtrPrivateName())) {
-        if (val.isCell() && val.inherits<WebCore::JSCryptoKey>())
-            return JSValue::encode(jsBoolean(true));
-    }
-
-    if (scope.exception()) {
-        scope.clearException();
-    }
-
-    return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(cell->inherits<Bun::JSKeyObject>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsCryptoKey,
     (JSC::JSGlobalObject * globalObject,

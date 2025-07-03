@@ -156,7 +156,7 @@ _bun_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string migrate pack version whoami view trust untrusted default-trusted" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

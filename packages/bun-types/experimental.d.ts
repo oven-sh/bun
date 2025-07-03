@@ -1,5 +1,5 @@
 declare module "bun" {
-  export namespace experimental {
+  export namespace __experimental {
     /**
      * Base interface for static site generation route parameters.
      *

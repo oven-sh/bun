@@ -1,5 +1,3 @@
-/// <reference types="bun/experimental" />
-
 import { join } from "path";
 import { expectType } from "./utilities";
 
@@ -10,7 +8,7 @@ type Params = {
   slug: string;
 };
 
-const Index: Bun.experimental.SSGPage<Params> = async ({ params }) => {
+const Index: Bun.__experimental.SSGPage<Params> = async ({ params }) => {
   expectType(params.slug).is<string>();
 
   const content = await Bun.file(join(process.cwd(), "posts", params.slug + ".md")).text();
@@ -23,10 +21,10 @@ expectType(Index.displayName).is<string | undefined>();
 
 export default Index;
 
-export const getStaticPaths: Bun.experimental.GetStaticPaths<{ slug: string }> = async () => {
+export const getStaticPaths: Bun.__experimental.GetStaticPaths<Params> = async () => {
   const glob = new Bun.Glob("**/*.md");
   const postsDir = join(process.cwd(), "posts");
-  const paths: Bun.experimental.SSGPaths<{ slug: string }> = [];
+  const paths: Bun.__experimental.SSGPaths<Params> = [];
 
   for (const file of glob.scanSync({ cwd: postsDir })) {
     const slug = file.replace(/\.md$/, "");

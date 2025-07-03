@@ -140,7 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
             }
         }
 
-        JSValue proto = object->getPrototype(vm, globalObject);
+        JSValue proto = object->getPrototype(globalObject);
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }
@@ -194,7 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     }
 
     auto& vm = JSC::getVM(globalObject);
-    auto proto = function->getPrototype(vm, globalObject);
+    auto proto = function->getPrototype(globalObject);
     if (!proto.isCell()) {
         return JSValue::encode(jsBoolean(false));
     }

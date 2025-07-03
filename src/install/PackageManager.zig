@@ -1163,6 +1163,7 @@ pub const getCacheDirectoryAndAbsPath = directories.getCacheDirectoryAndAbsPath;
 pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
+pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
 pub const pathForResolution = directories.pathForResolution;

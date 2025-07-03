@@ -59,6 +59,12 @@ pub fn RelPath(comptime opts: Options) type {
             bun.PathBufferPool.put(this._buf);
         }
 
+        pub fn reset(this: *@This(), new_path: string) void {
+            const trimmed = strings.trimPathSeparators(new_path);
+            this.len = 0;
+            this.appendCharacters(trimmed);
+        }
+
         /// Append a component
         pub fn append(this: *@This(), component: string) Result(void) {
             const trimmed = strings.trimPathSeparators(component);

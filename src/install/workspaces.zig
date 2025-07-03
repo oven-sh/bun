@@ -30,28 +30,9 @@ const Bin = install.Bin;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
 const Package = Lockfile.Package;
 const Command = bun.CLI.Command;
-
-// const IsolatedInstaller = struct {
-//     manager: *PackageManager,
-//     lockfile: *Lockfile,
-
-//     root_node_modules_dir: FD,
-//     is_new_root_node_modules_dir: bool,
-//     bun_modules_dir: FD,
-//     is_new_bun_modules_dir: bool,
-
-//     // workspace_dir: FD,
-//     // workspace_node_modules_dir: FD,
-//     // is_new_workspace_node_modules: bool,
-
-//     cwd_path: bun.AbsPath(.{}),
-//     bun_modules_path: bun.AbsPath(.{}),
-
-//     pub fn deinit(this: *IsolatedInstaller) void {
-//         this.cwd_path.deinit();
-//         this.bun_modules_path.deinit();
-//     }
-// };
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Progress = bun.Progress;
+const ProgressStrings = PackageManager.ProgressStrings;
 
 const modules_dir_name = ".bun";
 
@@ -61,10 +42,8 @@ pub fn installIsolatedPackages(
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
 ) OOM!PackageInstall.Summary {
-    var total_time = std.time.Timer.start() catch unreachable;
+    // var total_time = std.time.Timer.start() catch unreachable;
     bun.Analytics.Features.isolated_bun_install += 1;
-
-    var summary: PackageInstall.Summary = .{};
 
     const lockfile = manager.lockfile;
 
@@ -394,7 +373,7 @@ pub fn installIsolatedPackages(
             }
         }
 
-        const full_tree_end = timer.read();
+        // const full_tree_end = timer.read();
 
         // Store.Node.debugPrintList(&nodes, lockfile);
 
@@ -431,10 +410,6 @@ pub fn installIsolatedPackages(
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (entry_queue.readItem()) |entry| {
-            {
-                // nodes.get(entry.node_id.get()).debugPrint(entry.node_id, lockfile);
-            }
-
             const pkg_id = node_pkg_ids[entry.node_id.get()];
 
             const dedupe_entry = try dedupe.getOrPut(lockfile.allocator, pkg_id);
@@ -550,23 +525,23 @@ pub fn installIsolatedPackages(
             }
         }
 
-        const dedupe_end = timer.read();
+        // const dedupe_end = timer.read();
 
         // Store.Entry.debugPrintList(&store, lockfile);
 
-        std.debug.print(
-            \\Build tree ({d}): [{}]
-            \\Deduplicate tree ({d}): [{}]
-            \\Total: [{}]
-            \\
-            \\
-        , .{
-            nodes.len,
-            bun.fmt.fmtDurationOneDecimal(full_tree_end),
-            store.len,
-            bun.fmt.fmtDurationOneDecimal(dedupe_end),
-            bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
-        });
+        // std.debug.print(
+        //     \\Build tree ({d}): [{}]
+        //     \\Deduplicate tree ({d}): [{}]
+        //     \\Total: [{}]
+        //     \\
+        //     \\
+        // , .{
+        //     nodes.len,
+        //     bun.fmt.fmtDurationOneDecimal(full_tree_end),
+        //     store.len,
+        //     bun.fmt.fmtDurationOneDecimal(dedupe_end),
+        //     bun.fmt.fmtDurationOneDecimal(full_tree_end + dedupe_end),
+        // });
 
         // Store.Node.deinitList(&nodes, lockfile.allocator);
 
@@ -641,31 +616,34 @@ pub fn installIsolatedPackages(
     _ = bun_modules_dir;
     // _ = is_new_bun_modules;
 
-    // const cwd_path: bun.AbsPath(.{}) = .init(FileSystem.instance.top_level_dir);
-    // defer cwd_path.deinit();
-
-    // var bun_modules_path = cwd_path.clone();
-    // defer bun_modules_path.deinit();
-    // bun_modules_path.append("node_modules/" ++ modules_dir_name);
-
-    // var ctx: IsolatedInstaller = .{
-    //     .manager = manager,
-    //     .lockfile = lockfile,
-
-    //     .root_node_modules_dir = root_node_modules_dir,
-    //     .is_new_root_node_modules_dir = is_new_root_node_modules,
-    //     .bun_modules_dir = bun_modules_dir,
-    //     .is_new_bun_modules_dir = is_new_bun_modules,
-
-    //     .cwd_path = cwd_path.move(),
-    //     .bun_modules_path = bun_modules_path.move(),
-    // };
-    // defer ctx.deinit();
-
-    var link_timer = std.time.Timer.start() catch unreachable;
-    const total_links: usize = 0;
+    // var link_timer = std.time.Timer.start() catch unreachable;
+    // const total_links: usize = 0;
 
     {
+        var root_node: *Progress.Node = undefined;
+        var download_node: Progress.Node = undefined;
+        var install_node: Progress.Node = undefined;
+        var scripts_node: Progress.Node = undefined;
+        var progress = &manager.progress;
+
+        if (manager.options.log_level.showProgress()) {
+            progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+            root_node = progress.start("", 0);
+            download_node = root_node.start(ProgressStrings.download(), 0);
+            install_node = root_node.start(ProgressStrings.install(), store.entries.len);
+            scripts_node = root_node.start(ProgressStrings.script(), 0);
+
+            manager.downloads_node = &download_node;
+            manager.scripts_node = &scripts_node;
+        }
+
+        defer {
+            if (manager.options.log_level.showProgress()) {
+                progress.root.end();
+                progress.* = .{};
+            }
+        }
+
         const nodes_slice = store.nodes.slice();
         const node_pkg_ids = nodes_slice.items(.pkg_id);
         const node_dep_ids = nodes_slice.items(.dep_id);
@@ -673,6 +651,7 @@ pub fn installIsolatedPackages(
         const entries = store.entries.slice();
         const entry_node_ids = entries.items(.node_id);
         const entry_steps = entries.items(.step);
+        const entry_dependencies = entries.items(.dependencies);
 
         const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -680,8 +659,6 @@ pub fn installIsolatedPackages(
         const pkg_names = pkgs.items(.name);
         const pkg_name_hashes = pkgs.items(.name_hash);
         const pkg_resolutions = pkgs.items(.resolution);
-        const pkg_bins = pkgs.items(.bin);
-        _ = pkg_bins;
 
         // var seen_workspaces: std.AutoHashMapUnmanaged(PackageID, void) = .empty;
         // defer seen_workspaces.deinit(lockfile.allocator);
@@ -698,6 +675,9 @@ pub fn installIsolatedPackages(
             .lockfile = lockfile,
             .manager = manager,
             .command_ctx = command_ctx,
+            .installed = try .initEmpty(manager.allocator, lockfile.packages.len),
+            .install_node = if (manager.options.log_level.showProgress()) &install_node else null,
+            .scripts_node = if (manager.options.log_level.showProgress()) &scripts_node else null,
             .store = store,
             .preallocated_tasks = .init(bun.default_allocator),
             .trusted_dependencies_mutex = .{},
@@ -752,12 +732,14 @@ pub fn installIsolatedPackages(
             const pkg_name_hash = pkg_name_hashes[pkg_id];
             const pkg_res: Resolution = pkg_resolutions[pkg_id];
 
-            const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
-
-            // determine if the package already exists in the store. root and workspace
-            // packages always ensure their node_module symlinks exist and are valid. other
-            // packages in the store add this only if the package needs to be installed.
-            const needs_install = needs_install: switch (pkg_res.tag) {
+            switch (pkg_res.tag) {
+                else => {
+                    // this is `uninitialized` or `single_file_module`.
+                    bun.debugAssert(false);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.resumeAvailableTasks();
+                    continue;
+                },
                 .root => {
                     if (entry_id == .root) {
                         entry_steps[entry_id.get()].store(.@"symlink dependencies and their binaries", .monotonic);
@@ -778,168 +760,176 @@ pub fn installIsolatedPackages(
                     installer.resumeAvailableTasks();
                     continue;
                 },
-                .symlink,
-                .folder,
-                => {
-                    @panic("link these!!!!");
+                .symlink => {
+                    // no installation required, will only need to be linked to packages that depend on it.
+                    bun.debugAssert(entry_dependencies[entry_id.get()].list.items.len == 0);
+                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                    installer.resumeAvailableTasks();
+                    continue;
+                },
+                .folder => {
+                    @panic("TODO: folder dependencies");
                 },
 
-                else => manager.options.enable.force_install or is_new_bun_modules or patch_info == .remove or {
-                    const exists = exists: {
-                        if (comptime Environment.isWindows) {
+                inline .npm,
+                .git,
+                .github,
+                .local_tarball,
+                .remote_tarball,
+                => |pkg_res_tag| {
+                    const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
+
+                    const needs_install =
+                        manager.options.enable.force_install or
+                        is_new_bun_modules or
+                        patch_info == .remove or
+                        needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
                             installer.appendStorePath(&store_path, entry_id);
-                            break :exists sys.existsZ(store_path.sliceZ());
-                        }
+                            const exists = sys.existsZ(store_path.sliceZ());
 
-                        var rel_path: bun.RelPath(.{}) = .init();
-                        defer rel_path.deinit();
-                        installer.appendStorePath(&rel_path, entry_id);
-                        break :exists sys.directoryExistsAt(cwd, rel_path.sliceZ()).unwrapOr(false);
-                    };
-
-                    break :needs_install switch (patch_info) {
-                        .none => !exists,
-                        // checked above
-                        .remove => unreachable,
-                        .patch => |patch| {
-                            var hash_buf: install.BuntagHashBuf = undefined;
-                            const hash = install.buntaghashbuf_make(&hash_buf, patch.contents_hash);
-
-                            if (comptime Environment.isWindows) {
-                                var patch_tag_path: bun.AbsPath(.{}) = .initTopLevelDir();
-                                defer patch_tag_path.deinit();
-                                installer.appendStorePath(&patch_tag_path, entry_id);
-                                patch_tag_path.append(hash);
-                                break :needs_install !sys.existsZ(patch_tag_path.sliceZ());
-                            }
-
-                            var patch_tag_path: bun.RelPath(.{}) = .init();
-                            defer patch_tag_path.deinit();
-                            installer.appendStorePath(&patch_tag_path, entry_id);
-                            patch_tag_path.append(hash);
-                            break :needs_install !sys.existsAt(cwd, patch_tag_path.sliceZ());
-                        },
-                    };
-                },
-            };
-
-            if (!needs_install) {
-                summary.skipped += 1;
-                entry_steps[entry_id.get()].store(.done, .monotonic);
-                installer.resumeAvailableTasks();
-                continue;
-            }
-
-            // determine if the package is cached. if it's not, enqueue it and go to the next package.
-            const cache_dir, const cache_dir_path, var pkg_cache_dir_subpath = installer.packageCacheDirAndSubpath(pkg_name, &pkg_res, patch_info);
-            defer {
-                cache_dir_path.deinit();
-                pkg_cache_dir_subpath.deinit();
-            }
-
-            const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
-                .done => false,
-                else => missing_from_cache: {
-                    if (patch_info == .none) {
-                        const exists = switch (pkg_res.tag) {
-                            .npm => exists: {
-                                var cache_dir_subpath_save = pkg_cache_dir_subpath.save();
-                                defer cache_dir_subpath_save.restore();
-                                pkg_cache_dir_subpath.append("package.json");
-
-                                break :exists sys.existsAt(cache_dir, pkg_cache_dir_subpath.sliceZ());
-                            },
-                            else => sys.directoryExistsAt(cache_dir, pkg_cache_dir_subpath.sliceZ()).unwrapOr(false),
+                            break :needs_install switch (patch_info) {
+                                .none => !exists,
+                                // checked above
+                                .remove => unreachable,
+                                .patch => |patch| {
+                                    var hash_buf: install.BuntagHashBuf = undefined;
+                                    const hash = install.buntaghashbuf_make(&hash_buf, patch.contents_hash);
+                                    var patch_tag_path: bun.AbsPath(.{}) = .initTopLevelDir();
+                                    defer patch_tag_path.deinit();
+                                    installer.appendStorePath(&patch_tag_path, entry_id);
+                                    patch_tag_path.append(hash);
+                                    break :needs_install !sys.existsZ(patch_tag_path.sliceZ());
+                                },
+                            };
                         };
-                        if (exists) manager.setPreinstallState(pkg_id, installer.lockfile, .done);
-                        break :missing_from_cache !exists;
+
+                    if (!needs_install) {
+                        installer.summary.skipped += 1;
+                        installer.store.entries.items(.step)[entry_id.get()].store(.done, .monotonic);
+                        if (installer.install_node) |node| {
+                            node.completeOne();
+                        }
+                        installer.resumeAvailableTasks();
+                        continue;
                     }
 
-                    // TODO: why does this look like it will never work?
-                    break :missing_from_cache true;
-                },
-            };
+                    var pkg_cache_dir_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .from(switch (pkg_res_tag) {
+                        .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                        .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
+                        .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
+                        .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
+                        .remote_tarball => manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
 
-            if (!missing_from_cache) {
-                installer.startTask(entry_id);
-                continue;
-            }
+                        else => comptime unreachable,
+                    });
+                    defer pkg_cache_dir_subpath.deinit();
 
-            const ctx: install.TaskCallbackContext = .{
-                .isolated_package_install_context = entry_id,
-            };
+                    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+                    defer cache_dir_path.deinit();
 
-            const dep_id = node_dep_ids[node_id.get()];
-            const dep = lockfile.buffers.dependencies.items[dep_id];
+                    const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
+                        .done => false,
+                        else => missing_from_cache: {
+                            if (patch_info == .none) {
+                                const exists = switch (pkg_res_tag) {
+                                    .npm => exists: {
+                                        var cache_dir_path_save = pkg_cache_dir_subpath.save();
+                                        defer cache_dir_path_save.restore();
+                                        pkg_cache_dir_subpath.append("package.json");
+                                        break :exists sys.existsAt(cache_dir, pkg_cache_dir_subpath.sliceZ());
+                                    },
+                                    else => sys.directoryExistsAt(cache_dir, pkg_cache_dir_subpath.sliceZ()).unwrapOr(false),
+                                };
+                                if (exists) {
+                                    manager.setPreinstallState(pkg_id, installer.lockfile, .done);
+                                }
+                                break :missing_from_cache !exists;
+                            }
 
-            switch (pkg_res.tag) {
-                .npm => {
-                    manager.enqueuePackageForDownload(
-                        pkg_name.slice(string_buf),
-                        dep_id,
-                        pkg_id,
-                        pkg_res.value.npm.version,
-                        pkg_res.value.npm.url.slice(string_buf),
-                        ctx,
-                        patch_info.nameAndVersionHash(),
-                    ) catch |err| switch (err) {
-                        error.OutOfMemory => |oom| return oom,
-                        error.InvalidURL => {
-                            @panic("TODOO!!!!");
+                            // TODO: why does this look like it will never work?
+                            break :missing_from_cache true;
                         },
                     };
-                },
-                .git => {
-                    manager.enqueueGitForCheckout(
-                        dep_id,
-                        dep.name.slice(string_buf),
-                        &pkg_res,
-                        ctx,
-                        patch_info.nameAndVersionHash(),
-                    );
-                },
-                .github => {
-                    const url = manager.allocGitHubURL(&pkg_res.value.git);
-                    defer manager.allocator.free(url);
-                    manager.enqueueTarballForDownload(
-                        dep_id,
-                        pkg_id,
-                        url,
-                        ctx,
-                        patch_info.nameAndVersionHash(),
-                    ) catch |err| switch (err) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        error.InvalidURL => {
-                            @panic("error");
-                        },
+
+                    if (!missing_from_cache) {
+                        installer.startTask(entry_id);
+                        continue;
+                    }
+
+                    const ctx: install.TaskCallbackContext = .{
+                        .isolated_package_install_context = entry_id,
                     };
-                },
-                .local_tarball => {
-                    manager.enqueueTarballForReading(
-                        dep_id,
-                        dep.name.slice(string_buf),
-                        &pkg_res,
-                        ctx,
-                    );
-                },
-                .remote_tarball => {
-                    manager.enqueueTarballForDownload(
-                        dep_id,
-                        pkg_id,
-                        pkg_res.value.remote_tarball.slice(string_buf),
-                        ctx,
-                        patch_info.nameAndVersionHash(),
-                    ) catch |err| switch (err) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        error.InvalidURL => {
-                            @panic("ooopsies");
+
+                    const dep_id = node_dep_ids[node_id.get()];
+                    const dep = lockfile.buffers.dependencies.items[dep_id];
+                    switch (pkg_res_tag) {
+                        .npm => {
+                            manager.enqueuePackageForDownload(
+                                pkg_name.slice(string_buf),
+                                dep_id,
+                                pkg_id,
+                                pkg_res.value.npm.version,
+                                pkg_res.value.npm.url.slice(string_buf),
+                                ctx,
+                                patch_info.nameAndVersionHash(),
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => |oom| return oom,
+                                error.InvalidURL => {
+                                    @panic("TODOO!!!!");
+                                },
+                            };
                         },
-                    };
-                },
-                else => {
-                    unreachable;
+                        .git => {
+                            manager.enqueueGitForCheckout(
+                                dep_id,
+                                dep.name.slice(string_buf),
+                                &pkg_res,
+                                ctx,
+                                patch_info.nameAndVersionHash(),
+                            );
+                        },
+                        .github => {
+                            const url = manager.allocGitHubURL(&pkg_res.value.git);
+                            defer manager.allocator.free(url);
+                            manager.enqueueTarballForDownload(
+                                dep_id,
+                                pkg_id,
+                                url,
+                                ctx,
+                                patch_info.nameAndVersionHash(),
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => {
+                                    @panic("error");
+                                },
+                            };
+                        },
+                        .local_tarball => {
+                            manager.enqueueTarballForReading(
+                                dep_id,
+                                dep.name.slice(string_buf),
+                                &pkg_res,
+                                ctx,
+                            );
+                        },
+                        .remote_tarball => {
+                            manager.enqueueTarballForDownload(
+                                dep_id,
+                                pkg_id,
+                                pkg_res.value.remote_tarball.slice(string_buf),
+                                ctx,
+                                patch_info.nameAndVersionHash(),
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => {
+                                    @panic("ooopsies");
+                                },
+                            };
+                        },
+                        else => comptime unreachable,
+                    }
                 },
             }
         }
@@ -984,10 +974,11 @@ pub fn installIsolatedPackages(
             }
         }
 
-        {
+        if (comptime Environment.isDebug) {
             var done = true;
-            next_entry: for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
+            for (store.entries.items(.step), 0..) |entry_step, _entry_id| {
                 const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
+                _ = entry_id;
                 const step = entry_step.load(.monotonic);
 
                 if (step == .done) {
@@ -996,43 +987,37 @@ pub fn installIsolatedPackages(
 
                 done = false;
 
-                std.debug.print("entry not done: {d}", .{entry_id});
+                // std.debug.print("entry not done: {d}", .{entry_id});
 
-                const deps = store.entries.items(.dependencies)[entry_id.get()];
-                for (deps.slice()) |dep| {
-                    const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
-                    if (dep_step != .done) {
-                        std.debug.print(", parents:\n - ", .{});
-                        const parent_ids = Store.Entry.debugGatherAllParents(entry_id, store);
-                        for (parent_ids) |parent_id| {
-                            if (parent_id == .root) {
-                                std.debug.print("root ", .{});
-                            } else {
-                                std.debug.print("{d} ", .{parent_id.get()});
-                            }
-                        }
+                // const deps = store.entries.items(.dependencies)[entry_id.get()];
+                // for (deps.slice()) |dep| {
+                //     const dep_step = entry_steps[dep.entry_id.get()].load(.monotonic);
+                //     if (dep_step != .done) {
+                //         std.debug.print(", parents:\n - ", .{});
+                //         const parent_ids = Store.Entry.debugGatherAllParents(entry_id, store);
+                //         for (parent_ids) |parent_id| {
+                //             if (parent_id == .root) {
+                //                 std.debug.print("root ", .{});
+                //             } else {
+                //                 std.debug.print("{d} ", .{parent_id.get()});
+                //             }
+                //         }
 
-                        std.debug.print("\n", .{});
-                        continue :next_entry;
-                    }
-                }
+                //         std.debug.print("\n", .{});
+                //         continue :next_entry;
+                //     }
+                // }
 
-                std.debug.print(" and is able to run\n", .{});
+                // std.debug.print(" and is able to run\n", .{});
             }
 
             bun.debugAssert(done);
         }
+
+        installer.summary.successfully_installed = installer.installed;
+
+        return installer.summary;
     }
-
-    const link_time = link_timer.read();
-
-    std.debug.print("\n\ninstallIsolatedPackages [{}]\n  Total links: {d} [{}]\n", .{
-        bun.fmt.fmtDurationOneDecimal(total_time.read()),
-        total_links,
-        bun.fmt.fmtDurationOneDecimal(link_time),
-    });
-
-    return summary;
 }
 
 const EnsureDependencyLinkStrategy = enum {
@@ -1270,6 +1255,11 @@ pub const Store = struct {
         // this is not const for `lockfile.trusted_dependencies`
         lockfile: *Lockfile,
 
+        summary: PackageInstall.Summary = .{ .successfully_installed = .empty },
+        installed: Bitset,
+        install_node: ?*Progress.Node,
+        scripts_node: ?*Progress.Node,
+
         manager: *PackageManager,
         command_ctx: Command.Context,
 
@@ -1316,17 +1306,53 @@ pub const Store = struct {
             }
         }
 
-        pub fn onTask(this: *Installer, task: *Installer.Task) void {
+        pub fn onTask(this: *Installer, task_entry_id: Entry.Id) void {
             const entries = this.store.entries.slice();
             const entry_steps = entries.items(.step);
-            const step = entry_steps[task.entry_id.get()].load(.monotonic);
+            const step = entry_steps[task_entry_id.get()].load(.monotonic);
 
             if (step != .done) {
                 // only done will unblock other packages
                 return;
             }
 
+            this.onTaskSuccess(task_entry_id);
+        }
+
+        pub fn onTaskSuccess(this: *Installer, entry_id: Entry.Id) void {
             this.resumeAvailableTasks();
+
+            const pkg_id = pkg_id: {
+                if (entry_id == .root) {
+                    return;
+                }
+
+                const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+                const nodes = this.store.nodes.slice();
+
+                // const dep_id = nodes.items(.dep_id)[node_id.get()];
+
+                // if (dep_id == invalid_dependency_id) {
+                //     // should be coverd by `entry_id == .root` above, but
+                //     // just in case
+                //     return;
+                // }
+
+                // const dep = this.lockfile.buffers.dependencies.items[dep_id];
+
+                // if (dep.behavior.isWorkspaceOnly()) {
+                //     return;
+                // }
+
+                break :pkg_id nodes.items(.pkg_id)[node_id.get()];
+            };
+
+            const is_duplicate = this.installed.isSet(pkg_id);
+            this.summary.success += @intFromBool(!is_duplicate);
+            this.installed.set(pkg_id);
+            if (this.install_node) |node| {
+                node.completeOne();
+            }
         }
 
         pub fn resumeAvailableTasks(this: *Installer) void {
@@ -1428,7 +1454,6 @@ pub const Store = struct {
             }
 
             fn blocked(this: *Task) void {
-                // std.debug.print("BLOCKED!!!!!\n", .{});
                 this.installer.store.entries.items(.step)[this.entry_id.get()].store(.blocked, .monotonic);
                 this.installer.tasks.push(this);
                 this.installer.manager.wake();
@@ -1436,6 +1461,8 @@ pub const Store = struct {
 
             fn run(this: *Task) OOM!void {
                 const installer = this.installer;
+                const manager = installer.manager;
+                const lockfile = installer.lockfile;
 
                 const pkgs = installer.lockfile.packages.slice();
                 const pkg_names = pkgs.items(.name);
@@ -1453,6 +1480,7 @@ pub const Store = struct {
                 const nodes = installer.store.nodes.slice();
                 const node_pkg_ids = nodes.items(.pkg_id);
                 const node_dep_ids = nodes.items(.dep_id);
+                const node_peers = nodes.items(.peers);
 
                 const node_id = entry_node_ids[this.entry_id.get()];
                 const pkg_id = node_pkg_ids[node_id.get()];
@@ -1462,23 +1490,29 @@ pub const Store = struct {
                 const pkg_name_hash = pkg_name_hashes[pkg_id];
                 const pkg_res = pkg_resolutions[pkg_id];
 
-                return next_step: switch (installer.store.entries.items(.step)[this.entry_id.get()].load(.monotonic)) {
+                return next_step: switch (entry_steps[this.entry_id.get()].load(.monotonic)) {
                     .link_package => {
+                        const string_buf = lockfile.buffers.string_bytes.items;
+
                         const patch_info = try installer.packagePatchInfo(
                             pkg_name,
                             pkg_name_hash,
                             &pkg_res,
                         );
 
-                        const cache_dir, const cache_dir_path, const pkg_cache_dir_subpath = installer.packageCacheDirAndSubpath(
-                            pkg_name,
-                            &pkg_res,
-                            patch_info,
-                        );
-                        defer {
-                            cache_dir_path.deinit();
-                            pkg_cache_dir_subpath.deinit();
-                        }
+                        var pkg_cache_dir_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .from(switch (pkg_res.tag) {
+                            .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
+                            .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
+                            .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
+                            .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
+                            .remote_tarball => manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
+
+                            else => unreachable,
+                        });
+                        defer pkg_cache_dir_subpath.deinit();
+
+                        const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+                        defer cache_dir_path.deinit();
 
                         var dest_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .init();
                         defer dest_subpath.deinit();
@@ -1514,7 +1548,8 @@ pub const Store = struct {
                                                 }
                                             },
                                             else => {
-                                                @panic("oooopss!");
+                                                break :hardlink_fallback;
+                                                // @panic("oooopss!");
                                             },
                                         }
                                     },
@@ -1675,60 +1710,95 @@ pub const Store = struct {
                         installer.linkDependencies(this.entry_id);
                         installer.linkDependencyBins(this.entry_id);
 
-                        if (pkg_res.tag != .root and pkg_res.tag != .workspace) hoisted_symlink: {
-                            var hidden_hoisted_node_modules: bun.RelPath(.{}) = .init();
-                            defer hidden_hoisted_node_modules.deinit();
+                        switch (pkg_res.tag) {
+                            .uninitialized,
+                            .root,
+                            .workspace,
+                            .folder,
+                            .symlink,
+                            .single_file_module,
+                            => {},
 
-                            hidden_hoisted_node_modules.append(
-                                "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
-                            );
-                            hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
+                            _ => {},
 
-                            var target: bun.RelPath(.{}) = .init();
-                            defer target.deinit();
+                            .npm,
+                            .git,
+                            .github,
+                            .local_tarball,
+                            .remote_tarball,
+                            => hoisted_symlink: {
+                                const string_buf = installer.lockfile.buffers.string_bytes.items;
 
-                            target.append("..");
-                            if (strings.containsChar(pkg_name.slice(installer.lockfile.buffers.string_bytes.items), '/')) {
-                                // assume valid scoped package name
+                                var hidden_hoisted_node_modules: bun.RelPath(.{}) = .init();
+                                defer hidden_hoisted_node_modules.deinit();
+
+                                hidden_hoisted_node_modules.append(
+                                    "node_modules" ++ std.fs.path.sep_str ++ ".bun" ++ std.fs.path.sep_str ++ "node_modules",
+                                );
+                                hidden_hoisted_node_modules.append(pkg_name.slice(installer.lockfile.buffers.string_bytes.items));
+
+                                var target: bun.RelPath(.{}) = .init();
+                                defer target.deinit();
+
                                 target.append("..");
-                            }
+                                if (strings.containsChar(pkg_name.slice(installer.lockfile.buffers.string_bytes.items), '/')) {
+                                    target.append("..");
+                                }
 
-                            installer.appendEntryPath(&target, this.entry_id);
+                                {
+                                    const peers = node_peers[node_id.get()];
+                                    target.appendFmt(
+                                        "{s}@{}{}/node_modules/{s}",
+                                        .{
+                                            pkg_name.fmtStorePath(string_buf),
+                                            pkg_res.fmt(string_buf, .posix),
+                                            Node.TransitivePeer.fmtStorePath(peers.slice(), string_buf, pkg_names, pkg_resolutions),
+                                            pkg_name.slice(string_buf),
+                                        },
+                                    );
+                                }
 
-                            if (comptime Environment.isWindows) {
-                                var full_target: bun.AbsPath(.{}) = .initTopLevelDir();
-                                defer full_target.deinit();
+                                if (comptime Environment.isWindows) {
+                                    var full_target: bun.AbsPath(.{}) = .initTopLevelDir();
+                                    defer full_target.deinit();
 
-                                installer.appendStorePath(&full_target, this.entry_id);
+                                    installer.appendStorePath(&full_target, this.entry_id);
 
-                                sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch |err| switch (err) {
-                                    error.ENOENT => {
-                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), hidden_hoisted_node_modules.dirname() orelse unreachable) catch {
+                                    sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch |err| switch (err) {
+                                        error.ENOENT => {
+                                            const make_path_path = hidden_hoisted_node_modules.dirname() orelse {
+                                                break :hoisted_symlink;
+                                            };
+                                            FD.cwd().makePath(u8, make_path_path) catch {
+                                                break :hoisted_symlink;
+                                            };
+                                            sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch {
+                                                break :hoisted_symlink;
+                                            };
+                                        },
+                                        else => {
                                             break :hoisted_symlink;
-                                        };
-                                        sys.symlinkOrJunction(hidden_hoisted_node_modules.sliceZ(), target.sliceZ(), full_target.sliceZ()).unwrap() catch {
+                                        },
+                                    };
+                                } else {
+                                    sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch |err| switch (err) {
+                                        error.ENOENT => {
+                                            const make_path_path = hidden_hoisted_node_modules.dirname() orelse {
+                                                break :hoisted_symlink;
+                                            };
+                                            FD.cwd().makePath(u8, make_path_path) catch {
+                                                break :hoisted_symlink;
+                                            };
+                                            sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch {
+                                                break :hoisted_symlink;
+                                            };
+                                        },
+                                        else => {
                                             break :hoisted_symlink;
-                                        };
-                                    },
-                                    else => {
-                                        break :hoisted_symlink;
-                                    },
-                                };
-                            } else {
-                                sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch |err| switch (err) {
-                                    error.ENOENT => {
-                                        bun.MakePath.makePath(u8, FD.cwd().stdDir(), hidden_hoisted_node_modules.dirname() orelse unreachable) catch {
-                                            break :hoisted_symlink;
-                                        };
-                                        sys.symlink(target.sliceZ(), hidden_hoisted_node_modules.sliceZ()).unwrap() catch {
-                                            break :hoisted_symlink;
-                                        };
-                                    },
-                                    else => {
-                                        break :hoisted_symlink;
-                                    },
-                                };
-                            }
+                                        },
+                                    };
+                                }
+                            },
                         }
 
                         continue :next_step this.nextStep();
@@ -1930,37 +2000,6 @@ pub const Store = struct {
                 };
             }
         };
-
-        pub fn packageCacheDirAndSubpath(
-            this: *Installer,
-            pkg_name: String,
-            pkg_res: *const Resolution,
-            patch_info: PatchInfo,
-        ) struct { FD, bun.AbsPath(.{}), bun.RelPath(.{ .normalize_slashes = true }) } {
-            const string_buf = this.lockfile.buffers.string_bytes.items;
-
-            const subpath = switch (pkg_res.tag) {
-                .npm => this.manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
-                .git => this.manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
-                .github => this.manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
-                .local_tarball => this.manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
-                .remote_tarball => this.manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
-
-                // should never reach this function. they aren't cached!
-                .workspace => unreachable,
-                .root => unreachable,
-                .folder => unreachable,
-                .symlink => unreachable,
-
-                else => {
-                    @panic("oops!!!!");
-                },
-            };
-
-            const cache_dir, const abs_cache_dir_path = this.manager.getCacheDirectoryAndAbsPath();
-
-            return .{ .fromStdDir(cache_dir), .init(abs_cache_dir_path), .from(subpath) };
-        }
 
         const PatchInfo = union(enum) {
             none,
@@ -2228,43 +2267,17 @@ pub const Store = struct {
                 .workspace => {
                     buf.append(pkg_res.value.workspace.slice(string_buf));
                 },
+                .symlink => {
+                    const symlink_dir_path = this.manager.globalLinkDirPath() catch {
+                        @panic("oops! link dir path");
+                    };
+
+                    buf.reset(symlink_dir_path);
+                    buf.append(pkg_res.value.symlink.slice(string_buf));
+                },
                 else => {
                     const pkg_name = pkg_names[pkg_id];
                     buf.appendFmt("node_modules/" ++ modules_dir_name ++ "/{s}@{}{}/node_modules/{s}", .{
-                        pkg_name.fmtStorePath(string_buf),
-                        pkg_res.fmt(string_buf, .posix),
-                        Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
-                        pkg_name.slice(string_buf),
-                    });
-                },
-            }
-        }
-
-        pub fn appendEntryPath(this: *const Installer, buf: anytype, entry_id: Entry.Id) void {
-            const string_buf = this.lockfile.buffers.string_bytes.items;
-
-            const entries = this.store.entries.slice();
-            const entry_node_ids = entries.items(.node_id);
-
-            const nodes = this.store.nodes.slice();
-            const node_pkg_ids = nodes.items(.pkg_id);
-            const node_peers = nodes.items(.peers);
-
-            const pkgs = this.lockfile.packages.slice();
-            const pkg_names = pkgs.items(.name);
-            const pkg_resolutions = pkgs.items(.resolution);
-
-            const node_id = entry_node_ids[entry_id.get()];
-            const peers = node_peers[node_id.get()];
-            const pkg_id = node_pkg_ids[node_id.get()];
-            const pkg_res = pkg_resolutions[pkg_id];
-
-            switch (pkg_res.tag) {
-                .root => {},
-                .workspace => {},
-                else => {
-                    const pkg_name = pkg_names[pkg_id];
-                    buf.appendFmt("{s}@{}{}/node_modules/{s}", .{
                         pkg_name.fmtStorePath(string_buf),
                         pkg_res.fmt(string_buf, .posix),
                         Node.TransitivePeer.fmtStorePath(peers.list.items, string_buf, pkg_names, pkg_resolutions),
@@ -2324,23 +2337,6 @@ pub const Store = struct {
 
             return parents.keys();
         }
-
-        // const State = enum(u8) {
-        //     uninitialized = 0,
-        //     linked,
-        //     preinstall_done,
-        //     binaries_linked,
-        //     install_and_postinstall_done,
-        //     install_complete,
-        // };
-
-        // tag: enum {
-        //     normal,
-        //     root_package,
-        //     root_link,
-        //     workspace_package,
-        //     workspace_link,
-        // },
 
         pub const List = bun.MultiArrayList(Entry);
 

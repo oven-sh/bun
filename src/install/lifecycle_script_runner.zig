@@ -103,9 +103,6 @@ pub const LifecycleScriptSubprocess = struct {
         this.handleExit(process.status);
     }
 
-    // This is only used on the main thread.
-    var cwd_z_buf: bun.PathBuffer = undefined;
-
     fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
         output.flags.nonblocking = true;
         output.flags.socket = true;
@@ -429,7 +426,7 @@ pub const LifecycleScriptSubprocess = struct {
                     const previous_step = ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].swap(.done, .monotonic);
                     bun.debugAssert(previous_step == .@"run (post)install and (pre/post)prepare");
                     this.manager.decrementPendingTasks();
-                    ctx.installer.resumeAvailableTasks();
+                    ctx.installer.onTask(ctx.entry_id);
                 }
 
                 // the last script finished

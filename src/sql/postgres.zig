@@ -17,32 +17,16 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     return binding;
 }
 
-const assert = bun.assert;
 const bun = @import("bun");
 const JSC = bun.JSC;
-const String = bun.String;
-const uws = bun.uws;
-const Socket = uws.AnySocket;
-const std = @import("std");
-const debug = bun.Output.scoped(.Postgres, false);
 
 const JSValue = JSC.JSValue;
-const BoringSSL = bun.BoringSSL;
 const ZigString = JSC.ZigString;
 
 pub const types = @import("./postgres/PostgresTypes.zig");
 
-const int4 = types.int4;
-const short = types.short;
-const int8 = types.int8;
-const PostgresInt32 = types.PostgresInt32;
-const PostgresInt64 = types.PostgresInt64;
-const PostgresShort = types.PostgresShort;
 pub const protocol = @import("./postgres/PostgresProtocol.zig");
 
-const PostgresRequest = @import("./postgres/PostgresRequest.zig");
-const SSLMode = @import("./postgres/SSLMode.zig").SSLMode;
-const Data = @import("./postgres/Data.zig").Data;
 pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
 pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
 pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");

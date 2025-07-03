@@ -579,7 +579,6 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const JSRef = JSC.JSRef;
 const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;

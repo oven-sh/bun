@@ -14,7 +14,6 @@ pub fn empty() Signature {
     };
 }
 
-const log = bun.Output.scoped(.PostgresSignature, false);
 pub fn deinit(this: *Signature) void {
     if (this.prepared_statement_name.len > 0) {
         bun.default_allocator.free(this.prepared_statement_name);

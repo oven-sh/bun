@@ -115,7 +115,6 @@ pub const QueryBindingIterator = union(enum) {
         }
     }
 };
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

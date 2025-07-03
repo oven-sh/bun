@@ -1,4 +1,3 @@
-const PostgresSQLContext = @This();
 tcp: ?*uws.SocketContext = null,
 
 onQueryResolveFn: JSC.Strong.Optional = .empty,
@@ -16,7 +15,6 @@ comptime {
     const js_init = JSC.toJSHostFn(init);
     @export(&js_init, .{ .name = "PostgresSQLContext__init" });
 }
-const std = @import("std");
 const bun = @import("bun");
 const uws = bun.uws;
 const JSC = bun.JSC;

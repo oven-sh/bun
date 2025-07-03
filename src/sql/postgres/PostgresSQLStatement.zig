@@ -178,7 +178,6 @@ const protocol = @import("./PostgresProtocol.zig");
 const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
 const Signature = @import("./Signature.zig");
-const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 const String = bun.String;

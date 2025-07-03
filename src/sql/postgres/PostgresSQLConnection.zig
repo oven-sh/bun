@@ -1685,7 +1685,6 @@ const protocol = @import("./PostgresProtocol.zig");
 const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
 const debug = bun.Output.scoped(.Postgres, false);
 const SSLMode = @import("./SSLMode.zig").SSLMode;
-const Signature = @import("./Signature.zig");
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");

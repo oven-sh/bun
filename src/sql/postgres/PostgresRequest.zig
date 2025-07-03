@@ -1,5 +1,3 @@
-const PostgresRequest = @This();
-
 pub fn writeBind(
     name: []const u8,
     cursor_name: bun.String,
@@ -329,7 +327,6 @@ pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 const std = @import("std");
 const bun = @import("bun");
 const String = bun.String;
-const uws = bun.uws;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");

@@ -2840,6 +2840,12 @@ export function printEnvironment() {
           spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
         }
       });
+      startGroup("Disk (df)", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
+        }
+      });
     }
   }
 

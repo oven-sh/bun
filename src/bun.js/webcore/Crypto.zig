@@ -171,17 +171,14 @@ comptime {
 pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments: []const JSC.JSValue = callframe.argumentsUndef(3).slice();
 
-    // First argument: namespace (required)
     if (arguments.len == 0 or arguments[0].isUndefinedOrNull()) {
         return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be specified", .{}).throw();
     }
 
-    // Second argument: name (required)
     if (arguments.len < 2 or arguments[1].isUndefinedOrNull()) {
         return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be specified", .{}).throw();
     }
 
-    // Third argument: encoding (optional, defaults to "hex")
     const encoding: JSC.Node.Encoding = brk: {
         if (arguments.len > 2 and !arguments[2].isUndefined()) {
             if (arguments[2].isString()) {
@@ -197,7 +194,6 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     const name_value = arguments[0];
     const namespace_value = arguments[1];
 
-    // Get name data
     const name = brk: {
         if (name_value.isString()) {
             const name_str = try name_value.toBunString(globalThis);
@@ -213,10 +209,8 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     };
     defer name.deinit();
 
-    // Parse namespace UUID
     const namespace = brk: {
         if (namespace_value.isString()) {
-            // Parse UUID string
             const namespace_str = try namespace_value.toBunString(globalThis);
             defer namespace_str.deref();
             const namespace_slice = namespace_str.toUTF8(bun.default_allocator);
@@ -235,7 +229,6 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
             };
             break :brk parsed_uuid.bytes;
         } else if (namespace_value.asArrayBuffer(globalThis)) |*array_buffer| {
-            // Accept ArrayBuffer/TypedArray with 16 bytes
             const slice = array_buffer.byteSlice();
             if (slice.len != 16) {
                 return globalThis.ERR(.INVALID_ARG_VALUE, "Namespace must be exactly 16 bytes", .{}).throw();
@@ -246,7 +239,6 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
         return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be a string or buffer", .{}).throw();
     };
 
-    // Generate UUID v5
     const uuid = UUID5.init(&namespace, name.slice());
 
     if (encoding == .hex) {

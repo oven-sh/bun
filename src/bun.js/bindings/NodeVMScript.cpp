@@ -163,6 +163,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 // JSC::ProgramCodeBlock::create() requires GC to be deferred.
                 DeferGC deferGC(vm);
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
             if (compilationResult != JSC::CompilationResult::CompilationFailed) {

@@ -314,7 +314,7 @@ export class Dev extends EventEmitter {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
         } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise, Bun.sleep(1000)]);
+          await Promise.race([seenFiles.promise]);
         }
         if (!fastBatches) {
           // Wait an extra delay to avoid double-triggering events.

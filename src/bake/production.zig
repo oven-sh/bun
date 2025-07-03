@@ -444,7 +444,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             .param => {
                 params_buf.append(ctx.allocator, route.part.param) catch unreachable;
             },
-            .catch_all, .catch_all_optional => {
+            .catch_all => {
+                params_buf.append(ctx.allocator, route.part.catch_all) catch unreachable;
+            },
+            .catch_all_optional => {
                 return global.throw("catch-all routes are not supported in static site generation", .{});
             },
             else => {},
@@ -463,7 +466,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 .param => {
                     params_buf.append(ctx.allocator, parent.part.param) catch unreachable;
                 },
-                .catch_all, .catch_all_optional => {
+                .catch_all => {
+                    params_buf.append(ctx.allocator, parent.part.catch_all) catch unreachable;
+                },
+                .catch_all_optional => {
                     return global.throw("catch-all routes are not supported in static site generation", .{});
                 },
                 else => {},

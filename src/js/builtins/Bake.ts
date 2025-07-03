@@ -40,6 +40,8 @@ export function renderRoutesForProdStatic(
   });
   const { join: pathJoin } = require("node:path");
 
+  const regex = /:(\w+)/g;
+
   let loadedModules = new Array(allServerFiles.length);
 
   async function doGenerateRoute(
@@ -47,7 +49,7 @@ export function renderRoutesForProdStatic(
     i: number,
     layouts: any[],
     pageModule: any,
-    params: Record<string, string> | null,
+    params: Record<string, string | string[]> | null,
   ) {
     // Call the framework's rendering function
     const callback = renderStatic[type];
@@ -77,10 +79,20 @@ export function renderRoutesForProdStatic(
       Object.entries(files).map(([key, value]) => {
         if (params != null) {
           $assert(patterns[i].includes(`:`));
-          // replace the :paramName part of patterns[i] with the value of params[paramName]
-          // use a regex in replace with a callback
-          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) => params[p1]);
-          return Bun.write(pathJoin(outBase, newKey + key), value);
+          const matches = regex.exec(patterns[i]);
+          const [_, p1] = matches!;
+          if (typeof params[p1] === "string") {
+            // replace the :paramName part of patterns[i] with the value of params[paramName]
+            // use a regex in replace with a callback
+            const newKey = params[p1];
+            return Bun.write(pathJoin(outBase, newKey + key), value);
+          }
+          if (Array.isArray(params[p1])) {
+            return Bun.write(pathJoin(outBase, ...params[p1], key), value);
+          }
+          throw new Error(
+            `Route ${JSON.stringify(sourceRouteFiles[i])} has a param that is not a string or array of strings: ${p1}`,
+          );
         }
         return Bun.write(pathJoin(outBase, patterns[i] + key), value);
       }),
@@ -92,10 +104,10 @@ export function renderRoutesForProdStatic(
     i: number,
     layouts: any[],
     pageModule: any,
-    params: Record<string, string>,
+    params: Record<string, string | string[]>,
   ) {
     for (const param of paramInformation[i]!) {
-      if (!params[param]) {
+      if (params[param] === undefined) {
         throw new Error(`Missing param ${param} for route ${JSON.stringify(sourceRouteFiles[i])}`);
       }
     }

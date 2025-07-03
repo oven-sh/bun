@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMusl, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -185,7 +185,8 @@ describe("napi", () => {
       expect(result).toEndWith("str: abcdef");
     });
 
-    it("copies auto len", async () => {
+    // TODO: once we upgrade the Node version on macOS and musl to Node v24.3.0, remove this test
+    it.todoIf(isCI && (isMacOS || isMusl))("copies auto len", async () => {
       const result = await checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str: abcdef");
     });

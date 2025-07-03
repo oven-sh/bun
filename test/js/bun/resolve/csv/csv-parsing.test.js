@@ -673,8 +673,8 @@ a,b,c
     it("should infer numeric values", () => {
       const parsed = CSV.parse(
         `num1,num2,num3,str
-  123,-456,78.9,"123"`,
-        { infer: true },
+123,-456,78.9,"123"`,
+        { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([{ num1: 123, num2: -456, num3: 78.9, str: "123" }]);
@@ -683,8 +683,8 @@ a,b,c
     it("should infer boolean values", () => {
       const parsed = CSV.parse(
         `bool1,bool2,str1,str2
-  true,false,"true","false"`,
-        { infer: true },
+true,false,"true","false"`,
+        { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([{ bool1: true, bool2: false, str1: "true", str2: "false" }]);
@@ -693,8 +693,8 @@ a,b,c
     it("should infer null values", () => {
       const parsed = CSV.parse(
         `val1,val2,val3
-  null,NULL,"null"`,
-        { infer: true },
+null,NULL,"null"`,
+        { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([{ val1: null, val2: null, val3: "null" }]);
@@ -703,8 +703,8 @@ a,b,c
     it("should not infer non-finite numeric values", () => {
       const parsed = CSV.parse(
         `val1,val2,val3
-  NaN,Infinity,-Infinity`,
-        { infer: true },
+NaN,Infinity,-Infinity`,
+        { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([{ val1: "NaN", val2: "Infinity", val3: "-Infinity" }]);
@@ -713,11 +713,11 @@ a,b,c
     it("should correctly parse BigInts", () => {
       const parsed = CSV.parse(
         `val1,val2
-  1,2
-  3,9007199254740993
-  5,6
-  7,8`,
-        { infer: true },
+1,2
+3,9007199254740993
+5,6
+7,8`,
+        { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([

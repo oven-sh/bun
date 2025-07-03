@@ -1,3 +1,5 @@
+// @sortImports
+
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
     binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.js.getConstructor(globalObject));

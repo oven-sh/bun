@@ -1,3 +1,5 @@
+// @sortImports
+
 const Signature = @This();
 
 fields: []const int4,

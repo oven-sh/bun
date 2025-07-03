@@ -1,3 +1,5 @@
+// @sortImports
+
 structure: JSC.Strong.Optional = .empty,
 // only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
 fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,

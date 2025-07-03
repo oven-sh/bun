@@ -1,3 +1,5 @@
+// @sortImports
+
 pub fn write(data: []const u8) void {
     if (comptime bun.Environment.isDebug) {
         DebugSocketMonitorWriter.check.call();

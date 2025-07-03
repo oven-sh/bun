@@ -1,3 +1,7 @@
+// @sortImports
+
+const PostgresRequest = @This();
+
 pub fn writeBind(
     name: []const u8,
     cursor_name: bun.String,

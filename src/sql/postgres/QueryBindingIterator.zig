@@ -1,3 +1,5 @@
+// @sortImports
+
 pub const QueryBindingIterator = union(enum) {
     array: JSC.JSArrayIterator,
     objects: ObjectIterator,

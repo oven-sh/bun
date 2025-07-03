@@ -1,3 +1,5 @@
+// @sortImports
+
 pub const SSLMode = enum(u8) {
     disable = 0,
     prefer = 1,

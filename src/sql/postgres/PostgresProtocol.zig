@@ -1,3 +1,5 @@
+// @sortImports
+
 pub const ArrayList = struct {
     array: *std.ArrayList(u8),
 

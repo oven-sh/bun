@@ -2953,8 +2953,6 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
 
 bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
     if (!jsValue || !jsValue.isCell())
         return false;
@@ -2963,6 +2961,6 @@ bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJS
     if (!cell)
         return false;
 
-    JSValue prototype = cell->getPrototype(vm, lexicalGlobalObject);
+    JSValue prototype = cell->getPrototype(lexicalGlobalObject);
     return prototype.inherits<WebCore::JSBufferPrototype>();
 }

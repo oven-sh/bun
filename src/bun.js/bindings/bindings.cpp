@@ -5621,7 +5621,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
             fast = false;
 
-            if (JSValue proto = object->getPrototype(vm, globalObject)) {
+            if (JSValue proto = object->getPrototype(globalObject)) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
@@ -5830,7 +5830,7 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(vm, globalObject).getObject();
+            iterating = iterating->getPrototype(globalObject).getObject();
         }
     }
 

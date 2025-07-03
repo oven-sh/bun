@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
@@ -71,6 +70,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 using namespace JSC;
 using namespace WebCore;
@@ -758,6 +758,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
+    randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1

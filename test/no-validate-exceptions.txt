@@ -2051,6 +2051,7 @@ test/js/third_party/grpc-js/test-server-interceptors.test.ts
 test/js/third_party/grpc-js/test-server.test.ts
 test/js/third_party/grpc-js/test-status-builder.test.ts
 test/js/third_party/grpc-js/test-uri-parser.test.ts
+test/js/third_party/grpc-js/test-tonic.test.ts
 test/js/third_party/http2-wrapper/http2-wrapper.test.ts
 test/js/third_party/jsonwebtoken/async_sign.test.js
 test/js/third_party/jsonwebtoken/buffer.test.js

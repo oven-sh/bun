@@ -9017,7 +9017,7 @@ fn NewParser_(
                     }) catch unreachable;
                 }
 
-                item_refs.putAssumeCapacity("default", name_loc.*);
+                // No need to add this to `item_refs` because `.scanForImportsAndExports` special cases `s
             }
             var end: usize = 0;
 

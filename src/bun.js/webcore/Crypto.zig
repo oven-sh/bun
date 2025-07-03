@@ -214,6 +214,7 @@ pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
             return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be a string or buffer", .{}).throw();
         }
     };
+    defer name.deinit();
 
     // Parse namespace UUID
     const namespace = brk: {

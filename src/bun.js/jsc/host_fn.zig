@@ -90,8 +90,8 @@ pub fn toJSHostCall(
     // runtime tuple values
     args: anytype,
 ) JSValue {
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
@@ -105,6 +105,9 @@ pub fn toJSHostCall(
 
 /// Convert the return value of a function returning a maybe-empty JSValue into an error union.
 /// The wrapped function must return an empty JSValue if and only if it has thrown an exception.
+/// If your function does not follow this pattern (if it can return empty without an exception, or
+/// throw an exception and return non-empty), either fix the function or write a custom wrapper with
+/// CatchScope.
 pub fn fromJSHostCall(
     globalThis: *JSGlobalObject,
     /// For attributing thrown exceptions
@@ -112,8 +115,8 @@ pub fn fromJSHostCall(
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!JSValue {
-    var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    var scope: jsc.ExceptionValidationScope = undefined;
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const value = @call(.auto, function, args);
@@ -129,10 +132,20 @@ pub fn fromJSHostCallGeneric(
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
-    scope.init(globalThis, src, .assertions_only);
+    scope.init(globalThis, src);
     defer scope.deinit();
 
     const result = @call(.auto, function, args);
+    // supporting JSValue would make it too easy to mix up this function with fromJSHostCall
+    // fromJSHostCall has the benefit of checking that the function is correctly returning an empty
+    // value if and only if it has thrown.
+    // fromJSHostCallGeneric is only for functions where the return value tells you nothing about
+    // whether an exception was thrown.
+    //
+    // alternatively, we could consider something like `comptime exception_sentinel: ?T`
+    // to generically support using a value of any type to signal exceptions (INT_MAX, infinity,
+    // nullptr...?) but it's unclear how often that would be useful
+    if (@TypeOf(result) == JSValue) @compileError("fromJSHostCallGeneric does not support JSValue");
     try scope.returnIfException();
     return result;
 }

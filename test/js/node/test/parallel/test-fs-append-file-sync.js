@@ -70,7 +70,6 @@ fs.writeFileSync(filename4, currentFileData, common.mustNotMutateObjectDeep({ mo
 [
   true, false, 0, 1, Infinity, () => {}, {}, [], undefined, null,
 ].forEach((value) => {
-  console.log(value);
   assert.throws(
     () => fs.appendFileSync(filename4, value, common.mustNotMutateObjectDeep({ mode: m })),
     { message: /data/, code: 'ERR_INVALID_ARG_TYPE' }

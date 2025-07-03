@@ -9,7 +9,10 @@ const assert = require('assert');
 const net = require('net');
 
 const { addresses } = require('../common/internet');
-const { errorLookupMock, mockedErrorCode } = require('../common/dns');
+const {
+  errorLookupMock,
+  mockedErrorCode
+} = require('../common/dns');
 
 // Using port 0 as hostname used is already invalid.
 const c = net.createConnection({

@@ -1,13 +1,41 @@
 ---
-description: How to build Bun
-globs:
+description:
+globs: src/**/*.cpp,src/**/*.zig
 alwaysApply: false
 ---
 
-# How to build Bun
+### Build Commands
 
-Run:
+- **Build debug version**: `bun bd` or `bun run build:debug`
+  - Creates a debug build at `./build/debug/bun-debug`
+  - Compilation takes ~2.5 minutes
+- **Run tests with your debug build**: `bun bd test <test-file>`
+  - **CRITICAL**: Never use `bun test` directly - it won't include your changes
+- **Run any command with debug build**: `bun bd <command>`
 
-```bash
-bun bd
+### Run a file
+
+To run a file, use:
+
+```sh
+bun bd <file> <...args>
 ```
+
+**CRITICAL**: Never use `bun <file>` directly. It will not have your changes.
+
+### Logging
+
+`BUN_DEBUG_$(SCOPE)=1` enables debug logs for a specific debug log scope.
+
+Debug logs look like this:
+
+```zig
+const log = bun.Output.scoped(.${SCOPE}, false);
+
+// ...later
+log("MY DEBUG LOG", .{})
+```
+
+### Code Generation
+
+Code generation happens automatically as part of the build process. There are no commands to run.

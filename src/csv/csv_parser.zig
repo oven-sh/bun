@@ -14,6 +14,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const JSC = bun.JSC;
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -46,12 +47,14 @@ pub const Error = error{
 
 pub const CSVParserOptions = struct {
     header: bool = true,
+
     delimiter: []const u8 = ",",
-    comments: bool = true,
-    comment_char: []const u8 = "#",
     trim_whitespace: bool = false,
     dynamic_typing: bool = false,
     quote: []const u8 = "\"",
+
+    comment_char: []const u8 = "#",
+    comments: bool = true,
     preview: ?usize = null,
     skip_empty_lines: bool = false,
 };
@@ -106,12 +109,6 @@ pub const CSV = struct {
     }
 
     pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, _: bool, opts: CSVParserOptions) !Expr {
-        // we don't consider header a record if it's a header
-        var _preview = opts.preview;
-        if (_preview != null and opts.header) {
-            _preview.? += 1;
-        }
-
         var p = CSV.init(allocator, source_.*, log, .{
             .header = opts.header,
             .delimiter = opts.delimiter,
@@ -121,8 +118,7 @@ pub const CSV = struct {
             .dynamic_typing = opts.dynamic_typing,
             .quote = opts.quote,
             .skip_empty_lines = opts.skip_empty_lines,
-            // overrides:
-            .preview = _preview,
+            .preview = opts.preview,
         });
 
         if (source_.contents.len != 0) {
@@ -150,16 +146,19 @@ pub const CSV = struct {
             .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.columns)) }, loc),
         });
 
-        try return_value.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "errors" }, loc),
-            .value = p.result.errors,
-        });
+        if (p.result.errors.data.e_array.items.len > 0) {
+            try return_value.data.e_object.properties.push(p.allocator, .{
+                .key = p.e(E.String{ .data = "errors" }, loc),
+                .value = p.result.errors,
+            });
+        }
 
-        // Add comments array
-        try return_value.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "comments" }, loc),
-            .value = p.result.comments,
-        });
+        if (p.result.comments.data.e_array.items.len > 0) {
+            try return_value.data.e_object.properties.push(p.allocator, .{
+                .key = p.e(E.String{ .data = "comments" }, loc),
+                .value = p.result.comments,
+            });
+        }
 
         return return_value;
     }
@@ -331,7 +330,8 @@ pub const CSV = struct {
         return checkLineBreak(p, true);
     }
 
-    pub fn parseField(p: *CSV) ![]const u8 {
+    // New internal function
+    fn _parseField(p: *CSV) !struct { value: []const u8, was_quoted: bool } {
         const start_index = p.index;
         var field = std.ArrayList(u8).init(p.allocator);
         errdefer field.deinit();
@@ -440,17 +440,42 @@ pub const CSV = struct {
             _ = p.nextCodepoint();
         }
 
-        return field.toOwnedSlice();
+        const field_value = try field.toOwnedSlice();
+
+        // Apply trimming if enabled and field wasn't quoted
+        const final_value = if (p.options.trim_whitespace and !is_quoted)
+            strings.trim(field_value, " \t\n\r")
+        else
+            field_value;
+
+        return .{
+            .value = final_value,
+            .was_quoted = is_quoted,
+        };
     }
 
-    fn parseRecord(p: *CSV) !std.ArrayList([]const u8) {
-        var fields = std.ArrayList([]const u8).init(p.allocator);
-        errdefer {
-            for (fields.items) |item| {
-                p.allocator.free(item);
-            }
-            fields.deinit();
+    // Refactored public function
+    pub fn parseField(p: *CSV, row_index: usize) !Expr {
+        const field_result = try p._parseField();
+        errdefer p.allocator.free(field_result.value); // _parseField allocates
+
+        const loc = logger.Loc{ .start = @intCast(row_index) };
+
+        if (p.options.dynamic_typing and !field_result.was_quoted) {
+            return try p.parseValueWithDynamicTyping(field_result.value, loc);
+        } else {
+            return p.e(E.String{ .data = field_result.value }, loc);
         }
+    }
+
+    fn parseHeaderField(p: *CSV) ![]const u8 {
+        const field_result = try p._parseField();
+        return field_result.value;
+    }
+
+    fn parseRecord(p: *CSV, row_index: usize) !std.ArrayList(Expr) {
+        var fields = std.ArrayList(Expr).init(p.allocator);
+        errdefer fields.deinit();
 
         // Handle empty line case
         if (p.isEndOfLine()) {
@@ -458,32 +483,63 @@ pub const CSV = struct {
         }
 
         // Parse first field
-        const first_field = try p.parseField();
+        const first_field = try p.parseField(row_index);
         try fields.append(first_field);
 
         // Parse remaining fields
         while (p.consumeDelimiter()) {
-            const field = try p.parseField();
+            const field = try p.parseField(row_index);
             try fields.append(field);
         }
 
         return fields;
     }
 
-    fn cleanupFields(p: *CSV, fields: *std.ArrayList([]const u8)) void {
-        for (fields.items) |item| {
-            p.allocator.free(item);
+    fn parseHeaderRecord(p: *CSV) !std.ArrayList([]const u8) {
+        var fields = std.ArrayList([]const u8).init(p.allocator);
+        errdefer p.cleanupHeaderFields(&fields);
+
+        // Handle empty header case
+        if (p.isEndOfLine()) {
+            return fields;
+        }
+
+        // Parse first header field
+        const first_field = try p.parseHeaderField();
+        try fields.append(first_field);
+
+        // Parse remaining header fields
+        while (p.consumeDelimiter()) {
+            const field = try p.parseHeaderField();
+            try fields.append(field);
+        }
+
+        return fields;
+    }
+
+    fn cleanupFields(_: *CSV, fields: *std.ArrayList(Expr)) void {
+        fields.deinit();
+    }
+
+    fn cleanupHeaderFields(p: *CSV, fields: *std.ArrayList([]const u8)) void {
+        for (fields.items) |field| {
+            p.allocator.free(field);
         }
         fields.deinit();
     }
 
-    fn isEmptyRecord(record: std.ArrayList([]const u8)) bool {
+    fn isEmptyRecord(_: *CSV, record: std.ArrayList(Expr)) bool {
         if (record.items.len == 0) {
             return true;
         }
 
         for (record.items) |field| {
-            if (field.len > 0) {
+            // Check if this is a string field with content
+            if (field.data == .e_string and field.data.e_string.data.len > 0) {
+                return false;
+            }
+            // Non-string fields (numbers, booleans) are considered content
+            if (field.data != .e_string) {
                 return false;
             }
         }
@@ -492,7 +548,7 @@ pub const CSV = struct {
     }
 
     fn runParser(p: *CSV) anyerror!void {
-        var all_records = std.ArrayList(std.ArrayList([]const u8)).init(p.allocator);
+        var all_records = std.ArrayList(std.ArrayList(Expr)).init(p.allocator);
         errdefer {
             for (all_records.items) |*record| {
                 p.cleanupFields(record);
@@ -500,10 +556,39 @@ pub const CSV = struct {
             all_records.deinit();
         }
 
-        // First read all rows
+        var header_fields: ?std.ArrayList([]const u8) = null;
+        errdefer if (header_fields) |*h| p.cleanupHeaderFields(h);
+
+        // Parse Header (if applicable)
+        if (p.options.header) {
+            while (p.index < p.contents.len) {
+                if (p.isCommentLine()) {
+                    const comment_text = try p.parseCommentLine();
+                    errdefer p.allocator.free(comment_text);
+                    try p.addCommentToArray(comment_text);
+
+                    _ = p.consumeEndOfLine();
+                    continue;
+                }
+                if (p.isEndOfLine()) { // Skip empty lines before header
+                    _ = p.consumeEndOfLine();
+                    continue;
+                }
+
+                // Found the header line
+                header_fields = try p.parseHeaderRecord();
+
+                // we don't have to check if it's bigger, because it's the first line we encounter
+                p.result.columns = header_fields.?.items.len;
+                _ = p.consumeEndOfLine();
+                break; // Exit header-finding loop
+            }
+        }
+
+        // Parse all rows
         var records_processed: usize = 0;
         while (p.index < p.contents.len) {
-            var record = try p.parseRecord();
+            var record = try p.parseRecord(records_processed);
             errdefer p.cleanupFields(&record);
 
             // Check if this is a comment line
@@ -523,7 +608,7 @@ pub const CSV = struct {
                 break;
             }
 
-            if (p.options.skip_empty_lines and isEmptyRecord(record)) {
+            if (p.options.skip_empty_lines and p.isEmptyRecord(record)) {
                 continue;
             }
 
@@ -540,60 +625,34 @@ pub const CSV = struct {
             }
         }
 
-        // Prepare the output format depending on the header option
-        if (all_records.items.len > 0 and p.options.header) {
-            // First row is the header
-            var header = all_records.orderedRemove(0);
-            errdefer p.cleanupFields(&header);
-
-            // Process remaining rows as objects with the header keys
+        // 3. Build Final AST
+        if (header_fields) |h| {
+            // Process as objects
             for (all_records.items, 0..) |record, idx| {
-                const record_loc = logger.Loc{ .start = 0 };
+                var row_object = p.e(E.Object{}, .{ .start = 0 });
+                for (0..h.items.len) |i| {
+                    const key_data = try p.allocator.dupe(u8, h.items[i]);
+                    const key_expr = p.e(E.String{ .data = key_data }, .{ .start = @intCast(idx) });
 
-                // Create an object for this row
-                var row_object = p.e(E.Object{}, record_loc);
-
-                // Add each field to the object, using empty string as fallback if record is shorter than header
-                for (0..header.items.len) |i| {
-                    const key = header.items[i];
-                    const key_expr = p.e(E.String{ .data = key }, .{ .start = @intCast(idx) });
-
-                    var value_expr: Expr = undefined;
-                    if (i < record.items.len) {
-                        // We have a value for this header
-                        value_expr = p.e(E.String{ .data = record.items[i] }, .{ .start = @intCast(idx) });
-                    } else {
-                        // No value, use empty string as fallback
-                        value_expr = p.e(E.String{ .data = "" }, .{ .start = @intCast(idx) });
-                    }
+                    const value_expr = if (i < record.items.len)
+                        record.items[i]
+                    else
+                        p.e(E.String{ .data = "" }, .{ .start = @intCast(idx) });
 
                     try row_object.data.e_object.properties.push(p.allocator, .{
                         .key = key_expr,
                         .value = value_expr,
                     });
                 }
-
                 try p.result.data_array.data.e_array.push(p.allocator, row_object);
             }
         } else {
-            // Process all rows as arrays (no header conversion)
-            for (all_records.items, 0..) |record, idx| {
-                const record_loc = logger.Loc{ .start = 0 };
-
-                // Create an array for this row
-                var row_array = p.e(E.Array{}, record_loc);
-
-                for (record.items) |value| {
-                    var value_expr: Expr = undefined;
-
-                    if (p.options.trim_whitespace) {
-                        value_expr = p.e(E.String{ .data = strings.trim(value, " \t\n\r") }, .{ .start = @intCast(idx) });
-                    } else {
-                        value_expr = p.e(E.String{ .data = value }, .{ .start = @intCast(idx) });
-                    }
+            // Process as arrays
+            for (all_records.items) |record| {
+                var row_array = p.e(E.Array{}, .{ .start = 0 });
+                for (record.items) |value_expr| {
                     try row_array.data.e_array.push(p.allocator, value_expr);
                 }
-
                 try p.result.data_array.data.e_array.push(p.allocator, row_array);
             }
         }
@@ -647,6 +706,7 @@ pub const CSV = struct {
     }
 
     fn addCommentToArray(p: *CSV, comment_text: []const u8) !void {
+        // currently lines are 0-indexed, check what other parsers do
         const loc = logger.Loc{ .start = @intCast(p.line_number) };
 
         var comment_obj = p.e(E.Object{}, loc);
@@ -663,6 +723,51 @@ pub const CSV = struct {
         });
 
         try p.result.comments.data.e_array.push(p.allocator, comment_obj);
+    }
+
+    /// Parse a string value with dynamic typing enabled
+    /// Returns an Expr with the appropriate type: boolean, number, bigint, or string
+    fn parseValueWithDynamicTyping(p: *CSV, value: []const u8, loc: logger.Loc) !Expr {
+        // Apply trimming if enabled
+        const trimmed_value = if (p.options.trim_whitespace)
+            strings.trim(value, " \t\n\r")
+        else
+            value;
+
+        // Empty string stays empty string
+        if (trimmed_value.len == 0) {
+            return p.e(E.String{ .data = trimmed_value }, loc);
+        }
+
+        // Try to parse as boolean first
+        if (std.ascii.eqlIgnoreCase(trimmed_value, "true")) {
+            return p.e(E.Boolean{ .value = true }, loc);
+        } else if (std.ascii.eqlIgnoreCase(trimmed_value, "false")) {
+            return p.e(E.Boolean{ .value = false }, loc);
+        }
+
+        // Check if the value is null
+        if (std.ascii.eqlIgnoreCase(trimmed_value, "null")) {
+            return p.e(E.Null{}, loc);
+        }
+
+        // Try to parse as number
+        if (std.fmt.parseFloat(f64, trimmed_value)) |parsed_number| {
+            // Check if the number is within safe integer range
+            if (@abs(parsed_number) <= @as(f64, @floatFromInt(JSC.MAX_SAFE_INTEGER)) and @trunc(parsed_number) == parsed_number) {
+                // It's a safe integer, use as number
+                return p.e(E.Number{ .value = parsed_number }, loc);
+            } else if (@trunc(parsed_number) == parsed_number) {
+                // It's an integer but outside safe range, use as bigint
+                return p.e(E.BigInt{ .value = trimmed_value }, loc);
+            } else {
+                // It's a floating point number
+                return p.e(E.Number{ .value = parsed_number }, loc);
+            }
+        } else |_| {
+            // Not a valid number, keep as string
+            return p.e(E.String{ .data = trimmed_value }, loc);
+        }
     }
 };
 

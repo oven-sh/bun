@@ -1,4 +1,4 @@
-const QueryBindingIterator = union(enum) {
+pub const QueryBindingIterator = union(enum) {
     array: JSC.JSArrayIterator,
     objects: ObjectIterator,
 

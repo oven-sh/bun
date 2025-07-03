@@ -29,7 +29,7 @@ pub const StackReader = struct {
         return this.buffer.len >= (this.offset.* + length);
     }
 
-    pub fn init(buffer: []const u8, offset: *usize, message_start: *usize) protocol.NewReader(StackReader) {
+    pub fn init(buffer: []const u8, offset: *usize, message_start: *usize) NewReader(StackReader) {
         return .{
             .wrapped = .{
                 .buffer = buffer,
@@ -1534,18 +1534,16 @@ fn TODO(comptime Type: type) !void {
 }
 const std = @import("std");
 const bun = @import("bun");
-const postgres = bun.api.Postgres;
-const Data = postgres.Data;
-const protocol = @This();
-const PostgresInt32 = postgres.PostgresInt32;
-const PostgresShort = postgres.PostgresShort;
 const String = bun.String;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const short = postgres.short;
-const int4 = postgres.int4;
-const int8 = postgres.int8;
-const PostgresInt64 = postgres.PostgresInt64;
-const types = postgres.types;
-const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;
+const types = @import("./PostgresTypes.zig");
+const int4 = types.int4;
+const int8 = types.int8;
+const short = types.short;
+const PostgresInt64 = types.PostgresInt64;
+const PostgresInt32 = types.PostgresInt32;
+const PostgresShort = types.PostgresShort;
+const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
+const Data = @import("./Data.zig").Data;
 const debug = bun.Output.scoped(.Postgres, false);

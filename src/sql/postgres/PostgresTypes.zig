@@ -5,7 +5,6 @@ const Data = postgres.Data;
 const String = bun.String;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const AnyPostgresError = postgres.AnyPostgresError;
 
 //     select b.typname,  b.oid, b.typarray
 //       from pg_catalog.pg_type a
@@ -557,3 +556,4 @@ pub const int8 = i64;
 pub const PostgresInt64 = int8;
 pub const short = u16;
 pub const PostgresShort = u16;
+pub const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;

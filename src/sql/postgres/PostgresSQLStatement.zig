@@ -7,7 +7,7 @@ signature: Signature,
 status: Status = Status.pending,
 error_response: ?Error = null,
 needs_duplicate_check: bool = true,
-fields_flags: PostgresSQLConnection.DataCell.Flags = .{},
+fields_flags: DataCell.Flags = .{},
 
 pub const Error = union(enum) {
     protocol: protocol.ErrorResponse,
@@ -63,7 +63,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
 
     // iterate backwards
     var remaining = this.fields.len;
-    var flags: PostgresSQLConnection.DataCell.Flags = .{};
+    var flags: DataCell.Flags = .{};
     while (remaining > 0) {
         remaining -= 1;
         const field: *protocol.FieldDescription = &this.fields[remaining];
@@ -182,3 +182,4 @@ const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 const String = bun.String;
+const DataCell = @import("./DataCell.zig").DataCell;

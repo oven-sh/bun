@@ -996,7 +996,7 @@ fn current(this: *PostgresSQLConnection) ?*PostgresSQLQuery {
     return this.requests.peekItem(0);
 }
 
-fn hasQueryRunning(this: *PostgresSQLConnection) bool {
+pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
     return !this.flags.is_ready_for_query or this.current() != null;
 }
 

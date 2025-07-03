@@ -36,12 +36,13 @@ const int4 = types.int4;
 const short = types.short;
 const int8 = types.int8;
 const PostgresInt32 = types.PostgresInt32;
-const PostgresInt64 = type s.PostgresInt64;
+const PostgresInt64 = types.PostgresInt64;
 const PostgresShort = types.PostgresShort;
 pub const protocol = @import("./postgres/PostgresProtocol.zig");
-const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
+
 const PostgresRequest = @import("./postgres/PostgresRequest.zig");
 const SSLMode = @import("./postgres/SSLMode.zig").SSLMode;
 const Data = @import("./postgres/Data.zig").Data;
-const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
-const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
+pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
+pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
+pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");

@@ -2098,12 +2098,6 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
         return napi_set_last_error(env, napi_ok);
     }
 
-    if (bufsize == NAPI_AUTO_LENGTH) [[unlikely]] {
-        if (writtenPtr) *writtenPtr = 0;
-        buf[0] = '\0';
-        return napi_set_last_error(env, napi_ok);
-    }
-
     size_t written;
     std::span<unsigned char> writable_byte_slice(reinterpret_cast<unsigned char*>(buf),
         EncodeTo == NapiStringEncoding::utf16

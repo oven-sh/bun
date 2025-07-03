@@ -11,6 +11,7 @@ const logger = bun.logger;
 const JSON = bun.JSON;
 const RunCommand = bun.RunCommand;
 const Environment = bun.Environment;
+const JSPrinter = bun.js_printer;
 
 pub const PmVersionCommand = struct {
     const VersionType = enum {
@@ -59,30 +60,45 @@ pub const PmVersionCommand = struct {
         defer ctx.allocator.free(package_json_contents);
 
         const package_json_source = logger.Source.initPathString(package_json_path, package_json_contents);
-        const json = JSON.parsePackageJSONUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+        const json_result = JSON.parsePackageJSONUTF8WithOpts(
+            &package_json_source,
+            ctx.log,
+            ctx.allocator,
+            .{
+                .is_json = true,
+                .allow_comments = true,
+                .allow_trailing_commas = true,
+                .guess_indentation = true,
+            },
+        ) catch |err| {
             Output.errGeneric("Failed to parse package.json: {s}", .{@errorName(err)});
             Global.exit(1);
         };
 
-        const scripts = json.asProperty("scripts");
+        var json = json_result.root;
+
+        if (json.data != .e_object) {
+            Output.errGeneric("Failed to parse package.json: root must be an object", .{});
+            Global.exit(1);
+        }
+
+        const scripts = if (pm.options.do.run_scripts) json.asProperty("scripts") else null;
         const scripts_obj = if (scripts) |s| if (s.expr.data == .e_object) s.expr else null else null;
 
-        if (pm.options.do.run_scripts) {
-            if (scripts_obj) |s| {
-                if (s.get("preversion")) |script| {
-                    if (script.asString(ctx.allocator)) |script_command| {
-                        try RunCommand.runPackageScriptForeground(
-                            ctx,
-                            ctx.allocator,
-                            script_command,
-                            "preversion",
-                            package_json_dir,
-                            pm.env,
-                            &.{},
-                            pm.options.log_level == .silent,
-                            ctx.debug.use_system_shell,
-                        );
-                    }
+        if (scripts_obj) |s| {
+            if (s.get("preversion")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "preversion",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
                 }
             }
         }
@@ -96,49 +112,80 @@ pub const PmVersionCommand = struct {
                     else => {},
                 }
             }
-            Output.errGeneric("No version field found in package.json", .{});
-            Global.exit(1);
+            break :brk_version null;
         };
 
-        const new_version_str = try calculateNewVersion(ctx.allocator, current_version, version_type, new_version, pm.options.preid, package_json_dir);
+        const new_version_str = try calculateNewVersion(ctx.allocator, current_version orelse "0.0.0", version_type, new_version, pm.options.preid, package_json_dir);
         defer ctx.allocator.free(new_version_str);
 
-        if (!pm.options.allow_same_version and strings.eql(current_version, new_version_str)) {
-            Output.errGeneric("Version not changed", .{});
-            Global.exit(1);
-        }
-
         {
-            const updated_contents = try updateVersionString(ctx.allocator, package_json_contents, current_version, new_version_str);
-            defer ctx.allocator.free(updated_contents);
+            if (current_version) |version| {
+                if (!pm.options.allow_same_version and strings.eql(version, new_version_str)) {
+                    Output.errGeneric("Version not changed", .{});
+                    Global.exit(1);
+                }
 
-            const file = std.fs.cwd().openFile(package_json_path, .{ .mode = .write_only }) catch |err| {
-                Output.errGeneric("Failed to open package.json for writing: {s}", .{@errorName(err)});
+                if (json.asProperty("version")) |version_prop| {
+                    version_prop.expr.data.e_string.data = try ctx.allocator.dupe(u8, new_version_str);
+                } else {
+                    unreachable;
+                }
+            } else {
+                const properties = json.data.e_object.properties.slice();
+                var new_properties = try ctx.allocator.alloc(bun.JSAst.G.Property, properties.len + 1);
+                @memcpy(new_properties[0..properties.len], properties);
+                new_properties[properties.len] = .{
+                    .key = bun.JSAst.Expr.allocate(ctx.allocator, bun.JSAst.E.String, .{
+                        .data = try ctx.allocator.dupe(u8, "version"),
+                    }, bun.logger.Loc.Empty),
+                    .value = bun.JSAst.Expr.allocate(ctx.allocator, bun.JSAst.E.String, .{
+                        .data = try ctx.allocator.dupe(u8, new_version_str),
+                    }, bun.logger.Loc.Empty),
+                };
+                json.data.e_object.properties = bun.JSAst.G.Property.List.init(new_properties);
+            }
+
+            var buffer_writer = JSPrinter.BufferWriter.init(ctx.allocator);
+            buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
+            var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+            _ = JSPrinter.printJSON(
+                @TypeOf(&package_json_writer),
+                &package_json_writer,
+                json,
+                &package_json_source,
+                .{
+                    .indent = json_result.indentation,
+                    .mangled_props = null,
+                },
+            ) catch |err| {
+                Output.errGeneric("Failed to print package.json: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            defer file.close();
 
-            try file.seekTo(0);
-            try file.setEndPos(0);
-            try file.writeAll(updated_contents);
+            std.fs.cwd().writeFile(.{
+                .sub_path = package_json_path,
+                .data = package_json_writer.ctx.writtenWithoutTrailingZero(),
+            }) catch |err| {
+                Output.errGeneric("Failed to write package.json: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
         }
 
-        if (pm.options.do.run_scripts) {
-            if (scripts_obj) |s| {
-                if (s.get("version")) |script| {
-                    if (script.asString(ctx.allocator)) |script_command| {
-                        try RunCommand.runPackageScriptForeground(
-                            ctx,
-                            ctx.allocator,
-                            script_command,
-                            "version",
-                            package_json_dir,
-                            pm.env,
-                            &.{},
-                            pm.options.log_level == .silent,
-                            ctx.debug.use_system_shell,
-                        );
-                    }
+        if (scripts_obj) |s| {
+            if (s.get("version")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "version",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
                 }
             }
         }
@@ -147,22 +194,20 @@ pub const PmVersionCommand = struct {
             try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir);
         }
 
-        if (pm.options.do.run_scripts) {
-            if (scripts_obj) |s| {
-                if (s.get("postversion")) |script| {
-                    if (script.asString(ctx.allocator)) |script_command| {
-                        try RunCommand.runPackageScriptForeground(
-                            ctx,
-                            ctx.allocator,
-                            script_command,
-                            "postversion",
-                            package_json_dir,
-                            pm.env,
-                            &.{},
-                            pm.options.log_level == .silent,
-                            ctx.debug.use_system_shell,
-                        );
-                    }
+        if (scripts_obj) |s| {
+            if (s.get("postversion")) |script| {
+                if (script.asString(ctx.allocator)) |script_command| {
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_command,
+                        "postversion",
+                        package_json_dir,
+                        pm.env,
+                        &.{},
+                        pm.options.log_level == .silent,
+                        ctx.debug.use_system_shell,
+                    );
                 }
             }
         }
@@ -201,7 +246,7 @@ pub const PmVersionCommand = struct {
             return;
         }
 
-        if (!try isGitClean(cwd) and !pm.options.force) {
+        if (!pm.options.force and !try isGitClean(cwd)) {
             Output.errGeneric("Git working directory not clean.", .{});
             Global.exit(1);
         }
@@ -293,76 +338,22 @@ pub const PmVersionCommand = struct {
             \\<b>Options<r>:
             \\  <cyan>--no-git-tag-version<r> <d>Skip git operations<r>
             \\  <cyan>--allow-same-version<r> <d>Prevents throwing error if version is the same<r>
-            \\  <cyan>--message<d>=\<val\><r>, <cyan>-m<r>  <d>Custom commit message<r>
-            \\  <cyan>--preid<d>=\<val\><r>        <d>Prerelease identifier<r>
+            \\  <cyan>--message<d>=\<val\><r>, <cyan>-m<r>  <d>Custom commit message, use %s for version substitution<r>
+            \\  <cyan>--preid<d>=\<val\><r>        <d>Prerelease identifier (i.e beta → {s})<r>
+            \\  <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>
             \\
             \\<b>Examples<r>:
             \\  <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>
             \\  <d>$<r> <b><green>bun pm version<r> <blue>1.2.3<r> <cyan>--no-git-tag-version<r>
-            \\  <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r>
+            \\  <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r> <cyan>--message<r> <blue>"Release beta: %s"<r>
             \\
             \\More info: <magenta>https://bun.sh/docs/cli/pm#version<r>
             \\
         ;
-        Output.pretty(set_specific_version_help_text, .{});
+        Output.pretty(set_specific_version_help_text, .{
+            try calculateNewVersion(ctx.allocator, current_version, .prerelease, null, "beta", cwd),
+        });
         Output.flush();
-    }
-
-    fn updateVersionString(allocator: std.mem.Allocator, contents: []const u8, old_version: []const u8, new_version: []const u8) ![]const u8 {
-        const version_key = "\"version\"";
-
-        var search_start: usize = 0;
-        while (std.mem.indexOfPos(u8, contents, search_start, version_key)) |key_pos| {
-            var colon_pos = key_pos + version_key.len;
-            while (colon_pos < contents.len and (contents[colon_pos] == ' ' or contents[colon_pos] == '\t')) {
-                colon_pos += 1;
-            }
-
-            if (colon_pos >= contents.len or contents[colon_pos] != ':') {
-                search_start = key_pos + 1;
-                continue;
-            }
-
-            colon_pos += 1;
-            while (colon_pos < contents.len and (contents[colon_pos] == ' ' or contents[colon_pos] == '\t')) {
-                colon_pos += 1;
-            }
-
-            if (colon_pos >= contents.len or contents[colon_pos] != '"') {
-                search_start = key_pos + 1;
-                continue;
-            }
-
-            const value_start = colon_pos + 1;
-
-            var value_end = value_start;
-            while (value_end < contents.len and contents[value_end] != '"') {
-                if (contents[value_end] == '\\' and value_end + 1 < contents.len) {
-                    value_end += 2;
-                } else {
-                    value_end += 1;
-                }
-            }
-
-            if (value_end >= contents.len) {
-                search_start = key_pos + 1;
-                continue;
-            }
-
-            const current_value = contents[value_start..value_end];
-            if (strings.eql(current_value, old_version)) {
-                var result = std.ArrayList(u8).init(allocator);
-                try result.appendSlice(contents[0..value_start]);
-                try result.appendSlice(new_version);
-                try result.appendSlice(contents[value_end..]);
-                return result.toOwnedSlice();
-            }
-
-            search_start = value_end + 1;
-        }
-
-        Output.errGeneric("Version not found in package.json", .{});
-        Global.exit(1);
     }
 
     fn calculateNewVersion(allocator: std.mem.Allocator, current_str: []const u8, version_type: VersionType, specific_version: ?[]const u8, preid: []const u8, cwd: []const u8) bun.OOM![]const u8 {
@@ -487,12 +478,15 @@ pub const PmVersionCommand = struct {
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
             },
-        }) catch return false;
+        }) catch |err| {
+            Output.errGeneric("Failed to spawn git process: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
 
         switch (proc) {
             .err => |err| {
                 Output.err(err, "Failed to spawn git process", .{});
-                return false;
+                Global.exit(1);
             },
             .result => |result| {
                 return result.isOK() and result.stdout.items.len == 0;
@@ -566,24 +560,30 @@ pub const PmVersionCommand = struct {
             },
         }) catch |err| {
             Output.errGeneric("Git add failed: {s}", .{@errorName(err)});
-            return;
+            Global.exit(1);
         };
 
         switch (stage_proc) {
             .err => |err| {
                 Output.err(err, "Git add failed unexpectedly", .{});
-                return;
+                Global.exit(1);
             },
             .result => |result| {
                 if (!result.isOK()) {
                     Output.errGeneric("Git add failed with exit code {d}", .{result.status.exited.code});
-                    return;
+                    Global.exit(1);
                 }
             },
         }
 
-        const commit_message = custom_message orelse try std.fmt.allocPrint(allocator, "v{s}", .{version});
-        defer if (custom_message == null) allocator.free(commit_message);
+        const commit_message = if (custom_message) |msg|
+            if (strings.indexOf(msg, "%s")) |_|
+                try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
+            else
+                try allocator.dupe(u8, msg)
+        else
+            try std.fmt.allocPrint(allocator, "v{s}", .{version});
+        defer allocator.free(commit_message);
 
         const commit_proc = bun.spawnSync(&.{
             .argv = &.{ git_path, "commit", "-m", commit_message },
@@ -597,18 +597,18 @@ pub const PmVersionCommand = struct {
             },
         }) catch |err| {
             Output.errGeneric("Git commit failed: {s}", .{@errorName(err)});
-            return;
+            Global.exit(1);
         };
 
         switch (commit_proc) {
             .err => |err| {
                 Output.err(err, "Git commit failed unexpectedly", .{});
-                return;
+                Global.exit(1);
             },
             .result => |result| {
                 if (!result.isOK()) {
                     Output.errGeneric("Git commit failed", .{});
-                    return;
+                    Global.exit(1);
                 }
             },
         }
@@ -628,18 +628,18 @@ pub const PmVersionCommand = struct {
             },
         }) catch |err| {
             Output.errGeneric("Git tag failed: {s}", .{@errorName(err)});
-            return;
+            Global.exit(1);
         };
 
         switch (tag_proc) {
             .err => |err| {
                 Output.err(err, "Git tag failed unexpectedly", .{});
-                return;
+                Global.exit(1);
             },
             .result => |result| {
                 if (!result.isOK()) {
                     Output.errGeneric("Git tag failed", .{});
-                    return;
+                    Global.exit(1);
                 }
             },
         }

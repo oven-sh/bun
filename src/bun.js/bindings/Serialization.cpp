@@ -29,12 +29,11 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     auto forTransferEnum = forTransferBool ? SerializationForTransfer::Yes : SerializationForTransfer::No;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
+    EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());
     if (serialized.hasException()) {
-        scope.exception();
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, { 0 });
     }
-    scope.assertNoException();
 
     auto serializedValue = serialized.releaseReturnValue();
 

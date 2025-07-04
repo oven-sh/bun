@@ -31,7 +31,7 @@ export function expectType<T>(arg: T): {
 };
 
 export function expectType<T>(arg?: T) {
-  return { is() {} };
+  return { is() {}, extends() {} };
 }
 
 export declare const expectAssignable: <T>(expression: T) => void;

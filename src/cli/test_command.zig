@@ -603,7 +603,11 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
-        var buffered_writer = std.io.bufferedWriter(writer_);
+        const BufferedWriter = std.io.BufferedWriter(4096, @TypeOf(writer_));
+        var buffered_writer: BufferedWriter = undefined;
+        // https://github.com/ziglang/zig/issues/24313
+        buffered_writer.unbuffered_writer = writer_;
+        buffered_writer.end = 0;
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
 
@@ -854,10 +858,9 @@ pub const CommandLineReporter = struct {
                         const writer = f.writer();
                         // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
                         const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
-                        ptr.* = .{
-                            .end = 0,
-                            .unbuffered_writer = writer,
-                        };
+                        // https://github.com/ziglang/zig/issues/24313
+                        ptr.end = 0;
+                        ptr.unbuffered_writer = writer;
                         break :buffered_writer ptr;
                     };
 

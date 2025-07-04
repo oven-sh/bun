@@ -1934,7 +1934,11 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
     defer this.had_errors = prev_had_errors;
 
     const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
+    const BufferedErrorWriter = std.io.BufferedWriter(4096, @TypeOf(error_writer));
+    var buffered_writer: BufferedErrorWriter = undefined;
+    // https://github.com/ziglang/zig/issues/24313
+    buffered_writer.unbuffered_writer = error_writer;
+    buffered_writer.end = 0;
     defer {
         buffered_writer.flush() catch {};
     }

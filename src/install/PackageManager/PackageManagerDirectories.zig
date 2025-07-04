@@ -678,9 +678,11 @@ pub fn writeYarnLock(this: *PackageManager) !void {
 
     var file = tmpfile.file();
     const file_writer = file.writer();
-    var buffered_writer = std.io.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer)){
-        .unbuffered_writer = file_writer,
-    };
+    const BufferedWriter = std.io.BufferedWriter(std.heap.page_size_min, @TypeOf(file_writer));
+    // https://github.com/ziglang/zig/issues/24313
+    var buffered_writer: BufferedWriter = undefined;
+    buffered_writer.unbuffered_writer = file_writer;
+    buffered_writer.end = 0;
     const writer = buffered_writer.writer();
     try Lockfile.Printer.Yarn.print(&printer, @TypeOf(writer), writer);
     try buffered_writer.flush();

@@ -183,7 +183,7 @@ fn start(other_vm: *VirtualMachine) void {
 
         loop.enter();
         defer loop.exit();
-        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect);
+        bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__startJSDebuggerThread, .{ this.global, debugger.script_execution_context_id, &url, 1, debugger.mode == .connect }) catch @panic("unreachable");
     }
 
     if (debugger.path_or_port) |path_or_port| {
@@ -191,7 +191,7 @@ fn start(other_vm: *VirtualMachine) void {
 
         loop.enter();
         defer loop.exit();
-        Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
+        bun.jsc.fromJSHostCallGeneric(this.global, @src(), Bun__startJSDebuggerThread, .{ this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect }) catch @panic("unreachable");
     }
 
     this.global.handleRejectedPromises();

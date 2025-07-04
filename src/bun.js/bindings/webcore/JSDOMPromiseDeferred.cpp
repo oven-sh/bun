@@ -154,7 +154,7 @@ void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandle
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     if (exception.code() == ExistingExceptionError) {
-        EXCEPTION_ASSERT(scope.exception());
+        ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
         scope.clearException();
@@ -189,7 +189,7 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     if (ec == ExistingExceptionError) {
-        EXCEPTION_ASSERT(scope.exception());
+        ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
         scope.clearException();

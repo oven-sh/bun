@@ -304,9 +304,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     if (allowStringInPlaceOfOptions && optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+    } else {
+        auto from = options.fromJS(globalObject, vm, scope, optionsArg);
         RETURN_IF_EXCEPTION(scope, {});
-        options = {};
+        if (!from) {
+            options = {};
+        }
     }
 
     // Set the contextified object before evaluating
@@ -519,7 +522,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSObject* context = asObject(contextArg);
     ASSERT(nodeVmGlobalObject != nullptr);
 
-    return runInContext(nodeVmGlobalObject, script, context, args.at(1));
+    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, context, args.at(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

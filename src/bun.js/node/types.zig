@@ -173,7 +173,7 @@ pub const StringOrBuffer = union(enum) {
         return result;
     }
 
-    pub fn toJS(this: *StringOrBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *StringOrBuffer, ctx: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             inline .threadsafe_string, .string => |*str| {
                 return str.transferToJS(ctx);

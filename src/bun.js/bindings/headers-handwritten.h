@@ -404,7 +404,7 @@ extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::E
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**
  * @brief `Bun.deepMatch(a, b)`
@@ -445,7 +445,7 @@ bool Bun__deepMatch(
     JSC::JSValue subset,
     std::set<JSC::EncodedJSValue>* seenSubsetProperties,
     JSC::JSGlobalObject* globalObject,
-    JSC::ThrowScope* throwScope,
+    JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);

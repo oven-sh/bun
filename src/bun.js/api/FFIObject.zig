@@ -1,4 +1,4 @@
-pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
+pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) bun.JSError!JSC.JSValue {
     switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
         .err => |err| {
             return err;

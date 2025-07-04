@@ -47,14 +47,14 @@ static bool invokeReadableStreamDefaultControllerFunction(JSC::JSGlobalObject& l
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
 
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, false);
 
     ASSERT(function.isCallable());
 
     auto callData = JSC::getCallData(function);
     call(&lexicalGlobalObject, function, callData, JSC::jsUndefined(), arguments);
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     return !scope.exception();
 }
 
@@ -145,7 +145,7 @@ bool ReadableStreamDefaultController::enqueue(RefPtr<JSC::ArrayBuffer>&& buffer)
     auto length = buffer->byteLength();
     auto value = JSC::JSUint8Array::create(&lexicalGlobalObject, lexicalGlobalObject.typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTFMove(buffer), 0, length);
 
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, false);
 
     return enqueue(value);

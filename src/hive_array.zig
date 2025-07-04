@@ -20,16 +20,21 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
         ///
         /// https://github.com/ziglang/zig/issues/22462
         /// https://github.com/ziglang/zig/issues/21988
-        pub var empty: Self = .{
-            .buffer = undefined,
-            .used = .initEmpty(),
+        pub var empty: Self = brk: {
+            var self: Self = undefined;
+            self.used = .initEmpty();
+            break :brk self;
         };
 
         pub fn init() Self {
-            return .{
-                .buffer = undefined,
-                .used = .initEmpty(),
-            };
+            var self: Self = undefined;
+            self.zero();
+            return self;
+        }
+
+        pub inline fn zero(this: *Self) void {
+            // https://github.com/ziglang/zig/issues/24313
+            this.used = .initEmpty();
         }
 
         pub fn get(self: *Self) ?*T {
@@ -86,11 +91,13 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
             pub const This = @This();
 
-            pub fn init(allocator: std.mem.Allocator) This {
-                return .{
-                    .allocator = allocator,
-                    .hive = if (comptime capacity > 0) Self.empty,
-                };
+            pub inline fn init(allocator: std.mem.Allocator) This {
+                var self: This = undefined;
+                self.allocator = allocator;
+                if (comptime capacity > 0) {
+                    self.hive.zero();
+                }
+                return self;
             }
 
             pub fn get(self: *This) *T {

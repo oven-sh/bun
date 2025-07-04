@@ -1592,11 +1592,12 @@ pub const PackCommand = struct {
         defer pack_list.deinit(ctx.allocator);
 
         var read_buf: [8192]u8 = undefined;
+
         const file_reader = try ctx.allocator.create(BufferedFileReader);
         defer ctx.allocator.destroy(file_reader);
-        file_reader.* = .{
-            .unbuffered_reader = undefined,
-        };
+        // https://github.com/ziglang/zig/issues/24313
+        file_reader.end = 0;
+        file_reader.start = 0;
 
         var entry = Archive.Entry.new2(archive);
 

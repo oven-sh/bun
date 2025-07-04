@@ -394,8 +394,10 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         masks: [num_masks]MaskInt,
 
         /// Creates a bit set with no elements present.
-        pub fn initEmpty() Self {
-            return .{ .masks = [_]MaskInt{0} ** num_masks };
+        pub inline fn initEmpty() Self {
+            var self: Self = undefined;
+            @memset(self.masks[0..num_masks], 0);
+            return self;
         }
 
         /// Creates a bit set with all elements present.
@@ -408,7 +410,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         }
 
         /// Returns the number of bits in this bit set
-        pub fn capacity(self: Self) callconv(bun.callconv_inline) usize {
+        pub fn capacity(self: *const Self) callconv(bun.callconv_inline) usize {
             _ = self;
             return bit_length;
         }

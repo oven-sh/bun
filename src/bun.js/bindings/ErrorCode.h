@@ -159,7 +159,7 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
 
 }
 
-void throwBoringSSLError(JSGlobalObject* globalObject, int errorCode);
-void throwCryptoOperationFailed(JSGlobalObject* globalObject);
+void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);
+void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);
 
 }

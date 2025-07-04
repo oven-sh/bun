@@ -252,7 +252,7 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
     // Initialize the X509 certificate from the provided data
     auto result = ncrypto::X509Pointer::Parse(ncrypto::Buffer<const unsigned char> { reinterpret_cast<const unsigned char*>(der.data()), der.size() });
     if (!result) {
-        Bun::throwBoringSSLError(globalObject, result.error.value_or(0));
+        Bun::throwBoringSSLError(globalObject, scope, result.error.value_or(0));
         return nullptr;
     }
 
@@ -428,7 +428,7 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
     if (!legacy) {
         auto bio = view.getSubject();
         if (!bio) {
-            throwCryptoOperationFailed(globalObject);
+            throwCryptoOperationFailed(globalObject, scope);
             return {};
         }
         return jsString(vm, toWTFString(bio));
@@ -450,10 +450,11 @@ JSValue JSX509Certificate::computeSubject(ncrypto::X509View view, JSGlobalObject
 JSValue JSX509Certificate::computeIssuer(ncrypto::X509View view, JSGlobalObject* globalObject, bool legacy)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.getIssuer();
     if (!bio) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return {};
     }
 
@@ -461,16 +462,17 @@ JSValue JSX509Certificate::computeIssuer(ncrypto::X509View view, JSGlobalObject*
         return jsString(vm, toWTFString(bio));
     }
 
-    return GetX509NameObject<X509_get_issuer_name>(globalObject, view.get());
+    RELEASE_AND_RETURN(scope, GetX509NameObject<X509_get_issuer_name>(globalObject, view.get()));
 }
 
 JSString* JSX509Certificate::computeValidFrom(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.getValidFrom();
     if (!bio) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -480,10 +482,11 @@ JSString* JSX509Certificate::computeValidFrom(ncrypto::X509View view, JSGlobalOb
 JSString* JSX509Certificate::computeValidTo(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.getValidTo();
     if (!bio) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -493,10 +496,11 @@ JSString* JSX509Certificate::computeValidTo(ncrypto::X509View view, JSGlobalObje
 JSString* JSX509Certificate::computeSerialNumber(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto serial = view.getSerialNumber();
     if (!serial) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -506,10 +510,11 @@ JSString* JSX509Certificate::computeSerialNumber(ncrypto::X509View view, JSGloba
 JSString* JSX509Certificate::computeFingerprint(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto fingerprint = view.getFingerprint(EVP_sha1());
     if (!fingerprint) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -519,10 +524,11 @@ JSString* JSX509Certificate::computeFingerprint(ncrypto::X509View view, JSGlobal
 JSString* JSX509Certificate::computeFingerprint256(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto fingerprint = view.getFingerprint(EVP_sha256());
     if (!fingerprint) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -532,10 +538,11 @@ JSString* JSX509Certificate::computeFingerprint256(ncrypto::X509View view, JSGlo
 JSString* JSX509Certificate::computeFingerprint512(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto fingerprint = view.getFingerprint(EVP_sha512());
     if (!fingerprint) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return jsEmptyString(vm);
     }
 
@@ -544,9 +551,12 @@ JSString* JSX509Certificate::computeFingerprint512(ncrypto::X509View view, JSGlo
 
 JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto bio = view.toDER();
     if (!bio) {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return nullptr;
     }
 
@@ -557,7 +567,7 @@ JSUint8Array* JSX509Certificate::computeRaw(ncrypto::X509View view, JSGlobalObje
     Ref<JSC::ArrayBuffer> buffer = JSC::ArrayBuffer::createFromBytes(std::span(reinterpret_cast<uint8_t*>(bptr->data), bptr->length), createSharedTask<void(void*)>([](void* data) {
         ncrypto::BIOPointer free_me(static_cast<BIO*>(data));
     }));
-    return Bun::createBuffer(globalObject, WTFMove(buffer));
+    RELEASE_AND_RETURN(scope, Bun::createBuffer(globalObject, WTFMove(buffer)));
 }
 
 bool JSX509Certificate::computeIsCA(ncrypto::X509View view, JSGlobalObject* globalObject)
@@ -576,7 +586,7 @@ static bool handleMatchResult(JSGlobalObject* globalObject, ASCIILiteral errorMe
     case ncrypto::X509View::CheckMatch::MATCH:
         return true;
     default: {
-        throwCryptoOperationFailed(globalObject);
+        throwCryptoOperationFailed(globalObject, scope);
         return false;
     }
     }

@@ -174,8 +174,8 @@ expectType(sql).is<Bun.SQL>();
 const opts2: Bun.SQLOptions = { url: "postgres://localhost" };
 expectType(opts2).is<Bun.SQLOptions>();
 
-const txCb = (async sql => [sql<[1]>`SELECT 1`]) satisfies Bun.SQLTransactionContextCallback<unknown>;
-const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQLSavepointContextCallback<unknown>;
+const txCb = (async sql => [sql<[1]>`SELECT 1`]) satisfies Bun.SQL.TransactionContextCallback<unknown>;
+const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointContextCallback<unknown>;
 
 expectType(await sql.begin(txCb)).is<[1][]>();
 expectType(await sql.begin(spCb)).is<[2][]>();

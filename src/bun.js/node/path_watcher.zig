@@ -497,7 +497,7 @@ pub const PathWatcherManager = struct {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err },
+                            .err => |err| return .{ .err = err.withPath(child_path.path) },
                             .result => {},
                         }
                     }
@@ -537,7 +537,7 @@ pub const PathWatcherManager = struct {
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.JSC.Maybe(void) {
         const fd = path.fd;
         switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
-            .err => |err| return .{ .err = err },
+            .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
 
@@ -878,7 +878,9 @@ pub const PathWatcher = struct {
         }
 
         this.needs_flush = true;
-        if (this.isClosed()) return;
+        if (this.isClosed()) {
+            return;
+        }
         this.callback(this.ctx, event, is_file);
     }
 

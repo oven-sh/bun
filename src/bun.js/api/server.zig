@@ -3156,13 +3156,13 @@ pub const AnyServer = struct {
     pub fn onRequest(
         this: AnyServer,
         req: *uws.Request,
-        resp: *uws.NewApp(false).Response,
+        resp: bun.uws.AnyResponse,
     ) void {
         return switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequest(req, resp),
-            Ptr.case(HTTPSServer) => @panic("TODO: https"),
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequest(req, resp),
-            Ptr.case(DebugHTTPSServer) => @panic("TODO: https"),
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequest(req, resp.assertNoSSL()),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onRequest(req, resp.assertSSL()),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequest(req, resp.assertNoSSL()),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onRequest(req, resp.assertSSL()),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

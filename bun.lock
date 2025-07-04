@@ -4,7 +4,6 @@
     "": {
       "name": "bun",
       "devDependencies": {
-        "@types/react": "^18.3.3",
         "esbuild": "^0.21.4",
         "mitata": "^0.1.11",
         "peechy": "0.4.34",
@@ -29,13 +28,17 @@
         "@types/node": "*",
       },
       "devDependencies": {
+        "@types/react": "^19",
         "typescript": "^5.0.2",
+      },
+      "peerDependencies": {
+        "@types/react": "^19",
       },
     },
   },
   "overrides": {
-    "bun-types": "workspace:packages/bun-types",
     "@types/bun": "workspace:packages/@types/bun",
+    "bun-types": "workspace:packages/bun-types",
   },
   "packages": {
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.21.5", "", { "os": "aix", "cpu": "ppc64" }, "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ=="],
@@ -88,9 +91,7 @@
 
     "@types/node": ["@types/node@22.15.18", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-v1DKRfUdyW+jJhZNEI1PYy29S2YRxMV5AOO/x/SjKmW0acCIOqmbj6Haf9eHAhsPmrhlHSxEhv/1WszcLWV4cg=="],
 
-    "@types/prop-types": ["@types/prop-types@15.7.14", "", {}, "sha512-gNMvNH49DJ7OJYv+KAKn0Xp45p8PLl6zo2YnvDIbTd4J6MER2BmWN49TG7n9LvkyihINxeKW8+3bfS2yDC9dzQ=="],
-
-    "@types/react": ["@types/react@18.3.21", "", { "dependencies": { "@types/prop-types": "*", "csstype": "^3.0.2" } }, "sha512-gXLBtmlcRJeT09/sI4PxVwyrku6SaNUj/6cMubjE6T6XdY1fDmBL7r0nX0jbSZPU/Xr0KuwLLZh6aOYY5d91Xw=="],
+    "@types/react": ["@types/react@19.1.8", "", { "dependencies": { "csstype": "^3.0.2" } }, "sha512-AwAfQ2Wa5bCx9WP8nZL2uMZWod7J7/JSplxbTmBQ5ms6QpqNYm672H0Vu9ZVKVngQ+ii4R/byguVEUZQyeg44g=="],
 
     "bun-types": ["bun-types@workspace:packages/bun-types"],
 

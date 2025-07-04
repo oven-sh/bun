@@ -447,7 +447,7 @@ pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
     return ensureTempNodeGypScriptOnce.call(.{this});
 }
 
-pub var ensureTempNodeGypScriptOnce = bun.once(struct {
+var ensureTempNodeGypScriptOnce = bun.once(struct {
     pub fn run(manager: *PackageManager) !void {
         if (manager.node_gyp_tempdir_name.len > 0) return;
 

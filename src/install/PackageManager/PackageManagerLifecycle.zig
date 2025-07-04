@@ -296,7 +296,18 @@ pub fn spawnPackageLifecycleScripts(
     try script_env.put("PATH", PATH.slice());
 
     const envp = try script_env.createNullDelimitedEnvMap(this.allocator);
-    const shell_bin = if (Environment.isWindows) null else bun.CLI.RunCommand.findShell(this.env.get("PATH") orelse "", cwd) orelse null;
+
+    const shell_bin = shell_bin: {
+        if (comptime Environment.isWindows) {
+            break :shell_bin null;
+        }
+
+        if (this.env.get("PATH")) |env_path| {
+            break :shell_bin bun.CLI.RunCommand.findShell(env_path, cwd);
+        }
+
+        break :shell_bin null;
+    };
 
     try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, shell_bin, optional, log_level, foreground, install_ctx);
 }

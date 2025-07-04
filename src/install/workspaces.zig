@@ -1,40 +1,3 @@
-// @sortImports
-
-const std = @import("std");
-const bun = @import("bun");
-const install = bun.install;
-const Lockfile = install.Lockfile;
-const PackageManager = install.PackageManager;
-const DependencyID = install.DependencyID;
-const PackageID = install.PackageID;
-const Dependency = install.Dependency;
-const PackageInstall = install.PackageInstall;
-const sys = bun.sys;
-const FD = bun.FD;
-const Output = bun.Output;
-const Global = bun.Global;
-const Resolution = install.Resolution;
-const OOM = bun.OOM;
-const Semver = bun.Semver;
-const String = Semver.String;
-const invalid_package_id = install.invalid_package_id;
-const invalid_dependency_id = install.invalid_dependency_id;
-const string = bun.string;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const Tree = Lockfile.Tree;
-const strings = bun.strings;
-const Environment = bun.Environment;
-const ThreadPool = bun.ThreadPool;
-const PackageNameHash = install.PackageNameHash;
-const Walker = @import("../walker_skippable.zig");
-const Bin = install.Bin;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const Package = Lockfile.Package;
-const Command = bun.CLI.Command;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Progress = bun.Progress;
-const ProgressStrings = PackageManager.ProgressStrings;
-
 const modules_dir_name = ".bun";
 
 pub fn installIsolatedPackages(
@@ -2741,3 +2704,45 @@ pub const Store = struct {
         }
     };
 };
+
+// @sortImports
+
+const Walker = @import("../walker_skippable.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const ThreadPool = bun.ThreadPool;
+const string = bun.string;
+const strings = bun.strings;
+const sys = bun.sys;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.CLI.Command;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
+const install = bun.install;
+const Bin = install.Bin;
+const Dependency = install.Dependency;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const Package = Lockfile.Package;
+const Tree = Lockfile.Tree;
+
+const PackageManager = install.PackageManager;
+const ProgressStrings = PackageManager.ProgressStrings;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

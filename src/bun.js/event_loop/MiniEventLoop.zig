@@ -88,9 +88,10 @@ pub fn onAfterEventLoop(this: *MiniEventLoop) void {
 
 pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
-        this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
-        this.file_polls_.?.* = Async.FilePoll.Store.init();
-        return this.file_polls_.?;
+        const polls = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
+        polls.zero();
+        this.file_polls_ = polls;
+        return polls;
     };
 }
 

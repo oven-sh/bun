@@ -91,13 +91,11 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
             pub const This = @This();
 
-            pub inline fn init(allocator: std.mem.Allocator) This {
-                var self: This = undefined;
-                self.allocator = allocator;
+            pub inline fn zero(this: *This, allocator: std.mem.Allocator) void {
+                this.allocator = allocator;
                 if (comptime capacity > 0) {
-                    self.hive.zero();
+                    this.hive.zero();
                 }
-                return self;
             }
 
             pub fn get(self: *This) *T {

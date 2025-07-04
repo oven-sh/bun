@@ -2137,10 +2137,8 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
-    pub fn init() RuntimeTranspilerStore {
-        return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
-        };
+    pub fn zero(this: *RuntimeTranspilerStore) void {
+        this.store.zero(bun.typedAllocator(TranspilerJob));
     }
 
     // This is run at the top of the event loop on the JS thread.

@@ -34,7 +34,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             pub const size = largest_size * count * 2;
             pub const Size = std.math.IntFittingRange(0, size + largest_size);
 
-            buffer: [size]u8 align(largest_align) = undefined,
+            buffer: [size]u8 align(largest_align),
             bytes_used: Size = 0,
             next: ?*Block = null,
 

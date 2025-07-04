@@ -4309,7 +4309,7 @@ pub const H2FrameParser = struct {
             if (ENABLE_ALLOCATOR_POOL) {
                 if (H2FrameParser.pool == null) {
                     H2FrameParser.pool = bun.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator) catch bun.outOfMemory();
-                    H2FrameParser.pool.?.* = H2FrameParser.H2FrameParserHiveAllocator.init(bun.default_allocator);
+                    H2FrameParser.pool.?.zero(bun.default_allocator);
                 }
                 const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
 

@@ -545,15 +545,15 @@ pub const FilePoll = struct {
     // This ensures that we don't free a FilePoll before the next callback is called
     pub const Store = struct {
         hive: HiveArray,
-        pending_free_head: ?*FilePoll = null,
-        pending_free_tail: ?*FilePoll = null,
+        pending_free_head: ?*FilePoll,
+        pending_free_tail: ?*FilePoll,
 
         const log = Output.scoped(.FilePoll, false);
 
-        pub fn init() Store {
-            return .{
-                .hive = HiveArray.init(bun.typedAllocator(FilePoll)),
-            };
+        pub fn zero(this: *Store) void {
+            this.hive.zero(bun.typedAllocator(FilePoll));
+            this.pending_free_head = null;
+            this.pending_free_tail = null;
         }
 
         pub fn get(this: *Store) *FilePoll {

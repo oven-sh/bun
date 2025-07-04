@@ -7,11 +7,11 @@ previous: ?*ASTMemoryAllocator = null,
 
 pub fn enter(this: *ASTMemoryAllocator, allocator: std.mem.Allocator) ASTMemoryAllocator.Scope {
     this.allocator = allocator;
-    this.stack_allocator = SFA{
-        .buffer = undefined,
-        .fallback_allocator = allocator,
-        .fixed_buffer_allocator = undefined,
-    };
+    this.stack_allocator.fallback_allocator = allocator;
+    if (comptime std.debug.runtime_safety) {
+        this.stack_allocator.get_called = false;
+    }
+
     this.bump_allocator = this.stack_allocator.get();
     this.previous = null;
     var ast_scope = ASTMemoryAllocator.Scope{

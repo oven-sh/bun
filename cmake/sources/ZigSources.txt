@@ -758,6 +758,14 @@ src/sql/postgres/SocketMonitor.zig
 src/sql/postgres/SSLMode.zig
 src/sql/postgres/Status.zig
 src/sql/postgres/TLSStatus.zig
+src/sql/postgres/types/bool.zig
+src/sql/postgres/types/bytea.zig
+src/sql/postgres/types/date.zig
+src/sql/postgres/types/int_types.zig
+src/sql/postgres/types/json.zig
+src/sql/postgres/types/numeric.zig
+src/sql/postgres/types/string.zig
+src/sql/postgres/types/Tag.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig
 src/string_immutable.zig

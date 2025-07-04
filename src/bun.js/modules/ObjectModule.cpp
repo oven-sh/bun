@@ -26,7 +26,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
 
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
+            if (scope.exception()) [[unlikely]] {
                 scope.clearException();
                 value = jsUndefined();
             }
@@ -66,7 +66,7 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
 
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
-            if (scope.exception()) {
+            if (scope.exception()) [[unlikely]] {
                 scope.clearException();
                 value = jsUndefined();
             }

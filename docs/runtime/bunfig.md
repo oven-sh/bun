@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -353,6 +353,8 @@ dryRun = false
 
 To configure the directory where Bun puts globally installed packages.
 
+Environment variable: `BUN_INSTALL_GLOBAL_DIR`
+
 ```toml
 [install]
 # where `bun install --global` installs packages
@@ -362,6 +364,8 @@ globalDir = "~/.bun/install/global"
 ### `install.globalBinDir`
 
 To configure the directory where Bun installs globally installed binaries and CLIs.
+
+Environment variable: `BUN_INSTALL_BIN`
 
 ```toml
 # where globally-installed package bins are linked
@@ -380,6 +384,17 @@ registry = "https://registry.npmjs.org"
 registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
 registry = "https://username:password@registry.npmjs.org"
+```
+
+### `install.linkWorkspacePackages`
+
+To configure how workspace packages are linked, use the `install.linkWorkspacePackages` option.
+
+Whether to link workspace packages from the monorepo root to their respective `node_modules` directories. Default `true`.
+
+```toml
+[install]
+linkWorkspacePackages = true
 ```
 
 ### `install.scopes`

@@ -5,6 +5,8 @@
 #include "JavaScriptCore/AbstractModuleRecord.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
+#include "../vm/SigintReceiver.h"
+
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -25,7 +27,7 @@ private:
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;
 };
 
-class NodeVMModule : public JSC::JSDestructibleObject {
+class NodeVMModule : public JSC::JSDestructibleObject, public SigintReceiver {
 public:
     using Base = JSC::JSDestructibleObject;
 
@@ -57,23 +59,26 @@ public:
     void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
 
     // Purposely not virtual. Dispatches to the correct subclass.
-    bool finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex);
-
-    // Purposely not virtual. Dispatches to the correct subclass.
     JSValue createModuleRecord(JSC::JSGlobalObject* globalObject);
 
     // Purposely not virtual. Dispatches to the correct subclass.
     AbstractModuleRecord* moduleRecord(JSC::JSGlobalObject* globalObject);
 
+    JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
-    mutable WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
-    mutable WriteBarrier<JSObject> m_context;
+    WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
+    WriteBarrier<JSObject> m_context;
+    WriteBarrier<Unknown> m_evaluationResult;
+    WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
-    mutable WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
 
-    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context);
+    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
+
+    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

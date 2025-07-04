@@ -217,23 +217,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-static JSBundlerPluginNativeOnBeforeParseCallback nativeCallbackFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
-{
-    if (auto* fn = jsDynamicCast<JSFFIFunction*>(value)) {
-        return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
-    }
-
-    if (auto* object = value.getObject()) {
-        if (auto callbackValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(globalObject->vm(), String("native"_s)))) {
-            if (auto* fn = jsDynamicCast<JSFFIFunction*>(callbackValue)) {
-                return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
-            }
-        }
-    }
-
-    return nullptr;
-}
-
 void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external)
 {
     unsigned index = 0;
@@ -522,7 +505,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
         scope.clearException();
         if (!plugin->plugin.tombstoned) {

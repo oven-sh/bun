@@ -7,8 +7,6 @@ const Property = css.Property;
 const PropertyIdTag = css.PropertyIdTag;
 const PropertyCategory = css.logical.PropertyCategory;
 
-
-
 const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
 
 /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.

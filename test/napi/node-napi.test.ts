@@ -1,7 +1,6 @@
 import { Glob, spawn, spawnSync } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMusl, isWindows } from "harness";
-import os from "node:os";
 import { dirname, join } from "path";
 
 const jsNativeApiRoot = join(__dirname, "node-napi-tests", "test", "js-native-api");
@@ -88,67 +87,51 @@ for (const t of failingNodeApiTests) {
   }
 }
 
-beforeAll(async () => {
-  const directories = jsNativeApiTests
-    .filter(t => !failingJsNativeApiTests.includes(t))
-    .map(t => join(jsNativeApiRoot, t))
-    .concat(nodeApiTests.filter(t => !failingNodeApiTests.includes(t)).map(t => join(nodeApiRoot, t)))
-    .map(t => dirname(t));
-  const uniqueDirectories = Array.from(new Set(directories));
+const directories = jsNativeApiTests
+  .filter(t => !failingJsNativeApiTests.includes(t))
+  .map(t => join(jsNativeApiRoot, t))
+  .concat(nodeApiTests.filter(t => !failingNodeApiTests.includes(t)).map(t => join(nodeApiRoot, t)))
+  .map(t => dirname(t));
+const uniqueDirectories = Array.from(new Set(directories));
 
-  async function buildOne(dir: string) {
-    const child = spawn({
-      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug"],
-      cwd: dir,
-      stderr: "pipe",
-      stdout: "ignore",
-      stdin: "inherit",
-      env: {
-        ...bunEnv,
-        npm_config_target: "v23.2.0",
-        // on linux CI, node-gyp will default to g++ and the version installed there is very old,
-        // so we make it use clang instead
-        ...(process.platform == "linux" && isCI
-          ? { "CC": "/usr/lib/llvm-19/bin/clang", CXX: "/usr/lib/llvm-19/bin/clang++" }
-          : {}),
-      },
+describe("build", () => {
+  for (const dir of uniqueDirectories) {
+    it(`${dir.slice(import.meta.dir.length + 1)}`, async () => {
+      const child = spawn({
+        cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max"],
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "ignore",
+        stdin: "inherit",
+        env: {
+          ...bunEnv,
+          npm_config_target: "v24.3.0",
+          CXXFLAGS: (bunEnv.CXXFLAGS ?? "") + (process.platform == "win32" ? " -std=c++20" : " -std=gnu++20"),
+          // on linux CI, node-gyp will default to g++ and the version installed there is very old,
+          // so we make it use clang instead
+          ...(process.platform == "linux" && isCI
+            ? { "CC": "/usr/lib/llvm-19/bin/clang", CXX: "/usr/lib/llvm-19/bin/clang++" }
+            : {}),
+        },
+      });
+      await child.exited;
+      if (child.exitCode !== 0) {
+        const stderr = await new Response(child.stderr).text();
+        console.error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
+        console.error("bailing out!");
+        process.exit(1);
+      }
     });
-    await child.exited;
-    if (child.exitCode !== 0) {
-      const stderr = await new Response(child.stderr).text();
-      console.error(`node-gyp rebuild in ${dir} failed:\n${stderr}`);
-      console.error("bailing out!");
-      process.exit(1);
-    }
   }
+});
 
-  async function worker() {
-    while (uniqueDirectories.length > 0) {
-      const dir = uniqueDirectories.pop();
-      await buildOne(dir!);
-    }
-  }
-
-  const parallelism = Math.min(8, os.cpus().length, 1 /* TODO(@heimskr): remove */);
-  const jobs: Promise<void>[] = [];
-  for (let i = 0; i < parallelism; i++) {
-    jobs.push(worker());
-  }
-
-  await Promise.all(jobs);
-}, 600000);
-
-describe.each([
-  ["js-native-api", jsNativeApiTests, jsNativeApiRoot, failingJsNativeApiTests],
-  ["node-api", nodeApiTests, nodeApiRoot, failingNodeApiTests],
-])("%s tests", (_name, tests, root, failing) => {
-  describe.each(tests)("%s", test => {
-    it.skipIf(failing.includes(test))(
-      "passes",
-      () => {
+describe("js-native-api tests", () => {
+  for (const test of jsNativeApiTests) {
+    describe.skipIf(failingJsNativeApiTests.includes(test))(`${test}`, () => {
+      it("passes", () => {
         const result = spawnSync({
           cmd: [bunExe(), "run", test],
-          cwd: root,
+          cwd: jsNativeApiRoot,
           stderr: "inherit",
           stdout: "ignore",
           stdin: "inherit",
@@ -156,8 +139,26 @@ describe.each([
         });
         expect(result.success).toBeTrue();
         expect(result.exitCode).toBe(0);
-      },
-      60000, // timeout
-    );
-  });
+      }, 60_000);
+    });
+  }
+});
+
+describe("node-api tests", () => {
+  for (const test of nodeApiTests) {
+    describe.skipIf(failingNodeApiTests.includes(test))(`${test}`, () => {
+      it("passes", () => {
+        const result = spawnSync({
+          cmd: [bunExe(), "run", test],
+          cwd: nodeApiRoot,
+          stderr: "inherit",
+          stdout: "ignore",
+          stdin: "inherit",
+          env: bunEnv,
+        });
+        expect(result.success).toBeTrue();
+        expect(result.exitCode).toBe(0);
+      }, 60_000);
+    });
+  }
 });

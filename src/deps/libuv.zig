@@ -887,6 +887,7 @@ pub const UV_EILSEQ: c_int = -4027;
 pub const UV_ESOCKTNOSUPPORT: c_int = -4025;
 pub const UV_ENODATA: c_int = -4024;
 pub const UV_EUNATCH: c_int = -4023;
+pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 pub const uv_errno_t = c_int;
 pub const UV_UNKNOWN_HANDLE: c_int = 0;
@@ -2929,7 +2930,7 @@ pub const ReturnCodeI64 = enum(i64) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.sys.E.ACCES)) {
+    pub inline fn errno(this: ReturnCodeI64) ?u16 {
         return if (@intFromEnum(this) < 0)
             @as(u16, @intCast(-@intFromEnum(this)))
         else

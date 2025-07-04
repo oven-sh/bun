@@ -23,7 +23,7 @@ pub fn gcAggressionLevel(
     const value = callframe.arguments_old(1).ptr[0];
 
     if (!value.isEmptyOrUndefinedOrNull()) {
-        switch (value.coerce(i32, globalThis)) {
+        switch (try value.coerce(i32, globalThis)) {
             1 => globalThis.bunVM().aggressive_garbage_collection = .mild,
             2 => globalThis.bunVM().aggressive_garbage_collection = .aggressive,
             0 => globalThis.bunVM().aggressive_garbage_collection = .none,
@@ -64,7 +64,7 @@ fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
     if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
-    return .undefined;
+    return .js_undefined;
 }
 
 const JSC = bun.JSC;

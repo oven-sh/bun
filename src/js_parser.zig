@@ -111,7 +111,7 @@ const JSXImport = enum {
         Fragment: ?LocRef = null,
         createElement: ?LocRef = null,
 
-        pub fn get(this: *const Symbols, name: []const u8) ?Ref {
+        pub fn get(noalias this: *const Symbols, name: []const u8) ?Ref {
             if (strings.eqlComptime(name, "jsx")) return if (this.jsx) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxDEV")) return if (this.jsxDEV) |jsx| jsx.ref.? else null;
             if (strings.eqlComptime(name, "jsxs")) return if (this.jsxs) |jsxs| jsxs.ref.? else null;
@@ -120,7 +120,7 @@ const JSXImport = enum {
             return null;
         }
 
-        pub fn getWithTag(this: *const Symbols, tag: JSXImport) ?Ref {
+        pub fn getWithTag(noalias this: *const Symbols, tag: JSXImport) ?Ref {
             return switch (tag) {
                 .jsx => if (this.jsx) |jsx| jsx.ref.? else null,
                 .jsxDEV => if (this.jsxDEV) |jsx| jsx.ref.? else null,
@@ -130,7 +130,7 @@ const JSXImport = enum {
             };
         }
 
-        pub fn runtimeImportNames(this: *const Symbols, buf: *[3]string) []const string {
+        pub fn runtimeImportNames(noalias this: *const Symbols, buf: *[3]string) []const string {
             var i: usize = 0;
             if (this.jsxDEV != null) {
                 bun.assert(this.jsx == null); // we should never end up with this in the same file
@@ -156,7 +156,7 @@ const JSXImport = enum {
 
             return buf[0..i];
         }
-        pub fn sourceImportNames(this: *const Symbols) []const string {
+        pub fn sourceImportNames(noalias this: *const Symbols) []const string {
             return if (this.createElement != null) &[_]string{"createElement"} else &[_]string{};
         }
     };
@@ -447,7 +447,7 @@ const VisitArgsOpts = struct {
 pub fn ExpressionTransposer(
     comptime ContextType: type,
     comptime StateType: type,
-    comptime visitor: fn (ptr: *ContextType, arg: Expr, state: StateType) Expr,
+    comptime visitor: fn (noalias ptr: *ContextType, arg: Expr, state: StateType) Expr,
 ) type {
     return struct {
         pub const Context = ContextType;
@@ -2648,7 +2648,7 @@ pub const StringVoidMap = struct {
         return StringVoidMap{ .allocator = allocator };
     }
 
-    pub fn reset(this: *StringVoidMap) void {
+    pub fn reset(noalias this: *StringVoidMap) void {
         // We must reset or the hash table will contain invalid pointers
         this.map.clearRetainingCapacity();
     }
@@ -3080,7 +3080,7 @@ pub const Parser = struct {
         if (runtime_api_call.len > 0) {
             var args = try p.allocator.alloc(Expr, 1);
             args[0] = expr;
-            final_expr = try p.callRuntime(expr.loc, runtime_api_call, args);
+            final_expr = p.callRuntime(expr.loc, runtime_api_call, args);
         }
 
         const ns_export_part = js_ast.Part{
@@ -3092,7 +3092,7 @@ pub const Parser = struct {
             .data = .{
                 .s_lazy_export = brk: {
                     const data = try p.allocator.create(Expr.Data);
-                    data.* = expr.data;
+                    data.* = final_expr.data;
                     break :brk data;
                 },
             },
@@ -3201,7 +3201,7 @@ pub const Parser = struct {
         analyze_tracer.end();
     }
 
-    fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
+    fn _parse(noalias self: *Parser, comptime ParserType: type) !js_ast.Result {
         const prev_action = bun.crash_handler.current_action;
         defer bun.crash_handler.current_action = prev_action;
         bun.crash_handler.current_action = .{ .parse = self.source.path.text };
@@ -4279,7 +4279,7 @@ pub const Parser = struct {
         return Parser{
             .options = _options,
             .allocator = allocator,
-            .lexer = try js_lexer.Lexer.init(log, source.*, allocator),
+            .lexer = try js_lexer.Lexer.init(log, source, allocator),
             .define = define,
             .source = source,
             .log = log,
@@ -4507,7 +4507,7 @@ pub const KnownGlobal = enum {
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
-    pub noinline fn maybeMarkConstructorAsPure(e: *E.New, symbols: []const Symbol) void {
+    pub noinline fn maybeMarkConstructorAsPure(noalias e: *E.New, symbols: []const Symbol) void {
         const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return;
         const symbol = &symbols[id.innerIndex()];
         if (symbol.kind != .unbound)
@@ -5102,7 +5102,7 @@ fn NewParser_(
             return p.options.bundle and p.source.index.isRuntime();
         }
 
-        pub fn transposeImport(p: *P, arg: Expr, state: *const TransposeState) Expr {
+        pub fn transposeImport(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
             if (arg.data.as(.e_string)) |str| {
                 // Ignore calls to import() if the control flow is provably dead here.
@@ -5141,7 +5141,7 @@ fn NewParser_(
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: Expr) Expr {
+        pub fn transposeRequireResolve(noalias p: *P, arg: Expr, require_resolve_ref: Expr) Expr {
             // The argument must be a string
             if (arg.data == .e_string) {
                 return p.transposeRequireResolveKnownString(arg);
@@ -5162,7 +5162,7 @@ fn NewParser_(
             }, arg.loc);
         }
 
-        pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
+        pub inline fn transposeRequireResolveKnownString(noalias p: *P, arg: Expr) Expr {
             bun.assert(arg.data == .e_string);
 
             // Ignore calls to import() if the control flow is provably dead here.
@@ -5185,7 +5185,7 @@ fn NewParser_(
             );
         }
 
-        pub fn transposeRequire(p: *P, arg: Expr, state: *const TransposeState) Expr {
+        pub fn transposeRequire(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             if (!p.options.features.allow_runtime) {
                 const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
                 args[0] = arg;
@@ -5282,7 +5282,7 @@ fn NewParser_(
             return p.options.features.unwrap_commonjs_to_esm;
         }
 
-        fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {
+        fn isBindingUsed(noalias p: *P, binding: Binding, default_export_ref: Ref) bool {
             switch (binding.data) {
                 .b_identifier => |ident| {
                     if (default_export_ref.eql(ident.ref)) return true;
@@ -5319,7 +5319,7 @@ fn NewParser_(
             }
         }
 
-        pub fn treeShake(p: *P, parts: *[]js_ast.Part, merge: bool) void {
+        pub fn treeShake(noalias p: *P, parts: *[]js_ast.Part, merge: bool) void {
             var parts_: []js_ast.Part = parts.*;
             defer {
                 if (merge and parts_.len > 1) {
@@ -5433,7 +5433,7 @@ fn NewParser_(
                     };
 
                     if (is_dead) {
-                        p.clearSymbolUsagesFromDeadPart(part);
+                        p.clearSymbolUsagesFromDeadPart(&part);
 
                         continue;
                     }
@@ -5458,7 +5458,7 @@ fn NewParser_(
             pub const Hoisted = Binding.ToExpr(P, P.wrapIdentifierHoisting);
         };
 
-        fn clearSymbolUsagesFromDeadPart(p: *P, part: js_ast.Part) void {
+        fn clearSymbolUsagesFromDeadPart(noalias p: *P, part: *const js_ast.Part) void {
             const symbol_use_refs = part.symbol_uses.keys();
             const symbol_use_values = part.symbol_uses.values();
             var symbols = p.symbols.items;
@@ -5472,7 +5472,7 @@ fn NewParser_(
             }
         }
 
-        pub fn s(_: *P, t: anytype, loc: logger.Loc) Stmt {
+        pub fn s(noalias _: *const P, t: anytype, loc: logger.Loc) Stmt {
             const Type = @TypeOf(t);
             if (!is_typescript_enabled and (Type == S.TypeScript or Type == *S.TypeScript)) {
                 @compileError("Attempted to use TypeScript syntax in a non-TypeScript environment");
@@ -5557,7 +5557,7 @@ fn NewParser_(
             return freq;
         }
 
-        pub fn newExpr(p: *P, t: anytype, loc: logger.Loc) Expr {
+        pub fn newExpr(noalias p: *P, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
 
             comptime {
@@ -5612,11 +5612,11 @@ fn NewParser_(
             }
         }
 
-        pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
+        pub fn findSymbol(noalias p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
             return findSymbolWithRecordUsage(p, loc, name, true);
         }
 
-        pub fn findSymbolWithRecordUsage(p: *P, loc: logger.Loc, name: string, comptime record_usage: bool) !FindSymbolResult {
+        pub fn findSymbolWithRecordUsage(noalias p: *P, loc: logger.Loc, name: string, comptime record_usage: bool) !FindSymbolResult {
             var declare_loc: logger.Loc = logger.Loc.Empty;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
@@ -5720,7 +5720,7 @@ fn NewParser_(
             };
         }
 
-        pub fn recordExportedBinding(p: *P, binding: Binding) void {
+        pub fn recordExportedBinding(noalias p: *P, binding: Binding) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |ident| {
@@ -5739,7 +5739,7 @@ fn NewParser_(
             }
         }
 
-        pub fn recordExport(p: *P, loc: logger.Loc, alias: string, ref: Ref) !void {
+        pub fn recordExport(noalias p: *P, loc: logger.Loc, alias: string, ref: Ref) !void {
             if (p.named_exports.get(alias)) |name| {
                 // Duplicate exports are an error
                 var notes = try p.allocator.alloc(logger.Data, 1);
@@ -5760,11 +5760,11 @@ fn NewParser_(
             }
         }
 
-        fn isDeoptimizedCommonJS(p: *P) bool {
+        fn isDeoptimizedCommonJS(noalias p: *P) bool {
             return p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0;
         }
 
-        pub fn recordUsage(p: *P, ref: Ref) void {
+        pub fn recordUsage(noalias p: *P, ref: Ref) void {
             if (p.is_revisit_for_substitution) return;
             // The use count stored in the symbol is used for generating symbol names
             // during minification. These counts shouldn't include references inside dead
@@ -5788,7 +5788,7 @@ fn NewParser_(
             }
         }
 
-        fn logArrowArgErrors(p: *P, errors: *DeferredArrowArgErrors) void {
+        fn logArrowArgErrors(noalias p: *P, errors: *DeferredArrowArgErrors) void {
             if (errors.invalid_expr_await.len > 0) {
                 const r = errors.invalid_expr_await;
                 p.log.addRangeError(p.source, r, "Cannot use an \"await\" expression here") catch unreachable;
@@ -5800,7 +5800,7 @@ fn NewParser_(
             }
         }
 
-        fn keyNameForError(p: *P, key: js_ast.Expr) string {
+        fn keyNameForError(noalias p: *P, key: js_ast.Expr) string {
             switch (key.data) {
                 .e_string => {
                     return key.data.e_string.string(p.allocator) catch unreachable;
@@ -5815,7 +5815,7 @@ fn NewParser_(
         }
 
         /// This function is very very hot.
-        pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, original_name: ?string, opts: IdentifierOpts) Expr {
+        pub fn handleIdentifier(noalias p: *P, loc: logger.Loc, ident: E.Identifier, original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
             if (p.options.features.inlining) {
@@ -5951,7 +5951,7 @@ fn NewParser_(
         }
 
         pub fn generateImportStmt(
-            p: *P,
+            noalias p: *P,
             import_path: string,
             imports: anytype,
             parts: *ListManaged(js_ast.Part),
@@ -6041,7 +6041,7 @@ fn NewParser_(
         }
 
         pub fn generateReactRefreshImport(
-            p: *P,
+            noalias p: *P,
             parts: *ListManaged(js_ast.Part),
             import_path: []const u8,
             clauses: []const ReactRefreshImportClause,
@@ -6058,7 +6058,7 @@ fn NewParser_(
         };
 
         fn generateReactRefreshImportHmr(
-            p: *P,
+            noalias p: *P,
             parts: *ListManaged(js_ast.Part),
             import_path: []const u8,
             clauses: []const ReactRefreshImportClause,
@@ -6143,7 +6143,7 @@ fn NewParser_(
             });
         }
 
-        fn substituteSingleUseSymbolInStmt(p: *P, stmt: Stmt, ref: Ref, replacement: Expr) bool {
+        fn substituteSingleUseSymbolInStmt(noalias p: *P, stmt: Stmt, ref: Ref, replacement: Expr) bool {
             const expr: *Expr = brk: {
                 switch (stmt.data) {
                     .s_expr => |exp| {
@@ -6217,7 +6217,7 @@ fn NewParser_(
         }
 
         fn substituteSingleUseSymbolInExpr(
-            p: *P,
+            noalias p: *P,
             expr: Expr,
             ref: Ref,
             replacement: Expr,
@@ -6631,7 +6631,7 @@ fn NewParser_(
             return .{ .failure = expr };
         }
 
-        pub fn prepareForVisitPass(p: *P) anyerror!void {
+        pub fn prepareForVisitPass(noalias p: *P) anyerror!void {
             {
                 var i: usize = 0;
                 p.scope_order_to_visit = try p.allocator.alloc(ScopeOrder, p.scopes_in_order.items.len);
@@ -6763,7 +6763,7 @@ fn NewParser_(
             return p.options.bundle or p.options.features.minify_identifiers;
         }
 
-        fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
+        fn hoistSymbols(noalias p: *P, scope: *js_ast.Scope) void {
             if (!scope.kindStopsHoisting()) {
                 var iter = scope.members.iterator();
                 const allocator = p.allocator;
@@ -6952,7 +6952,7 @@ fn NewParser_(
             return head;
         }
 
-        fn pushScopeForVisitPass(p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) anyerror!void {
+        fn pushScopeForVisitPass(noalias p: *P, kind: js_ast.Scope.Kind, loc: logger.Loc) anyerror!void {
             const order = p.nextScopeInOrderForVisitPass();
 
             // Sanity-check that the scopes generated by the first and second passes match
@@ -6972,7 +6972,7 @@ fn NewParser_(
             try p.scopes_for_current_part.append(p.allocator, order.scope);
         }
 
-        fn pushScopeForParsePass(p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
+        fn pushScopeForParsePass(noalias p: *P, comptime kind: js_ast.Scope.Kind, loc: logger.Loc) !usize {
             var parent: *Scope = p.current_scope;
             const allocator = p.allocator;
             var scope = try allocator.create(Scope);
@@ -7047,7 +7047,7 @@ fn NewParser_(
         // from expression to binding should be written to "invalidLog" instead. That
         // way we can potentially keep this as an expression if it turns out it's not
         // needed as a binding after all.
-        fn convertExprToBinding(p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
+        fn convertExprToBinding(noalias p: *P, expr: ExprNodeIndex, invalid_loc: *LocList) ?Binding {
             switch (expr.data) {
                 .e_missing => {
                     return null;
@@ -7150,7 +7150,7 @@ fn NewParser_(
             return null;
         }
 
-        fn convertExprToBindingAndInitializer(p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
+        fn convertExprToBindingAndInitializer(noalias p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
             var initializer: ?ExprNodeIndex = null;
             var expr = _expr;
             // zig syntax is sometimes painful
@@ -7581,13 +7581,13 @@ fn NewParser_(
             }
         };
 
-        fn forbidLexicalDecl(p: *P, loc: logger.Loc) anyerror!void {
+        fn forbidLexicalDecl(noalias p: *const P, loc: logger.Loc) anyerror!void {
             try p.log.addError(p.source, loc, "Cannot use a declaration in a single-statement context");
         }
 
         /// If we attempt to parse TypeScript syntax outside of a TypeScript file
         /// make it a compile error
-        inline fn markTypeScriptOnly(_: *const P) void {
+        inline fn markTypeScriptOnly(noalias _: *const P) void {
             if (comptime !is_typescript_enabled) {
                 @compileError("This function can only be used in TypeScript");
             }
@@ -7598,7 +7598,7 @@ fn NewParser_(
             }
         }
 
-        fn logExprErrors(p: *P, errors: *DeferredErrors) void {
+        fn logExprErrors(noalias p: *P, noalias errors: *DeferredErrors) void {
             if (errors.invalid_expr_default_value) |r| {
                 p.log.addRangeError(
                     p.source,
@@ -7618,7 +7618,7 @@ fn NewParser_(
 
         // This assumes the "function" token has already been parsed
 
-        fn parseFnStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
+        fn parseFnStmt(noalias p: *P, loc: logger.Loc, noalias opts: *ParseStatementOptions, asyncRange: ?logger.Range) !Stmt {
             const is_generator = p.lexer.token == T.t_asterisk;
             const is_async = asyncRange != null;
 
@@ -7671,7 +7671,15 @@ fn NewParser_(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            var scopeIndex: usize = 0;
+            var pushedScopeForFunctionArgs = false;
+            // Push scope if the current lexer token is an open parenthesis token.
+            // That is, the parser is about parsing function arguments
+            if (p.lexer.token == .t_open_paren) {
+                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+                pushedScopeForFunctionArgs = true;
+            }
+
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
@@ -7687,7 +7695,7 @@ fn NewParser_(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if (opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) {
+                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) and pushedScopeForFunctionArgs) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -7703,7 +7711,9 @@ fn NewParser_(
                 }
             }
 
-            p.popScope();
+            if (pushedScopeForFunctionArgs) {
+                p.popScope();
+            }
 
             // Only declare the function after we know if it had a body or not. Otherwise
             // TypeScript code such as this will double-declare the symbol:
@@ -7737,7 +7747,7 @@ fn NewParser_(
             );
         }
 
-        fn popAndDiscardScope(p: *P, scope_index: usize) void {
+        fn popAndDiscardScope(noalias p: *P, scope_index: usize) void {
             // Move up to the parent scope
             const to_discard = p.current_scope;
             const parent = to_discard.parent orelse unreachable;
@@ -11441,14 +11451,14 @@ fn NewParser_(
             };
         }
 
-        fn requireInitializers(p: *P, comptime kind: S.Local.Kind, decls: []G.Decl) anyerror!void {
+        fn requireInitializers(noalias p: *P, comptime kind: S.Local.Kind, decls: []G.Decl) anyerror!void {
             const what = switch (kind) {
                 .k_await_using, .k_using => "declaration",
                 .k_const => "constant",
                 else => @compileError("unreachable"),
             };
 
-            for (decls) |decl| {
+            for (decls) |*decl| {
                 if (decl.value == null) {
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
@@ -12605,13 +12615,18 @@ fn NewParser_(
             p.allow_in = true;
 
             const loc = p.lexer.loc();
-            _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
-            defer p.popScope();
+            var pushedScopeForFunctionBody = false;
+            if (p.lexer.token == .t_open_brace) {
+                _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+                pushedScopeForFunctionBody = true;
+            }
 
             try p.lexer.expect(.t_open_brace);
             var opts = ParseStatementOptions{};
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
             try p.lexer.next();
+
+            if (pushedScopeForFunctionBody) p.popScope();
 
             p.allow_in = oldAllowIn;
             p.fn_or_arrow_data_parse = oldFnOrArrowData;
@@ -13023,7 +13038,7 @@ fn NewParser_(
             return @as(u32, @intCast(index));
         }
 
-        pub fn popScope(p: *P) void {
+        pub fn popScope(noalias p: *P) void {
             const current_scope = p.current_scope;
             // We cannot rename anything inside a scope containing a direct eval() call
             if (current_scope.contains_direct_eval) {
@@ -13082,7 +13097,7 @@ fn NewParser_(
             p.current_scope = current_scope.parent orelse p.panic("Internal error: attempted to call popScope() on the topmost scope", .{});
         }
 
-        pub fn markExprAsParenthesized(_: *P, expr: *Expr) void {
+        pub fn markExprAsParenthesized(noalias _: *P, expr: *Expr) void {
             switch (expr.data) {
                 .e_array => |ex| {
                     ex.is_parenthesized = true;
@@ -13850,7 +13865,7 @@ fn NewParser_(
             return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
         }
 
-        pub fn parseSuffix(p: *P, _left: Expr, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parseSuffix(noalias p: *P, _left: Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             var left = _left;
             var optional_chain: ?js_ast.OptionalChain = null;
             while (true) {
@@ -14163,10 +14178,6 @@ fn NewParser_(
                         if (!is_typescript_enabled) {
                             try p.lexer.unexpected();
                             return error.SyntaxError;
-                        }
-
-                        if (level.gte(.postfix)) {
-                            return left;
                         }
 
                         try p.lexer.next();
@@ -14660,7 +14671,7 @@ fn NewParser_(
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
 
-        pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parsePrefix(noalias p: *P, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             const loc = p.lexer.loc();
             const l = @intFromEnum(level);
             // Output.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
@@ -15037,11 +15048,6 @@ fn NewParser_(
                     var args = ExprNodeList{};
 
                     if (comptime is_typescript_enabled) {
-                        // Skip over TypeScript non-null assertions
-                        if (p.lexer.token == .t_exclamation and !p.lexer.has_newline_before) {
-                            try p.lexer.next();
-                        }
-
                         // Skip over TypeScript type arguments here if there are any
                         if (p.lexer.token == .t_less_than) {
                             _ = p.trySkipTypeScriptTypeArgumentsWithBacktracking();
@@ -15363,7 +15369,7 @@ fn NewParser_(
         }
 
         // Note: The caller has already parsed the "import" keyword
-        fn parseImportExpr(p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
+        fn parseImportExpr(noalias p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
             // Parse an "import.meta" expression
             if (p.lexer.token == .t_dot) {
                 p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -15439,7 +15445,7 @@ fn NewParser_(
             }, loc);
         }
 
-        fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
+        fn parseJSXPropValueIdentifier(noalias p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
             // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
@@ -15458,7 +15464,7 @@ fn NewParser_(
             }
         }
 
-        fn parseJSXElement(p: *P, loc: logger.Loc) anyerror!Expr {
+        fn parseJSXElement(noalias p: *P, loc: logger.Loc) anyerror!Expr {
             if (only_scan_imports_and_do_not_visit) {
                 p.needs_jsx_import = true;
             }
@@ -15733,7 +15739,7 @@ fn NewParser_(
             }
         }
 
-        fn willNeedBindingPattern(p: *P) bool {
+        fn willNeedBindingPattern(noalias p: *const P) bool {
             return switch (p.lexer.token) {
                 // "[a] = b;"
                 .t_equals => true,
@@ -15745,7 +15751,7 @@ fn NewParser_(
             };
         }
 
-        fn appendPart(p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) anyerror!void {
+        fn appendPart(noalias p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) anyerror!void {
             // Reuse the memory if possible
             // This is reusable if the last part turned out to be dead
             p.symbol_uses.clearRetainingCapacity();
@@ -15814,7 +15820,7 @@ fn NewParser_(
                 p.had_commonjs_named_exports_this_visit = false;
             } else if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
                 // if the part is dead, invalidate all the usage counts
-                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
+                p.clearSymbolUsagesFromDeadPart(&.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
                 p.declared_symbols.clearRetainingCapacity();
                 p.import_records_for_current_part.clearRetainingCapacity();
             }
@@ -15994,7 +16000,7 @@ fn NewParser_(
             }
         }
 
-        fn recordDeclaredSymbol(p: *P, ref: Ref) anyerror!void {
+        fn recordDeclaredSymbol(noalias p: *P, ref: Ref) anyerror!void {
             bun.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
@@ -16003,7 +16009,7 @@ fn NewParser_(
         }
 
         // public for JSNode.JSXWriter usage
-        pub inline fn visitExpr(p: *P, expr: Expr) Expr {
+        pub inline fn visitExpr(noalias p: *P, expr: Expr) Expr {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -19039,7 +19045,7 @@ fn NewParser_(
         }
 
         const visitors = struct {
-            pub fn s_import(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Import) !void {
+            pub fn s_import(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Import) !void {
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (data.default_name) |default_name| {
@@ -19054,7 +19060,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_export_clause(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportClause) !void {
+            pub fn s_export_clause(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ExportClause) !void {
                 // "export {foo}"
                 var end: usize = 0;
                 var any_replaced = false;
@@ -19120,7 +19126,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_export_from(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportFrom) !void {
+            pub fn s_export_from(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ExportFrom) !void {
 
                 // "export {foo} from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
@@ -19171,7 +19177,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_export_star(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportStar) !void {
+            pub fn s_export_star(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ExportStar) !void {
 
                 // "export * from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
@@ -19191,7 +19197,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_export_default(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportDefault) !void {
+            pub fn s_export_default(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ExportDefault) !void {
                 defer {
                     if (data.default_name.ref) |ref| {
                         p.recordDeclaredSymbol(ref) catch unreachable;
@@ -19376,22 +19382,36 @@ fn NewParser_(
                                 // > export default default_export;
                                 // > $RefreshReg(default_export, "App.tsx:default")
                                 const ref = if (data.value == .expr) emit_temp_var: {
-                                    const temp_id = p.generateTempRef("default_export");
-                                    try p.current_scope.generated.push(p.allocator, temp_id);
+                                    const ref_to_use = brk: {
+                                        if (func.func.name) |*loc_ref| {
+                                            // Input:
+                                            //
+                                            //  export default function Foo() {}
+                                            //
+                                            // Output:
+                                            //
+                                            //  const Foo = _s(function Foo() {})
+                                            //  export default Foo;
+                                            if (loc_ref.ref) |ref| break :brk ref;
+                                        }
 
+                                        const temp_id = p.generateTempRef("default_export");
+                                        try p.current_scope.generated.push(p.allocator, temp_id);
+                                        break :brk temp_id;
+                                    };
                                     stmts.append(Stmt.alloc(S.Local, .{
                                         .kind = .k_const,
                                         .decls = try G.Decl.List.fromSlice(p.allocator, &.{
                                             .{
-                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = ref_to_use }, stmt.loc),
                                                 .value = data.value.expr,
                                             },
                                         }),
                                     }, stmt.loc)) catch bun.outOfMemory();
 
-                                    data.value = .{ .expr = .initIdentifier(temp_id, stmt.loc) };
+                                    data.value = .{ .expr = .initIdentifier(ref_to_use, stmt.loc) };
 
-                                    break :emit_temp_var temp_id;
+                                    break :emit_temp_var ref_to_use;
                                 } else data.default_name.ref.?;
 
                                 if (p.options.features.server_components.wrapsExports()) {
@@ -19467,7 +19487,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_function(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Function) !void {
+            pub fn s_function(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Function) !void {
                 // We mark it as dead, but the value may not actually be dead
                 // We just want to be sure to not increment the usage counts for anything in the function
                 const mark_as_dead = p.options.features.dead_code_elimination and data.func.flags.contains(.is_export) and
@@ -19556,7 +19576,7 @@ fn NewParser_(
                 return;
             }
 
-            pub fn s_class(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Class) !void {
+            pub fn s_class(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Class) !void {
                 const mark_as_dead = p.options.features.dead_code_elimination and data.is_export and
                     p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.class.class_name.?.ref.?);
                 const original_is_dead = p.is_control_flow_dead;
@@ -19617,7 +19637,7 @@ fn NewParser_(
 
                 return;
             }
-            pub fn s_export_equals(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ExportEquals) !void {
+            pub fn s_export_equals(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ExportEquals) !void {
                 // "module.exports = value"
                 stmts.append(
                     Stmt.assign(
@@ -19628,7 +19648,7 @@ fn NewParser_(
                 p.recordUsage(p.module_ref);
                 return;
             }
-            pub fn s_break(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Break) !void {
+            pub fn s_break(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Break) !void {
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panicLoc("Expected label to have a ref", .{}, label.loc));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -19644,7 +19664,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_continue(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Continue) !void {
+            pub fn s_continue(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Continue) !void {
                 if (data.label) |*label| {
                     const name = p.loadNameFromRef(label.ref orelse p.panicLoc("Expected continue label to have a ref", .{}, label.loc));
                     const res = p.findLabelSymbol(label.loc, name);
@@ -19660,7 +19680,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_label(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Label) !void {
+            pub fn s_label(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Label) !void {
                 p.pushScopeForVisitPass(.label, stmt.loc) catch unreachable;
                 const name = p.loadNameFromRef(data.name.ref.?);
                 const ref = p.newSymbol(.label, name) catch unreachable;
@@ -19678,7 +19698,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_local(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Local, was_after_after_const_local_prefix: bool) !void {
+            pub fn s_local(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Local, was_after_after_const_local_prefix: bool) !void {
                 // TODO: Silently remove unsupported top-level "await" in dead code branches
                 // (this was from 'await using' syntax)
 
@@ -19783,7 +19803,7 @@ fn NewParser_(
 
                 return;
             }
-            pub fn s_expr(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.SExpr) !void {
+            pub fn s_expr(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.SExpr) !void {
                 const should_trim_primitive = p.options.features.dead_code_elimination and
                     (p.options.features.minify_syntax and data.value.isPrimitiveLiteral());
                 p.stmt_expr_value = data.value.data;
@@ -19885,11 +19905,11 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_throw(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Throw) !void {
+            pub fn s_throw(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Throw) !void {
                 data.value = p.visitExpr(data.value);
                 try stmts.append(stmt.*);
             }
-            pub fn s_return(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Return) !void {
+            pub fn s_return(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Return) !void {
                 // Forbid top-level return inside modules with ECMAScript-style exports
                 if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
                     const where = where: {
@@ -19919,7 +19939,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_block(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Block) !void {
+            pub fn s_block(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Block) !void {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
@@ -19947,7 +19967,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_with(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.With) !void {
+            pub fn s_with(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.With) !void {
                 data.value = p.visitExpr(data.value);
 
                 p.pushScopeForVisitPass(.with, data.body_loc) catch unreachable;
@@ -19965,7 +19985,7 @@ fn NewParser_(
                 p.popScope();
                 try stmts.append(stmt.*);
             }
-            pub fn s_while(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.While) !void {
+            pub fn s_while(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.While) !void {
                 data.test_ = p.visitExpr(data.test_);
                 data.body = p.visitLoopBody(data.body);
 
@@ -19977,14 +19997,14 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_do_while(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.DoWhile) !void {
+            pub fn s_do_while(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.DoWhile) !void {
                 data.body = p.visitLoopBody(data.body);
                 data.test_ = p.visitExpr(data.test_);
 
                 data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 try stmts.append(stmt.*);
             }
-            pub fn s_if(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.If) !void {
+            pub fn s_if(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.If) !void {
                 data.test_ = p.visitExpr(data.test_);
 
                 if (p.options.features.minify_syntax) {
@@ -20083,7 +20103,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_for(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.For) !void {
+            pub fn s_for(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.For) !void {
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
 
                 if (data.init) |initst| {
@@ -20122,7 +20142,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_for_in(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ForIn) !void {
+            pub fn s_for_in(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ForIn) !void {
                 {
                     p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                     defer p.popScope();
@@ -20158,7 +20178,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_for_of(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.ForOf) !void {
+            pub fn s_for_of(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ForOf) !void {
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 defer p.popScope();
                 _ = p.visitForLoopInit(data.init, true);
@@ -20220,7 +20240,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_try(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Try) !void {
+            pub fn s_try(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Try) !void {
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 {
                     var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.body);
@@ -20258,7 +20278,7 @@ fn NewParser_(
 
                 try stmts.append(stmt.*);
             }
-            pub fn s_switch(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Switch) !void {
+            pub fn s_switch(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Switch) !void {
                 data.test_ = p.visitExpr(data.test_);
                 {
                     p.pushScopeForVisitPass(.block, data.body_loc) catch unreachable;
@@ -20283,7 +20303,7 @@ fn NewParser_(
                 try stmts.append(stmt.*);
             }
 
-            pub fn s_enum(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Enum, was_after_after_const_local_prefix: bool) !void {
+            pub fn s_enum(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Enum, was_after_after_const_local_prefix: bool) !void {
 
                 // Do not end the const local prefix after TypeScript enums. We process
                 // them first within their scope so that they are inlined into all code in
@@ -20475,7 +20495,7 @@ fn NewParser_(
                 );
                 return;
             }
-            pub fn s_namespace(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt, data: *S.Namespace) !void {
+            pub fn s_namespace(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Namespace) !void {
                 p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
 
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -20523,7 +20543,7 @@ fn NewParser_(
             return p.options.features.replace_exports.contains(symbol_name);
         }
 
-        fn visitDecls(p: *P, decls: []G.Decl, was_const: bool, comptime is_possibly_decl_to_remove: bool) usize {
+        fn visitDecls(noalias p: *P, decls: []G.Decl, was_const: bool, comptime is_possibly_decl_to_remove: bool) usize {
             var j: usize = 0;
             var out_decls = decls;
             for (decls) |*decl| {
@@ -20794,7 +20814,7 @@ fn NewParser_(
             }
         }
 
-        pub fn appendIfBodyPreservingScope(p: *P, stmts: *ListManaged(Stmt), body: Stmt) anyerror!void {
+        pub fn appendIfBodyPreservingScope(noalias p: *P, stmts: *ListManaged(Stmt), body: Stmt) anyerror!void {
             switch (body.data) {
                 .s_block => |block| {
                     var keep_block = false;
@@ -20844,8 +20864,8 @@ fn NewParser_(
         }
 
         fn generateClosureForTypeScriptNamespaceOrEnum(
-            p: *P,
-            stmts: *ListManaged(Stmt),
+            noalias p: *P,
+            noalias stmts: *ListManaged(Stmt),
             stmt_loc: logger.Loc,
             is_export: bool,
             name_loc: logger.Loc,
@@ -20995,7 +21015,7 @@ fn NewParser_(
         }
 
         fn lowerClass(
-            p: *P,
+            noalias p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
         ) []Stmt {
             switch (stmtorexpr) {
@@ -21318,7 +21338,7 @@ fn NewParser_(
             }
         }
 
-        fn serializeMetadata(p: *P, ts_metadata: TypeScript.Metadata) !Expr {
+        fn serializeMetadata(noalias p: *P, ts_metadata: TypeScript.Metadata) !Expr {
             return switch (ts_metadata) {
                 .m_none,
                 .m_any,
@@ -21599,7 +21619,7 @@ fn NewParser_(
             return Expr.initIdentifier(ref, loc);
         }
 
-        fn wrapInlinedEnum(p: *P, value: Expr, comment: string) Expr {
+        fn wrapInlinedEnum(noalias p: *P, value: Expr, comment: string) Expr {
             if (bun.strings.containsComptime(comment, "*/")) {
                 // Don't wrap with a comment
                 return value;
@@ -21612,7 +21632,7 @@ fn NewParser_(
             }, value.loc);
         }
 
-        fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
+        fn valueForDefine(noalias p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
             switch (define_data.value) {
                 .e_identifier => {
                     return p.handleIdentifier(
@@ -21638,7 +21658,7 @@ fn NewParser_(
             };
         }
 
-        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
+        fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
@@ -21697,7 +21717,7 @@ fn NewParser_(
             return false;
         }
 
-        fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringVoidMap) void {
+        fn visitBinding(noalias p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringVoidMap) void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |bind| {
@@ -21765,7 +21785,7 @@ fn NewParser_(
             }
         }
 
-        fn visitLoopBody(p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
+        fn visitLoopBody(noalias p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
             const old_is_inside_loop = p.fn_or_arrow_data_visit.is_inside_loop;
             p.fn_or_arrow_data_visit.is_inside_loop = true;
             p.loop_body = stmt.data;
@@ -21774,7 +21794,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitSingleStmtBlock(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+        fn visitSingleStmtBlock(noalias p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
             var new_stmt = stmt;
             p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
             var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmt.data.s_block.stmts.len) catch unreachable;
@@ -21789,7 +21809,7 @@ fn NewParser_(
             return new_stmt;
         }
 
-        fn visitSingleStmt(p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
+        fn visitSingleStmt(noalias p: *P, stmt: Stmt, kind: StmtsKind) Stmt {
             if (stmt.data == .s_block) {
                 return p.visitSingleStmtBlock(stmt, kind);
             }
@@ -21816,7 +21836,7 @@ fn NewParser_(
         }
 
         // One statement could potentially expand to several statements
-        fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
+        fn stmtsToSingleStmt(noalias p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
             if (stmts.len == 0) {
                 return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
             }
@@ -21829,7 +21849,7 @@ fn NewParser_(
             return p.s(S.Block{ .stmts = stmts }, loc);
         }
 
-        fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
+        fn findLabelSymbol(noalias p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
             var res = FindLabelSymbolResult{ .ref = Ref.None, .is_loop = false };
 
             var _scope: ?*Scope = p.current_scope;
@@ -21859,7 +21879,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, default_name_ref: Ref) Ref {
+        fn visitClass(noalias p: *P, name_scope_loc: logger.Loc, noalias class: *G.Class, default_name_ref: Ref) Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -24135,7 +24155,7 @@ pub fn newLazyExportASTImpl(
     var parser = Parser{
         .options = opts,
         .allocator = allocator,
-        .lexer = js_lexer.Lexer.initWithoutReading(log, source.*, allocator),
+        .lexer = js_lexer.Lexer.initWithoutReading(log, source, allocator),
         .define = define,
         .source = source,
         .log = log,

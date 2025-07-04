@@ -26,7 +26,7 @@ pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug)
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
-pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
     debug_allocator_data.allocator
 else
     default_allocator;
@@ -121,6 +121,15 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+};
+
+pub const JSExecutionTerminated = error{
+    /// JavaScript execution has been terminated.
+    /// This condition is indicated by throwing an exception, so most code should still handle it
+    /// with JSError. If you expect that you will not throw any errors other than the termination
+    /// exception, you can catch JSError, assert that the exception is the termination exception,
+    /// and return error.JSExecutionTerminated.
+    JSExecutionTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -1265,7 +1274,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
         return buf[0..res.written];
     }
 
@@ -1820,6 +1829,8 @@ pub const StringMap = struct {
 
 pub const DotEnv = @import("./env_loader.zig");
 pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const js_ast = bun.bundle_v2.js_ast;
+pub const Loader = bundle_v2.Loader;
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
@@ -1911,6 +1922,7 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 const _string = @import("./string.zig");
 pub const strings = @import("string_immutable.zig");
 pub const String = _string.String;
+pub const ZigString = JSC.ZigString;
 pub const StringJoiner = _string.StringJoiner;
 pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
 pub const PathString = _string.PathString;
@@ -2973,7 +2985,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
@@ -3706,24 +3718,16 @@ const StackOverflow = error{StackOverflow};
 // We keep up to 4 path buffers alive per thread at a time.
 pub fn PathBufferPoolT(comptime T: type) type {
     return struct {
-        const Pool = ObjectPool(PathBuf, null, true, 4);
-        pub const PathBuf = struct {
-            bytes: T,
-
-            pub fn deinit(this: *PathBuf) void {
-                var node: *Pool.Node = @alignCast(@fieldParentPtr("data", this));
-                node.release();
-            }
-        };
+        const Pool = ObjectPool(T, null, true, 4);
 
         pub fn get() *T {
             // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data.bytes;
+            return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
         pub fn put(buffer: *T) void {
-            var path_buf: *PathBuf = @alignCast(@fieldParentPtr("bytes", buffer));
-            path_buf.deinit();
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+            node.release();
         }
 
         pub fn deleteAll() void {
@@ -3768,3 +3772,5 @@ pub fn move(dest: []u8, src: []const u8) void {
     }
     _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
 }
+
+pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;

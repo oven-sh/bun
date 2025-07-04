@@ -118,7 +118,7 @@ WEBCORE_EXPORT CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(St
 // -1 could be set to one of the return parameters to indicate the value is not specified.
 WEBCORE_EXPORT bool parseRange(StringView, RangeAllowWhitespace, long long& rangeStart, long long& rangeEnd);
 
-inline bool isHTTPSpace(UChar character)
+inline bool isHTTPSpace(char16_t character)
 {
     return character <= ' ' && (character == ' ' || character == '\n' || character == '\t' || character == '\r');
 }

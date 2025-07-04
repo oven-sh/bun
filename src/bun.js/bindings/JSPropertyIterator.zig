@@ -81,13 +81,8 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
                 var name = bun.String.dead;
                 if (comptime options.include_value) {
                     const FnToUse = if (options.observable) JSPropertyIteratorImpl.getNameAndValue else JSPropertyIteratorImpl.getNameAndValueNonObservable;
-                    const current = FnToUse(this.impl.?, this.globalObject, this.object, &name, i);
-                    if (current == .zero) {
-                        if (this.globalObject.hasException()) {
-                            return error.JSError;
-                        }
-                        continue;
-                    }
+                    const current: JSC.JSValue = try FnToUse(this.impl.?, this.globalObject, this.object, &name, i);
+                    if (current == .zero) continue;
                     current.ensureStillAlive();
                     this.value = current;
                 } else {
@@ -121,19 +116,34 @@ const JSPropertyIteratorImpl = opaque {
         own_properties_only: bool,
         only_non_index_properties: bool,
     ) bun.JSError!?*JSPropertyIteratorImpl {
-        const iter = Bun__JSPropertyIterator__create(globalObject, object.toJS(), count, own_properties_only, only_non_index_properties);
-        if (globalObject.hasException()) {
-            return error.JSError;
-        }
-        return iter;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__JSPropertyIterator__create, .{ globalObject, object.toJS(), count, own_properties_only, only_non_index_properties });
     }
 
     pub const deinit = Bun__JSPropertyIterator__deinit;
-    pub const getNameAndValue = Bun__JSPropertyIterator__getNameAndValue;
-    pub const getNameAndValueNonObservable = Bun__JSPropertyIterator__getNameAndValueNonObservable;
+
+    pub fn getNameAndValue(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) bun.JSError!JSC.JSValue {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        const value = Bun__JSPropertyIterator__getNameAndValue(iter, globalObject, object, propertyName, i);
+        try scope.returnIfException();
+        return value;
+    }
+
+    pub fn getNameAndValueNonObservable(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) bun.JSError!JSC.JSValue {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        const value = Bun__JSPropertyIterator__getNameAndValueNonObservable(iter, globalObject, object, propertyName, i);
+        try scope.returnIfException();
+        return value;
+    }
+
     pub const getName = Bun__JSPropertyIterator__getName;
+
     pub const getLongestPropertyName = Bun__JSPropertyIterator__getLongestPropertyName;
 
+    /// may return null without an exception
     extern "c" fn Bun__JSPropertyIterator__create(globalObject: *JSC.JSGlobalObject, encodedValue: JSC.JSValue, count: *usize, own_properties_only: bool, only_non_index_properties: bool) ?*JSPropertyIteratorImpl;
     extern "c" fn Bun__JSPropertyIterator__getNameAndValue(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) JSC.JSValue;
     extern "c" fn Bun__JSPropertyIterator__getNameAndValueNonObservable(iter: *JSPropertyIteratorImpl, globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject, propertyName: *bun.String, i: usize) JSC.JSValue;

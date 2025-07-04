@@ -51,7 +51,7 @@ pub const Event = extern struct {
     const largest_size = std.mem.alignForward(usize, @sizeOf(Event) + bun.MAX_PATH_BYTES, @alignOf(Event));
 
     pub fn name(event: *align(1) Event) [:0]u8 {
-        if (comptime Environment.allow_assert) bun.assert(event.name_len > 0);
+        if (comptime Environment.allow_assert) bun.assertf(event.name_len > 0, "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function.", .{});
         const name_first_char_ptr = std.mem.asBytes(&event.name_len).ptr + @sizeOf(u32);
         return bun.sliceTo(@as([*:0]u8, @ptrCast(name_first_char_ptr)), 0);
     }
@@ -192,7 +192,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;
-        if (!Environment.enable_logs)
+        if (Environment.enable_logs)
             log("{} read event {} {} {} {}", .{
                 this.fd,
                 event.watch_descriptor,

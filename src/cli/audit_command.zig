@@ -113,11 +113,11 @@ pub const AuditCommand = struct {
             Output.writer().writeByte('\n') catch {};
 
             if (response_text.len > 0) {
-                const source = logger.Source.initPathString("audit-response.json", response_text);
+                const source = &logger.Source.initPathString("audit-response.json", response_text);
                 var log = logger.Log.init(ctx.allocator);
                 defer log.deinit();
 
-                const expr = @import("../json_parser.zig").parse(&source, &log, ctx.allocator, true) catch {
+                const expr = @import("../json_parser.zig").parse(source, &log, ctx.allocator, true) catch {
                     Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
                     return 1; // If we can't parse then safe to assume a similar failure
                 };
@@ -334,6 +334,8 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     defer allocator.free(url_str);
     const url = URL.parse(url_str);
 
+    const http_proxy = pm.env.getHttpProxyFor(url);
+
     var response_buf = try MutableString.init(allocator, 1024);
     var req = http.AsyncHTTP.initSync(
         allocator,
@@ -343,7 +345,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.content.ptr.?[0..headers.content.len],
         &response_buf,
         final_compressed_body,
-        null,
+        http_proxy,
         null,
         .follow,
     );
@@ -543,11 +545,11 @@ fn printEnhancedAuditReport(
     pm: *PackageManager,
     dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
 ) bun.OOM!u32 {
-    const source = logger.Source.initPathString("audit-response.json", response_text);
+    const source = &logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(&source, &log, allocator, true) catch {
+    const expr = @import("../json_parser.zig").parse(source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return 1;

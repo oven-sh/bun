@@ -752,8 +752,8 @@ src/sql/postgres/PostgresSQLQueryResultMode.zig
 src/sql/postgres/PostgresSQLStatement.zig
 src/sql/postgres/PostgresTypes.zig
 src/sql/postgres/QueryBindingIterator.zig
-src/sql/postgres/Signature.zig
 src/sql/postgres/SASL.zig
+src/sql/postgres/Signature.zig
 src/sql/postgres/SocketMonitor.zig
 src/sql/postgres/SSLMode.zig
 src/sql/postgres/Status.zig

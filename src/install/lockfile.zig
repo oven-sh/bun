@@ -922,7 +922,6 @@ pub fn hoist(
         .log = log,
         .lockfile = lockfile,
         .manager = manager,
-        .filter_path_buf = .init(FileSystem.instance.top_level_dir),
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
     };

@@ -135,17 +135,20 @@ pub fn AbsPath(comptime opts: Options) type {
 
         // check length beforehand
         fn appendCharacters(this: *@This(), bytes: string) void {
-            if (opts.normalize_slashes) {
-                for (bytes) |c| {
-                    switch (c) {
-                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
-                        else => this._buf[this.len] = c,
+            switch (comptime opts.path_separators) {
+                .any => {
+                    @memcpy(this._buf[this.len..][0..bytes.len], bytes);
+                    this.len += @intCast(bytes.len);
+                },
+                inline else => |sep| {
+                    for (bytes) |c| {
+                        switch (c) {
+                            '/', '\\' => this._buf[this.len] = sep.char(),
+                            else => this._buf[this.len] = c,
+                        }
+                        this.len += 1;
                     }
-                    this.len += 1;
-                }
-            } else {
-                @memcpy(this._buf[this.len..][0..bytes.len], bytes);
-                this.len += @intCast(bytes.len);
+                },
             }
         }
 
@@ -188,17 +191,49 @@ pub fn AbsPath(comptime opts: Options) type {
             else
                 strings.trimPathSeparators(printed);
 
-            if (comptime opts.normalize_slashes) {
-                for (trimmed) |c| {
-                    switch (c) {
-                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
-                        else => {},
+            switch (comptime opts.path_separators) {
+                .any => {
+                    this.len += @intCast(trimmed.len);
+                },
+                inline else => |sep| {
+                    for (trimmed) |c| {
+                        switch (c) {
+                            '/', '\\' => this._buf[this.len] = sep.char(),
+                            else => {},
+                        }
+                        this.len += 1;
                     }
-                    this.len += 1;
-                }
-            } else {
-                this.len += @intCast(trimmed.len);
+                },
             }
+        }
+
+        pub fn join(this: *@This(), path: anytype) void {
+            const input: string = switch (@TypeOf(path)) {
+                []u8, []const u8 => path,
+                else => path.slice(),
+            };
+
+            if (input.len == 0) {
+                return;
+            }
+
+            const cloned = this.clone();
+            defer cloned.deinit();
+
+            const joined = bun.path.joinAbsStringBuf(
+                cloned.slice(),
+                this._buf,
+                &.{input},
+                switch (opts.path_separators) {
+                    .any, .auto => .auto,
+                    .posix => .posix,
+                    .windows => .windows,
+                },
+            );
+
+            const trimmed = strings.trimTrailingPathSeparators(joined);
+
+            this.len = @intCast(trimmed.len);
         }
 
         pub fn undo(this: *@This(), n_components: usize) callconv(bun.callconv_inline) void {

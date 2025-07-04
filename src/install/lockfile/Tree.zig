@@ -244,7 +244,6 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
-        filter_path_buf: bun.AbsPath(.{ .normalize_slashes = true }),
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -300,7 +299,6 @@ pub fn Builder(comptime method: BuilderMethod) type {
             }
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
-            this.filter_path_buf.deinit();
 
             // take over the `builder.list` pointer for only trees
             if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -322,7 +320,6 @@ pub fn isFilteredDependencyOrWorkspace(
     parent_pkg_id: PackageID,
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
-    filter_path: *bun.AbsPath(.{ .normalize_slashes = true }),
     manager: *const PackageManager,
     lockfile: *const Lockfile,
 ) bool {
@@ -385,8 +382,8 @@ pub fn isFilteredDependencyOrWorkspace(
     var workspace_matched = workspace_filters.len == 0;
 
     for (workspace_filters) |filter| {
-        const filter_path_reset = filter_path.save();
-        defer filter_path_reset.restore();
+        var filter_path: bun.AbsPath(.{ .path_separators = .posix }) = .initTopLevelDir();
+        defer filter_path.deinit();
 
         const pattern, const name_or_path = switch (filter) {
             .all => {
@@ -402,7 +399,7 @@ pub fn isFilteredDependencyOrWorkspace(
                     return false;
                 }
 
-                filter_path.append(res.value.workspace.slice(lockfile.buffers.string_bytes.items));
+                filter_path.join(res.value.workspace.slice(lockfile.buffers.string_bytes.items));
 
                 break :path_pattern .{ path_pattern, filter_path.slice() };
             },
@@ -488,7 +485,6 @@ pub fn processSubtree(
                 parent_pkg_id,
                 builder.workspace_filters,
                 builder.install_root_dependencies,
-                &builder.filter_path_buf,
                 builder.manager,
                 builder.lockfile,
             )) {

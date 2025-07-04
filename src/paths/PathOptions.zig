@@ -1,8 +1,29 @@
+const std = @import("std");
 const Error = error{MaxPathExceeded};
 
 check_length: CheckLength = .assume_always_less_than_max_path,
-normalize_slashes: bool = false,
+// TODO: should `auto` be the default?
+path_separators: PathSeparators = .any,
 // buf_type: enum { pool, array_list },
+
+const PathSeparators = enum {
+    any,
+    auto,
+    posix,
+    windows,
+
+    pub fn char(comptime sep: @This()) u8 {
+        return switch (sep) {
+
+            // the existing separator should be used
+            .any => comptime unreachable,
+
+            .auto => std.fs.path.sep,
+            .posix => std.fs.path.sep_posix,
+            .windows => std.fs.path.sep_windows,
+        };
+    }
+};
 
 const CheckLength = enum {
     assume_always_less_than_max_path,

@@ -72,7 +72,7 @@ pub const UntrustedCommand = struct {
 
         var tree_iterator = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
-        var node_modules_path: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+        var node_modules_path: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
         defer node_modules_path.deinit();
 
         while (tree_iterator.next(null)) |node_modules| {
@@ -221,7 +221,7 @@ pub const TrustCommand = struct {
         // in the correct order as they would during a normal install
         var tree_iter = Lockfile.Tree.Iterator(.node_modules).init(pm.lockfile);
 
-        var node_modules_path: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+        var node_modules_path: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
         defer node_modules_path.deinit();
 
         var package_names_to_add: bun.StringArrayHashMapUnmanaged(void) = .{};

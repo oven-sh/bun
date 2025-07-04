@@ -90,17 +90,20 @@ pub fn RelPath(comptime opts: Options) type {
 
         // check length beforehand
         fn appendCharacters(this: *@This(), bytes: string) void {
-            if (opts.normalize_slashes) {
-                for (bytes) |c| {
-                    switch (c) {
-                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
-                        else => this._buf[this.len] = c,
+            switch (comptime opts.path_separators) {
+                .any => {
+                    @memcpy(this._buf[this.len..][0..bytes.len], bytes);
+                    this.len += @intCast(bytes.len);
+                },
+                inline else => |sep| {
+                    for (bytes) |c| {
+                        switch (c) {
+                            '/', '\\' => this._buf[this.len] = sep.char(),
+                            else => this._buf[this.len] = c,
+                        }
+                        this.len += 1;
                     }
-                    this.len += 1;
-                }
-            } else {
-                @memcpy(this._buf[this.len..][0..bytes.len], bytes);
-                this.len += @intCast(bytes.len);
+                },
             }
         }
 
@@ -132,16 +135,19 @@ pub fn RelPath(comptime opts: Options) type {
 
             const trimmed = strings.trimTrailingPathSeparators(printed);
 
-            if (comptime opts.normalize_slashes) {
-                for (trimmed) |c| {
-                    switch (c) {
-                        '/', '\\' => this._buf[this.len] = std.fs.path.sep,
-                        else => {},
+            switch (comptime opts.path_separators) {
+                .any => {
+                    this.len += @intCast(trimmed.len);
+                },
+                inline else => |sep| {
+                    for (trimmed) |c| {
+                        switch (c) {
+                            '/', '\\' => this._buf[this.len] = sep.char(),
+                            else => {},
+                        }
+                        this.len += 1;
                     }
-                    this.len += 1;
-                }
-            } else {
-                this.len += @intCast(trimmed.len);
+                },
             }
         }
 

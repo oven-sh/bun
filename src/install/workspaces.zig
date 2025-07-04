@@ -22,9 +22,6 @@ pub fn installIsolatedPackages(
         const dependencies = lockfile.buffers.dependencies.items;
         const string_buf = lockfile.buffers.string_bytes.items;
 
-        var filter_path_buf: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
-        defer filter_path_buf.deinit();
-
         var nodes: Store.Node.List = .empty;
 
         const QueuedNode = struct {
@@ -173,7 +170,6 @@ pub fn installIsolatedPackages(
                     entry.pkg_id,
                     workspace_filters,
                     install_root_dependencies,
-                    &filter_path_buf,
                     manager,
                     lockfile,
                 )) {
@@ -800,7 +796,7 @@ pub fn installIsolatedPackages(
                         continue;
                     }
 
-                    var pkg_cache_dir_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .from(switch (pkg_res_tag) {
+                    var pkg_cache_dir_subpath: bun.RelPath(.{ .path_separators = .auto }) = .from(switch (pkg_res_tag) {
                         .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
                         .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                         .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
@@ -1485,7 +1481,7 @@ pub const Store = struct {
                             &pkg_res,
                         );
 
-                        var pkg_cache_dir_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .from(switch (pkg_res.tag) {
+                        var pkg_cache_dir_subpath: bun.RelPath(.{ .path_separators = .auto }) = .from(switch (pkg_res.tag) {
                             .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
                             .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                             .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
@@ -1499,7 +1495,7 @@ pub const Store = struct {
                         const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                         defer cache_dir_path.deinit();
 
-                        var dest_subpath: bun.RelPath(.{ .normalize_slashes = true }) = .init();
+                        var dest_subpath: bun.RelPath(.{ .path_separators = .auto }) = .init();
                         defer dest_subpath.deinit();
 
                         installer.appendStorePath(&dest_subpath, this.entry_id);
@@ -1802,7 +1798,7 @@ pub const Store = struct {
                             break :brk .{ false, false };
                         };
 
-                        var pkg_cwd: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+                        var pkg_cwd: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
                         defer pkg_cwd.deinit();
 
                         installer.appendStorePath(&pkg_cwd, this.entry_id);
@@ -2152,18 +2148,18 @@ pub const Store = struct {
                 const dep_id = node_dep_ids[dep_node_id.get()];
                 const dep_name = dependencies[dep_id].name.slice(string_buf);
 
-                var dest: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+                var dest: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
                 defer dest.deinit();
 
                 this.appendStoreNodeModulesPath(&dest, entry_id);
                 dest.append(dep_name);
 
-                var dep_store_path: bun.AbsPath(.{ .normalize_slashes = true }) = .initTopLevelDir();
+                var dep_store_path: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
                 defer dep_store_path.deinit();
 
                 this.appendStorePath(&dep_store_path, dep.entry_id);
 
-                var target: bun.RelPath(.{ .normalize_slashes = true }) = .init();
+                var target: bun.RelPath(.{ .path_separators = .auto }) = .init();
                 defer target.deinit();
 
                 {

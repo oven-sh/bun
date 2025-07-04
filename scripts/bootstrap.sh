@@ -755,13 +755,8 @@ install_nodejs() {
 		;;
 	esac
 
-	# Some distros do not install the node headers by default.
-	# These are needed for certain FFI tests, such as: `cc.test.ts`
-	case "$distro" in
-	alpine | amzn)
-		install_nodejs_headers
-		;;
-	esac
+	# Ensure that Node.js headers are always pre-downloaded so that we don't rely on node-gyp
+	install_nodejs_headers
 }
 
 install_nodejs_headers() {

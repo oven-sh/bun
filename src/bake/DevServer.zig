@@ -1618,14 +1618,14 @@ fn onFrameworkRequestWithBundle(
                 const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                arr.putIndex(global, 0, route_name.transferToJS(global));
+                try arr.putIndex(global, 0, route_name.transferToJS(global));
                 dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
                         var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
                         defer dev.releaseRelativePathBuf();
-                        arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                        try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
@@ -2209,7 +2209,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!J
         }) catch unreachable;
         const str = bun.String.createUTF8(path);
         defer str.deref();
-        arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2253,7 +2253,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObjec
         const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
         defer dev.releaseRelativePathBuf();
         defer str.deref();
-        arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), str.toJS(global));
     }
     return arr;
 }

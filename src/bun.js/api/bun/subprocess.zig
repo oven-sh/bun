@@ -786,14 +786,14 @@ pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
 
 pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
     const array = try JSValue.createEmptyArray(global, 0);
-    array.push(global, .null);
-    array.push(global, .null); // TODO: align this with options
-    array.push(global, .null); // TODO: align this with options
+    try array.push(global, .null);
+    try array.push(global, .null); // TODO: align this with options
+    try array.push(global, .null); // TODO: align this with options
 
     this.observable_getters.insert(.stdio);
     var pipes = this.stdio_pipes.items;
     if (this.ipc_data != null) {
-        array.push(global, .null);
+        try array.push(global, .null);
         pipes = pipes[@min(1, pipes.len)..];
     }
 
@@ -801,10 +801,10 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
-                array.push(global, JSValue.jsNumber(fdno));
+                try array.push(global, JSValue.jsNumber(fdno));
             }
         } else {
-            array.push(global, JSValue.jsNumber(item.cast()));
+            try array.push(global, JSValue.jsNumber(item.cast()));
         }
     }
     return array;

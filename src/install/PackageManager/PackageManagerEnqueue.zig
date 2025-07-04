@@ -1641,6 +1641,12 @@ fn getOrPutResolvedPackage(
                         //     .auto,
                         // );
                     };
+
+                    // if (strings.eqlLong(strings.withoutTrailingSlash(folder_path_abs), strings.withoutTrailingSlash(FileSystem.instance.top_level_dir), true)) {
+                    //     successFn(this, dependency_id, 0);
+                    //     return .{ .package = this.lockfile.packages.get(0) };
+                    // }
+
                     break :res FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
                 }
 
@@ -1720,7 +1726,7 @@ fn getOrPutResolvedPackage(
             }
         },
         .symlink => {
-            const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
+            const res = FolderResolution.getOrPut(.{ .global = this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
 
             switch (res) {
                 .err => |err| return err,

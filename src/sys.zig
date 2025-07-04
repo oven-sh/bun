@@ -345,7 +345,7 @@ pub const Error = struct {
     syscall: sys.Tag = sys.Tag.TODO,
     dest: []const u8 = "",
 
-    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) bun.OOM!Error {
         var copy = this.*;
         copy.path = try allocator.dupe(u8, copy.path);
         copy.dest = try allocator.dupe(u8, copy.dest);
@@ -2809,8 +2809,10 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: p
 }
 
 pub fn unlinkW(from: [:0]const u16) Maybe(void) {
-    if (windows.DeleteFileW(from.ptr) != 0) {
-        return .{ .err = Error.fromCode(bun.windows.getLastErrno(), .unlink) };
+    const ret = windows.DeleteFileW(from);
+    if (Maybe(void).errnoSys(ret, .unlink)) |err| {
+        log("DeleteFileW({s}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
+        return err;
     }
 
     return Maybe(void).success;
@@ -3766,6 +3768,42 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     return dupWithFlags(fd, 0);
+}
+
+pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        if (T == u8) {
+            return sys_uv.link(src, dest);
+        }
+
+        const ret = bun.windows.CreateHardLinkW(dest, src, null);
+        if (Maybe(void).errnoSys(ret, .link)) |err| {
+            log("CreateHardLinkW({s}, {s}) = {s}", .{
+                bun.fmt.fmtPath(T, dest, .{}),
+                bun.fmt.fmtPath(T, src, .{}),
+                @tagName(err.getErrno()),
+            });
+            return err;
+        }
+
+        log("CreateHardLinkW({s}, {s}) = 0", .{
+            bun.fmt.fmtPath(T, dest, .{}),
+            bun.fmt.fmtPath(T, src, .{}),
+        });
+        return .success;
+    }
+
+    if (T == u16) {
+        @compileError("unexpected path type");
+    }
+
+    const ret = std.c.link(src, dest);
+    if (Maybe(void).errnoSysP(ret, .link, src)) |err| {
+        log("link({s}, {s}) = {s}", .{ src, dest, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("link({s}, {s}) = 0", .{ src, dest });
+    return .success;
 }
 
 pub fn linkat(src: bun.FileDescriptor, src_path: []const u8, dest: bun.FileDescriptor, dest_path: []const u8) Maybe(void) {

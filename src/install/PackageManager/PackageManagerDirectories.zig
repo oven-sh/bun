@@ -361,25 +361,40 @@ pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
     manager.options.bin_path = path.ptr[0..path.len :0];
 }
 
-pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
+pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
     return this.global_link_dir orelse brk: {
-        var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch |err| switch (err) {
+            error.@"No global directory found" => {
+                Output.errGeneric("failed to find a global directory for package caching and global link directories", .{});
+                Global.exit(1);
+            },
+            else => {
+                Output.err(err, "failed to open the global directory", .{});
+                Global.exit(1);
+            },
+        };
         this.global_dir = global_dir;
-        this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
+        this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
+            Output.err(err, "failed to open global link dir node_modules at '{}'", .{FD.fromStdDir(global_dir)});
+            Global.exit(1);
+        };
         var buf: bun.PathBuffer = undefined;
-        const _path = try bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf);
-        this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
+        const _path = bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf) catch |err| {
+            Output.err(err, "failed to get the full path of the global directory", .{});
+            Global.exit(1);
+        };
+        this.global_link_dir_path = Fs.FileSystem.DirnameStore.instance.append([]const u8, _path) catch bun.outOfMemory();
         break :brk this.global_link_dir.?;
     };
 }
 
-pub fn globalLinkDirPath(this: *PackageManager) ![]const u8 {
-    _ = try this.globalLinkDir();
+pub fn globalLinkDirPath(this: *PackageManager) []const u8 {
+    _ = this.globalLinkDir();
     return this.global_link_dir_path;
 }
 
-pub fn globalLinkDirAndPath(this: *PackageManager) !struct { std.fs.Dir, []const u8 } {
-    const dir = try this.globalLinkDir();
+pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const u8 } {
+    const dir = this.globalLinkDir();
     return .{ dir, this.global_link_dir_path };
 }
 
@@ -502,14 +517,7 @@ pub fn computeCacheDirAndSubpath(
             cache_dir = std.fs.cwd();
         },
         .symlink => {
-            const directory = manager.globalLinkDir() catch |err| {
-                const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                const args = .{ name, @errorName(err) };
-
-                Output.prettyErrorln(fmt, args);
-
-                Global.exit(1);
-            };
+            const directory = manager.globalLinkDir();
 
             const folder = resolution.value.symlink.slice(buf);
 
@@ -517,7 +525,7 @@ pub fn computeCacheDirAndSubpath(
                 cache_dir_subpath = ".";
                 cache_dir = std.fs.cwd();
             } else {
-                const global_link_dir = manager.globalLinkDirPath() catch unreachable;
+                const global_link_dir = manager.globalLinkDirPath();
                 var ptr = folder_path_buf;
                 var remain: []u8 = folder_path_buf[0..];
                 @memcpy(ptr[0..global_link_dir.len], global_link_dir);

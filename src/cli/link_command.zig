@@ -100,7 +100,7 @@ fn link(ctx: Command.Context) !void {
                 );
                 link_path_buf[top_level.len] = 0;
                 const link_path = link_path_buf[0..top_level.len :0];
-                const global_path = try manager.globalLinkDirPath();
+                const global_path = manager.globalLinkDirPath();
                 const dest_path = Path.joinAbsStringZ(global_path, &.{name}, .windows);
                 switch (bun.sys.sys_uv.symlinkUV(
                     link_path,

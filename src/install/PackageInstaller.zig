@@ -890,32 +890,7 @@ pub const PackageInstaller = struct {
                 installer.cache_dir = std.fs.cwd();
             },
             .symlink => {
-                const directory = this.manager.globalLinkDir() catch |err| {
-                    if (log_level != .silent) {
-                        const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                        const args = .{ pkg_name.slice(this.lockfile.buffers.string_bytes.items), @errorName(err) };
-
-                        if (log_level.showProgress()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                },
-                            }
-                        } else {
-                            Output.prettyErrorln(fmt, args);
-                        }
-                    }
-
-                    if (this.manager.options.enable.fail_early) {
-                        Global.exit(1);
-                    }
-
-                    Output.flush();
-                    this.summary.fail += 1;
-
-                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-                    return;
-                };
+                const directory = this.manager.globalLinkDir();
 
                 const folder = resolution.value.symlink.slice(this.lockfile.buffers.string_bytes.items);
 
@@ -923,7 +898,7 @@ pub const PackageInstaller = struct {
                     installer.cache_dir_subpath = ".";
                     installer.cache_dir = std.fs.cwd();
                 } else {
-                    const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
+                    const global_link_dir = this.manager.globalLinkDirPath();
                     var ptr = &this.folder_path_buf;
                     var remain: []u8 = this.folder_path_buf[0..];
                     @memcpy(ptr[0..global_link_dir.len], global_link_dir);

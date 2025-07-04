@@ -257,6 +257,10 @@ pub fn AbsPath(comptime opts: Options) type {
             return full[full.len - base.len ..][0..base.len :0];
         }
 
+        pub fn dirname(this: *@This()) ?string {
+            return std.fs.path.dirname(this.slice());
+        }
+
         pub fn relative(from: *const @This(), to: *const @This(), output: *RelPath(opts)) void {
             const rel = bun.path.relativeBufZ(output._buf, from.slice(), to.slice());
             const trimmed = strings.trimTrailingPathSeparators(rel);

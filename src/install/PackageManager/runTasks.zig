@@ -74,7 +74,11 @@ pub fn runTasks(
         var iter = batch.iterator();
         while (iter.next()) |task| {
             defer installer.preallocated_tasks.put(task);
-            installer.onTask(task.entry_id);
+            if (task.err) |err| {
+                installer.onTaskFail(task.entry_id, err);
+            } else {
+                installer.onTask(task.entry_id);
+            }
         }
     }
 

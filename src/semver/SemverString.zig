@@ -175,16 +175,7 @@ pub const String = extern struct {
         str: *const String,
         buf: string,
 
-        // pub const Options = struct {
-        //     replace_slashes: bool,
-        // };
-
         pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            // if (!this.opts.replace_slashes) {
-            //     try writer.writeAll(this.str.slice(this.buf));
-            //     return;
-            // }
-
             for (this.str.slice(this.buf)) |c| {
                 switch (c) {
                     '/' => try writer.writeByte('+'),

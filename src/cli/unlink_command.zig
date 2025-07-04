@@ -55,7 +55,7 @@ fn unlink(ctx: Command.Context) !void {
             }
         }
 
-        switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
+        switch (Syscall.lstat(Path.joinAbsStringZ(manager.globalLinkDirPath(), &.{name}, .auto))) {
             .result => |stat| {
                 if (!bun.S.ISLNK(@intCast(stat.mode))) {
                     Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});

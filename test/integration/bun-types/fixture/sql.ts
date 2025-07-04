@@ -111,14 +111,14 @@ expectType(
   expectType(tx).is<readonly [[9], [10]]>();
 }
 
-expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQLQuery>();
-expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQLQuery<{ id: string }[]>>();
-expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQLQuery>();
+expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query>();
+expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Query<{ id: string }[]>>();
+expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query>();
 
 sql1.reserve().then(reserved => {
   reserved.release();
 
-  expectType(reserved<[8]>`SELECT 8`).is<Bun.SQLQuery<[8]>>();
+  expectType(reserved<[8]>`SELECT 8`).is<Bun.SQL.Query<[8]>>();
 });
 
 sql1.begin(async txn => {
@@ -151,23 +151,23 @@ sql1.begin("read write", 123);
 // @ts-expect-error
 sql1.transaction("read write", 123);
 
-const sqlQueryAny: Bun.SQLQuery = {} as any;
-const sqlQueryNumber: Bun.SQLQuery<number> = {} as any;
-const sqlQueryString: Bun.SQLQuery<string> = {} as any;
+const sqlQueryAny: Bun.SQL.Query = {} as any;
+const sqlQueryNumber: Bun.SQL.Query<number> = {} as any;
+const sqlQueryString: Bun.SQL.Query<string> = {} as any;
 
 expectAssignable<Promise<any>>(sqlQueryAny);
 expectAssignable<Promise<number>>(sqlQueryNumber);
 expectAssignable<Promise<string>>(sqlQueryString);
 
-expectType(sqlQueryNumber).is<Bun.SQLQuery<number>>();
-expectType(sqlQueryString).is<Bun.SQLQuery<string>>();
-expectType(sqlQueryNumber).is<Bun.SQLQuery<number>>();
+expectType(sqlQueryNumber).is<Bun.SQL.Query<number>>();
+expectType(sqlQueryString).is<Bun.SQL.Query<string>>();
+expectType(sqlQueryNumber).is<Bun.SQL.Query<number>>();
 
 const queryA = sql`SELECT 1`;
-expectType(queryA).is<Bun.SQLQuery>();
+expectType(queryA).is<Bun.SQL.Query>();
 
 const queryB = sql({ foo: "bar" });
-expectType(queryB).is<Bun.SQLHelper<{ foo: string }>>();
+expectType(queryB).is<Bun.SQL.Helper<{ foo: string }>>();
 
 expectType(sql).is<Bun.SQL>();
 
@@ -180,18 +180,18 @@ const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQLSavepointConte
 expectType(await sql.begin(txCb)).is<[1][]>();
 expectType(await sql.begin(spCb)).is<[2][]>();
 
-expectType(queryA.cancel()).is<Bun.SQLQuery>();
-expectType(queryA.simple()).is<Bun.SQLQuery>();
-expectType(queryA.execute()).is<Bun.SQLQuery>();
-expectType(queryA.raw()).is<Bun.SQLQuery>();
-expectType(queryA.values()).is<Bun.SQLQuery>();
+expectType(queryA.cancel()).is<Bun.SQL.Query>();
+expectType(queryA.simple()).is<Bun.SQL.Query>();
+expectType(queryA.execute()).is<Bun.SQL.Query>();
+expectType(queryA.raw()).is<Bun.SQL.Query>();
+expectType(queryA.values()).is<Bun.SQL.Query>();
 
-declare const queryNum: Bun.SQLQuery<number>;
-expectType(queryNum.cancel()).is<Bun.SQLQuery<number>>();
-expectType(queryNum.simple()).is<Bun.SQLQuery<number>>();
-expectType(queryNum.execute()).is<Bun.SQLQuery<number>>();
-expectType(queryNum.raw()).is<Bun.SQLQuery<number>>();
-expectType(queryNum.values()).is<Bun.SQLQuery<number>>();
+declare const queryNum: Bun.SQL.Query<number>;
+expectType(queryNum.cancel()).is<Bun.SQL.Query<number>>();
+expectType(queryNum.simple()).is<Bun.SQL.Query<number>>();
+expectType(queryNum.execute()).is<Bun.SQL.Query<number>>();
+expectType(queryNum.raw()).is<Bun.SQL.Query<number>>();
+expectType(queryNum.values()).is<Bun.SQL.Query<number>>();
 
 expectType(await queryNum.cancel()).is<number>();
 expectType(await queryNum.simple()).is<number>();
@@ -200,7 +200,7 @@ expectType(await queryNum.raw()).is<number>();
 expectType(await queryNum.values()).is<number>();
 
 expectType(sql({ name: "Alice", email: "alice@example.com" })).is<
-  Bun.SQLHelper<{
+  Bun.SQL.Helper<{
     name: string;
     email: string;
   }>
@@ -212,7 +212,7 @@ expectType(
     { name: "Bob", email: "bob@example.com" },
   ]),
 ).is<
-  Bun.SQLHelper<{
+  Bun.SQL.Helper<{
     name: string;
     email: string;
   }>
@@ -221,7 +221,7 @@ expectType(
 const userWithAge = { name: "Alice", email: "alice@example.com", age: 25 };
 
 expectType(sql(userWithAge, "name", "email")).is<
-  Bun.SQLHelper<{
+  Bun.SQL.Helper<{
     name: string;
     email: string;
   }>
@@ -231,13 +231,13 @@ const users = [
   { id: 1, name: "Alice" },
   { id: 2, name: "Bob" },
 ];
-expectType(sql(users, "id")).is<Bun.SQLHelper<{ id: number }>>();
+expectType(sql(users, "id")).is<Bun.SQL.Helper<{ id: number }>>();
 
-expectType(sql([1, 2, 3])).is<Bun.SQLHelper<number[]>>();
-expectType(sql([1, 2, 3] as const)).is<Bun.SQLHelper<readonly [1, 2, 3]>>();
+expectType(sql([1, 2, 3])).is<Bun.SQL.Helper<number[]>>();
+expectType(sql([1, 2, 3] as const)).is<Bun.SQL.Helper<readonly [1, 2, 3]>>();
 
-expectType(sql("users")).is<Bun.SQLQuery<any>>();
-expectType(sql<1>("users")).is<Bun.SQLQuery<1>>();
+expectType(sql("users")).is<Bun.SQL.Query<any>>();
+expectType(sql<1>("users")).is<Bun.SQL.Query<1>>();
 
 // @ts-expect-error - missing key in object
 sql(user, "notAKey");

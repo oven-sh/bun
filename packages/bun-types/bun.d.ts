@@ -1383,33 +1383,6 @@ declare module "bun" {
     prepare?: boolean;
   }
 
-  /**
-   * Represents a SQL query that can be executed, with additional control methods
-   * Extends Promise to allow for async/await usage
-   */
-  interface SQLQuery<T = any> extends Promise<T> {
-    /** Indicates if the query is currently executing */
-    active: boolean;
-
-    /** Indicates if the query has been cancelled */
-    cancelled: boolean;
-
-    /** Cancels the executing query */
-    cancel(): SQLQuery<T>;
-
-    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery<T>;
-
-    /** Executes the query */
-    execute(): SQLQuery<T>;
-
-    /** Returns the raw query result */
-    raw(): SQLQuery<T>;
-
-    /** Returns only the values from the query result */
-    values(): SQLQuery<T>;
-  }
-
   namespace SQL {
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
       [K in keyof T]: Awaited<T[K]>;
@@ -1417,24 +1390,60 @@ declare module "bun" {
 
     type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
     type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+
+    /**
+     * Represents a SQL query that can be executed, with additional control methods
+     * Extends Promise to allow for async/await usage
+     */
+    interface Query<T = any> extends Promise<T> {
+      /** Indicates if the query is currently executing */
+      active: boolean;
+
+      /** Indicates if the query has been cancelled */
+      cancelled: boolean;
+
+      /** Cancels the executing query */
+      cancel(): SQLQuery<T>;
+
+      /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+      simple(): SQLQuery<T>;
+
+      /** Executes the query */
+      execute(): SQLQuery<T>;
+
+      /** Returns the raw query result */
+      raw(): SQLQuery<T>;
+
+      /** Returns only the values from the query result */
+      values(): SQLQuery<T>;
+    }
+
+    /**
+     * Callback function type for transaction contexts
+     * @param sql Function to execute SQL queries within the transaction
+     */
+    type TransactionContextCallback<T> = ContextCallback<T, TransactionSQL>;
+
+    /**
+     * Callback function type for savepoint contexts
+     * @param sql Function to execute SQL queries within the savepoint
+     */
+    type SavepointContextCallback<T> = SQL.ContextCallback<T, SavepointSQL>;
+
+    interface Helper<T> {
+      readonly value: T[];
+      readonly columns: (keyof T)[];
+    }
   }
 
-  /**
-   * Callback function type for transaction contexts
-   * @param sql Function to execute SQL queries within the transaction
-   */
-  type SQLTransactionContextCallback<T> = SQL.ContextCallback<T, TransactionSQL>;
+  /** @deprecated Use {@link SQL.Query} */
+  type SQLQuery<T = any> = SQL.Query<T>;
 
-  /**
-   * Callback function type for savepoint contexts
-   * @param sql Function to execute SQL queries within the savepoint
-   */
-  type SQLSavepointContextCallback<T> = SQL.ContextCallback<T, SavepointSQL>;
+  /** @deprecated Use {@link SQL.TransactionContextCallback} */
+  type SQLTransactionContextCallback<T> = SQL.TransactionContextCallback<T>;
 
-  interface SQLHelper<T> {
-    readonly value: T[];
-    readonly columns: (keyof T)[];
-  }
+  /** @deprecated Use {@link SQL.SavepointContextCallback} */
+  type SQLSavepointContextCallback<T> = SQL.SavepointContextCallback<T>;
 
   /**
    * Main SQL client interface providing connection and transaction management
@@ -1447,12 +1456,12 @@ declare module "bun" {
      * const [user] = await sql`select * from users where id = ${1}`;
      * ```
      */
-    <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQLQuery<T>;
+    <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQL.Query<T>;
 
     /**
      * Execute a SQL query using a string
      */
-    <T = any>(string: string): SQLQuery<T>;
+    <T = any>(string: string): SQL.Query<T>;
 
     /**
      * Helper function for inserting an object into a query
@@ -1472,7 +1481,7 @@ declare module "bun" {
     <T extends { [Key in PropertyKey]: unknown }, Keys extends keyof T = keyof T>(
       obj: T | T[] | readonly T[],
       ...columns: readonly Keys[]
-    ): SQLHelper<Pick<T, Keys>>;
+    ): SQL.Helper<Pick<T, Keys>>;
 
     /**
      * Helper function for inserting any serializable value into a query
@@ -1482,7 +1491,7 @@ declare module "bun" {
      * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
      * ```
      */
-    <T>(value: T): SQLHelper<T>;
+    <T>(value: T): SQL.Helper<T>;
 
     /**
      * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
@@ -1607,7 +1616,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    begin<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Begins a new transaction with options.
@@ -1635,7 +1644,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    begin<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Alternative method to begin a transaction.
@@ -1664,7 +1673,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    transaction<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Alternative method to begin a transaction with options
@@ -1694,7 +1703,7 @@ declare module "bun" {
      *   return [user, account]
      * });
      */
-    transaction<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    transaction<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Begins a distributed transaction
@@ -1715,13 +1724,13 @@ declare module "bun" {
      */
     beginDistributed<const T>(
       name: string,
-      fn: SQLTransactionContextCallback<T>,
+      fn: SQL.TransactionContextCallback<T>,
     ): Promise<SQL.ContextCallbackResult<T>>;
 
     /** Alternative method to begin a distributed transaction
      * @alias {@link beginDistributed}
      */
-    distributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    distributed<const T>(name: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**If you know what you're doing, you can use unsafe to pass any string you'd like.
      * Please note that this can lead to SQL injection if you're not careful.

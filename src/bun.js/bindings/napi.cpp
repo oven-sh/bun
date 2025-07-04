@@ -1956,6 +1956,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

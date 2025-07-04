@@ -337,7 +337,7 @@ pub const GetAddrInfo = struct {
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
-                            array.putIndex(globalThis, i, item.toJS(globalThis));
+                            try array.putIndex(globalThis, i, item.toJS(globalThis));
                             i += 1;
                         }
                         break :brk array;
@@ -454,7 +454,7 @@ pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalOb
         var j: u32 = 0;
         var current: ?*std.c.addrinfo = addr_info;
         while (current) |this_node| : (current = current.?.next) {
-            array.putIndex(
+            try array.putIndex(
                 globalThis,
                 j,
                 GetAddrInfo.Result.toJS(

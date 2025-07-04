@@ -371,13 +371,13 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void;
-    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
-        JSC__JSValue__putIndex(value, globalObject, i, out);
+    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__putIndex, .{ value, globalObject, i, out });
     }
 
     extern fn JSC__JSValue__push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void;
-    pub fn push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void {
-        JSC__JSValue__push(value, globalObject, out);
+    pub fn push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__push, .{ value, globalObject, out });
     }
 
     extern fn JSC__JSValue__toISOString(*JSC.JSGlobalObject, JSC.JSValue, *[28]u8) c_int;
@@ -508,24 +508,10 @@ pub const JSValue = enum(i64) {
         Bun__JSValue__unprotect(this);
     }
 
-    extern fn JSC__JSValue__JSONValueFromString(
-        global: *JSGlobalObject,
-        str: [*]const u8,
-        len: usize,
-        ascii: bool,
-    ) JSValue;
-    pub fn JSONValueFromString(
-        global: *JSGlobalObject,
-        str: [*]const u8,
-        len: usize,
-        ascii: bool,
-    ) JSValue {
-        return JSC__JSValue__JSONValueFromString(global, str, len, ascii);
-    }
     extern fn JSC__JSValue__createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue;
     /// Create an object with exactly two properties
-    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue {
-        return JSC__JSValue__createObject2(global, key1, key2, value1, value2);
+    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__createObject2, .{ global, key1, key2, value1, value2 });
     }
 
     /// this must have been created by fromPtrAddress()
@@ -1219,8 +1205,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void;
-    pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
-        return JSC__JSValue__jsonStringify(this, globalThis, indent, out);
+    pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringify, .{ this, globalThis, indent, out });
     }
 
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
@@ -2214,8 +2200,8 @@ pub const JSValue = enum(i64) {
     extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: usize) JSValue;
 
     /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
-    pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
-        return Bun__JSValue__deserialize(global, bytes.ptr, bytes.len);
+    pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(global, @src(), Bun__JSValue__deserialize, .{ global, bytes.ptr, bytes.len });
     }
 
     extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue, forTransfer: bool) SerializedScriptValue.External;
@@ -2238,12 +2224,9 @@ pub const JSValue = enum(i64) {
 
     /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
-    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) ?SerializedScriptValue {
-        const value = Bun__serializeJSValue(global, this, forTransfer);
-        return if (value.bytes) |bytes|
-            .{ .data = bytes[0..value.size], .handle = value.handle.? }
-        else
-            null;
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) bun.JSError!SerializedScriptValue {
+        const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, forTransfer });
+        return .{ .data = value.bytes.?[0..value.size], .handle = value.handle.? };
     }
 
     extern fn Bun__ProxyObject__getInternalField(this: JSValue, field: ProxyInternalField) JSValue;
@@ -2320,7 +2303,7 @@ pub const JSValue = enum(i64) {
             inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
                 var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |item, i| {
-                    array.putIndex(
+                    try array.putIndex(
                         globalObject,
                         @truncate(i),
                         JSC.jsNumber(item),
@@ -2339,7 +2322,7 @@ pub const JSValue = enum(i64) {
                     for (value, 0..) |*item, i| {
                         const res = try fromAny(globalObject, *Child, item);
                         if (res == .zero) return .zero;
-                        array.putIndex(
+                        try array.putIndex(
                             globalObject,
                             @truncate(i),
                             res,

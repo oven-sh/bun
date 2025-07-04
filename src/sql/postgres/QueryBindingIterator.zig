@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const QueryBindingIterator = union(enum) {
     array: JSC.JSArrayIterator,
     objects: ObjectIterator,
@@ -58,7 +56,11 @@ pub const QueryBindingIterator = union(enum) {
         }
     }
 };
+
+// @sortImports
+
+const ObjectIterator = @import("./ObjectIterator.zig");
 const bun = @import("bun");
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const ObjectIterator = @import("./ObjectIterator.zig");

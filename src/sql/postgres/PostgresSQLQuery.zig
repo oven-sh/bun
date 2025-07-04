@@ -1,6 +1,3 @@
-// @sortImports
-
-const PostgresSQLQuery = @This();
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -19,11 +16,6 @@ flags: packed struct(u8) {
     result_mode: PostgresSQLQueryResultMode = .objects,
     _padding: u2 = 0,
 } = .{},
-
-pub const js = JSC.Codegen.JSPostgresSQLQuery;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub fn getTarget(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, clean_target: bool) JSC.JSValue {
     const thisValue = this.thisValue.get();
@@ -478,19 +470,30 @@ comptime {
     @export(&jscall, .{ .name = "PostgresSQLQuery__createInstance" });
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
-const JSRef = JSC.JSRef;
-const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
+const PostgresSQLQuery = @This();
+const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
+const Signature = @import("./Signature.zig");
+const bun = @import("bun");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const CommandTag = @import("./CommandTag.zig").CommandTag;
+const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
-const debug = bun.Output.scoped(.Postgres, false);
-const PostgresRequest = @import("./PostgresRequest.zig");
-const Signature = @import("./Signature.zig");
-const protocol = @import("./PostgresProtocol.zig");
-const CommandTag = @import("./CommandTag.zig").CommandTag;
+
+const JSC = bun.JSC;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSRef = JSC.JSRef;
+const JSValue = JSC.JSValue;
+
+pub const js = JSC.Codegen.JSPostgresSQLQuery;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;

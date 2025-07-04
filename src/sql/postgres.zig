@@ -1,5 +1,3 @@
-// @sortImports
-
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
     binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.js.getConstructor(globalObject));
@@ -19,16 +17,15 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
     return binding;
 }
 
+// @sortImports
+
+pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
+pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
+pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
 const bun = @import("bun");
-const JSC = bun.JSC;
-
-const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
-
+pub const protocol = @import("./postgres/PostgresProtocol.zig");
 pub const types = @import("./postgres/PostgresTypes.zig");
 
-pub const protocol = @import("./postgres/PostgresProtocol.zig");
-
-pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
-pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
-pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;

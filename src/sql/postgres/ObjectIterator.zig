@@ -1,6 +1,3 @@
-// @sortImports
-const ObjectIterator = @This();
-
 array: JSValue,
 columns: JSValue = .zero,
 globalObject: *JSC.JSGlobalObject,
@@ -58,7 +55,10 @@ pub fn next(this: *ObjectIterator) ?JSC.JSValue {
     return value;
 }
 
-const std = @import("std");
+// @sortImports
+
+const ObjectIterator = @This();
 const bun = @import("bun");
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const CommandTag = union(enum) {
     // For an INSERT command, the tag is INSERT oid rows, where rows is the
     // number of rows inserted. oid used to be the object ID of the inserted
@@ -98,8 +96,12 @@ pub const CommandTag = union(enum) {
     }
 };
 
-const std = @import("std");
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
 const bun = @import("bun");
+const std = @import("std");
+
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const debug = bun.Output.scoped(.Postgres, false);

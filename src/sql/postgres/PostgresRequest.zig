@@ -1,7 +1,3 @@
-// @sortImports
-
-const PostgresRequest = @This();
-
 pub fn writeBind(
     name: []const u8,
     cursor_name: bun.String,
@@ -328,19 +324,25 @@ pub fn onData(
 
 pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
-const std = @import("std");
-const bun = @import("bun");
-const String = bun.String;
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
+const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
+const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+
 const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;
 const int4 = types.int4;
 const short = types.short;
-const debug = bun.Output.scoped(.Postgres, false);
-const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
-const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const Signature = @import("./Signature.zig");
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

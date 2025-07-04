@@ -1,5 +1,3 @@
-// @sortImports
-
 tcp: ?*uws.SocketContext = null,
 
 onQueryResolveFn: JSC.Strong.Optional = .empty,
@@ -17,6 +15,9 @@ comptime {
     const js_init = JSC.toJSHostFn(init);
     @export(&js_init, .{ .name = "PostgresSQLContext__init" });
 }
+
+// @sortImports
+
 const bun = @import("bun");
-const uws = bun.uws;
 const JSC = bun.JSC;
+const uws = bun.uws;

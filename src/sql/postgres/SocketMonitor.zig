@@ -1,5 +1,3 @@
-// @sortImports
-
 pub fn write(data: []const u8) void {
     if (comptime bun.Environment.isDebug) {
         DebugSocketMonitorWriter.check.call();
@@ -18,8 +16,8 @@ pub fn read(data: []const u8) void {
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const debug = bun.Output.scoped(.Postgres, false);
+// @sortImports
+
 const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.zig");
 const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.zig");
+const bun = @import("bun");

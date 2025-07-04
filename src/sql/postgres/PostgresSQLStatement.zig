@@ -1,6 +1,3 @@
-// @sortImports
-
-const PostgresSQLStatement = @This();
 cached_structure: PostgresCachedStructure = .{},
 ref_count: u32 = 1,
 fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
@@ -170,17 +167,26 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC
 
     return this.cached_structure;
 }
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+
 const debug = bun.Output.scoped(.Postgres, false);
-const protocol = @import("./PostgresProtocol.zig");
-const types = @import("./PostgresTypes.zig");
-const int4 = types.int4;
+
+// @sortImports
+
+const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresSQLStatement = @This();
 const Signature = @import("./Signature.zig");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const DataCell = @import("./DataCell.zig").DataCell;
+
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
+
+const types = @import("./PostgresTypes.zig");
+const int4 = types.int4;
+
+const bun = @import("bun");
 const String = bun.String;
-const DataCell = @import("./DataCell.zig").DataCell;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const DataCell = extern struct {
     tag: Tag,
 
@@ -1087,18 +1085,23 @@ pub const DataCell = extern struct {
     };
 };
 
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const Data = @import("./Data.zig").Data;
+const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+
+const types = @import("./PostgresTypes.zig");
+const AnyPostgresError = types.AnyPostgresError;
+const int4 = types.int4;
+const short = types.short;
+
 const bun = @import("bun");
+const String = bun.String;
 
 const JSC = bun.JSC;
-const std = @import("std");
 const JSValue = JSC.JSValue;
-const Data = @import("./Data.zig").Data;
-const types = @import("./PostgresTypes.zig");
-const String = bun.String;
-const int4 = types.int4;
-const AnyPostgresError = types.AnyPostgresError;
-const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
-const short = types.short;
-const debug = bun.Output.scoped(.Postgres, false);
-const protocol = @import("./PostgresProtocol.zig");

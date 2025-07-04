@@ -1,7 +1,3 @@
-// @sortImports
-
-const Signature = @This();
-
 fields: []const int4,
 name: []const u8,
 query: []const u8,
@@ -103,10 +99,15 @@ pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_valu
     };
 }
 
-const std = @import("std");
+// @sortImports
+
+const Signature = @This();
 const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
+const std = @import("std");
+const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+
 const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const Data = union(enum) {
     owned: bun.ByteList,
     temporary: []const u8,
@@ -63,5 +61,7 @@ pub const Data = union(enum) {
         };
     }
 };
+
+// @sortImports
 
 const bun = @import("bun");

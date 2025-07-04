@@ -1,6 +1,3 @@
-// @sortImports
-
-const PostgresSQLConnection = @This();
 socket: Socket,
 status: Status = Status.connecting,
 ref_count: u32 = 1,
@@ -61,11 +58,6 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
         .nsec = 0,
     },
 },
-
-pub const js = JSC.Codegen.JSPostgresSQLConnection;
-pub const toJS = js.toJS;
-pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 fn getTimeoutInterval(this: *const PostgresSQLConnection) u32 {
     return switch (this.status) {
@@ -1541,28 +1533,42 @@ pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: 
     return on_close;
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const uws = bun.uws;
-const JSC = bun.JSC;
-const BoringSSL = bun.BoringSSL;
-const Socket = uws.AnySocket;
-const PostgresRequest = @import("./PostgresRequest.zig");
-const JSValue = JSC.JSValue;
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, bun.IdentityContext(u64), 80);
-const protocol = @import("./PostgresProtocol.zig");
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+
 const debug = bun.Output.scoped(.Postgres, false);
-const SSLMode = @import("./SSLMode.zig").SSLMode;
-const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
-const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
-const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
+
+// @sortImports
+
+const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresRequest = @import("./PostgresRequest.zig");
+const PostgresSQLConnection = @This();
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
-const assert = bun.assert;
+const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const SocketMonitor = @import("./SocketMonitor.zig");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
+const ConnectionFlags = @import("./ConnectionFlags.zig").ConnectionFlags;
 const Data = @import("./Data.zig").Data;
 const DataCell = @import("./DataCell.zig").DataCell;
-const ConnectionFlags = @import("./ConnectionFlags.zig").ConnectionFlags;
+const SSLMode = @import("./SSLMode.zig").SSLMode;
 const Status = @import("./Status.zig").Status;
-const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
+
+const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
+const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
+
+const bun = @import("bun");
+const BoringSSL = bun.BoringSSL;
+const assert = bun.assert;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;
+
+pub const js = JSC.Codegen.JSPostgresSQLConnection;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+pub const toJS = js.toJS;
+
+const uws = bun.uws;
+const Socket = uws.AnySocket;

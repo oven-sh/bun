@@ -1,7 +1,3 @@
-// @sortImports
-
-const DebugSocketMonitorReader = @This();
-
 var file: std.fs.File = undefined;
 pub var enabled = false;
 pub var check = std.once(load);
@@ -21,6 +17,9 @@ pub fn write(data: []const u8) void {
     file.writeAll(data) catch {};
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const bun = @import("bun");
+const std = @import("std");

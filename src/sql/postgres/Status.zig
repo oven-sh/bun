@@ -1,5 +1,3 @@
-// @sortImports
-
 pub const Status = enum {
     disconnected,
     connecting,
@@ -9,3 +7,5 @@ pub const Status = enum {
     connected,
     failed,
 };
+
+// @sortImports

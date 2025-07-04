@@ -1085,19 +1085,23 @@ pub const DataCell = extern struct {
     };
 };
 
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
+const Data = @import("./Data.zig").Data;
+const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+
+const types = @import("./PostgresTypes.zig");
+const AnyPostgresError = types.AnyPostgresError;
+const int4 = types.int4;
+const short = types.short;
+
 const bun = @import("bun");
+const String = bun.String;
 
 const JSC = bun.JSC;
-const std = @import("std");
 const JSValue = JSC.JSValue;
-const postgres = @import("./postgres.zig");
-const Data = postgres.Data;
-const types = postgres.types;
-const String = bun.String;
-const int4 = postgres.int4;
-const AnyPostgresError = postgres.AnyPostgresError;
-const protocol = postgres.protocol;
-const PostgresSQLQueryResultMode = postgres.PostgresSQLQueryResultMode;
-const PostgresCachedStructure = postgres.PostgresCachedStructure;
-const debug = postgres.debug;
-const short = postgres.short;

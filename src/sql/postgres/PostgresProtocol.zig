@@ -1,20 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const postgres = bun.api.Postgres;
-const Data = postgres.Data;
-const protocol = @This();
-const PostgresInt32 = postgres.PostgresInt32;
-const PostgresShort = postgres.PostgresShort;
-const String = bun.String;
-const debug = postgres.debug;
-const JSValue = JSC.JSValue;
-const JSC = bun.JSC;
-const short = postgres.short;
-const int4 = postgres.int4;
-const int8 = postgres.int8;
-const PostgresInt64 = postgres.PostgresInt64;
-const types = postgres.types;
-const AnyPostgresError = postgres.AnyPostgresError;
 pub const ArrayList = struct {
     array: *std.ArrayList(u8),
 
@@ -46,7 +29,7 @@ pub const StackReader = struct {
         return this.buffer.len >= (this.offset.* + length);
     }
 
-    pub fn init(buffer: []const u8, offset: *usize, message_start: *usize) protocol.NewReader(StackReader) {
+    pub fn init(buffer: []const u8, offset: *usize, message_start: *usize) NewReader(StackReader) {
         return .{
             .wrapped = .{
                 .buffer = buffer,
@@ -892,8 +875,6 @@ fn Int32(value: anytype) [4]u8 {
     return @bitCast(@byteSwap(@as(int4, @intCast(value))));
 }
 
-const toBytes = std.mem.toBytes;
-
 pub const TransactionStatusIndicator = enum(u8) {
     /// if idle (not in a transaction block)
     I = 'I',
@@ -1549,3 +1530,26 @@ pub const CopyOutResponse = struct {
 fn TODO(comptime Type: type) !void {
     bun.Output.panic("TODO: not implemented {s}", .{bun.meta.typeBaseName(@typeName(Type))});
 }
+
+const debug = bun.Output.scoped(.Postgres, false);
+
+// @sortImports
+
+const std = @import("std");
+const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
+const Data = @import("./Data.zig").Data;
+const toBytes = std.mem.toBytes;
+
+const types = @import("./PostgresTypes.zig");
+const PostgresInt32 = types.PostgresInt32;
+const PostgresInt64 = types.PostgresInt64;
+const PostgresShort = types.PostgresShort;
+const int4 = types.int4;
+const int8 = types.int8;
+const short = types.short;
+
+const bun = @import("bun");
+const String = bun.String;
+
+const JSC = bun.JSC;
+const JSValue = JSC.JSValue;

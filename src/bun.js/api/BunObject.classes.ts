@@ -121,6 +121,8 @@ export default [
       },
       stdio: {
         getter: "getStdio",
+        this: true,
+        cache: true,
       },
     },
     values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],

@@ -784,16 +784,47 @@ pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.hasKilled());
 }
 
-pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
-    const array = try JSValue.createEmptyArray(global, 0);
-    array.push(global, .null);
-    array.push(global, .null); // TODO: align this with options
-    array.push(global, .null); // TODO: align this with options
+pub fn getStdio(
+    this: *Subprocess,
+    this_value: JSValue,
+    globalThis: *JSGlobalObject,
+) bun.JSError!JSValue {
+    const array = try JSValue.createEmptyArray(globalThis, 0);
+    array.push(globalThis, brk: {
+        if (js.stdinGetCached(this_value)) |value| break :brk value;
+
+        const value = this.getStdin(globalThis);
+        if (value.isCell()) {
+            js.stdinSetCached(this_value, globalThis, value);
+        }
+
+        break :brk value;
+    });
+    array.push(globalThis, brk: {
+        if (js.stdoutGetCached(this_value)) |value| break :brk value;
+
+        const value = this.getStdout(globalThis);
+        if (value.isCell()) {
+            js.stdoutSetCached(this_value, globalThis, value);
+        }
+
+        break :brk value;
+    });
+    array.push(globalThis, brk: {
+        if (js.stderrGetCached(this_value)) |value| break :brk value;
+
+        const value = this.getStderr(globalThis);
+        if (value.isCell()) {
+            js.stderrSetCached(this_value, globalThis, value);
+        }
+
+        break :brk value;
+    });
 
     this.observable_getters.insert(.stdio);
     var pipes = this.stdio_pipes.items;
     if (this.ipc_data != null) {
-        array.push(global, .null);
+        array.push(globalThis, .null);
         pipes = pipes[@min(1, pipes.len)..];
     }
 
@@ -801,10 +832,10 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
-                array.push(global, JSValue.jsNumber(fdno));
+                array.push(globalThis, JSValue.jsNumber(fdno));
             }
         } else {
-            array.push(global, JSValue.jsNumber(item.cast()));
+            array.push(globalThis, JSValue.jsNumber(item.cast()));
         }
     }
     return array;

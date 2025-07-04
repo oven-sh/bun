@@ -18,6 +18,8 @@ struct SerializedValueSlice {
 /// Returns a "slice" that also contains a pointer to the SerializedScriptValue. Must be freed by the caller
 extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, bool forTransferBool)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
@@ -27,9 +29,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
     auto forTransferEnum = forTransferBool ? SerializationForTransfer::Yes : SerializationForTransfer::No;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, forStorage, context, forTransferEnum);
 
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
+    EXCEPTION_ASSERT(!!scope.exception() == serialized.hasException());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, { 0 });

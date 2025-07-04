@@ -136,6 +136,9 @@ pub const BundleV2 = struct {
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` cli) runs at the top of an event loop. When this is
     /// true, a callback is executed after all work is complete.
+    ///
+    /// You can find which callbacks are run by looking at the
+    /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
 
@@ -1864,7 +1867,7 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result);
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
                     }
 
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);

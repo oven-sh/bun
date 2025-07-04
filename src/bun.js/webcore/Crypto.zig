@@ -163,6 +163,93 @@ pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
 }
 
+comptime {
+    const Bun__randomUUIDv5 = JSC.toJSHostFn(Bun__randomUUIDv5_);
+    @export(&Bun__randomUUIDv5, .{ .name = "Bun__randomUUIDv5" });
+}
+
+pub fn Bun__randomUUIDv5_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const arguments: []const JSC.JSValue = callframe.argumentsUndef(3).slice();
+
+    if (arguments.len == 0 or arguments[0].isUndefinedOrNull()) {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be specified", .{}).throw();
+    }
+
+    if (arguments.len < 2 or arguments[1].isUndefinedOrNull()) {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be specified", .{}).throw();
+    }
+
+    const encoding: JSC.Node.Encoding = brk: {
+        if (arguments.len > 2 and !arguments[2].isUndefined()) {
+            if (arguments[2].isString()) {
+                break :brk try JSC.Node.Encoding.fromJS(arguments[2], globalThis) orelse {
+                    return globalThis.ERR(.UNKNOWN_ENCODING, "Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                };
+            }
+        }
+
+        break :brk JSC.Node.Encoding.hex;
+    };
+
+    const name_value = arguments[0];
+    const namespace_value = arguments[1];
+
+    const name = brk: {
+        if (name_value.isString()) {
+            const name_str = try name_value.toBunString(globalThis);
+            defer name_str.deref();
+            const result = name_str.toUTF8(bun.default_allocator);
+
+            break :brk result;
+        } else if (name_value.asArrayBuffer(globalThis)) |array_buffer| {
+            break :brk JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.byteSlice());
+        } else {
+            return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be of type string or BufferSource", .{}).throw();
+        }
+    };
+    defer name.deinit();
+
+    const namespace = brk: {
+        if (namespace_value.isString()) {
+            const namespace_str = try namespace_value.toBunString(globalThis);
+            defer namespace_str.deref();
+            const namespace_slice = namespace_str.toUTF8(bun.default_allocator);
+            defer namespace_slice.deinit();
+
+            if (namespace_slice.slice().len != 36) {
+                if (UUID5.namespaces.get(namespace_slice.slice())) |namespace| {
+                    break :brk namespace.*;
+                }
+
+                return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid UUID format for namespace", .{}).throw();
+            }
+
+            const parsed_uuid = UUID.parse(namespace_slice.slice()) catch {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid UUID format for namespace", .{}).throw();
+            };
+            break :brk parsed_uuid.bytes;
+        } else if (namespace_value.asArrayBuffer(globalThis)) |*array_buffer| {
+            const slice = array_buffer.byteSlice();
+            if (slice.len != 16) {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "Namespace must be exactly 16 bytes", .{}).throw();
+            }
+            break :brk slice[0..16].*;
+        }
+
+        return globalThis.ERR(.INVALID_ARG_TYPE, "The \"namespace\" argument must be a string or buffer", .{}).throw();
+    };
+
+    const uuid = UUID5.init(&namespace, name.slice());
+
+    if (encoding == .hex) {
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        uuid.print(bytes[0..36]);
+        return str.transferToJS(globalThis);
+    }
+
+    return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
+}
+
 pub fn randomUUIDWithoutTypeChecks(
     _: *Crypto,
     globalThis: *JSC.JSGlobalObject,
@@ -193,6 +280,8 @@ pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue 
 }
 
 const UUID7 = @import("../uuid.zig").UUID7;
+const UUID = @import("../uuid.zig");
+const UUID5 = @import("../uuid.zig").UUID5;
 
 const std = @import("std");
 const bun = @import("bun");

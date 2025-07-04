@@ -137,7 +137,7 @@ console.log(contents); // => "Hello, world!"
 import html from "./index.html" with { type: "text" };
 ```
 
-When referenced during a build, the contents are into the bundle as a string.
+When referenced during a build, the contents are inlined into the bundle as a string.
 
 ```ts
 var contents = `Hello, world!`;

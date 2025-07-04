@@ -799,6 +799,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
         JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
 

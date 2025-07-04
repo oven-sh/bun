@@ -174,10 +174,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initTranspiler(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server);
-    try framework.initTranspiler(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client);
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, .@"inline");
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, .@"inline");
     if (separate_ssr_graph) {
-        try framework.initTranspiler(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr);
+        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, .@"inline");
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
@@ -366,9 +366,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 public_path,
                 pt.outputFile(client_file).dest_path,
             })).toJS(global);
-            client_entry_urls.putIndex(global, @intCast(i), str);
+            try client_entry_urls.putIndex(global, @intCast(i), str);
         } else {
-            client_entry_urls.putIndex(global, @intCast(i), .null);
+            try client_entry_urls.putIndex(global, @intCast(i), .null);
         }
 
         const server_entry_point = try pt.loadBundledModule(router_type.server_file);
@@ -404,8 +404,8 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
         else
             JSValue.null;
-        server_render_funcs.putIndex(global, @intCast(i), server_render_func);
-        server_param_funcs.putIndex(global, @intCast(i), server_param_func);
+        try server_render_funcs.putIndex(global, @intCast(i), server_render_func);
+        try server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
 
     var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);
@@ -482,15 +482,15 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         next = route.parent.unwrap();
         file_count = 1;
         css_file_count = 0;
-        file_list.putIndex(global, 0, pt.preloadBundledModule(main_file_route_index));
+        try file_list.putIndex(global, 0, try pt.preloadBundledModule(main_file_route_index));
         for (main_file.referenced_css_files) |ref| {
-            styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+            try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
         }
         if (route.file_layout.unwrap()) |file| {
-            file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
+            try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
             for (pt.outputFile(file).referenced_css_files) |ref| {
-                styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+                try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                 css_file_count += 1;
             }
             file_count += 1;
@@ -499,9 +499,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         while (next) |parent_index| {
             const parent = router.routePtr(parent_index);
             if (parent.file_layout.unwrap()) |file| {
-                file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
+                try file_list.putIndex(global, file_count, try pt.preloadBundledModule(file));
                 for (pt.outputFile(file).referenced_css_files) |ref| {
-                    styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
+                    try styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                     css_file_count += 1;
                 }
                 file_count += 1;
@@ -512,26 +512,26 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         // Init the items
         var pattern_string = bun.String.createUTF8(pattern.slice());
         defer pattern_string.deref();
-        route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
+        try route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
 
         var src_path = bun.String.createUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
-        route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
+        try route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
 
-        route_nested_files.putIndex(global, @intCast(nav_index), file_list);
-        route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
+        try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
+        try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
             .type = route.type.get(),
         })));
 
         if (params_buf.items.len > 0) {
             const param_info_array = try JSValue.createEmptyArray(global, params_buf.items.len);
             for (params_buf.items, 0..) |param, i| {
-                param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), bun.String.createUTF8ForJS(global, param));
+                try param_info_array.putIndex(global, @intCast(params_buf.items.len - i - 1), bun.String.createUTF8ForJS(global, param));
             }
-            route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
+            try route_param_info.putIndex(global, @intCast(nav_index), param_info_array);
         } else {
-            route_param_info.putIndex(global, @intCast(nav_index), .null);
+            try route_param_info.putIndex(global, @intCast(nav_index), .null);
         }
-        route_style_references.putIndex(global, @intCast(nav_index), styles);
+        try route_style_references.putIndex(global, @intCast(nav_index), styles);
     }
 
     const render_promise = BakeRenderRoutesForProdStatic(
@@ -561,6 +561,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             return vm.global.throwValue(err);
         },
     }
+    vm.waitForTasks();
 }
 
 /// unsafe function, must be run outside of the event loop
@@ -821,10 +822,10 @@ pub const PerThread = struct {
     // What could be done here is generating a new index type, which is
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
-    pub fn preloadBundledModule(pt: *PerThread, id: OpaqueFileId) JSValue {
+    pub fn preloadBundledModule(pt: *PerThread, id: OpaqueFileId) bun.JSError!JSValue {
         if (!pt.loaded_files.isSet(id.get())) {
             pt.loaded_files.set(id.get());
-            pt.all_server_files.putIndex(
+            try pt.all_server_files.putIndex(
                 pt.vm.global,
                 @intCast(id.get()),
                 pt.module_keys[id.get()].toJS(pt.vm.global),

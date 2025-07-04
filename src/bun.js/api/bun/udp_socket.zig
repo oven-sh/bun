@@ -199,7 +199,7 @@ pub const UDPSocketConfig = struct {
                     if (!value.isCell() or !value.isCallable()) {
                         return globalThis.throwInvalidArguments("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
                     }
-                    @field(config, handler.@"1") = value;
+                    @field(config, handler.@"1") = value.withAsyncContextIfNeeded(globalThis);
                 }
             }
         }

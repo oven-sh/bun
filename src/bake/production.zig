@@ -174,10 +174,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, .@"inline");
-    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, .@"inline");
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server, bun.options.SourceMapOption.fromApi(options.bundler_options.server.source_map));
+    try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client, bun.options.SourceMapOption.fromApi(options.bundler_options.client.source_map));
     if (separate_ssr_graph) {
-        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, .@"inline");
+        try framework.initTranspilerWithSourceMap(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr, bun.options.SourceMapOption.fromApi(options.bundler_options.ssr.source_map));
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
@@ -287,7 +287,11 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             file.entry_point_index,
         });
         if (file.loader.isCSS()) {
-            if (css_chunks_count == 0) css_chunks_first = i;
+            if (css_chunks_count == 0) {
+                css_chunks_first = i;
+            } else {
+                css_chunks_first = @min(css_chunks_first, i);
+            }
             css_chunks_count += 1;
         }
 
@@ -417,6 +421,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
+        // CSS chunks must be in contiguous order!!
         bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
@@ -490,6 +495,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         css_file_count = 0;
         file_list.putIndex(global, 0, pt.preloadBundledModule(main_file_route_index));
         for (main_file.referenced_css_files) |ref| {
+            bun.assert(ref.get() >= css_chunks_first);
             styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
         }

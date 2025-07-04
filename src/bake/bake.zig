@@ -155,6 +155,20 @@ const BuildConfigSubset = struct {
     env: bun.Schema.Api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
     define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
+    source_map: bun.Schema.Api.SourceMapMode = .external,
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
+        var options = BuildConfigSubset{};
+
+        if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| {
+            if (try bun.Schema.Api.SourceMapMode.fromJS(global, val)) |sourcemap| {
+                options.source_map = sourcemap;
+            }
+            return bun.JSC.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "string", val);
+        }
+
+        return options;
+    }
 };
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
@@ -578,8 +592,15 @@ pub const Framework = struct {
         }
 
         if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
-            _ = js_options; // TODO:
-            // try bundler_options.parseInto(global, js_options, .root);
+            if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
+                bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
+            }
+            if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
+                bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
+            }
+            if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
+                bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
+            }
         }
 
         return framework;

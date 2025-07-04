@@ -210,7 +210,7 @@ append_to_profile() {
 	content="$1"
 	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
 	for profile in $profiles; do
-		for profile_path in "$current_home/$profile" "$home/$profile"; do
+		for profile_path in "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
 				append_file "$profile_path" "$content"
 			fi
@@ -472,7 +472,6 @@ check_user() {
 
 	current_user="$user"
 	current_group="$group"
-	current_home="$home"
 }
 
 check_ulimit() {
@@ -788,8 +787,8 @@ setup_node_gyp_cache() {
 		$HOME/.node-gyp/$nodejs_version
 		$HOME/.cache/node-gyp/$nodejs_version
 		$HOME/.npm/_cacache/node-gyp/$nodejs_version
-		$current_home/.node-gyp/$nodejs_version
-		$current_home/.cache/node-gyp/$nodejs_version
+		$home/.node-gyp/$nodejs_version
+		$home/.cache/node-gyp/$nodejs_version
 	"
 
 	for cache_dir in $cache_locations; do

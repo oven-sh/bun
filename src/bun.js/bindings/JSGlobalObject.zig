@@ -884,8 +884,8 @@ pub const JSGlobalObject = opaque {
 
         defer any_blob.detach();
 
-        // Give the caller the pointer and length to the blob contents, and return null to
-        // signify this has been done.
+        // Push the blob contents into the streaming compiler by passing a pointer and
+        // length, and return null to signify this has been done.
         const slice = any_blob.slice();
         JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.ptr, slice.len);
 

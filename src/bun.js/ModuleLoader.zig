@@ -2130,15 +2130,18 @@ fn setBreakPointOnFirstLine() bool {
 }
 
 pub const RuntimeTranspilerStore = struct {
-    generation_number: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    generation_number: std.atomic.Value(u32),
     store: TranspilerJob.Store,
-    enabled: bool = true,
-    queue: Queue = Queue{},
+    enabled: bool,
+    queue: Queue,
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
     pub fn zero(this: *RuntimeTranspilerStore) void {
         this.store.zero(bun.typedAllocator(TranspilerJob));
+        this.generation_number = std.atomic.Value(u32).init(0);
+        this.enabled = true;
+        this.queue = Queue{};
     }
 
     // This is run at the top of the event loop on the JS thread.

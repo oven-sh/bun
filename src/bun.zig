@@ -3774,3 +3774,34 @@ pub fn move(dest: []u8, src: []const u8) void {
 }
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
+
+pub const TerminalHyperlink = struct {
+    link: []const u8,
+    text: []const u8,
+    enabled: bool,
+
+    const Protocol = enum {
+        vscode,
+        cursor,
+    };
+
+    pub fn new(link: []const u8, text: []const u8, enabled: bool) TerminalHyperlink {
+        return TerminalHyperlink{
+            .link = link,
+            .text = text,
+            .enabled = enabled,
+        };
+    }
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.enabled) {
+            const ESC = "\x1b";
+            const OSC8 = ESC ++ "];8;";
+            const ST = ESC ++ "\\";
+            const link_fmt_string = OSC8 ++ "{s}" ++ ST ++ "{s}" ++ OSC8 ++ ST;
+            try writer.print(link_fmt_string, .{ this.link, this.text });
+        } else {
+            try writer.print("{s}", .{this.text});
+        }
+    }
+};

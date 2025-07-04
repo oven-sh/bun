@@ -515,7 +515,7 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 
     for (hashes.keys(), 0..) |hash, i| {
         const str = String.createUTF8ForJS(global, hash);
-        array.putIndex(global, @intCast(i), str);
+        try array.putIndex(global, @intCast(i), str);
     }
 
     return array;

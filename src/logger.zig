@@ -780,7 +780,7 @@ pub const Log = struct {
 
         const arr = try JSC.JSValue.createEmptyArray(global, msgs.len);
         for (msgs, 0..) |msg, i| {
-            arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
+            try arr.putIndex(global, @as(u32, @intCast(i)), try msg.toJS(global, allocator));
         }
 
         return arr;

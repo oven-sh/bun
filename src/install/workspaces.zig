@@ -1,3 +1,5 @@
+// @sortImports
+
 const std = @import("std");
 const bun = @import("bun");
 const install = bun.install;
@@ -1927,9 +1929,7 @@ pub const Store = struct {
                         var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
                         defer node_modules_path.deinit();
 
-                        installer.appendStorePath(&node_modules_path, this.entry_id);
-
-                        node_modules_path.append("node_modules");
+                        installer.appendStoreNodeModulesPath(&node_modules_path, this.entry_id);
 
                         var bin_linker: Bin.Linker = .{
                             .bin = bin,

@@ -14,6 +14,15 @@ declare module "bun" {
     ): void;
   }
 
+  /** @deprecated Use {@link SQL.Query} */
+  type SQLQuery<T = any> = SQL.Query<T>;
+
+  /** @deprecated Use {@link SQL.TransactionContextCallback} */
+  type SQLTransactionContextCallback<T> = SQL.TransactionContextCallback<T>;
+
+  /** @deprecated Use {@link SQL.SavepointContextCallback} */
+  type SQLSavepointContextCallback<T> = SQL.SavepointContextCallback<T>;
+
   /**
    * @deprecated Renamed to `ErrorLike`
    */

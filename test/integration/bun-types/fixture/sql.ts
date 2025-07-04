@@ -250,3 +250,8 @@ sql(users, "notAKey");
 
 // @ts-expect-error - array of numbers, extra key argument
 sql([1, 2, 3], "notAKey");
+
+// check the deprecated stuff still exists
+expectType<Bun.SQLQuery<"hey">>();
+expectType<Bun.SQLTransactionContextCallback<"hey">>();
+expectType<Bun.SQLSavepointContextCallback<"hey">>();

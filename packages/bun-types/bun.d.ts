@@ -1436,19 +1436,10 @@ declare module "bun" {
     }
   }
 
-  /** @deprecated Use {@link SQL.Query} */
-  type SQLQuery<T = any> = SQL.Query<T>;
-
-  /** @deprecated Use {@link SQL.TransactionContextCallback} */
-  type SQLTransactionContextCallback<T> = SQL.TransactionContextCallback<T>;
-
-  /** @deprecated Use {@link SQL.SavepointContextCallback} */
-  type SQLSavepointContextCallback<T> = SQL.SavepointContextCallback<T>;
-
   /**
    * Main SQL client interface providing connection and transaction management
    */
-  interface SQL {
+  interface SQL extends AsyncDisposable {
     /**
      * Executes a SQL query using template literals
      * @example
@@ -1752,9 +1743,8 @@ declare module "bun" {
      * Current client options
      */
     options: SQLOptions;
-
-    [Symbol.asyncDispose](): Promise<void>;
   }
+
   const SQL: {
     /**
      * Creates a new SQL client instance
@@ -1799,10 +1789,11 @@ declare module "bun" {
    * Represents a reserved connection from the connection pool
    * Extends SQL with additional release functionality
    */
-  interface ReservedSQL extends SQL {
-    /** Releases the client back to the connection pool */
+  interface ReservedSQL extends SQL, Disposable {
+    /**
+     * Releases the client back to the connection pool
+     */
     release(): void;
-    [Symbol.dispose](): void;
   }
 
   /**
@@ -1821,17 +1812,20 @@ declare module "bun" {
   interface SavepointSQL extends SQL {}
 
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+
   interface CSRFGenerateOptions {
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     expiresIn?: number;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
@@ -1844,16 +1838,19 @@ declare module "bun" {
      * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
      */
     secret?: string;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
      */
     algorithm?: CSRFAlgorithm;
+
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
@@ -1863,15 +1860,11 @@ declare module "bun" {
 
   /**
    * SQL client
-   *
-   * @category Database
    */
   const sql: SQL;
 
   /**
    * SQL client for PostgreSQL
-   *
-   * @category Database
    */
   const postgres: SQL;
 

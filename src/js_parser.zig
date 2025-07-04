@@ -19384,6 +19384,14 @@ fn NewParser_(
                                 const ref = if (data.value == .expr) emit_temp_var: {
                                     const ref_to_use = brk: {
                                         if (func.func.name) |*loc_ref| {
+                                            // Input:
+                                            //
+                                            //  export default function Foo() {}
+                                            //
+                                            // Output:
+                                            //
+                                            //  const Foo = _s(function Foo() {})
+                                            //  export default Foo;
                                             if (loc_ref.ref) |ref| break :brk ref;
                                         }
 

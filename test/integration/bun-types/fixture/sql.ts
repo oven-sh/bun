@@ -1,4 +1,4 @@
-import { sql, SQLQuery } from "bun";
+import { sql } from "bun";
 import { expectAssignable, expectType } from "./utilities";
 
 {

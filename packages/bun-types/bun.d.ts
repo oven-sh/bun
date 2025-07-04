@@ -1410,25 +1410,26 @@ declare module "bun" {
     values(): SQLQuery<T>;
   }
 
-  type AwaitPromisesArray<T extends Array<Promise<any>>> = {
-    [K in keyof T]: Awaited<T[K]>;
-  };
+  namespace SQL {
+    type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
+      [K in keyof T]: Awaited<T[K]>;
+    };
 
-  type SQLContextCallbackResult<T> = T extends unknown[] ? AwaitPromisesArray<T> : Awaited<T>;
-
-  type SQLContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+    type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
+    type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+  }
 
   /**
    * Callback function type for transaction contexts
    * @param sql Function to execute SQL queries within the transaction
    */
-  type SQLTransactionContextCallback<T> = SQLContextCallback<T, TransactionSQL>;
+  type SQLTransactionContextCallback<T> = SQL.ContextCallback<T, TransactionSQL>;
 
   /**
    * Callback function type for savepoint contexts
    * @param sql Function to execute SQL queries within the savepoint
    */
-  type SQLSavepointContextCallback<T> = SQLContextCallback<T, SavepointSQL>;
+  type SQLSavepointContextCallback<T> = SQL.ContextCallback<T, SavepointSQL>;
 
   interface SQLHelper<T> {
     readonly value: T[];
@@ -1606,7 +1607,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    begin<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Begins a new transaction with options.
@@ -1634,7 +1635,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    begin<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Alternative method to begin a transaction.
@@ -1663,7 +1664,7 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    transaction<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Alternative method to begin a transaction with options
@@ -1693,7 +1694,7 @@ declare module "bun" {
      *   return [user, account]
      * });
      */
-    transaction<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    transaction<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Begins a distributed transaction
@@ -1712,12 +1713,15 @@ declare module "bun" {
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
      */
-    beginDistributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    beginDistributed<const T>(
+      name: string,
+      fn: SQLTransactionContextCallback<T>,
+    ): Promise<SQL.ContextCallbackResult<T>>;
 
     /** Alternative method to begin a distributed transaction
      * @alias {@link beginDistributed}
      */
-    distributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+    distributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**If you know what you're doing, you can use unsafe to pass any string you'd like.
      * Please note that this can lead to SQL injection if you're not careful.
@@ -1798,8 +1802,8 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
-    savepoint<T>(name: string, fn: SQLSavepointContextCallback): Promise<T>;
-    savepoint<T>(fn: SQLSavepointContextCallback): Promise<T>;
+    savepoint<T>(name: string, fn: SQLSavepointContextCallback<T>): Promise<T>;
+    savepoint<T>(fn: SQLSavepointContextCallback<T>): Promise<T>;
   }
 
   /**

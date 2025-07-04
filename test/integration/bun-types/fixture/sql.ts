@@ -111,9 +111,9 @@ expectType(
   expectType(tx).is<readonly [[9], [10]]>();
 }
 
-expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query>();
+expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query<any>>();
 expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Query<{ id: string }[]>>();
-expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query>();
+expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
 
 sql1.reserve().then(reserved => {
   reserved.release();
@@ -151,7 +151,7 @@ sql1.begin("read write", 123);
 // @ts-expect-error
 sql1.transaction("read write", 123);
 
-const sqlQueryAny: Bun.SQL.Query = {} as any;
+const sqlQueryAny: Bun.SQL.Query<any> = {} as any;
 const sqlQueryNumber: Bun.SQL.Query<number> = {} as any;
 const sqlQueryString: Bun.SQL.Query<string> = {} as any;
 
@@ -164,15 +164,16 @@ expectType(sqlQueryString).is<Bun.SQL.Query<string>>();
 expectType(sqlQueryNumber).is<Bun.SQL.Query<number>>();
 
 const queryA = sql`SELECT 1`;
-expectType(queryA).is<Bun.SQL.Query>();
+expectType(queryA).is<Bun.SQL.Query<any>>();
+expectType(await queryA).is<any>();
 
 const queryB = sql({ foo: "bar" });
 expectType(queryB).is<Bun.SQL.Helper<{ foo: string }>>();
 
 expectType(sql).is<Bun.SQL>();
 
-const opts2: Bun.SQLOptions = { url: "postgres://localhost" };
-expectType(opts2).is<Bun.SQLOptions>();
+const opts2: Bun.SQL.Options = { url: "postgres://localhost" };
+expectType(opts2).is<Bun.SQL.Options>();
 
 const txCb = (async sql => [sql<[1]>`SELECT 1`]) satisfies Bun.SQL.TransactionContextCallback<unknown>;
 const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointContextCallback<unknown>;
@@ -180,11 +181,11 @@ const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointCont
 expectType(await sql.begin(txCb)).is<[1][]>();
 expectType(await sql.begin(spCb)).is<[2][]>();
 
-expectType(queryA.cancel()).is<Bun.SQL.Query>();
-expectType(queryA.simple()).is<Bun.SQL.Query>();
-expectType(queryA.execute()).is<Bun.SQL.Query>();
-expectType(queryA.raw()).is<Bun.SQL.Query>();
-expectType(queryA.values()).is<Bun.SQL.Query>();
+expectType(queryA.cancel()).is<Bun.SQL.Query<any>>();
+expectType(queryA.simple()).is<Bun.SQL.Query<any>>();
+expectType(queryA.execute()).is<Bun.SQL.Query<any>>();
+expectType(queryA.raw()).is<Bun.SQL.Query<any>>();
+expectType(queryA.values()).is<Bun.SQL.Query<any>>();
 
 declare const queryNum: Bun.SQL.Query<number>;
 expectType(queryNum.cancel()).is<Bun.SQL.Query<number>>();

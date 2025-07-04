@@ -1315,74 +1315,6 @@ declare module "bun" {
     stat(): Promise<import("node:fs").Stats>;
   }
 
-  /**
-   * Configuration options for SQL client connection and behavior
-   *  @example
-   * const config: SQLOptions = {
-   *   host: 'localhost',
-   *   port: 5432,
-   *   user: 'dbuser',
-   *   password: 'secretpass',
-   *   database: 'myapp',
-   *   idleTimeout: 30,
-   *   max: 20,
-   *   onconnect: (client) => {
-   *     console.log('Connected to database');
-   *   }
-   * };
-   */
-
-  interface SQLOptions {
-    /** Connection URL (can be string or URL object) */
-    url?: URL | string;
-    /** Database server hostname */
-    host?: string;
-    /** Database server hostname (alias for host) */
-    hostname?: string;
-    /** Database server port number */
-    port?: number | string;
-    /** Database user for authentication */
-    username?: string;
-    /** Database user for authentication (alias for username) */
-    user?: string;
-    /** Database password for authentication */
-    password?: string | (() => Promise<string>);
-    /** Database password for authentication (alias for password) */
-    pass?: string | (() => Promise<string>);
-    /** Name of the database to connect to */
-    database?: string;
-    /** Name of the database to connect to (alias for database) */
-    db?: string;
-    /** Database adapter/driver to use */
-    adapter?: string;
-    /** Maximum time in seconds to wait for connection to become available */
-    idleTimeout?: number;
-    /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
-    idle_timeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection */
-    connectionTimeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
-    connection_timeout?: number;
-    /** Maximum lifetime in seconds of a connection */
-    maxLifetime?: number;
-    /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
-    max_lifetime?: number;
-    /** Whether to use TLS/SSL for the connection */
-    tls?: TLSOptions | boolean;
-    /** Whether to use TLS/SSL for the connection (alias for tls) */
-    ssl?: TLSOptions | boolean;
-    /** Callback function executed when a connection is established */
-    onconnect?: (client: SQL) => void;
-    /** Callback function executed when a connection is closed */
-    onclose?: (client: SQL) => void;
-    /** Maximum number of connections in the pool */
-    max?: number;
-    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
-    bigint?: boolean;
-    /** Automatic creation of prepared statements, defaults to true */
-    prepare?: boolean;
-  }
-
   namespace SQL {
     type AwaitPromisesArray<T extends Array<PromiseLike<any>>> = {
       [K in keyof T]: Awaited<T[K]>;
@@ -1392,30 +1324,111 @@ declare module "bun" {
     type ContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
 
     /**
+     * Configuration options for SQL client connection and behavior
+     *  @example
+     * const config: Bun.SQL.Options = {
+     *   host: 'localhost',
+     *   port: 5432,
+     *   user: 'dbuser',
+     *   password: 'secretpass',
+     *   database: 'myapp',
+     *   idleTimeout: 30,
+     *   max: 20,
+     *   onconnect: (client) => {
+     *     console.log('Connected to database');
+     *   }
+     * };
+     */
+    interface Options {
+      /** Connection URL (can be string or URL object) */
+      url?: URL | string;
+      /** Database server hostname */
+      host?: string;
+      /** Database server hostname (alias for host) */
+      hostname?: string;
+      /** Database server port number */
+      port?: number | string;
+      /** Database user for authentication */
+      username?: string;
+      /** Database user for authentication (alias for username) */
+      user?: string;
+      /** Database password for authentication */
+      password?: string | (() => Promise<string>);
+      /** Database password for authentication (alias for password) */
+      pass?: string | (() => Promise<string>);
+      /** Name of the database to connect to */
+      database?: string;
+      /** Name of the database to connect to (alias for database) */
+      db?: string;
+      /** Database adapter/driver to use */
+      adapter?: string;
+      /** Maximum time in seconds to wait for connection to become available */
+      idleTimeout?: number;
+      /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
+      idle_timeout?: number;
+      /** Maximum time in seconds to wait when establishing a connection */
+      connectionTimeout?: number;
+      /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
+      connection_timeout?: number;
+      /** Maximum lifetime in seconds of a connection */
+      maxLifetime?: number;
+      /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
+      max_lifetime?: number;
+      /** Whether to use TLS/SSL for the connection */
+      tls?: TLSOptions | boolean;
+      /** Whether to use TLS/SSL for the connection (alias for tls) */
+      ssl?: TLSOptions | boolean;
+      /** Callback function executed when a connection is established */
+      onconnect?: (client: SQL) => void;
+      /** Callback function executed when a connection is closed */
+      onclose?: (client: SQL) => void;
+      /** Maximum number of connections in the pool */
+      max?: number;
+      /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
+      bigint?: boolean;
+      /** Automatic creation of prepared statements, defaults to true */
+      prepare?: boolean;
+    }
+
+    /**
      * Represents a SQL query that can be executed, with additional control methods
      * Extends Promise to allow for async/await usage
      */
-    interface Query<T = any> extends Promise<T> {
-      /** Indicates if the query is currently executing */
+    interface Query<T> extends Promise<T> {
+      /**
+       * Indicates if the query is currently executing
+       */
       active: boolean;
 
-      /** Indicates if the query has been cancelled */
+      /**
+       * Indicates if the query has been cancelled
+       */
       cancelled: boolean;
 
-      /** Cancels the executing query */
-      cancel(): SQLQuery<T>;
+      /**
+       * Cancels the executing query
+       */
+      cancel(): Query<T>;
 
-      /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-      simple(): SQLQuery<T>;
+      /**
+       * Executes the query as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons
+       */
+      simple(): Query<T>;
 
-      /** Executes the query */
-      execute(): SQLQuery<T>;
+      /**
+       * Executes the query
+       */
+      execute(): Query<T>;
 
-      /** Returns the raw query result */
-      raw(): SQLQuery<T>;
+      /**
+       * Returns the raw query result
+       */
+      raw(): Query<T>;
 
-      /** Returns only the values from the query result */
-      values(): SQLQuery<T>;
+      /**
+       * Returns only the values from the query result
+       */
+      values(): Query<T>;
     }
 
     /**
@@ -1428,8 +1441,18 @@ declare module "bun" {
      * Callback function type for savepoint contexts
      * @param sql Function to execute SQL queries within the savepoint
      */
-    type SavepointContextCallback<T> = SQL.ContextCallback<T, SavepointSQL>;
+    type SavepointContextCallback<T> = ContextCallback<T, SavepointSQL>;
 
+    /**
+     * SQL.Helper represents a parameter or serializable
+     * value inside of a query.
+     *
+     * @example
+     * ```ts
+     * const helper = sql(users, 'id');
+     * await sql`insert into users ${helper}`;
+     * ```
+     */
     interface Helper<T> {
       readonly value: T[];
       readonly columns: (keyof T)[];
@@ -1460,13 +1483,13 @@ declare module "bun" {
      * @example
      * ```ts
      * // Insert an object
-     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     * const result = await sql`insert into users ${sql(users)} returning *`;
      *
      * // Or pick specific columns
-     * const result = await sql`insert into users ${sql(users, "id", "name")} RETURNING *`;
+     * const result = await sql`insert into users ${sql(users, "id", "name")} returning *`;
      *
      * // Or a single object
-     * const result = await sql`insert into users ${sql(user)} RETURNING *`;
+     * const result = await sql`insert into users ${sql(user)} returning *`;
      * ```
      */
     <T extends { [Key in PropertyKey]: unknown }, Keys extends keyof T = keyof T>(
@@ -1742,7 +1765,7 @@ declare module "bun" {
     /**
      * Current client options
      */
-    options: SQLOptions;
+    options: SQL.Options;
   }
 
   const SQL: {
@@ -1770,7 +1793,7 @@ declare module "bun" {
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      * ```
      */
-    new (connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
+    new (connectionString: string | URL, options: Omit<SQL.Options, "url">): SQL;
 
     /**
      * Creates a new SQL client instance with options
@@ -1782,7 +1805,7 @@ declare module "bun" {
      * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
      * ```
      */
-    new (options?: SQLOptions): SQL;
+    new (options?: SQL.Options): SQL;
   };
 
   /**

@@ -23,6 +23,9 @@ declare module "bun" {
   /** @deprecated Use {@link SQL.SavepointContextCallback} */
   type SQLSavepointContextCallback<T> = SQL.SavepointContextCallback<T>;
 
+  /** @deprecated Use {@link SQL.Options} */
+  type SQLOptions = SQL.Options;
+
   /**
    * @deprecated Renamed to `ErrorLike`
    */

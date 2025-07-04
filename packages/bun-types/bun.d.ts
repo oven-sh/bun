@@ -1410,16 +1410,30 @@ declare module "bun" {
     values(): SQLQuery<T>;
   }
 
+  type AwaitPromisesArray<T extends Array<Promise<any>>> = {
+    [K in keyof T]: Awaited<T[K]>;
+  };
+
+  type SQLContextCallbackResult<T> = T extends unknown[] ? AwaitPromisesArray<T> : Awaited<T>;
+
+  type SQLContextCallback<T, SQL> = (sql: SQL) => Promise<T>;
+
   /**
    * Callback function type for transaction contexts
    * @param sql Function to execute SQL queries within the transaction
    */
-  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
+  type SQLTransactionContextCallback<T> = SQLContextCallback<T, TransactionSQL>;
+
   /**
    * Callback function type for savepoint contexts
    * @param sql Function to execute SQL queries within the savepoint
    */
-  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
+  type SQLSavepointContextCallback<T> = SQLContextCallback<T, SavepointSQL>;
+
+  interface SQLHelper<T> {
+    readonly value: T[];
+    readonly columns: (keyof T)[];
+  }
 
   /**
    * Main SQL client interface providing connection and transaction management
@@ -1432,7 +1446,12 @@ declare module "bun" {
      * const [user] = await sql`select * from users where id = ${1}`;
      * ```
      */
-    (strings: string[] | TemplateStringsArray, ...values: any[]): SQLQuery;
+    <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQLQuery<T>;
+
+    /**
+     * Execute a SQL query using a string
+     */
+    <T = any>(string: string): SQLQuery<T>;
 
     /**
      * Helper function for inserting an object into a query
@@ -1449,7 +1468,10 @@ declare module "bun" {
      * const result = await sql`insert into users ${sql(user)} RETURNING *`;
      * ```
      */
-    <T extends { [Key in PropertyKey]: unknown }>(obj: T | T[] | readonly T[], ...columns: (keyof T)[]): SQLQuery;
+    <T extends { [Key in PropertyKey]: unknown }, Keys extends keyof T = keyof T>(
+      obj: T | T[] | readonly T[],
+      ...columns: readonly Keys[]
+    ): SQLHelper<Pick<T, Keys>>;
 
     /**
      * Helper function for inserting any serializable value into a query
@@ -1459,7 +1481,7 @@ declare module "bun" {
      * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
      * ```
      */
-    (obj: unknown): SQLQuery;
+    <T>(value: T): SQLHelper<T>;
 
     /**
      * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
@@ -1531,6 +1553,7 @@ declare module "bun" {
 
     /**
      * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     *
      * This can be used for running queries on an isolated connection.
      * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
      *
@@ -1556,7 +1579,10 @@ declare module "bun" {
      * ```
      */
     reserve(): Promise<ReservedSQL>;
-    /** Begins a new transaction
+
+    /**
+     * Begins a new transaction.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @example
@@ -1580,8 +1606,11 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a new transaction with options
+    begin<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
+    /**
+     * Begins a new transaction with options.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @example
@@ -1605,8 +1634,11 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction
+    begin<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
+    /**
+     * Alternative method to begin a transaction.
+     *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
      * @alias begin
@@ -1631,11 +1663,15 @@ declare module "bun" {
      *   return [user, account]
      * })
      */
-    transaction(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction with options
+    transaction<const T>(fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
+    /**
+     * Alternative method to begin a transaction with options
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
      * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @alias begin
+     *
+     * @alias {@link begin}
+     *
      * @example
      * const [user, account] = await sql.transaction("read write", async sql => {
      *   const [user] = await sql`
@@ -1655,15 +1691,18 @@ declare module "bun" {
      *     returning *
      *   `
      *   return [user, account]
-     * })
+     * });
      */
-    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a distributed transaction
+    transaction<const T>(options: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
+    /**
+     * Begins a distributed transaction
      * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
      * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
      * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
      * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
      * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     *
      * @example
      * await sql.beginDistributed("numbers", async sql => {
      *   await sql`create table if not exists numbers (a int)`;
@@ -1673,18 +1712,21 @@ declare module "bun" {
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
      */
-    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    beginDistributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
     /** Alternative method to begin a distributed transaction
-     * @alias beginDistributed
+     * @alias {@link beginDistributed}
      */
-    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
+    distributed<const T>(name: string, fn: SQLTransactionContextCallback<T>): Promise<SQLContextCallbackResult<T>>;
+
     /**If you know what you're doing, you can use unsafe to pass any string you'd like.
      * Please note that this can lead to SQL injection if you're not careful.
      * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
      * @example
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
-    unsafe(string: string, values?: any[]): SQLQuery;
+    unsafe<T = any>(string: string, values?: any[]): SQLQuery<T>;
+
     /**
      * Reads a file and uses the contents as a query.
      * Optional parameters can be used if the file includes $1, $2, etc
@@ -1693,10 +1735,12 @@ declare module "bun" {
      */
     file(filename: string, values?: any[]): SQLQuery;
 
-    /** Current client options */
+    /**
+     * Current client options
+     */
     options: SQLOptions;
 
-    [Symbol.asyncDispose](): Promise<any>;
+    [Symbol.asyncDispose](): Promise<void>;
   }
   const SQL: {
     /**
@@ -1754,9 +1798,10 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /** Creates a savepoint within the current transaction */
-    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
-    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
+    savepoint<T>(name: string, fn: SQLSavepointContextCallback): Promise<T>;
+    savepoint<T>(fn: SQLSavepointContextCallback): Promise<T>;
   }
+
   /**
    * Represents a savepoint within a transaction
    */

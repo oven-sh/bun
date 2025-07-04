@@ -27,7 +27,9 @@ export function expectType<T>(arg: T): {
    * ```
    */
   is<X extends T>(...args: IfEquals<X, T> extends true ? [] : [expected: X, but_got: T]): void;
+  extends<X>(...args: T extends X ? [] : [expected: T, but_got: X]): void;
 };
+
 export function expectType<T>(arg?: T) {
   return { is() {} };
 }

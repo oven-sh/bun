@@ -184,7 +184,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_failBody(J
 
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_fail, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_failBody>(*lexicalGlobalObject, *callFrame, "error");
+    return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_failBody>(*lexicalGlobalObject, *callFrame, "fail");
 }
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_cancelBody(JSGlobalObject*, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)

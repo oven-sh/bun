@@ -63,7 +63,7 @@ describe("bundler", async () => {
       `,
           "/binary.dat": Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f]),
         },
-        run: { stdout: '[72,101,108,108,111]' },
+        run: { stdout: "[72,101,108,108,111]" },
       });
       itBundled("bun/loader-bytes-empty-file", {
         target,
@@ -90,7 +90,7 @@ describe("bundler", async () => {
       `,
           "/unicode.txt": "Hello, 世界! 🌍",
         },
-        run: { stdout: 'Hello, 世界! 🌍' },
+        run: { stdout: "Hello, 世界! 🌍" },
       });
     });
   }

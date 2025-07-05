@@ -101,9 +101,9 @@ describe("bytes loader", () => {
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    
+
     const output = stdout + stderr;
-    expect(output).toContain("This loader type only supports the \"default\" import");
+    expect(output).toContain('This loader type only supports the "default" import');
     expect(exitCode).not.toBe(0);
   });
 

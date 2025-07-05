@@ -13892,6 +13892,8 @@ fn NewParser_(
             const Continuation = enum { next, done };
             pub fn t_dot(p: *P, _: Level, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
                 try p.lexer.next();
+                const target = left.*;
+
                 if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
                     // "a.#b"
                     // "a?.b.#c"
@@ -13907,7 +13909,7 @@ fn NewParser_(
                     try p.lexer.next();
                     const ref = p.storeNameInRef(name) catch unreachable;
                     left.* = p.newExpr(E.Index{
-                        .target = left.*,
+                        .target = target,
                         .index = p.newExpr(
                             E.PrivateIdentifier{
                                 .ref = ref,
@@ -13929,7 +13931,7 @@ fn NewParser_(
 
                     left.* = p.newExpr(
                         E.Dot{
-                            .target = left.*,
+                            .target = target,
                             .name = name,
                             .name_loc = name_loc,
                             .optional_chain = old_optional_chain,

@@ -419,8 +419,7 @@ pub const JSGlobalObject = opaque {
 
     extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
     pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {
-        Bun__Process__emitWarning(globalObject, warning, @"type", code, ctor);
-        if (globalObject.hasException()) return error.JSError;
+        return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__Process__emitWarning, .{ globalObject, warning, @"type", code, ctor });
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
@@ -609,7 +608,7 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return JSC__JSGlobalObject__handleRejectedPromises(this);
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;

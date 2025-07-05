@@ -1102,8 +1102,7 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     if (!obj.isObject()) return false;
 
     auto* object = JSC::jsCast<JSC::JSObject*>(obj);
-    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack);
-    RELEASE_AND_RETURN(scope, result);
+    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
 extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
@@ -1145,7 +1144,10 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
-    if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
+    auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
+    if (scope.exception()) [[unlikely]]
+        scope.clearException();
+    if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         if (scope.exception()) [[unlikely]]
             scope.clearException();

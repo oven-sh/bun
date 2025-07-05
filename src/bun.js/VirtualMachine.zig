@@ -513,18 +513,21 @@ extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: 
 extern fn Bun__noSideEffectsToString(vm: *JSC.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
 
 fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
-    const result = Bun__promises__isErrorLike(globalObject, reason);
-    if (globalObject.hasException()) return error.JSError;
-    return result;
+    return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });
 }
 
 fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
     if (isErrorLike(globalObject, reason) catch blk: {
-        if (globalObject.hasException()) globalObject.clearException();
+        globalObject.clearException();
         break :blk false;
     }) return reason;
-    const reasonStr = Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
-    if (globalObject.hasException()) globalObject.clearException();
+    const reasonStr = blk: {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+        defer if (scope.exception()) |_| scope.clearException();
+        break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);
+    };
     const msg = "This error originated either by throwing inside of an async function without a catch block, " ++
         "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
         "{s}" ++
@@ -564,7 +567,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
             return;
         },
         .warn_with_error_code => {
@@ -572,7 +575,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
                 error.JSExecutionTerminated => {}, // we are returning anyway
             };
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
             this.exit_handler.exit_code = 1;
             return;
         },
@@ -583,7 +586,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return;
-            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
+            bun.jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__emitUnhandledRejectionWarning, .{ globalObject, reason, promise }) catch {};
             return;
         },
         .throw => {

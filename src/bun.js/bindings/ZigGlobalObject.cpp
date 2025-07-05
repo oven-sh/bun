@@ -3972,6 +3972,7 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
+    auto scope = DECLARE_THROW_SCOPE(virtual_machine);
     do {
         auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
@@ -3979,6 +3980,8 @@ void GlobalObject::handleRejectedPromises()
                 continue;
 
             Bun__handleRejectedPromise(this, promise.get());
+            if (scope.exception()) [[unlikely]]
+                scope.clearException(); // is this right?
         }
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }

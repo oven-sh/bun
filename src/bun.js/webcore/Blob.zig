@@ -4604,6 +4604,26 @@ pub fn FileOpener(comptime This: type) type {
                             }
                         }
 
+                        // Check if ENOENT is due to a broken symlink
+                        if (err.errno == @intFromEnum(bun.sys.E.NOENT)) {
+                            const stat_result = bun.sys.lstat(path);
+                            if (stat_result == .result) {
+                                const mode = stat_result.result.mode;
+                                // Check if it's a symlink
+                                if ((mode & bun.S.IFMT) == bun.S.IFLNK) {
+                                    var link_buf: bun.PathBuffer = undefined;
+                                    const readlink_result = bun.sys.readlink(path, &link_buf);
+                                    if (readlink_result == .result) {
+                                        // Use withPathDest to show both symlink and target
+                                        this.errno = bun.errnoToZigErr(err.errno);
+                                        this.system_error = err.withPathDest(path_string.slice(), readlink_result.result).toSystemError();
+                                        this.opened_fd = invalid_fd;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         this.errno = bun.errnoToZigErr(err.errno);
                         this.system_error = err.withPath(path_string.slice()).toSystemError();
                         this.opened_fd = invalid_fd;

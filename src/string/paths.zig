@@ -118,18 +118,6 @@ pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
     return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path).len + prefix.len :0];
 }
 
-pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
-    if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
-        @memcpy(buf[0..utf8.len], utf8);
-        buf[utf8.len] = 0;
-        return buf[0..utf8.len :0];
-    }
-
-    const prefix = bun.windows.nt_maxpath_prefix_u8;
-    buf[0..prefix.len].* = prefix;
-    return buf[0 .. toPathNormalized(buf[prefix.len..], utf8).len + prefix.len :0];
-}
-
 pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
     @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
@@ -155,6 +143,11 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     bun.unsafeAssert(wbuf.len > 4);
+    if (hasPrefixComptime(utf8, bun.windows.long_path_prefix_u8) or
+        hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
+    {
+        return toWPathNormalized(wbuf, utf8);
+    }
     wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
@@ -445,6 +438,43 @@ pub fn removeLeadingDotSlash(slice: []const u8) callconv(bun.callconv_inline) []
         }
     }
     return slice;
+}
+
+pub fn trimLeadingPathSeparators(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and switch (trimmed[0]) {
+        '/', '\\' => true,
+        else => false,
+    }) {
+        trimmed = trimmed[1..];
+    }
+    return trimmed;
+}
+
+pub fn trimTrailingPathSeparators(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and switch (trimmed[trimmed.len - 1]) {
+        '/', '\\' => true,
+        else => false,
+    }) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return trimmed;
+}
+
+pub fn trimPathSeparators(input: string) string {
+    return trimLeadingPathSeparators(trimTrailingPathSeparators(input));
+}
+
+pub fn trimPathDelimiters(input: string) string {
+    var trimmed = input;
+    while (trimmed.len > 0 and trimmed[0] == std.fs.path.delimiter) {
+        trimmed = trimmed[1..];
+    }
+    while (trimmed.len > 0 and trimmed[trimmed.len - 1] == std.fs.path.delimiter) {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return trimmed;
 }
 
 const bun = @import("bun");

@@ -262,6 +262,11 @@ pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
 pub const OSPathBuffer = if (Environment.isWindows) WPathBuffer else PathBuffer;
 
+pub const paths = @import("./paths.zig");
+pub const AbsPath = paths.AbsPath;
+pub const RelPath = paths.RelPath;
+pub const EnvPath = paths.EnvPath;
+
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (@typeInfo(@TypeOf(value)) == .int) {
         return @ptrFromInt(@as(usize, value));
@@ -3642,6 +3647,15 @@ pub inline fn clear(val: anytype, allocator: std.mem.Allocator) void {
     }
 }
 
+pub inline fn move(val: anytype) switch (@typeInfo(@TypeOf(val))) {
+    .pointer => |p| p.child,
+    else => @compileError("unexpected move type"),
+} {
+    const tmp = val.*;
+    @constCast(val).* = undefined;
+    return tmp;
+}
+
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
 }
@@ -3725,8 +3739,9 @@ pub fn PathBufferPoolT(comptime T: type) type {
             return &Pool.get(bun.threadlocalAllocator()).data;
         }
 
-        pub fn put(buffer: *T) void {
-            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", buffer));
+        pub fn put(buffer: *const T) void {
+            // there's no deinit function on T so @constCast is fine
+            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", @constCast(buffer)));
             node.release();
         }
 
@@ -3764,13 +3779,12 @@ pub const highway = @import("./highway.zig");
 
 pub const MemoryReportingAllocator = @import("allocators/MemoryReportingAllocator.zig");
 
-pub fn move(dest: []u8, src: []const u8) void {
-    if (comptime Environment.allow_assert) {
-        if (src.len != dest.len) {
-            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
-        }
-    }
-    _ = bun.c.memmove(dest.ptr, src.ptr, src.len);
-}
-
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
+
+pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item))) bool {
+    const T = @TypeOf(item);
+    return switch (T) {
+        u8 => strings.containsChar(list.items, item),
+        else => std.mem.indexOfScalar(T, list.items, item) != null,
+    };
+}

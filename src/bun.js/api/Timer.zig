@@ -209,10 +209,6 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
-        if (this.active_timer_count == 0) {
-            return false;
-        }
-
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {

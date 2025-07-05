@@ -51,6 +51,7 @@ src/bun.js/bindings/ffi.cpp
 src/bun.js/bindings/helpers.cpp
 src/bun.js/bindings/highway_strings.cpp
 src/bun.js/bindings/HTMLEntryPoint.cpp
+src/bun.js/bindings/HTMLEntityDecoder.cpp
 src/bun.js/bindings/ImportMetaObject.cpp
 src/bun.js/bindings/inlines.cpp
 src/bun.js/bindings/InspectorBunFrontendDevServerAgent.cpp

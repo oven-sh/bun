@@ -54,6 +54,44 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      itBundled("bun/loader-bytes-file", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import data from './binary.dat' with {type: "bytes"};
+        console.write(JSON.stringify(Array.from(data)));
+      `,
+          "/binary.dat": Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f]),
+        },
+        run: { stdout: '[72,101,108,108,111]' },
+      });
+      itBundled("bun/loader-bytes-empty-file", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import data from './empty.bin' with {type: "bytes"};
+        console.write(JSON.stringify({
+          type: data.constructor.name,
+          length: data.length,
+          empty: Array.from(data)
+        }));
+      `,
+          "/empty.bin": Buffer.from([]),
+        },
+        run: { stdout: '{"type":"Uint8Array","length":0,"empty":[]}' },
+      });
+      itBundled("bun/loader-bytes-unicode", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import data from './unicode.txt' with {type: "bytes"};
+        const decoder = new TextDecoder();
+        console.write(decoder.decode(data));
+      `,
+          "/unicode.txt": "Hello, 世界! 🌍",
+        },
+        run: { stdout: 'Hello, 世界! 🌍' },
+      });
     });
   }
 

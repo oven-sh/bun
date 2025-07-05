@@ -836,7 +836,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc or loader == .bytes)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -848,7 +848,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text, .bytes => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -1243,17 +1243,60 @@ pub fn transpileSourceCode(
             var printer = source_code_printer.*;
             printer.ctx.reset();
             defer source_code_printer.* = printer;
-            _ = brk: {
-                var mapper = jsc_vm.sourceMapHandler(&printer);
+            
+            // Special handling for bytes loader with lazy export
+            if (loader == .bytes and parse_result.ast.has_lazy_export) {
+                // The lazy export contains a call expression where the argument is the base64 string
+                const lazy_export = parse_result.ast.parts.ptr[1].stmts[0].data.s_lazy_export.*;
+                if (lazy_export == .e_call) {
+                    const call = lazy_export.e_call;
+                    if (call.args.ptr[0].data == .e_string) {
+                        // Generate the runtime code directly with the base64 string
+                        const written = try std.fmt.allocPrint(
+                            allocator,
+                            "import {{ __base64ToUint8Array }} from \"bun:wrap\";\nexport default __base64ToUint8Array(\"{s}\");",
+                            .{call.args.ptr[0].data.e_string.data},
+                        );
+                        _ = printer.ctx.writeAll(written) catch unreachable;
+                    } else {
+                        // Fallback to normal printing
+                        _ = brk: {
+                            var mapper = jsc_vm.sourceMapHandler(&printer);
+                            break :brk try jsc_vm.transpiler.printWithSourceMap(
+                                parse_result,
+                                @TypeOf(&printer),
+                                &printer,
+                                .esm_ascii,
+                                mapper.get(),
+                            );
+                        };
+                    }
+                } else {
+                    // Fallback to normal printing
+                    _ = brk: {
+                        var mapper = jsc_vm.sourceMapHandler(&printer);
+                        break :brk try jsc_vm.transpiler.printWithSourceMap(
+                            parse_result,
+                            @TypeOf(&printer),
+                            &printer,
+                            .esm_ascii,
+                            mapper.get(),
+                        );
+                    };
+                }
+            } else {
+                _ = brk: {
+                    var mapper = jsc_vm.sourceMapHandler(&printer);
 
-                break :brk try jsc_vm.transpiler.printWithSourceMap(
-                    parse_result,
-                    @TypeOf(&printer),
-                    &printer,
-                    .esm_ascii,
-                    mapper.get(),
-                );
-            };
+                    break :brk try jsc_vm.transpiler.printWithSourceMap(
+                        parse_result,
+                        @TypeOf(&printer),
+                        &printer,
+                        .esm_ascii,
+                        mapper.get(),
+                    );
+                };
+            }
 
             if (comptime Environment.dump_source) {
                 dumpSource(jsc_vm, specifier, &printer);

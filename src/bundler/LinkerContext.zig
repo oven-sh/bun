@@ -467,7 +467,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch bun.outOfMemory();
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh, .bytes => {},
                     }
                 }
             }

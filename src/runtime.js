@@ -12,6 +12,21 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 
+// This is used to convert base64 strings to Uint8Array for the bytes loader
+// Uses native Uint8Array.fromBase64 if available, otherwise polyfills
+export var __base64ToUint8Array =
+  /* @__PURE__ */
+  Uint8Array.fromBase64 ||
+  /* @__PURE__ */
+  (base64 => {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  });
+
 // This is used to implement "export * from" statements. It copies properties
 // from the imported module to the current module's ESM export object. If the
 // current module is an entry point and the target format is CommonJS, we
@@ -160,7 +175,7 @@ export var __legacyDecorateClassTS = function (decorators, target, key, desc) {
   else
     for (var i = decorators.length - 1; i >= 0; i--)
       if ((d = decorators[i])) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-  return (c > 3 && r && Object.defineProperty(target, key, r), r);
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 
 export var __legacyDecorateParamTS = (index, decorator) => (target, key) => decorator(target, key, index);

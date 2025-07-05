@@ -5461,6 +5461,7 @@ const DirectoryWatchStore = struct {
             .bunsh,
             .sqlite,
             .sqlite_embedded,
+            .bytes,
             => bun.debugAssert(false),
         }
 

@@ -223,10 +223,10 @@ const LinuxImpl = struct {
         else
             undefined;
 
-        const rc = linux.futex_wait(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
-            @as(i32, @bitCast(expect)),
+        const rc = linux.futex_4arg(
+            &ptr.raw,
+            .{ .cmd = .WAIT, .private = true },
+            expect,
             if (timeout != null) &ts else null,
         );
 
@@ -245,10 +245,10 @@ const LinuxImpl = struct {
     }
 
     fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-        const rc = linux.futex_wake(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
-            std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32),
+        const rc = linux.futex_3arg(
+            &ptr.raw,
+            .{ .cmd = .WAKE, .private = true },
+            max_waiters,
         );
 
         switch (linux.E.init(rc)) {

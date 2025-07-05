@@ -175,13 +175,14 @@ Increment:
 Options:
   --no-git-tag-version Skip git operations
   --allow-same-version Prevents throwing error if version is the same
-  --message=<val>, -m  Custom commit message
-  --preid=<val>        Prerelease identifier
+  --message=<val>, -m  Custom commit message, use %s for version substitution
+  --preid=<val>        Prerelease identifier (i.e beta → 1.0.1-beta.0)
+  --force, -f          Bypass dirty git history check
 
 Examples:
   $ bun pm version patch
   $ bun pm version 1.2.3 --no-git-tag-version
-  $ bun pm version prerelease --preid beta
+  $ bun pm version prerelease --preid beta --message "Release beta: %s"
 ```
 
 To bump the version in `package.json`:

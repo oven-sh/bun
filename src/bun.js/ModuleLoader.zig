@@ -1243,47 +1243,21 @@ pub fn transpileSourceCode(
             var printer = source_code_printer.*;
             printer.ctx.reset();
             defer source_code_printer.* = printer;
-            
-            // Special handling for bytes loader with lazy export
-            if (loader == .bytes and parse_result.ast.has_lazy_export) {
-                // The lazy export contains a call expression where the argument is the base64 string
-                const lazy_export = parse_result.ast.parts.ptr[1].stmts[0].data.s_lazy_export.*;
-                if (lazy_export == .e_call) {
-                    const call = lazy_export.e_call;
-                    if (call.args.ptr[0].data == .e_string) {
-                        // Generate the runtime code directly with the base64 string
-                        const written = try std.fmt.allocPrint(
-                            allocator,
-                            "import {{ __base64ToUint8Array }} from \"bun:wrap\";\nexport default __base64ToUint8Array(\"{s}\");",
-                            .{call.args.ptr[0].data.e_string.data},
-                        );
-                        _ = printer.ctx.writeAll(written) catch unreachable;
-                    } else {
-                        // Fallback to normal printing
-                        _ = brk: {
-                            var mapper = jsc_vm.sourceMapHandler(&printer);
-                            break :brk try jsc_vm.transpiler.printWithSourceMap(
-                                parse_result,
-                                @TypeOf(&printer),
-                                &printer,
-                                .esm_ascii,
-                                mapper.get(),
-                            );
-                        };
-                    }
-                } else {
-                    // Fallback to normal printing
-                    _ = brk: {
-                        var mapper = jsc_vm.sourceMapHandler(&printer);
-                        break :brk try jsc_vm.transpiler.printWithSourceMap(
-                            parse_result,
-                            @TypeOf(&printer),
-                            &printer,
-                            .esm_ascii,
-                            mapper.get(),
-                        );
-                    };
-                }
+
+            // Special handling for bytes loader at runtime
+            if (loader == .bytes and globalObject != null) {
+                // At runtime, we create a Uint8Array directly from the source contents
+                // The transpiler already parsed the file and stored it in parse_result.source
+                // TODO: should we add code for not reading the BOM?
+                const contents = parse_result.source.contents;
+                const uint8_array = try JSC.ArrayBuffer.create(globalObject.?, contents, .Uint8Array);
+                return ResolvedSource{
+                    .allocator = null,
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .jsvalue_for_export = uint8_array,
+                    .tag = .export_default_object,
+                };
             } else {
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);

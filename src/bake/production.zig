@@ -278,6 +278,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const module_keys = try vm.allocator.alloc(bun.String, entry_points.files.count());
     const output_indexes = entry_points.files.values();
     var output_module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
+    var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
         log("{s} - {s} : {s} - {?d}\n", .{
@@ -303,6 +304,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         switch (file.side orelse continue) {
             .client => {
+                // TODO: Maybe not do this all in 1 thread?
                 // Client-side resources will be written to disk for usage in on the client side
                 _ = file.writeToDisk(root_dir, ".") catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -316,6 +318,27 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
                     };
+                }
+
+                // If the file has a sourcemap, store it so we can put it on
+                // `PerThread` so we can provide sourcemapped stacktraces for
+                // server components.
+                if (file.source_map_index != std.math.maxInt(u32)) {
+                    const source_map_index = file.source_map_index;
+                    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+                    bun.assert(source_map_file.output_kind == .sourcemap);
+
+                    const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
+                        (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
+                        file.dest_path[2..]
+                    else
+                        file.dest_path;
+
+                    try source_maps.put(
+                        allocator,
+                        try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+                        OutputFile.Index.init(@intCast(source_map_index)),
+                    );
                 }
 
                 switch (file.output_kind) {
@@ -354,6 +377,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         .output_indexes = output_indexes,
         .module_keys = module_keys,
         .module_map = output_module_map,
+        .source_maps = source_maps,
     };
 
     var pt = try PerThread.init(vm, per_thread_options);
@@ -755,6 +779,7 @@ pub const PerThread = struct {
     module_keys: []const bun.String,
     /// Unordered
     module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+    source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
 
     // Thread-local
     vm: *JSC.VirtualMachine,
@@ -773,6 +798,7 @@ pub const PerThread = struct {
         module_keys: []const bun.String,
         /// Unordered
         module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+        source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
     };
 
     extern fn BakeGlobalObject__attachPerThreadData(global: *JSC.JSGlobalObject, pt: ?*PerThread) void;
@@ -794,6 +820,7 @@ pub const PerThread = struct {
             .vm = vm,
             .loaded_files = loaded_files,
             .all_server_files = all_server_files,
+            .source_maps = opts.source_maps,
         };
     }
 
@@ -855,6 +882,17 @@ pub export fn BakeProdLoad(pt: *PerThread, key: bun.String) bun.String {
     const utf8 = key.toUTF8(allocator);
     defer utf8.deinit();
     if (pt.module_map.get(utf8.slice())) |value| {
+        return pt.bundled_outputs[value.get()].value.toBunString();
+    }
+    return bun.String.dead;
+}
+
+pub export fn BakeProdSourceMap(pt: *PerThread, key: bun.String) bun.String {
+    var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+    const allocator = sfa.get();
+    const utf8 = key.toUTF8(allocator);
+    defer utf8.deinit();
+    if (pt.source_maps.get(utf8.slice())) |value| {
         return pt.bundled_outputs[value.get()].value.toBunString();
     }
     return bun.String.dead;

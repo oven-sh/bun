@@ -39,4 +39,6 @@ public:
     }
 };
 
+extern "C" ProductionPerThread* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global);
+
 }; // namespace Kit

@@ -99,6 +99,13 @@ pub const Value = union(Kind) {
         }
     }
 
+    pub fn asSlice(v: Value) []const u8 {
+        return switch (v) {
+            .buffer => |buf| buf.bytes,
+            else => "",
+        };
+    }
+
     pub fn toBunString(v: Value) bun.String {
         return switch (v) {
             .noop => bun.String.empty,

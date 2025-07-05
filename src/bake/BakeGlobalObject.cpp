@@ -109,6 +109,12 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 
 extern "C" BunString BakeProdLoad(ProductionPerThread* perThreadData, BunString a);
 
+extern "C" ProductionPerThread* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
+{
+    Bake::GlobalObject* bake = jsCast<Bake::GlobalObject*>(global);
+    return bake->m_perThreadData;
+}
+
 JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
     JSC::JSValue parameters, JSC::JSValue script)

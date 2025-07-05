@@ -4,7 +4,7 @@
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
-function notimpl(message) {
+function notimpl(message: string) {
   throwNotImplemented("node:v8 " + message);
 }
 
@@ -29,8 +29,15 @@ class GCProfiler {
 function cachedDataVersionTag() {
   notimpl("cachedDataVersionTag");
 }
-var HeapSnapshotReadable_;
-function getHeapSnapshot() {
+
+var HeapSnapshotReadable_: typeof import("node:stream").Readable;
+function getHeapSnapshot(_options?: import("node:v8").HeapSnapshotOptions) {
+  if (_options !== undefined) {
+    if (typeof _options !== "object" || _options === null || $isArray(_options)) {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", _options);
+    }
+  }
+
   if (!HeapSnapshotReadable_) {
     const Readable = require("node:stream").Readable;
     class HeapSnapshotReadable extends Readable {
@@ -40,6 +47,7 @@ function getHeapSnapshot() {
         this.push(null);
       }
     }
+
     HeapSnapshotReadable_ = HeapSnapshotReadable;
   }
 
@@ -124,12 +132,18 @@ function getDefaultHeapSnapshotPath() {
   return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
 }
 
-let fs;
+let fs: typeof import("./fs").default;
 
-function writeHeapSnapshot(path, _options) {
+function writeHeapSnapshot(path?: string, _options?: import("node:v8").HeapSnapshotOptions) {
+  if (_options !== undefined) {
+    if (typeof _options !== "object" || _options === null || $isArray(_options)) {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", _options);
+    }
+  }
+
   if (path !== undefined) {
     if (typeof path !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("path", "string", path);
+      throw $ERR_INVALID_ARG_TYPE("path", "string or an instance of Buffer or URL", path);
     }
 
     if (!path) {
@@ -142,6 +156,7 @@ function writeHeapSnapshot(path, _options) {
   if (!fs) {
     fs = require("node:fs");
   }
+
   fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
 
   return path;

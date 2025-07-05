@@ -1466,6 +1466,19 @@ pub fn openFileAtWindowsNtPath(
             },
             else => |code| {
                 if (code.toSystemErrno()) |sys_err| {
+                    if ((code == .ALREADY_EXISTS or code == .FILE_EXISTS) and
+                        (options.access_mask & w.GENERIC_WRITE != 0 or options.access_mask & w.FILE_APPEND_DATA != 0))
+                    {
+                        if (directoryExistsAt(dir, path).asValue() orelse false) {
+                            return .{
+                                .err = .{
+                                    .errno = @intFromEnum(E.ISDIR),
+                                    .syscall = .open,
+                                },
+                            };
+                        }
+                    }
+
                     return .{
                         .err = .{
                             .errno = @intFromEnum(sys_err),

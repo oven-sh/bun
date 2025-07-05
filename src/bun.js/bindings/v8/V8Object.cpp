@@ -62,6 +62,64 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     return Just(true);
 }
 
+Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> value)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    JSValue v = value->localToJSValue();
+    auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    // TODO: investigate if we should use the return value
+    bool success = object->putByIndex(object, globalObject, index, v, false);
+    (void)success;
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return Nothing<bool>();
+    }
+
+    return Just(true);
+}
+
+MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    JSValue k = key->localToJSValue();
+    auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    Identifier identifier = k.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+
+    JSValue result = object->get(globalObject, identifier);
+    if (scope.exception()) [[unlikely]] {
+        return MaybeLocal<Value>();
+    }
+
+    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    return handleScope->createLocal<Value>(vm, result);
+}
+
+MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    auto& vm = JSC::getVM(globalObject);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue result = object->get(globalObject, index);
+    if (scope.exception()) [[unlikely]] {
+        return MaybeLocal<Value>();
+    }
+
+    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    return handleScope->createLocal<Value>(vm, result);
+}
+
 void Object::SetInternalField(int index, Local<Data> data)
 {
     auto* fields = getInternalFieldsContainer(this);

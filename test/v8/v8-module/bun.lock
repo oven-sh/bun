@@ -3,7 +3,7 @@
   "workspaces": {
     "": {
       "devDependencies": {
-        "node-gyp": "^11.2.0",
+        "node-gyp": "~11.2.0",
       },
     },
   },

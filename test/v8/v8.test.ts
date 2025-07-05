@@ -174,15 +174,38 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
+  describe("Value", () => {
+    it("can compare values using StrictEquals", async () => {
+      await checkSameOutput("test_v8_strict_equals", []);
+    });
+  });
+
   describe("Object", () => {
     it("can create an object and set properties", async () => {
       await checkSameOutput("test_v8_object", []);
     });
+    it("can get properties by key using Object::Get(context, key)", async () => {
+      await checkSameOutput("test_v8_object_get_by_key", []);
+    });
+    it("can get array elements by index using Object::Get(context, index)", async () => {
+      await checkSameOutput("test_v8_object_get_by_index", []);
+    });
   });
   describe("Array", () => {
-    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-    it.skip("can create an array from a C array of Locals", async () => {
+    it("can create an array from a C array of Locals", async () => {
       await checkSameOutput("test_v8_array_new", []);
+    });
+    it("can create an array with a specific length", async () => {
+      await checkSameOutput("test_v8_array_new_with_length", []);
+    });
+    it("can create an array from a callback", async () => {
+      await checkSameOutput("test_v8_array_new_with_callback", []);
+    });
+    it("correctly reports array length", async () => {
+      await checkSameOutput("test_v8_array_length", []);
+    });
+    it("can iterate over array elements with callbacks", async () => {
+      await checkSameOutput("test_v8_array_iterate", []);
     });
   });
 
@@ -241,6 +264,12 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   describe("EscapableHandleScope", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope", []);
+    });
+  });
+
+  describe("MaybeLocal", () => {
+    it("correctly handles ToLocal and ToLocalChecked operations", async () => {
+      await checkSameOutput("test_v8_maybe_local", []);
     });
   });
 

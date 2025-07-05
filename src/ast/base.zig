@@ -103,6 +103,7 @@ pub const Index = packed struct(u32) {
 /// The maps can be merged quickly by creating a single outer array containing
 /// all inner arrays from all parsed files.
 pub const Ref = packed struct(u64) {
+    pub const SourceIndex = u28;
     pub const Int = u31;
 
     inner_index: Int = 0,
@@ -113,8 +114,19 @@ pub const Ref = packed struct(u64) {
         source_contents_slice,
         symbol,
     },
+    /// These flags are used by:
+    ///
+    /// - E.ImportIdentifier
+    /// - E.Identifier
+    /// - E.CommonJSExportIdentifier
+    ///
+    flags: packed struct(u3) {
+        flag1: bool = false,
+        flag2: bool = false,
+        flag3: bool = false,
+    } = .{},
 
-    source_index: Int = 0,
+    source_index: SourceIndex = 0,
 
     /// Represents a null state without using an extra bit
     pub const None = Ref{ .inner_index = 0, .source_index = 0, .tag = .invalid };
@@ -131,11 +143,20 @@ pub const Ref = packed struct(u64) {
     pub const HashCtx = RefCtx;
 
     pub fn isSourceIndexNull(this: anytype) bool {
-        return this == std.math.maxInt(Int);
+        return this == std.math.maxInt(SourceIndex);
     }
 
     pub fn isSymbol(this: Ref) bool {
         return this.tag == .symbol;
+    }
+
+    pub inline fn withoutFlags(this: Ref) Ref {
+        return .{
+            .inner_index = this.inner_index,
+            .source_index = this.source_index,
+            .tag = this.tag,
+            .flags = .{},
+        };
     }
 
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -175,7 +196,7 @@ pub const Ref = packed struct(u64) {
         return this.tag != .invalid;
     }
 
-    pub inline fn sourceIndex(this: Ref) Int {
+    pub inline fn sourceIndex(this: Ref) SourceIndex {
         return this.source_index;
     }
 
@@ -205,7 +226,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        return @bitCast(key);
+        return @bitCast(key.withoutFlags());
     }
 
     pub inline fn hash64(key: Ref) u64 {

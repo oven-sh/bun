@@ -72,7 +72,7 @@ pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-
+const OptionalChain = js_ast.OptionalChain;
 const DeferredImportNamespace = struct {
     namespace: LocRef,
     import_record_id: u32,
@@ -190,7 +190,7 @@ const MacroRefData = struct {
     name: ?string = null,
 };
 
-const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);
+const MacroRefs = std.ArrayHashMap(Ref, MacroRefData, Ref.ArrayHashCtx, false);
 
 const Substitution = union(enum) {
     success: Expr,
@@ -1679,11 +1679,11 @@ pub const SideEffects = enum(u1) {
                 }
             },
             .e_identifier => |ident| {
-                if (ident.must_keep_due_to_with_stmt) {
+                if (ident.must_keep_due_to_with_stmt()) {
                     return expr;
                 }
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
+                if (ident.can_be_removed_if_unused() or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
                     return null;
                 }
             },
@@ -2464,7 +2464,7 @@ fn statementCaresAboutScope(stmt: Stmt) bool {
     };
 }
 
-const ExprIn = struct {
+const ExprIn = packed struct(u8) {
     // This tells us if there are optional chain expressions (EDot, EIndex, or
     // ECall) that are chained on to this expression. Because of the way the AST
     // works, chaining expressions on to this expression means they are our
@@ -2530,6 +2530,8 @@ const ExprIn = struct {
     is_immediately_assigned_to_decl: bool = false,
 
     property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
+
+    _padding: u2 = 0,
 };
 
 // This function exists to tie all of these checks together in one place
@@ -4697,13 +4699,15 @@ pub const KnownGlobal = enum {
 pub const MacroState = struct {
     refs: MacroRefs,
     prepend_stmts: *ListManaged(Stmt) = undefined,
-    imports: std.AutoArrayHashMap(i32, Ref),
+    imports: ImportMap,
+
+    pub const ImportMap = std.AutoArrayHashMap(i32, Ref);
 
     pub fn init(allocator: Allocator) MacroState {
         return MacroState{
             .refs = MacroRefs.init(allocator),
             .prepend_stmts = undefined,
-            .imports = std.AutoArrayHashMap(i32, Ref).init(allocator),
+            .imports = .init(allocator),
         };
     }
 };
@@ -5243,9 +5247,7 @@ fn NewParser_(
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
-                            return p.newExpr(E.Identifier{
-                                .ref = namespace_ref,
-                            }, arg.loc);
+                            return p.newExpr(E.Identifier.init(.{ .ref = namespace_ref }), arg.loc);
                         }
 
                         return p.newExpr(
@@ -5557,52 +5559,51 @@ fn NewParser_(
             return freq;
         }
 
-        pub fn newExpr(noalias p: *P, t: anytype, loc: logger.Loc) Expr {
+        fn newExprForScanningImports(noalias p: *P, t: anytype, loc: logger.Loc) Expr {
             const Type = @TypeOf(t);
-
-            comptime {
-                if (jsx_transform_type == .none) {
-                    if (Type == E.JSXElement or Type == *E.JSXElement) {
-                        @compileError("JSXElement is not supported in this environment");
-                    }
-                }
-            }
 
             // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .pointer) {
-                if (comptime only_scan_imports_and_do_not_visit) {
-                    if (Type == *E.Call) {
-                        const call: *E.Call = t;
-                        switch (call.target.data) {
-                            .e_identifier => |ident| {
-                                // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
-                                }
-                            },
-                            else => {},
-                        }
+                if (Type == *E.Call) {
+                    const call: *E.Call = t;
+                    switch (call.target.data) {
+                        .e_identifier => |ident| {
+                            // is this a require("something")
+                            if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                            }
+                        },
+                        else => {},
                     }
                 }
                 return Expr.init(std.meta.Child(Type), t.*, loc);
             } else {
-                if (comptime only_scan_imports_and_do_not_visit) {
-                    if (Type == E.Call) {
-                        const call: E.Call = t;
-                        switch (call.target.data) {
-                            .e_identifier => |ident| {
-                                // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
-                                }
-                            },
-                            else => {},
-                        }
+                if (Type == E.Call) {
+                    const call: E.Call = t;
+                    switch (call.target.data) {
+                        .e_identifier => |ident| {
+                            // is this a require("something")
+                            if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                            }
+                        },
+                        else => {},
                     }
                 }
                 return Expr.init(Type, t, loc);
             }
         }
+
+        fn newExprForRegularParsing(noalias _: *const P, t: anytype, loc: logger.Loc) Expr {
+            const Type = @TypeOf(t);
+            if (comptime @typeInfo(Type) == .pointer) {
+                return Expr.init(std.meta.Child(Type), t.*, loc);
+            } else {
+                return Expr.init(Type, t, loc);
+            }
+        }
+
+        pub const newExpr = if (only_scan_imports_and_do_not_visit) newExprForScanningImports else newExprForRegularParsing;
 
         pub fn b(p: *P, t: anytype, loc: logger.Loc) Binding {
             if (@typeInfo(@TypeOf(t)) == .pointer) {
@@ -5853,7 +5854,7 @@ fn NewParser_(
 
                                     .namespace => |map| {
                                         const expr = p.newExpr(E.Dot{
-                                            .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
+                                            .target = p.newExpr(E.Identifier{ .ref = ns_alias.namespace_ref }, loc),
                                             .name = ns_alias.alias,
                                             .name_loc = loc,
                                         }, loc);
@@ -5870,17 +5871,20 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.ImportIdentifier{
+                    return p.newExpr(E.ImportIdentifier.init(.{
                         .ref = ident.ref,
                         .was_originally_identifier = true,
-                    }, loc);
+                    }), loc);
                 }
             }
 
             // Substitute an EImportIdentifier now if this is an import item
             if (p.is_import_item.contains(ref)) {
                 return p.newExpr(
-                    E.ImportIdentifier{ .ref = ref, .was_originally_identifier = opts.was_originally_identifier },
+                    E.ImportIdentifier.init(.{
+                        .ref = ref,
+                        .was_originally_identifier = opts.was_originally_identifier,
+                    }),
                     loc,
                 );
             }
@@ -5922,7 +5926,7 @@ fn NewParser_(
 
                     p.recordUsage(ns_ref);
                     const prop = p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier.init(ns_ref), loc),
+                        .target = p.newExpr(E.Identifier{ .ref = ns_ref }, loc),
                         .name = name,
                         .name_loc = loc,
                     }, loc);
@@ -8015,7 +8019,9 @@ fn NewParser_(
                 //   }
                 //
                 // This matches the behavior of the TypeScript compiler.
-                try decorators.append(try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator));
+                try decorators.ensureUnusedCapacity(1);
+                try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator, &decorators.unusedCapacitySlice()[0]);
+                decorators.items.len += 1;
             }
 
             return decorators.items;
@@ -9587,10 +9593,11 @@ fn NewParser_(
 
                                 const defaultName = try createDefaultName(p, loc);
 
-                                const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
-                                const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
+                                var value = js_ast.StmtOrExpr{ .expr = undefined };
+                                try p.parseAsyncPrefixExpr(async_range, Level.comma, &value.expr);
+                                try p.parseSuffix(&value.expr, Level.comma, null, Expr.EFlags.none);
                                 try p.lexer.expectOrInsertSemicolon();
-                                const value = js_ast.StmtOrExpr{ .expr = expr };
+
                                 p.has_export_default = true;
                                 return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
@@ -10328,11 +10335,11 @@ fn NewParser_(
                         // "import.meta"
                         .t_open_paren, .t_dot => {
                             p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
-                            const expr = try p.parseSuffix(try p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
+                            var expr: Expr = undefined;
+                            try p.parseImportExpr(loc, .lowest, &expr);
+                            try p.parseSuffix(&expr, .lowest, null, Expr.EFlags.none);
                             try p.lexer.expectOrInsertSemicolon();
-                            return p.s(S.SExpr{
-                                .value = expr,
-                            }, loc);
+                            return p.s(S.SExpr{ .value = expr }, loc);
                         },
                         .t_string_literal, .t_no_substitution_template_literal => {
                             // "import 'path'"
@@ -10566,7 +10573,8 @@ fn NewParser_(
                             return try p.parseFnStmt(async_range.loc, opts, async_range);
                         }
 
-                        expr = try p.parseSuffix(try p.parseAsyncPrefixExpr(async_range, .lowest), .lowest, null, Expr.EFlags.none);
+                        try p.parseAsyncPrefixExpr(async_range, .lowest, &expr);
+                        try p.parseSuffix(&expr, .lowest, null, Expr.EFlags.none);
                     } else {
                         const exprOrLet = try p.parseExprOrLetStmt(opts);
                         switch (exprOrLet.stmt_or_expr) {
@@ -11388,7 +11396,8 @@ fn NewParser_(
                 try p.lexer.next();
 
                 const raw2 = p.lexer.raw();
-                const value = if (p.lexer.token == .t_identifier and strings.eqlComptime(raw2, "using")) value: {
+
+                var value = if (p.lexer.token == .t_identifier and strings.eqlComptime(raw2, "using")) value: {
                     // const using_loc = p.saveExprCommentsHere();
                     const using_range = p.lexer.range();
                     try p.lexer.next();
@@ -11424,13 +11433,17 @@ fn NewParser_(
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
                 }
-                const expr = p.newExpr(
-                    E.Await{ .value = try p.parseSuffix(value, .prefix, null, .none) },
+
+                try p.parseSuffix(&value, .prefix, null, .none);
+
+                var await_value = p.newExpr(
+                    E.Await{ .value = value },
                     token_range.loc,
                 );
+                try p.parseSuffix(&await_value, .lowest, null, .none);
                 return ExprOrLetStmt{
                     .stmt_or_expr = js_ast.StmtOrExpr{
-                        .expr = try p.parseSuffix(expr, .lowest, null, .none),
+                        .expr = await_value,
                     },
                 };
             } else {
@@ -11441,12 +11454,15 @@ fn NewParser_(
                 };
             }
 
-            // Parse the remainder of this expression that starts with an identifier
-            const ref = try p.storeNameInRef(raw);
-            const expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc);
             return ExprOrLetStmt{
                 .stmt_or_expr = js_ast.StmtOrExpr{
-                    .expr = try p.parseSuffix(expr, .lowest, null, .none),
+                    .expr = brk: {
+                        // Parse the remainder of this expression that starts with an identifier
+                        const ref = try p.storeNameInRef(raw);
+                        var expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc);
+                        try p.parseSuffix(&expr, .lowest, null, .none);
+                        break :brk expr;
+                    },
                 },
             };
         }
@@ -12557,7 +12573,7 @@ fn NewParser_(
             }
         }
 
-        fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range) !Expr {
+        fn parseFnExpr(p: *P, loc: logger.Loc, is_async: bool, async_range: logger.Range, value: *Expr) !void {
             try p.lexer.next();
             const is_generator = p.lexer.token == T.t_asterisk;
             if (is_generator) {
@@ -12603,7 +12619,7 @@ fn NewParser_(
             p.validateFunctionName(func, .expr);
             p.popScope();
 
-            return p.newExpr(js_ast.E.Function{
+            value.* = p.newExpr(js_ast.E.Function{
                 .func = func,
             }, loc);
         }
@@ -12730,10 +12746,11 @@ fn NewParser_(
 
         // This parses an expression. This assumes we've already parsed the "async"
         // keyword and are currently looking at the following token.
-        pub fn parseAsyncPrefixExpr(p: *P, async_range: logger.Range, level: Level) !Expr {
+        pub fn parseAsyncPrefixExpr(p: *P, async_range: logger.Range, level: Level, value: *Expr) !void {
             // "async function() {}"
             if (!p.lexer.has_newline_before and p.lexer.token == T.t_function) {
-                return try p.parseFnExpr(async_range.loc, true, async_range);
+                try p.parseFnExpr(async_range.loc, true, async_range, value);
+                return;
             }
 
             // Check the precedence level to avoid parsing an arrow function in
@@ -12757,7 +12774,8 @@ fn NewParser_(
                             };
                             const arrow_body = try p.parseArrowBody(args, &data);
                             p.popScope();
-                            return p.newExpr(arrow_body, async_range.loc);
+                            value.* = p.newExpr(arrow_body, async_range.loc);
+                            return;
                         }
                     },
                     // "async x => {}"
@@ -12784,7 +12802,8 @@ fn NewParser_(
                             };
                             var arrowBody = try p.parseArrowBody(args, &data);
                             arrowBody.is_async = true;
-                            return p.newExpr(arrowBody, async_range.loc);
+                            value.* = p.newExpr(arrowBody, async_range.loc);
+                            return;
                         }
                     },
 
@@ -12792,7 +12811,8 @@ fn NewParser_(
                     // "async () => {}"
                     .t_open_paren => {
                         try p.lexer.next();
-                        return p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range });
+                        try p.parseParenExpr(async_range.loc, level, ParenExprOpts{ .is_async = true, .async_range = async_range }, value);
+                        return;
                     },
 
                     // "async<T>()"
@@ -12803,11 +12823,12 @@ fn NewParser_(
                                 .did_not_skip_anything => {},
                                 else => |result| {
                                     try p.lexer.next();
-                                    return p.parseParenExpr(async_range.loc, level, ParenExprOpts{
+                                    try p.parseParenExpr(async_range.loc, level, ParenExprOpts{
                                         .is_async = true,
                                         .async_range = async_range,
                                         .force_arrow_fn = result == .definitely_type_parameters,
-                                    });
+                                    }, value);
+                                    return;
                                 },
                             }
                         }
@@ -12819,7 +12840,7 @@ fn NewParser_(
 
             // "async"
             // "async + 1"
-            return p.newExpr(
+            value.* = p.newExpr(
                 E.Identifier{ .ref = try p.storeNameInRef("async") },
                 async_range.loc,
             );
@@ -12958,45 +12979,47 @@ fn NewParser_(
             }
         };
 
-        pub fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) SkipTypeParameterResult {
+        pub noinline fn trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking(p: *P) SkipTypeParameterResult {
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeParametersThenOpenParenWithBacktracking, SkipTypeParameterResult);
         }
 
-        pub fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
+        pub noinline fn trySkipTypeScriptTypeArgumentsWithBacktracking(p: *P) bool {
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptTypeArgumentsWithBacktracking, bool);
         }
 
-        pub fn trySkipTypeScriptArrowReturnTypeWithBacktracking(p: *P) bool {
+        pub noinline fn trySkipTypeScriptArrowReturnTypeWithBacktracking(p: *P) bool {
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowReturnTypeWithBacktracking, bool);
         }
 
-        pub fn trySkipTypeScriptArrowArgsWithBacktracking(p: *P) bool {
+        pub noinline fn trySkipTypeScriptArrowArgsWithBacktracking(p: *P) bool {
             return Backtracking.lexerBacktracker(p, Backtracking.skipTypeScriptArrowArgsWithBacktracking, bool);
         }
 
-        pub fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) bool {
+        pub noinline fn trySkipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) bool {
             return Backtracking.lexerBacktrackerWithArgs(p, Backtracking.skipTypeScriptConstraintOfInferTypeWithBacktracking, .{ p, flags }, bool);
         }
 
-        pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
-            return try p.parseExprCommon(level, errors, Expr.EFlags.none);
+        pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors, expr: *Expr) anyerror!void {
+            return p.parseExprCommon(level, errors, Expr.EFlags.none, expr);
         }
 
         pub inline fn parseExpr(p: *P, level: Level) anyerror!Expr {
-            return try p.parseExprCommon(level, null, Expr.EFlags.none);
+            var expr: Expr = undefined;
+            try p.parseExprCommon(level, null, Expr.EFlags.none, &expr);
+            return expr;
         }
 
-        pub inline fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) anyerror!Expr {
-            return try p.parseExprCommon(level, null, flags);
+        pub inline fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags, expr: *Expr) anyerror!void {
+            return p.parseExprCommon(level, null, flags, expr);
         }
 
-        fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags, expr: *Expr) anyerror!void {
             if (!p.stack_check.isSafeToRecurse()) {
                 try bun.throwStackOverflow();
             }
 
             const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
-            var expr = try p.parsePrefix(level, errors, flags);
+            try p.parsePrefix(expr, level, errors, flags);
 
             // There is no formal spec for "__PURE__" comments but from reverse-
             // engineering, it looks like they apply to the next CallExpression or
@@ -13004,7 +13027,7 @@ fn NewParser_(
             // to the expression "a().b()".
 
             if (had_pure_comment_before and level.lt(.call)) {
-                expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
+                try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
@@ -13016,7 +13039,7 @@ fn NewParser_(
                 }
             }
 
-            return try p.parseSuffix(expr, level, errors, flags);
+            try p.parseSuffix(expr, level, errors, flags);
         }
 
         pub inline fn addImportRecord(p: *P, kind: ImportKind, loc: logger.Loc, name: string) u32 {
@@ -13111,7 +13134,7 @@ fn NewParser_(
             }
         }
 
-        pub fn parseYieldExpr(p: *P, loc: logger.Loc) !ExprNodeIndex {
+        pub fn parseYieldExpr(p: *P, loc: logger.Loc, value: *Expr) !void {
             // Parse a yield-from expression, which yields from an iterator
             const isStar = p.lexer.token == T.t_asterisk;
 
@@ -13123,20 +13146,19 @@ fn NewParser_(
                 try p.lexer.next();
             }
 
-            var value: ?ExprNodeIndex = null;
+            value.* = Expr{ .data = .e_missing, .loc = loc };
+
             switch (p.lexer.token) {
                 .t_close_brace, .t_close_paren, .t_close_bracket, .t_colon, .t_comma, .t_semicolon => {},
                 else => {
                     if (isStar or !p.lexer.has_newline_before) {
-                        value = try p.parseExpr(.yield);
+                        try p.parseExprCommon(.yield, null, .none, value);
                     }
                 },
             }
 
-            return p.newExpr(E.Yield{
-                .value = value,
-                .is_star = isStar,
-            }, loc);
+            value.* = p.newExpr(E.Yield{ .value = if (value.data == .e_missing) null else value.*, .is_star = isStar }, loc);
+            return;
         }
 
         pub fn parseProperty(p: *P, kind: Property.Kind, opts: *PropertyOpts, errors: ?*DeferredErrors) anyerror!?G.Property {
@@ -13640,16 +13662,17 @@ fn NewParser_(
 
             // Parse an object key/value pair
             try p.lexer.expect(.t_colon);
-            const value = try p.parseExprOrBindings(.comma, errors);
-
-            return G.Property{
+            var property: G.Property = .{
                 .kind = kind,
                 .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
                 }),
                 .key = key,
-                .value = value,
+                .value = Expr{ .data = .e_missing, .loc = .{} },
             };
+
+            try p.parseExprOrBindings(.comma, errors, &property.value.?);
+            return property;
         }
 
         // By the time we call this, the identifier and type parameters have already
@@ -13865,239 +13888,78 @@ fn NewParser_(
             return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
         }
 
-        pub fn parseSuffix(noalias p: *P, _left: Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
-            var left = _left;
-            var optional_chain: ?js_ast.OptionalChain = null;
-            while (true) {
-                if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
-                    while (true) {
-                        switch (p.lexer.token) {
-                            .t_comma => {
-                                if (level.gte(.comma)) {
-                                    return left;
-                                }
+        const parse_suffix_fns = struct {
+            const Continuation = enum { next, done };
+            pub fn t_dot(p: *P, _: Level, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                try p.lexer.next();
+                const target = left.*;
 
-                                try p.lexer.next();
-                                left = p.newExpr(E.Binary{
-                                    .op = .bin_comma,
-                                    .left = left,
-                                    .right = try p.parseExpr(.comma),
-                                }, left.loc);
+                if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
+                    // "a.#b"
+                    // "a?.b.#c"
+                    switch (left.data) {
+                        .e_super => {
+                            try p.lexer.expected(.t_identifier);
+                        },
+                        else => {},
+                    }
+
+                    const name = p.lexer.identifier;
+                    const name_loc = p.lexer.loc();
+                    try p.lexer.next();
+                    const ref = p.storeNameInRef(name) catch unreachable;
+                    left.* = p.newExpr(E.Index{
+                        .target = target,
+                        .index = p.newExpr(
+                            E.PrivateIdentifier{
+                                .ref = ref,
                             },
-                            else => {
-                                return left;
-                            },
-                        }
+                            name_loc,
+                        ),
+                        .optional_chain = old_optional_chain,
+                    }, left.loc);
+                } else {
+                    // "a.b"
+                    // "a?.b.c"
+                    if (!p.lexer.isIdentifierOrKeyword()) {
+                        try p.lexer.expect(.t_identifier);
+                    }
+
+                    const name = p.lexer.identifier;
+                    const name_loc = p.lexer.loc();
+                    try p.lexer.next();
+
+                    left.* = p.newExpr(
+                        E.Dot{
+                            .target = target,
+                            .name = name,
+                            .name_loc = name_loc,
+                            .optional_chain = old_optional_chain,
+                        },
+                        left.loc,
+                    );
+                }
+                optional_chain.* = old_optional_chain;
+                return .next;
+            }
+            pub fn t_question_dot(p: *P, level: Level, optional_chain: *?OptionalChain, left: *Expr) anyerror!Continuation {
+                try p.lexer.next();
+                var optional_start: ?OptionalChain = OptionalChain.start;
+
+                // Remove unnecessary optional chains
+                if (p.options.features.minify_syntax) {
+                    const result = SideEffects.toNullOrUndefined(p, left.data);
+                    if (result.ok and !result.value) {
+                        optional_start = null;
                     }
                 }
 
-                if (comptime is_typescript_enabled) {
-                    // Stop now if this token is forbidden to follow a TypeScript "as" cast
-                    if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
-                        return left;
-                    }
-                }
-
-                // Reset the optional chain flag by default. That way we won't accidentally
-                // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
-                const old_optional_chain = optional_chain;
-                optional_chain = null;
                 switch (p.lexer.token) {
-                    .t_dot => {
-                        try p.lexer.next();
-                        if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
-                            // "a.#b"
-                            // "a?.b.#c"
-                            switch (left.data) {
-                                .e_super => {
-                                    try p.lexer.expected(.t_identifier);
-                                },
-                                else => {},
-                            }
-
-                            const name = p.lexer.identifier;
-                            const name_loc = p.lexer.loc();
-                            try p.lexer.next();
-                            const ref = p.storeNameInRef(name) catch unreachable;
-                            left = p.newExpr(E.Index{
-                                .target = left,
-                                .index = p.newExpr(
-                                    E.PrivateIdentifier{
-                                        .ref = ref,
-                                    },
-                                    name_loc,
-                                ),
-                                .optional_chain = old_optional_chain,
-                            }, left.loc);
-                        } else {
-                            // "a.b"
-                            // "a?.b.c"
-                            if (!p.lexer.isIdentifierOrKeyword()) {
-                                try p.lexer.expect(.t_identifier);
-                            }
-
-                            const name = p.lexer.identifier;
-                            const name_loc = p.lexer.loc();
-                            try p.lexer.next();
-
-                            left = p.newExpr(E.Dot{ .target = left, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
-                        }
-
-                        optional_chain = old_optional_chain;
-                    },
-                    .t_question_dot => {
-                        try p.lexer.next();
-                        var optional_start: ?js_ast.OptionalChain = js_ast.OptionalChain.start;
-
-                        // Remove unnecessary optional chains
-                        if (p.options.features.minify_syntax) {
-                            const result = SideEffects.toNullOrUndefined(p, left.data);
-                            if (result.ok and !result.value) {
-                                optional_start = null;
-                            }
-                        }
-
-                        switch (p.lexer.token) {
-                            .t_open_bracket => {
-                                // "a?.[b]"
-                                try p.lexer.next();
-
-                                // allow "in" inside the brackets;
-                                const old_allow_in = p.allow_in;
-                                p.allow_in = true;
-
-                                const index = try p.parseExpr(.lowest);
-
-                                p.allow_in = old_allow_in;
-
-                                try p.lexer.expect(.t_close_bracket);
-                                left = p.newExpr(
-                                    E.Index{ .target = left, .index = index, .optional_chain = optional_start },
-                                    left.loc,
-                                );
-                            },
-
-                            .t_open_paren => {
-                                // "a?.()"
-                                if (level.gte(.call)) {
-                                    return left;
-                                }
-
-                                const list_loc = try p.parseCallArgs();
-                                left = p.newExpr(E.Call{
-                                    .target = left,
-                                    .args = list_loc.list,
-                                    .close_paren_loc = list_loc.loc,
-                                    .optional_chain = optional_start,
-                                }, left.loc);
-                            },
-                            .t_less_than, .t_less_than_less_than => {
-                                // "a?.<T>()"
-                                if (comptime !is_typescript_enabled) {
-                                    try p.lexer.expected(.t_identifier);
-                                    return error.SyntaxError;
-                                }
-
-                                _ = try p.skipTypeScriptTypeArguments(false);
-                                if (p.lexer.token != .t_open_paren) {
-                                    try p.lexer.expected(.t_open_paren);
-                                }
-
-                                if (level.gte(.call)) {
-                                    return left;
-                                }
-
-                                const list_loc = try p.parseCallArgs();
-                                left = p.newExpr(E.Call{
-                                    .target = left,
-                                    .args = list_loc.list,
-                                    .close_paren_loc = list_loc.loc,
-                                    .optional_chain = optional_start,
-                                }, left.loc);
-                            },
-                            else => {
-                                if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
-                                    // "a?.#b"
-                                    const name = p.lexer.identifier;
-                                    const name_loc = p.lexer.loc();
-                                    try p.lexer.next();
-                                    const ref = p.storeNameInRef(name) catch unreachable;
-                                    left = p.newExpr(E.Index{
-                                        .target = left,
-                                        .index = p.newExpr(
-                                            E.PrivateIdentifier{
-                                                .ref = ref,
-                                            },
-                                            name_loc,
-                                        ),
-                                        .optional_chain = optional_start,
-                                    }, left.loc);
-                                } else {
-                                    // "a?.b"
-                                    if (!p.lexer.isIdentifierOrKeyword()) {
-                                        try p.lexer.expect(.t_identifier);
-                                    }
-                                    const name = p.lexer.identifier;
-                                    const name_loc = p.lexer.loc();
-                                    try p.lexer.next();
-
-                                    left = p.newExpr(E.Dot{
-                                        .target = left,
-                                        .name = name,
-                                        .name_loc = name_loc,
-                                        .optional_chain = optional_start,
-                                    }, left.loc);
-                                }
-                            },
-                        }
-
-                        // Only continue if we have started
-                        if ((optional_start orelse .continuation) == .start) {
-                            optional_chain = .continuation;
-                        }
-                    },
-                    .t_no_substitution_template_literal => {
-                        if (old_optional_chain != null) {
-                            p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
-                        }
-                        // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head = p.lexer.rawTemplateContents();
-                        try p.lexer.next();
-                        left = p.newExpr(E.Template{
-                            .tag = left,
-                            .head = .{ .raw = head },
-                        }, left.loc);
-                    },
-                    .t_template_head => {
-                        if (old_optional_chain != null) {
-                            p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
-                        }
-                        // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
-                        const head = p.lexer.rawTemplateContents();
-                        const partsGroup = try p.parseTemplateParts(true);
-                        const tag = left;
-                        left = p.newExpr(E.Template{
-                            .tag = tag,
-                            .head = .{ .raw = head },
-                            .parts = partsGroup,
-                        }, left.loc);
-                    },
                     .t_open_bracket => {
-                        // When parsing a decorator, ignore EIndex expressions since they may be
-                        // part of a computed property:
-                        //
-                        //   class Foo {
-                        //     @foo ['computed']() {}
-                        //   }
-                        //
-                        // This matches the behavior of the TypeScript compiler.
-                        if (flags == .ts_decorator) {
-                            return left;
-                        }
-
+                        // "a?.[b]"
                         try p.lexer.next();
 
-                        // Allow "in" inside the brackets
+                        // allow "in" inside the brackets;
                         const old_allow_in = p.allow_in;
                         p.allow_in = true;
 
@@ -14106,501 +13968,800 @@ fn NewParser_(
                         p.allow_in = old_allow_in;
 
                         try p.lexer.expect(.t_close_bracket);
-
-                        left = p.newExpr(E.Index{
-                            .target = left,
-                            .index = index,
-                            .optional_chain = old_optional_chain,
-                        }, left.loc);
-                        optional_chain = old_optional_chain;
+                        left.* = p.newExpr(
+                            E.Index{ .target = left.*, .index = index, .optional_chain = optional_start },
+                            left.loc,
+                        );
                     },
+
                     .t_open_paren => {
+                        // "a?.()"
                         if (level.gte(.call)) {
-                            return left;
+                            return .done;
                         }
 
                         const list_loc = try p.parseCallArgs();
-                        left = p.newExpr(
-                            E.Call{
-                                .target = left,
-                                .args = list_loc.list,
-                                .close_paren_loc = list_loc.loc,
-                                .optional_chain = old_optional_chain,
-                            },
-                            left.loc,
-                        );
-                        optional_chain = old_optional_chain;
-                    },
-                    .t_question => {
-                        if (level.gte(.conditional)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-
-                        // Stop now if we're parsing one of these:
-                        // "(a?) => {}"
-                        // "(a?: b) => {}"
-                        // "(a?, b?) => {}"
-                        if (is_typescript_enabled and left.loc.start == p.latest_arrow_arg_loc.start and (p.lexer.token == .t_colon or
-                            p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
-                        {
-                            if (errors == null) {
-                                try p.lexer.unexpected();
-                                return error.SyntaxError;
-                            }
-                            errors.?.invalid_expr_after_question = p.lexer.range();
-                            return left;
-                        }
-
-                        // Allow "in" in between "?" and ":"
-                        const old_allow_in = p.allow_in;
-                        p.allow_in = true;
-
-                        const yes = try p.parseExpr(.comma);
-
-                        p.allow_in = old_allow_in;
-
-                        try p.lexer.expect(.t_colon);
-                        const no = try p.parseExpr(.comma);
-
-                        left = p.newExpr(E.If{
-                            .test_ = left,
-                            .yes = yes,
-                            .no = no,
+                        left.* = p.newExpr(E.Call{
+                            .target = left.*,
+                            .args = list_loc.list,
+                            .close_paren_loc = list_loc.loc,
+                            .optional_chain = optional_start,
                         }, left.loc);
                     },
-                    .t_exclamation => {
-                        // Skip over TypeScript non-null assertions
-                        if (p.lexer.has_newline_before) {
-                            return left;
-                        }
-
-                        if (!is_typescript_enabled) {
-                            try p.lexer.unexpected();
+                    .t_less_than, .t_less_than_less_than => {
+                        // "a?.<T>()"
+                        if (comptime !is_typescript_enabled) {
+                            try p.lexer.expected(.t_identifier);
                             return error.SyntaxError;
                         }
 
-                        try p.lexer.next();
-                        optional_chain = old_optional_chain;
-                    },
-                    .t_minus_minus => {
-                        if (p.lexer.has_newline_before or level.gte(.postfix)) {
-                            return left;
+                        _ = try p.skipTypeScriptTypeArguments(false);
+                        if (p.lexer.token != .t_open_paren) {
+                            try p.lexer.expected(.t_open_paren);
                         }
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Unary{ .op = .un_post_dec, .value = left }, left.loc);
-                    },
-                    .t_plus_plus => {
-                        if (p.lexer.has_newline_before or level.gte(.postfix)) {
-                            return left;
+                        if (level.gte(.call)) {
+                            return .done;
                         }
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Unary{ .op = .un_post_inc, .value = left }, left.loc);
+                        const list_loc = try p.parseCallArgs();
+                        left.* = p.newExpr(E.Call{
+                            .target = left.*,
+                            .args = list_loc.list,
+                            .close_paren_loc = list_loc.loc,
+                            .optional_chain = optional_start,
+                        }, left.loc);
                     },
-                    .t_comma => {
-                        if (level.gte(.comma)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_comma, .left = left, .right = try p.parseExpr(.comma) }, left.loc);
-                    },
-                    .t_plus => {
-                        if (level.gte(.add)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_add, .left = left, .right = try p.parseExpr(.add) }, left.loc);
-                    },
-                    .t_plus_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_add_assign, .left = left, .right = try p.parseExpr(@as(Op.Level, @enumFromInt(@intFromEnum(Op.Level.assign) - 1))) }, left.loc);
-                    },
-                    .t_minus => {
-                        if (level.gte(.add)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_sub, .left = left, .right = try p.parseExpr(.add) }, left.loc);
-                    },
-                    .t_minus_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_sub_assign, .left = left, .right = try p.parseExpr(Op.Level.sub(Op.Level.assign, 1)) }, left.loc);
-                    },
-                    .t_asterisk => {
-                        if (level.gte(.multiply)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_mul, .left = left, .right = try p.parseExpr(.multiply) }, left.loc);
-                    },
-                    .t_asterisk_asterisk => {
-                        if (level.gte(.exponentiation)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_pow, .left = left, .right = try p.parseExpr(Op.Level.exponentiation.sub(1)) }, left.loc);
-                    },
-                    .t_asterisk_asterisk_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_pow_assign, .left = left, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_asterisk_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_mul_assign, .left = left, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_percent => {
-                        if (level.gte(.multiply)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_rem, .left = left, .right = try p.parseExpr(Op.Level.multiply) }, left.loc);
-                    },
-                    .t_percent_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_rem_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_slash => {
-                        if (level.gte(.multiply)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_div, .left = left, .right = try p.parseExpr(Level.multiply) }, left.loc);
-                    },
-                    .t_slash_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_div_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_equals_equals => {
-                        if (level.gte(.equals)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_loose_eq, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
-                    },
-                    .t_exclamation_equals => {
-                        if (level.gte(.equals)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_loose_ne, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
-                    },
-                    .t_equals_equals_equals => {
-                        if (level.gte(.equals)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_strict_eq, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
-                    },
-                    .t_exclamation_equals_equals => {
-                        if (level.gte(.equals)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_strict_ne, .left = left, .right = try p.parseExpr(Level.equals) }, left.loc);
-                    },
-                    .t_less_than => {
-                        // TypeScript allows type arguments to be specified with angle brackets
-                        // inside an expression. Unlike in other languages, this unfortunately
-                        // appears to require backtracking to parse.
-                        if (is_typescript_enabled and p.trySkipTypeScriptTypeArgumentsWithBacktracking()) {
-                            optional_chain = old_optional_chain;
-                            continue;
-                        }
-
-                        if (level.gte(.compare)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_lt, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
-                    .t_less_than_equals => {
-                        if (level.gte(.compare)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_le, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
-                    .t_greater_than => {
-                        if (level.gte(.compare)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_gt, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
-                    .t_greater_than_equals => {
-                        if (level.gte(.compare)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_ge, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
-                    .t_less_than_less_than => {
-                        // TypeScript allows type arguments to be specified with angle brackets
-                        // inside an expression. Unlike in other languages, this unfortunately
-                        // appears to require backtracking to parse.
-                        if (is_typescript_enabled and p.trySkipTypeScriptTypeArgumentsWithBacktracking()) {
-                            optional_chain = old_optional_chain;
-                            continue;
-                        }
-
-                        if (level.gte(.shift)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_shl, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
-                    },
-                    .t_less_than_less_than_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_shl_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_greater_than_greater_than => {
-                        if (level.gte(.shift)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_shr, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
-                    },
-                    .t_greater_than_greater_than_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_shr_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_greater_than_greater_than_greater_than => {
-                        if (level.gte(.shift)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_u_shr, .left = left, .right = try p.parseExpr(.shift) }, left.loc);
-                    },
-                    .t_greater_than_greater_than_greater_than_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_u_shr_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_question_question => {
-                        if (level.gte(.nullish_coalescing)) {
-                            return left;
-                        }
-                        try p.lexer.next();
-                        const prev = left;
-                        left = p.newExpr(E.Binary{ .op = .bin_nullish_coalescing, .left = prev, .right = try p.parseExpr(.nullish_coalescing) }, left.loc);
-                    },
-                    .t_question_question_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_nullish_coalescing_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_bar_bar => {
-                        if (level.gte(.logical_or)) {
-                            return left;
-                        }
-
-                        // Prevent "||" inside "??" from the right
-                        if (level.eql(.nullish_coalescing)) {
-                            try p.lexer.unexpected();
-                            return error.SyntaxError;
-                        }
-
-                        try p.lexer.next();
-                        const right = try p.parseExpr(.logical_or);
-                        left = p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = left, .right = right }, left.loc);
-
-                        if (level.lt(.nullish_coalescing)) {
-                            left = try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
-
-                            if (p.lexer.token == .t_question_question) {
-                                try p.lexer.unexpected();
-                                return error.SyntaxError;
+                    else => {
+                        if (p.lexer.token == .t_private_identifier and p.allow_private_identifiers) {
+                            // "a?.#b"
+                            const name = p.lexer.identifier;
+                            const name_loc = p.lexer.loc();
+                            try p.lexer.next();
+                            const ref = p.storeNameInRef(name) catch unreachable;
+                            left.* = p.newExpr(E.Index{
+                                .target = left.*,
+                                .index = p.newExpr(
+                                    E.PrivateIdentifier{
+                                        .ref = ref,
+                                    },
+                                    name_loc,
+                                ),
+                                .optional_chain = optional_start,
+                            }, left.loc);
+                        } else {
+                            // "a?.b"
+                            if (!p.lexer.isIdentifierOrKeyword()) {
+                                try p.lexer.expect(.t_identifier);
                             }
+                            const name = p.lexer.identifier;
+                            const name_loc = p.lexer.loc();
+                            try p.lexer.next();
+
+                            left.* = p.newExpr(E.Dot{
+                                .target = left.*,
+                                .name = name,
+                                .name_loc = name_loc,
+                                .optional_chain = optional_start,
+                            }, left.loc);
                         }
                     },
-                    .t_bar_bar_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
+                }
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_logical_or_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                // Only continue if we have started
+                if ((optional_start orelse .continuation) == .start) {
+                    optional_chain.* = .continuation;
+                }
+
+                return .next;
+            }
+            pub fn t_no_substitution_template_literal(p: *P, _: Level, _: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                if (old_optional_chain != null) {
+                    p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
+                }
+                // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
+                const head = p.lexer.rawTemplateContents();
+                try p.lexer.next();
+
+                left.* = p.newExpr(E.Template{
+                    .tag = left.*,
+                    .head = .{ .raw = head },
+                }, left.loc);
+                return .next;
+            }
+            pub fn t_template_head(p: *P, _: Level, _: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                if (old_optional_chain != null) {
+                    p.log.addRangeError(p.source, p.lexer.range(), "Template literals cannot have an optional chain as a tag") catch unreachable;
+                }
+                // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
+                const head = p.lexer.rawTemplateContents();
+                const partsGroup = try p.parseTemplateParts(true);
+                const tag = left.*;
+                left.* = p.newExpr(E.Template{
+                    .tag = tag,
+                    .head = .{ .raw = head },
+                    .parts = partsGroup,
+                }, left.loc);
+                return .next;
+            }
+            pub fn t_open_bracket(p: *P, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr, flags: Expr.EFlags) anyerror!Continuation {
+                // When parsing a decorator, ignore EIndex expressions since they may be
+                // part of a computed property:
+                //
+                //   class Foo {
+                //     @foo ['computed']() {}
+                //   }
+                //
+                // This matches the behavior of the TypeScript compiler.
+                if (flags == .ts_decorator) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+
+                // Allow "in" inside the brackets
+                const old_allow_in = p.allow_in;
+                p.allow_in = true;
+
+                const index = try p.parseExpr(.lowest);
+
+                p.allow_in = old_allow_in;
+
+                try p.lexer.expect(.t_close_bracket);
+
+                left.* = p.newExpr(E.Index{
+                    .target = left.*,
+                    .index = index,
+                    .optional_chain = optional_chain.*,
+                }, left.loc);
+                optional_chain.* = old_optional_chain;
+                return .next;
+            }
+            pub fn t_open_paren(p: *P, level: Level, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                if (level.gte(.call)) {
+                    return .done;
+                }
+
+                const list_loc = try p.parseCallArgs();
+                left.* = p.newExpr(
+                    E.Call{
+                        .target = left.*,
+                        .args = list_loc.list,
+                        .close_paren_loc = list_loc.loc,
+                        .optional_chain = optional_chain.*,
                     },
-                    .t_ampersand_ampersand => {
-                        if (level.gte(.logical_and)) {
-                            return left;
+                    left.loc,
+                );
+                optional_chain.* = old_optional_chain;
+                return .next;
+            }
+            pub fn t_question(p: *P, level: Level, noalias errors: ?*DeferredErrors, left: *Expr) anyerror!Continuation {
+                if (level.gte(.conditional)) {
+                    return .done;
+                }
+                try p.lexer.next();
+
+                // Stop now if we're parsing one of these:
+                // "(a?) => {}"
+                // "(a?: b) => {}"
+                // "(a?, b?) => {}"
+                if (is_typescript_enabled and left.loc.start == p.latest_arrow_arg_loc.start and (p.lexer.token == .t_colon or
+                    p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
+                {
+                    if (errors == null) {
+                        try p.lexer.unexpected();
+                        return error.SyntaxError;
+                    }
+                    errors.?.invalid_expr_after_question = p.lexer.range();
+                    return .done;
+                }
+
+                const ternary = p.newExpr(E.If{
+                    .test_ = left.*,
+                    .yes = undefined,
+                    .no = undefined,
+                }, left.loc);
+
+                // Allow "in" in between "?" and ":"
+                const old_allow_in = p.allow_in;
+                p.allow_in = true;
+
+                // condition ? yes : no
+                //             ^
+                try p.parseExprWithFlags(.comma, .none, &ternary.data.e_if.yes);
+
+                p.allow_in = old_allow_in;
+
+                // condition ? yes : no
+                //                 ^
+                try p.lexer.expect(.t_colon);
+
+                // condition ? yes : no
+                //                   ^
+                try p.parseExprWithFlags(.comma, .none, &ternary.data.e_if.no);
+
+                // condition ? yes : no
+                //                     ^
+
+                left.* = ternary;
+                return .next;
+            }
+            pub fn t_exclamation(p: *P, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain) anyerror!Continuation {
+                // Skip over TypeScript non-null assertions
+                if (p.lexer.has_newline_before) {
+                    return .done;
+                }
+
+                if (!is_typescript_enabled) {
+                    try p.lexer.unexpected();
+                    return error.SyntaxError;
+                }
+
+                try p.lexer.next();
+                optional_chain.* = old_optional_chain;
+
+                return .next;
+            }
+            pub fn t_minus_minus(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (p.lexer.has_newline_before or level.gte(.postfix)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Unary{ .op = .un_post_dec, .value = left.* }, left.loc);
+                return .next;
+            }
+            pub fn t_plus_plus(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (p.lexer.has_newline_before or level.gte(.postfix)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Unary{ .op = .un_post_inc, .value = left.* }, left.loc);
+                return .next;
+            }
+            pub fn t_comma(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.comma)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_comma, .left = left.*, .right = try p.parseExpr(.comma) }, left.loc);
+                return .next;
+            }
+            pub fn t_plus(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.add)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_add, .left = left.*, .right = try p.parseExpr(.add) }, left.loc);
+                return .next;
+            }
+            pub fn t_plus_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_add_assign, .left = left.*, .right = try p.parseExpr(@as(Op.Level, @enumFromInt(@intFromEnum(Op.Level.assign) - 1))) }, left.loc);
+                return .next;
+            }
+            pub fn t_minus(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.add)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_sub, .left = left.*, .right = try p.parseExpr(.add) }, left.loc);
+                return .next;
+            }
+            pub fn t_minus_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_sub_assign, .left = left.*, .right = try p.parseExpr(Op.Level.sub(Op.Level.assign, 1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_asterisk(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.multiply)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_mul, .left = left.*, .right = try p.parseExpr(.multiply) }, left.loc);
+                return .next;
+            }
+            pub fn t_asterisk_asterisk(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.exponentiation)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_pow, .left = left.*, .right = try p.parseExpr(Op.Level.exponentiation.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_asterisk_asterisk_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_pow_assign, .left = left.*, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_asterisk_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_mul_assign, .left = left.*, .right = try p.parseExpr(Op.Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_percent(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.multiply)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_rem, .left = left.*, .right = try p.parseExpr(Op.Level.multiply) }, left.loc);
+                return .next;
+            }
+            pub fn t_percent_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_rem_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_slash(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.multiply)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_div, .left = left.*, .right = try p.parseExpr(Level.multiply) }, left.loc);
+                return .next;
+            }
+            pub fn t_slash_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_div_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_equals_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.equals)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_loose_eq, .left = left.*, .right = try p.parseExpr(Level.equals) }, left.loc);
+                return .next;
+            }
+            pub fn t_exclamation_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.equals)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_loose_ne, .left = left.*, .right = try p.parseExpr(Level.equals) }, left.loc);
+                return .next;
+            }
+            pub fn t_equals_equals_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.equals)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_strict_eq, .left = left.*, .right = try p.parseExpr(Level.equals) }, left.loc);
+                return .next;
+            }
+            pub fn t_exclamation_equals_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.equals)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_strict_ne, .left = left.*, .right = try p.parseExpr(Level.equals) }, left.loc);
+                return .next;
+            }
+            pub fn t_less_than(p: *P, level: Level, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                // TypeScript allows type arguments to be specified with angle brackets
+                // inside an expression. Unlike in other languages, this unfortunately
+                // appears to require backtracking to parse.
+                if (is_typescript_enabled and p.trySkipTypeScriptTypeArgumentsWithBacktracking()) {
+                    optional_chain.* = old_optional_chain;
+                    return .next;
+                }
+
+                if (level.gte(.compare)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_lt, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+            pub fn t_less_than_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.compare)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_le, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.compare)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_gt, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.compare)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_ge, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+            pub fn t_less_than_less_than(p: *P, level: Level, optional_chain: *?OptionalChain, old_optional_chain: ?OptionalChain, left: *Expr) anyerror!Continuation {
+                // TypeScript allows type arguments to be specified with angle brackets
+                // inside an expression. Unlike in other languages, this unfortunately
+                // appears to require backtracking to parse.
+                if (is_typescript_enabled and p.trySkipTypeScriptTypeArgumentsWithBacktracking()) {
+                    optional_chain.* = old_optional_chain;
+                    return .next;
+                }
+
+                if (level.gte(.shift)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_shl, .left = left.*, .right = try p.parseExpr(.shift) }, left.loc);
+                return .next;
+            }
+            pub fn t_less_than_less_than_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_shl_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than_greater_than(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.shift)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_shr, .left = left.*, .right = try p.parseExpr(.shift) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than_greater_than_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_shr_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than_greater_than_greater_than(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.shift)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_u_shr, .left = left.*, .right = try p.parseExpr(.shift) }, left.loc);
+                return .next;
+            }
+            pub fn t_greater_than_greater_than_greater_than_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_u_shr_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_question_question(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.nullish_coalescing)) {
+                    return .done;
+                }
+                try p.lexer.next();
+                const prev = left.*;
+                left.* = p.newExpr(E.Binary{ .op = .bin_nullish_coalescing, .left = prev, .right = try p.parseExpr(.nullish_coalescing) }, left.loc);
+                return .next;
+            }
+            pub fn t_question_question_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_nullish_coalescing_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_bar_bar(p: *P, level: Level, left: *Expr, flags: Expr.EFlags) anyerror!Continuation {
+                if (level.gte(.logical_or)) {
+                    return .done;
+                }
+
+                // Prevent "||" inside "??" from the right
+                if (level.eql(.nullish_coalescing)) {
+                    try p.lexer.unexpected();
+                    return error.SyntaxError;
+                }
+
+                try p.lexer.next();
+                const right = try p.parseExpr(.logical_or);
+                left.* = p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = left.*, .right = right }, left.loc);
+
+                if (level.lt(.nullish_coalescing)) {
+                    try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
+
+                    if (p.lexer.token == .t_question_question) {
+                        try p.lexer.unexpected();
+                        return error.SyntaxError;
+                    }
+                }
+                return .next;
+            }
+            pub fn t_bar_bar_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_logical_or_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_ampersand_ampersand(p: *P, level: Level, left: *Expr, flags: Expr.EFlags) anyerror!Continuation {
+                if (level.gte(.logical_and)) {
+                    return .done;
+                }
+
+                // Prevent "&&" inside "??" from the right
+                if (level.eql(.nullish_coalescing)) {
+                    try p.lexer.unexpected();
+                    return error.SyntaxError;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_logical_and, .left = left.*, .right = try p.parseExpr(.logical_and) }, left.loc);
+
+                // Prevent "&&" inside "??" from the left
+                if (level.lt(.nullish_coalescing)) {
+                    try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
+
+                    if (p.lexer.token == .t_question_question) {
+                        try p.lexer.unexpected();
+                        return error.SyntaxError;
+                    }
+                }
+                return .next;
+            }
+            pub fn t_ampersand_ampersand_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_logical_and_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_bar(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.bitwise_or)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_or, .left = left.*, .right = try p.parseExpr(.bitwise_or) }, left.loc);
+                return .next;
+            }
+            pub fn t_bar_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_or_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_ampersand(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.bitwise_and)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_and, .left = left.*, .right = try p.parseExpr(.bitwise_and) }, left.loc);
+                return .next;
+            }
+            pub fn t_ampersand_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_and_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_caret(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.bitwise_xor)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_xor, .left = left.*, .right = try p.parseExpr(.bitwise_xor) }, left.loc);
+                return .next;
+            }
+            pub fn t_caret_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_bitwise_xor_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_equals(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.assign)) {
+                    return .done;
+                }
+
+                try p.lexer.next();
+
+                left.* = p.newExpr(E.Binary{ .op = .bin_assign, .left = left.*, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
+                return .next;
+            }
+            pub fn t_in(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.compare) or !p.allow_in) {
+                    return .done;
+                }
+
+                // Warn about "!a in b" instead of "!(a in b)"
+                switch (left.data) {
+                    .e_unary => |unary| {
+                        if (unary.op == .un_not) {
+                            // TODO:
+                            // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
                         }
+                    },
+                    else => {},
+                }
 
-                        // Prevent "&&" inside "??" from the right
-                        if (level.eql(.nullish_coalescing)) {
-                            try p.lexer.unexpected();
-                            return error.SyntaxError;
-                        }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_in, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+            pub fn t_instanceof(p: *P, level: Level, left: *Expr) anyerror!Continuation {
+                if (level.gte(.compare)) {
+                    return .done;
+                }
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_logical_and, .left = left, .right = try p.parseExpr(.logical_and) }, left.loc);
-
-                        // Prevent "&&" inside "??" from the left
-                        if (level.lt(.nullish_coalescing)) {
-                            left = try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
-
-                            if (p.lexer.token == .t_question_question) {
-                                try p.lexer.unexpected();
-                                return error.SyntaxError;
+                // Warn about "!a instanceof b" instead of "!(a instanceof b)". Here's an
+                // example of code with this problem: https://github.com/mrdoob/three.js/pull/11182.
+                if (!p.options.suppress_warnings_about_weird_code) {
+                    switch (left.data) {
+                        .e_unary => |unary| {
+                            if (unary.op == .un_not) {
+                                // TODO:
+                                // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
                             }
-                        }
-                    },
-                    .t_ampersand_ampersand_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
+                        },
+                        else => {},
+                    }
+                }
+                try p.lexer.next();
+                left.* = p.newExpr(E.Binary{ .op = .bin_instanceof, .left = left.*, .right = try p.parseExpr(.compare) }, left.loc);
+                return .next;
+            }
+        };
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_logical_and_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_bar => {
-                        if (level.gte(.bitwise_or)) {
-                            return left;
-                        }
+        pub fn parseSuffix(p: *P, left_and_out: *Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!void {
+            var left_value = left_and_out.*;
+            // Zig has a bug where it creates a new address to stack locals each & usage.
+            const left = &left_value;
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_or, .left = left, .right = try p.parseExpr(.bitwise_or) }, left.loc);
-                    },
-                    .t_bar_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_or_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_ampersand => {
-                        if (level.gte(.bitwise_and)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_and, .left = left, .right = try p.parseExpr(.bitwise_and) }, left.loc);
-                    },
-                    .t_ampersand_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_and_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_caret => {
-                        if (level.gte(.bitwise_xor)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_xor, .left = left, .right = try p.parseExpr(.bitwise_xor) }, left.loc);
-                    },
-                    .t_caret_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_bitwise_xor_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_equals => {
-                        if (level.gte(.assign)) {
-                            return left;
-                        }
-
-                        try p.lexer.next();
-
-                        left = p.newExpr(E.Binary{ .op = .bin_assign, .left = left, .right = try p.parseExpr(Level.assign.sub(1)) }, left.loc);
-                    },
-                    .t_in => {
-                        if (level.gte(.compare) or !p.allow_in) {
-                            return left;
-                        }
-
-                        // Warn about "!a in b" instead of "!(a in b)"
-                        switch (left.data) {
-                            .e_unary => |unary| {
-                                if (unary.op == .un_not) {
-                                    // TODO:
-                                    // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
+            var optional_chain_: ?OptionalChain = null;
+            const optional_chain = &optional_chain_;
+            while (true) {
+                if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
+                    while (true) {
+                        switch (p.lexer.token) {
+                            .t_comma => {
+                                if (level.gte(.comma)) {
+                                    break;
                                 }
+
+                                try p.lexer.next();
+                                left.* = p.newExpr(E.Binary{
+                                    .op = .bin_comma,
+                                    .left = left.*,
+                                    .right = try p.parseExpr(.comma),
+                                }, left.loc);
                             },
-                            else => {},
+                            else => {
+                                break;
+                            },
                         }
+                    }
+                }
 
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_in, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
-                    .t_instanceof => {
-                        if (level.gte(.compare)) {
-                            return left;
-                        }
+                if (comptime is_typescript_enabled) {
+                    // Stop now if this token is forbidden to follow a TypeScript "as" cast
+                    if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
+                        break;
+                    }
+                }
 
-                        // Warn about "!a instanceof b" instead of "!(a instanceof b)". Here's an
-                        // example of code with this problem: https://github.com/mrdoob/three.js/pull/11182.
-                        if (!p.options.suppress_warnings_about_weird_code) {
-                            switch (left.data) {
-                                .e_unary => |unary| {
-                                    if (unary.op == .un_not) {
-                                        // TODO:
-                                        // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-                        try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_instanceof, .left = left, .right = try p.parseExpr(.compare) }, left.loc);
-                    },
+                // Reset the optional chain flag by default. That way we won't accidentally
+                // treat "c.d" as OptionalChainContinue in "a?.b + c.d".
+                const old_optional_chain = optional_chain.*;
+                optional_chain.* = null;
+
+                const continuation = switch (p.lexer.token) {
+                    inline .t_ampersand,
+                    .t_ampersand_ampersand_equals,
+                    .t_ampersand_equals,
+                    .t_asterisk,
+                    .t_asterisk_asterisk,
+                    .t_asterisk_asterisk_equals,
+                    .t_asterisk_equals,
+                    .t_bar,
+                    .t_bar_bar_equals,
+                    .t_bar_equals,
+                    .t_caret,
+                    .t_caret_equals,
+                    .t_comma,
+                    .t_equals,
+                    .t_equals_equals,
+                    .t_equals_equals_equals,
+                    .t_exclamation_equals,
+                    .t_exclamation_equals_equals,
+                    .t_greater_than,
+                    .t_greater_than_equals,
+                    .t_greater_than_greater_than,
+                    .t_greater_than_greater_than_equals,
+                    .t_greater_than_greater_than_greater_than,
+                    .t_greater_than_greater_than_greater_than_equals,
+                    .t_in,
+                    .t_instanceof,
+                    .t_less_than_equals,
+                    .t_less_than_less_than_equals,
+                    .t_minus,
+                    .t_minus_equals,
+                    .t_minus_minus,
+                    .t_percent,
+                    .t_percent_equals,
+                    .t_plus,
+                    .t_plus_equals,
+                    .t_plus_plus,
+                    .t_question_question,
+                    .t_question_question_equals,
+                    .t_slash,
+                    .t_slash_equals,
+                    => |tag| @field(parse_suffix_fns, @tagName(tag))(p, level, left),
+                    .t_exclamation => parse_suffix_fns.t_exclamation(p, optional_chain, old_optional_chain),
+                    .t_bar_bar => parse_suffix_fns.t_bar_bar(p, level, left, flags),
+                    .t_ampersand_ampersand => parse_suffix_fns.t_ampersand_ampersand(p, level, left, flags),
+                    .t_question => parse_suffix_fns.t_question(p, level, errors, left),
+                    .t_question_dot => parse_suffix_fns.t_question_dot(p, level, optional_chain, left),
+                    .t_template_head => parse_suffix_fns.t_template_head(p, level, optional_chain, old_optional_chain, left),
+                    .t_less_than => parse_suffix_fns.t_less_than(p, level, optional_chain, old_optional_chain, left),
+                    .t_open_paren => parse_suffix_fns.t_open_paren(p, level, optional_chain, old_optional_chain, left),
+                    .t_no_substitution_template_literal => parse_suffix_fns.t_no_substitution_template_literal(p, level, optional_chain, old_optional_chain, left),
+                    .t_open_bracket => parse_suffix_fns.t_open_bracket(p, optional_chain, old_optional_chain, left, flags),
+                    .t_dot => parse_suffix_fns.t_dot(p, level, optional_chain, old_optional_chain, left),
+                    .t_less_than_less_than => parse_suffix_fns.t_less_than_less_than(p, level, optional_chain, old_optional_chain, left),
                     else => {
                         // Handle the TypeScript "as" operator
                         // Handle the TypeScript "satisfies" operator
@@ -14625,22 +14786,29 @@ fn NewParser_(
                                 .t_question_dot,
                                 => {
                                     p.forbid_suffix_after_as_loc = p.lexer.loc();
-                                    return left;
+                                    break;
                                 },
                                 else => {},
                             }
 
                             if (p.lexer.token.isAssign()) {
                                 p.forbid_suffix_after_as_loc = p.lexer.loc();
-                                return left;
+                                break;
                             }
                             continue;
                         }
 
-                        return left;
+                        break;
                     },
+                };
+
+                switch (try continuation) {
+                    .next => {},
+                    .done => break,
                 }
             }
+
+            left_and_out.* = left_value;
         }
 
         pub fn panic(p: *P, comptime fmt: string, args: anytype) noreturn {
@@ -14649,6 +14817,7 @@ fn NewParser_(
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {
+            @branchHint(.cold);
             var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
             var panic_stream = std.io.fixedBufferStream(panic_buffer);
 
@@ -14671,7 +14840,7 @@ fn NewParser_(
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
 
-        pub fn parsePrefix(noalias p: *P, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parsePrefix(noalias p: *P, value: *Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!void {
             const loc = p.lexer.loc();
             const l = @intFromEnum(level);
             // Output.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
@@ -14684,19 +14853,22 @@ fn NewParser_(
                     switch (p.lexer.token) {
                         .t_open_paren => {
                             if (l < @intFromEnum(Level.call) and p.fn_or_arrow_data_parse.allow_super_call) {
-                                return p.newExpr(E.Super{}, loc);
+                                value.* = p.newExpr(E.Super{}, loc);
+                                return;
                             }
                         },
                         .t_dot, .t_open_bracket => {
                             if (p.fn_or_arrow_data_parse.allow_super_property) {
-                                return p.newExpr(E.Super{}, loc);
+                                value.* = p.newExpr(E.Super{}, loc);
+                                return;
                             }
                         },
                         else => {},
                     }
 
                     p.log.addRangeError(p.source, superRange, "Unexpected \"super\"") catch unreachable;
-                    return p.newExpr(E.Super{}, loc);
+                    value.* = p.newExpr(E.Super{}, loc);
+                    return;
                 },
                 .t_open_paren => {
                     try p.lexer.next();
@@ -14707,34 +14879,39 @@ fn NewParser_(
                         const oldAllowIn = p.allow_in;
                         p.allow_in = true;
 
-                        var value = try p.parseExpr(Level.lowest);
-                        p.markExprAsParenthesized(&value);
+                        try p.parseExprWithFlags(Level.lowest, .none, value);
+                        p.markExprAsParenthesized(value);
                         try p.lexer.expect(.t_close_paren);
 
                         p.allow_in = oldAllowIn;
-                        return value;
+                        return;
                     }
 
-                    return p.parseParenExpr(loc, level, ParenExprOpts{});
+                    try p.parseParenExpr(loc, level, ParenExprOpts{}, value);
+                    return;
                 },
                 .t_false => {
                     try p.lexer.next();
-                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                    value.* = p.newExpr(E.Boolean{ .value = false }, loc);
+                    return;
                 },
                 .t_true => {
                     try p.lexer.next();
-                    return p.newExpr(E.Boolean{ .value = true }, loc);
+                    value.* = p.newExpr(E.Boolean{ .value = true }, loc);
+                    return;
                 },
                 .t_null => {
                     try p.lexer.next();
-                    return p.newExpr(E.Null{}, loc);
+                    value.* = p.newExpr(E.Null{}, loc);
+                    return;
                 },
                 .t_this => {
                     if (p.fn_or_arrow_data_parse.is_this_disallowed) {
                         p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"this\" here") catch unreachable;
                     }
                     try p.lexer.next();
-                    return Expr{ .data = Prefill.Data.This, .loc = loc };
+                    value.* = Expr{ .data = Prefill.Data.This, .loc = loc };
+                    return;
                 },
                 .t_private_identifier => {
                     if (!p.allow_private_identifiers or !p.allow_in or level.gte(.compare)) {
@@ -14750,7 +14927,8 @@ fn NewParser_(
                         try p.lexer.expected(.t_in);
                     }
 
-                    return p.newExpr(E.PrivateIdentifier{ .ref = try p.storeNameInRef(name) }, loc);
+                    value.* = p.newExpr(E.PrivateIdentifier{ .ref = try p.storeNameInRef(name) }, loc);
+                    return;
                 },
                 .t_identifier => {
                     const name = p.lexer.identifier;
@@ -14763,7 +14941,8 @@ fn NewParser_(
                     switch (AsyncPrefixExpression.find(name)) {
                         .is_async => {
                             if ((raw.ptr == name.ptr and raw.len == name.len) or AsyncPrefixExpression.find(raw) == .is_async) {
-                                return try p.parseAsyncPrefixExpr(name_range, level);
+                                try p.parseAsyncPrefixExpr(name_range, level, value);
+                                return;
                             }
                         },
 
@@ -14784,13 +14963,14 @@ fn NewParser_(
                                             p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await = name_range;
                                         }
 
-                                        const value = try p.parseExpr(.prefix);
+                                        try p.parseExprCommon(.prefix, null, .none, value);
                                         if (p.lexer.token == T.t_asterisk_asterisk) {
                                             try p.lexer.unexpected();
                                             return error.SyntaxError;
                                         }
 
-                                        return p.newExpr(E.Await{ .value = value }, loc);
+                                        value.* = p.newExpr(E.Await{ .value = value.* }, loc);
+                                        return;
                                     }
                                 },
                                 .allow_ident => {
@@ -14818,7 +14998,8 @@ fn NewParser_(
                                             p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_yield = name_range;
                                         }
 
-                                        return p.parseYieldExpr(loc);
+                                        try p.parseYieldExpr(loc, value);
+                                        return;
                                     }
                                 },
                                 // .allow_ident => {
@@ -14854,15 +15035,18 @@ fn NewParser_(
                         var fn_or_arrow_data = FnOrArrowDataParse{
                             .needs_async_loc = loc,
                         };
-                        return p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
+                        value.* = p.newExpr(try p.parseArrowBody(args, &fn_or_arrow_data), loc);
+                        return;
                     }
 
                     const ref = p.storeNameInRef(name) catch unreachable;
 
-                    return Expr.initIdentifier(ref, loc);
+                    value.* = Expr.initIdentifier(ref, loc);
+                    return;
                 },
                 .t_string_literal, .t_no_substitution_template_literal => {
-                    return try p.parseStringLiteral();
+                    value.* = try p.parseStringLiteral();
+                    return;
                 },
                 .t_template_head => {
                     const head = try p.lexer.toEString();
@@ -14872,58 +15056,62 @@ fn NewParser_(
                     // Check if TemplateLiteral is unsupported. We don't care for this product.`
                     // if ()
 
-                    return p.newExpr(E.Template{
+                    value.* = p.newExpr(E.Template{
                         .head = .{ .cooked = head },
                         .parts = parts,
                     }, loc);
+                    return;
                 },
                 .t_numeric_literal => {
-                    const value = p.newExpr(E.Number{ .value = p.lexer.number }, loc);
+                    value.* = p.newExpr(E.Number{ .value = p.lexer.number }, loc);
                     // p.checkForLegacyOctalLiteral()
                     try p.lexer.next();
-                    return value;
+                    return;
                 },
                 .t_big_integer_literal => {
-                    const value = p.lexer.identifier;
+                    value.* = p.newExpr(E.BigInt{ .value = p.lexer.identifier }, loc);
                     // markSyntaxFeature bigInt
                     try p.lexer.next();
-                    return p.newExpr(E.BigInt{ .value = value }, loc);
+                    return;
                 },
                 .t_slash, .t_slash_equals => {
                     try p.lexer.scanRegExp();
                     // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
                     defer p.lexer.regex_flags_start = null;
-                    const value = p.lexer.raw();
+                    const raw = p.lexer.raw();
                     try p.lexer.next();
 
-                    return p.newExpr(E.RegExp{ .value = value, .flags_offset = p.lexer.regex_flags_start }, loc);
+                    value.* = p.newExpr(E.RegExp{ .value = raw, .flags_offset = p.lexer.regex_flags_start }, loc);
+                    return;
                 },
                 .t_void => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{
+                    value.* = p.newExpr(E.Unary{
                         .op = .un_void,
-                        .value = value,
+                        .value = value.*,
                     }, loc);
+                    return;
                 },
                 .t_typeof => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_typeof, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_typeof, .value = value.* }, loc);
+                    return;
                 },
                 .t_delete => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
@@ -14937,58 +15125,68 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_delete, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_delete, .value = value.* }, loc);
+                    return;
                 },
                 .t_plus => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_pos, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_pos, .value = value.* }, loc);
+                    return;
                 },
                 .t_minus => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_neg, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_neg, .value = value.* }, loc);
+                    return;
                 },
                 .t_tilde => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_cpl, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_cpl, .value = value.* }, loc);
+                    return;
                 },
                 .t_exclamation => {
                     try p.lexer.next();
-                    const value = try p.parseExpr(.prefix);
+                    try p.parseExprCommon(.prefix, null, .none, value);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
                         return error.SyntaxError;
                     }
 
-                    return p.newExpr(E.Unary{ .op = .un_not, .value = value }, loc);
+                    value.* = p.newExpr(E.Unary{ .op = .un_not, .value = value.* }, loc);
+                    return;
                 },
                 .t_minus_minus => {
                     try p.lexer.next();
-                    return p.newExpr(E.Unary{ .op = .un_pre_dec, .value = try p.parseExpr(.prefix) }, loc);
+                    try p.parseExprCommon(.prefix, null, .none, value);
+                    value.* = p.newExpr(E.Unary{ .op = .un_pre_dec, .value = value.* }, loc);
+                    return;
                 },
                 .t_plus_plus => {
                     try p.lexer.next();
-                    return p.newExpr(E.Unary{ .op = .un_pre_inc, .value = try p.parseExpr(.prefix) }, loc);
+                    try p.parseExprCommon(.prefix, null, .none, value);
+                    value.* = p.newExpr(E.Unary{ .op = .un_pre_inc, .value = value.* }, loc);
+                    return;
                 },
                 .t_function => {
-                    return try p.parseFnExpr(loc, false, logger.Range.None);
+                    try p.parseFnExpr(loc, false, logger.Range.None, value);
+                    return;
                 },
                 .t_class => {
                     const classKeyword = p.lexer.range();
@@ -15022,10 +15220,9 @@ fn NewParser_(
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
-                    const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
+                    value.* = p.newExpr(try p.parseClass(classKeyword, name, ParseClassOptions{}), loc);
                     p.popScope();
-
-                    return p.newExpr(class, loc);
+                    return;
                 },
                 .t_new => {
                     try p.lexer.next();
@@ -15041,10 +15238,11 @@ fn NewParser_(
                         const range = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
 
                         try p.lexer.next();
-                        return p.newExpr(E.NewTarget{ .range = range }, loc);
+                        value.* = p.newExpr(E.NewTarget{ .range = range }, loc);
+                        return;
                     }
 
-                    const target = try p.parseExprWithFlags(.member, flags);
+                    try p.parseExprWithFlags(.member, flags, value);
                     var args = ExprNodeList{};
 
                     if (comptime is_typescript_enabled) {
@@ -15061,11 +15259,12 @@ fn NewParser_(
                         close_parens_loc = call_args.loc;
                     }
 
-                    return p.newExpr(E.New{
-                        .target = target,
+                    value.* = p.newExpr(E.New{
+                        .target = value.*,
                         .args = args,
                         .close_parens_loc = close_parens_loc,
                     }, loc);
+                    return;
                 },
                 .t_open_bracket => {
                     try p.lexer.next();
@@ -15089,9 +15288,11 @@ fn NewParser_(
 
                                 const dots_loc = p.lexer.loc();
                                 try p.lexer.next();
-                                items.append(
-                                    p.newExpr(E.Spread{ .value = try p.parseExprOrBindings(.comma, &self_errors) }, dots_loc),
-                                ) catch unreachable;
+                                try items.ensureUnusedCapacity(1);
+                                const spread_expr: *Expr = &items.unusedCapacitySlice()[0];
+                                spread_expr.* = p.newExpr(E.Spread{ .value = undefined }, dots_loc);
+                                try p.parseExprOrBindings(.comma, &self_errors, &spread_expr.data.e_spread.value);
+                                items.items.len += 1;
 
                                 // Commas are not allowed here when destructuring
                                 if (p.lexer.token == .t_comma) {
@@ -15099,9 +15300,10 @@ fn NewParser_(
                                 }
                             },
                             else => {
-                                items.append(
-                                    try p.parseExprOrBindings(.comma, &self_errors),
-                                ) catch unreachable;
+                                try items.ensureUnusedCapacity(1);
+                                const item: *Expr = &items.unusedCapacitySlice()[0];
+                                try p.parseExprOrBindings(.comma, &self_errors, item);
+                                items.items.len += 1;
                             },
                         }
 
@@ -15138,12 +15340,13 @@ fn NewParser_(
                         // In this case, we can't distinguish between the two yet
                         self_errors.mergeInto(errors.?);
                     }
-                    return p.newExpr(E.Array{
+                    value.* = p.newExpr(E.Array{
                         .items = ExprNodeList.fromList(items),
                         .comma_after_spread = comma_after_spread.toNullable(),
                         .is_single_line = is_single_line,
                         .close_bracket_loc = close_bracket_loc,
                     }, loc);
+                    return;
                 },
                 .t_open_brace => {
                     try p.lexer.next();
@@ -15159,7 +15362,19 @@ fn NewParser_(
                     while (p.lexer.token != .t_close_brace) {
                         if (p.lexer.token == .t_dot_dot_dot) {
                             try p.lexer.next();
-                            properties.append(G.Property{ .kind = .spread, .value = try p.parseExpr(.comma) }) catch unreachable;
+                            try properties.ensureUnusedCapacity(1);
+                            const property: *G.Property = &properties.unusedCapacitySlice()[0];
+                            property.* = .{
+                                .kind = .spread,
+                                .value = Expr.empty,
+                            };
+
+                            try p.parseExprOrBindings(
+                                .comma,
+                                &self_errors,
+                                &(property.value.?),
+                            );
+                            properties.items.len += 1;
 
                             // Commas are not allowed here when destructuring
                             if (p.lexer.token == .t_comma) {
@@ -15209,7 +15424,7 @@ fn NewParser_(
                         self_errors.mergeInto(errors.?);
                     }
 
-                    return p.newExpr(E.Object{
+                    value.* = p.newExpr(E.Object{
                         .properties = G.Property.List.fromList(properties),
                         .comma_after_spread = if (comma_after_spread.start > 0)
                             comma_after_spread
@@ -15218,6 +15433,7 @@ fn NewParser_(
                         .is_single_line = is_single_line,
                         .close_brace_loc = close_brace_loc,
                     }, loc);
+                    return;
                 },
                 .t_less_than => {
                     // This is a very complicated and highly ambiguous area of TypeScript
@@ -15258,21 +15474,22 @@ fn NewParser_(
                                 .allow_const_modifier = true,
                             });
                             try p.lexer.expect(.t_open_paren);
-                            return try p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true });
+                            try p.parseParenExpr(loc, level, ParenExprOpts{ .force_arrow_fn = true }, value);
+                            return;
                         }
                     }
 
                     if (is_jsx_enabled) {
                         // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
                         try p.lexer.nextInsideJSXElement();
-                        const element = try p.parseJSXElement(loc);
+                        value.* = try p.parseJSXElement(loc);
 
                         // The call to parseJSXElement() above doesn't consume the last
                         // TGreaterThan because the caller knows what Next() function to call.
                         // Use Next() instead of NextInsideJSXElement() here since the next
                         // token is an expression.
                         try p.lexer.next();
-                        return element;
+                        return;
                     }
 
                     if (is_typescript_enabled) {
@@ -15286,7 +15503,7 @@ fn NewParser_(
                                 try p.lexer.expect(.t_open_paren);
                                 return p.parseParenExpr(loc, level, ParenExprOpts{
                                     .force_arrow_fn = result == .definitely_type_parameters,
-                                });
+                                }, value);
                             },
                         }
 
@@ -15294,7 +15511,8 @@ fn NewParser_(
                         try p.lexer.next();
                         try p.skipTypeScriptType(.lowest);
                         try p.lexer.expectGreaterThan(false);
-                        return p.parsePrefix(level, errors, flags);
+                        try p.parsePrefix(value, level, errors, flags);
+                        return;
                     }
 
                     try p.lexer.unexpected();
@@ -15302,7 +15520,8 @@ fn NewParser_(
                 },
                 .t_import => {
                     try p.lexer.next();
-                    return p.parseImportExpr(loc, level);
+                    try p.parseImportExpr(loc, level, value);
+                    return;
                 },
                 else => {
                     try p.lexer.unexpected();
@@ -15317,11 +15536,11 @@ fn NewParser_(
 
             const value = p.handleIdentifier(
                 loc,
-                E.Identifier{
+                E.Identifier.init(.{
                     .ref = result.ref,
                     .must_keep_due_to_with_stmt = result.is_inside_with_scope,
                     .can_be_removed_if_unused = true,
-                },
+                }),
                 parts[0],
                 .{
                     .was_originally_identifier = true,
@@ -15369,7 +15588,7 @@ fn NewParser_(
         }
 
         // Note: The caller has already parsed the "import" keyword
-        fn parseImportExpr(noalias p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
+        fn parseImportExpr(noalias p: *P, loc: logger.Loc, level: Level, value: *Expr) anyerror!void {
             // Parse an "import.meta" expression
             if (p.lexer.token == .t_dot) {
                 p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -15377,7 +15596,8 @@ fn NewParser_(
                 if (p.lexer.isContextualKeyword("meta")) {
                     try p.lexer.next();
                     p.has_import_meta = true;
-                    return p.newExpr(E.ImportMeta{}, loc);
+                    value.* = p.newExpr(E.ImportMeta{}, loc);
+                    return;
                 } else {
                     try p.lexer.expectedString("\"meta\"");
                 }
@@ -15400,7 +15620,7 @@ fn NewParser_(
 
             p.lexer.preserve_all_comments_before = false;
 
-            const value = try p.parseExpr(.comma);
+            try p.parseExprCommon(.comma, null, .none, value);
 
             var import_options = Expr.empty;
             if (p.lexer.token == .t_comma) {
@@ -15409,7 +15629,7 @@ fn NewParser_(
 
                 if (p.lexer.token != .t_close_paren) {
                     // "import('./foo.json', { assert: { type: 'json' } })"
-                    import_options = try p.parseExpr(.comma);
+                    try p.parseExprCommon(.comma, null, .none, &import_options);
 
                     if (p.lexer.token == .t_comma) {
                         // "import('./foo.json', { assert: { type: 'json' } }, )"
@@ -15426,23 +15646,25 @@ fn NewParser_(
                 if (value.data == .e_string and value.data.e_string.isUTF8() and value.data.e_string.isPresent()) {
                     const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.slice(p.allocator));
 
-                    return p.newExpr(E.Import{
-                        .expr = value,
+                    value.* = p.newExpr(E.Import{
+                        .expr = value.*,
                         // .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
                         .options = import_options,
                     }, loc);
+                    return;
                 }
             }
 
             // _ = comments; // TODO: leading_interior comments
 
-            return p.newExpr(E.Import{
-                .expr = value,
+            value.* = p.newExpr(E.Import{
+                .expr = value.*,
                 // .leading_interior_comments = comments,
                 .import_record_index = std.math.maxInt(u32),
                 .options = import_options,
             }, loc);
+            return;
         }
 
         fn parseJSXPropValueIdentifier(noalias p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
@@ -16187,9 +16409,8 @@ fn NewParser_(
                     }
 
                     const result = p.findSymbol(expr.loc, name) catch unreachable;
-
-                    e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                     e_.ref = result.ref;
+                    e_.setMustKeepDueToWithStmt(result.is_inside_with_scope);
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
@@ -16250,10 +16471,10 @@ fn NewParser_(
 
                             // Copy the side effect flags over in case this expression is unused
                             if (def.can_be_removed_if_unused) {
-                                e_.can_be_removed_if_unused = true;
+                                e_.setCanBeRemovedIfUnused(true);
                             }
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
-                                e_.call_can_be_unwrapped_if_unused = true;
+                                e_.setCallCanBeUnwrappedIfUnused(true);
                             }
 
                             // If the user passed --drop=console, drop all property accesses to console.
@@ -17233,7 +17454,7 @@ fn NewParser_(
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused();
 
                             // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
                             // become "eval(x)" after we visit the target due to dead code elimination,
@@ -17857,7 +18078,7 @@ fn NewParser_(
                 .e_identifier => |ex| {
                     bun.assert(!ex.ref.isSourceContentsSlice()); // was not visited
 
-                    if (ex.must_keep_due_to_with_stmt) {
+                    if (ex.must_keep_due_to_with_stmt()) {
                         return false;
                     }
 
@@ -17880,7 +18101,7 @@ fn NewParser_(
                     // incorrect but proper TDZ analysis is very complicated and would have to
                     // be very conservative, which would inhibit a lot of optimizations of code
                     // inside closures. This may need to be revisited if it proves problematic.
-                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
+                    if (ex.can_be_removed_if_unused() or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
                         return true;
                     }
                 },
@@ -18324,11 +18545,11 @@ fn NewParser_(
                     p.recordUsage(ref);
                     return p.handleIdentifier(
                         loc,
-                        E.Identifier{
+                        E.Identifier.init(.{
                             .ref = ref,
                             .can_be_removed_if_unused = true,
                             .call_can_be_unwrapped_if_unused = true,
-                        },
+                        }),
                         null,
                         .{
                             .was_originally_identifier = true,
@@ -18449,7 +18670,7 @@ fn NewParser_(
 
                             return p.handleIdentifier(
                                 name_loc,
-                                E.Identifier{ .ref = ref },
+                                .{ .ref = ref },
                                 name,
                                 .{
                                     .assign_target = identifier_opts.assign_target,
@@ -18840,11 +19061,11 @@ fn NewParser_(
                                     p.recordUsage(ref);
 
                                     return p.newExpr(
-                                        E.CommonJSExportIdentifier{
+                                        E.CommonJSExportIdentifier.init(.{
                                             .ref = ref,
                                             // Record this as from module.exports
                                             .base = .module_dot_exports,
-                                        },
+                                        }),
                                         name_loc,
                                     );
                                 } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
@@ -19524,11 +19745,11 @@ fn NewParser_(
                     stmts.appendAssumeCapacity(stmt.*);
                     stmts.appendAssumeCapacity(Stmt.assign(
                         p.newExpr(E.Dot{
-                            .target = p.newExpr(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
+                            .target = p.newExpr(E.Identifier.init(.{ .ref = enclosing_namespace_arg_ref }), stmt.loc),
                             .name = original_name,
                             .name_loc = data.func.name.?.loc,
                         }, stmt.loc),
-                        p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc),
+                        p.newExpr(E.Identifier.init(.{ .ref = data.func.name.?.ref.? }), data.func.name.?.loc),
                     ));
                 } else if (!mark_as_dead) {
                     if (name_symbol.remove_overwritten_function_declaration) {
@@ -19619,7 +19840,7 @@ fn NewParser_(
                             p.newExpr(
                                 E.Dot{
                                     .target = p.newExpr(
-                                        E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? },
+                                        E.Identifier.init(.{ .ref = p.enclosing_namespace_arg_ref.? }),
                                         stmt.loc,
                                     ),
                                     .name = p.symbols.items[data.class.class_name.?.ref.?.innerIndex()].original_name,
@@ -19628,7 +19849,7 @@ fn NewParser_(
                                 stmt.loc,
                             ),
                             p.newExpr(
-                                E.Identifier{ .ref = data.class.class_name.?.ref.? },
+                                E.Identifier.init(.{ .ref = data.class.class_name.?.ref.? }),
                                 data.class.class_name.?.loc,
                             ),
                         ),
@@ -22152,10 +22373,10 @@ fn NewParser_(
             const ref = p.runtimeIdentifierRef(loc, name);
             p.recordUsage(ref);
             return p.newExpr(
-                E.ImportIdentifier{
+                E.ImportIdentifier.init(.{
                     .ref = ref,
                     .was_originally_identifier = false,
-                },
+                }),
                 loc,
             );
         }
@@ -22749,7 +22970,7 @@ fn NewParser_(
         }
 
         // This assumes that the open parenthesis has already been parsed by the caller
-        pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts) anyerror!Expr {
+        pub fn parseParenExpr(p: *P, loc: logger.Loc, level: Level, opts: ParenExprOpts, value: *Expr) anyerror!void {
             var items_list = ListManaged(Expr).init(p.allocator);
             var errors = DeferredErrors{};
             var arrowArgErrors = DeferredArrowArgErrors{};
@@ -22788,10 +23009,12 @@ fn NewParser_(
                 // We don't know yet whether these are arguments or expressions, so parse
                 p.latest_arrow_arg_loc = p.lexer.loc();
 
-                var item = try p.parseExprOrBindings(.comma, &errors);
+                try items_list.ensureUnusedCapacity(1);
+                const item: *Expr = &items_list.unusedCapacitySlice()[0];
+                try p.parseExprOrBindings(.comma, &errors, item);
 
                 if (is_spread) {
-                    item = p.newExpr(E.Spread{ .value = item }, loc);
+                    item.* = p.newExpr(E.Spread{ .value = item.* }, loc);
                 }
 
                 // Skip over types
@@ -22804,10 +23027,10 @@ fn NewParser_(
                 // There may be a "=" after the type (but not after an "as" cast)
                 if (is_typescript_enabled and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
                     try p.lexer.next();
-                    item = Expr.assign(item, try p.parseExpr(.comma));
+                    item.* = Expr.assign(item.*, try p.parseExpr(.comma));
                 }
 
-                items_list.append(item) catch unreachable;
+                items_list.items.len += 1;
 
                 if (p.lexer.token != .t_comma) {
                     break;
@@ -22897,7 +23120,8 @@ fn NewParser_(
                     arrow.is_async = opts.is_async;
                     arrow.has_rest_arg = spread_range.len > 0;
                     p.popScope();
-                    return p.newExpr(arrow, loc);
+                    value.* = p.newExpr(arrow, loc);
+                    return;
                 }
             }
 
@@ -22916,7 +23140,8 @@ fn NewParser_(
             if (opts.is_async) {
                 p.logExprErrors(&errors);
                 const async_expr = p.newExpr(E.Identifier{ .ref = try p.storeNameInRef("async") }, loc);
-                return p.newExpr(E.Call{ .target = async_expr, .args = ExprNodeList.init(items) }, loc);
+                value.* = p.newExpr(E.Call{ .target = async_expr, .args = ExprNodeList.init(items) }, loc);
+                return;
             }
 
             // Is this a chain of expressions and comma operators?
@@ -22927,9 +23152,9 @@ fn NewParser_(
                     return error.SyntaxError;
                 }
 
-                var value = Expr.joinAllWithComma(items, p.allocator);
-                p.markExprAsParenthesized(&value);
-                return value;
+                value.* = Expr.joinAllWithComma(items, p.allocator);
+                p.markExprAsParenthesized(value);
+                return;
             }
 
             // Indicate that we expected an arrow function

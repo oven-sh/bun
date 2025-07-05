@@ -126,10 +126,10 @@ pub const DefineData = struct {
             const value = if (value_is_undefined or strings.eqlComptime(value_str, "undefined"))
                 js_ast.Expr.Data{ .e_undefined = js_ast.E.Undefined{} }
             else
-                js_ast.Expr.Data{ .e_identifier = .{
+                js_ast.Expr.Data{ .e_identifier = js_ast.E.Identifier.init(.{
                     .ref = Ref.None,
                     .can_be_removed_if_unused = true,
-                } };
+                }) };
 
             return .{
                 .value = value,

@@ -398,9 +398,10 @@ pub fn convertStmtsForChunk(
                                         E.Binary{
                                             .op = .bin_assign,
                                             .left = Expr.init(
-                                                E.CommonJSExportIdentifier,
-                                                E.CommonJSExportIdentifier{
+                                                E.CommonJSExportIdentifier.Options,
+                                                .{
                                                     .ref = decl.binding.data.b_identifier.ref,
+                                                    .base = .exports,
                                                 },
                                                 decl.binding.loc,
                                             ),

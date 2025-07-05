@@ -238,29 +238,56 @@ pub const Function = struct { func: G.Fn };
 pub const Identifier = struct {
     ref: Ref = Ref.None,
 
-    // If we're inside a "with" statement, this identifier may be a property
-    // access. In that case it would be incorrect to remove this identifier since
-    // the property access may be a getter or setter with side effects.
-    must_keep_due_to_with_stmt: bool = false,
+    /// If we're inside a "with" statement, this identifier may be a property
+    /// access. In that case it would be incorrect to remove this identifier since
+    /// the property access may be a getter or setter with side effects.
+    pub inline fn must_keep_due_to_with_stmt(this: Identifier) bool {
+        return this.ref.flags.flag1;
+    }
+
+    pub inline fn setMustKeepDueToWithStmt(this: *Identifier, value: bool) void {
+        this.ref.flags.flag1 = value;
+    }
 
     // If true, this identifier is known to not have a side effect (i.e. to not
     // throw an exception) when referenced. If false, this identifier may or
     // not have side effects when referenced. This is used to allow the removal
     // of known globals such as "Object" if they aren't used.
-    can_be_removed_if_unused: bool = false,
+    pub inline fn can_be_removed_if_unused(this: Identifier) bool {
+        return this.ref.flags.flag2;
+    }
+
+    pub inline fn setCanBeRemovedIfUnused(this: *Identifier, value: bool) void {
+        this.ref.flags.flag2 = value;
+    }
 
     // If true, this identifier represents a function that, when called, can be
     // unwrapped if the resulting value is unused. Unwrapping means discarding
     // the call target but keeping any arguments with side effects.
-    call_can_be_unwrapped_if_unused: bool = false,
+    pub inline fn call_can_be_unwrapped_if_unused(this: Identifier) bool {
+        return this.ref.flags.flag3;
+    }
 
-    pub inline fn init(ref: Ref) Identifier {
-        return Identifier{
-            .ref = ref,
-            .must_keep_due_to_with_stmt = false,
-            .can_be_removed_if_unused = false,
-            .call_can_be_unwrapped_if_unused = false,
+    pub inline fn setCallCanBeUnwrappedIfUnused(this: *Identifier, value: bool) void {
+        this.ref.flags.flag3 = value;
+    }
+
+    pub const Options = struct {
+        ref: Ref,
+
+        must_keep_due_to_with_stmt: bool = false,
+        can_be_removed_if_unused: bool = false,
+        call_can_be_unwrapped_if_unused: bool = false,
+    };
+
+    pub fn init(options: Options) Identifier {
+        var this = Identifier{
+            .ref = options.ref.withoutFlags(),
         };
+        this.ref.flags.flag1 = options.must_keep_due_to_with_stmt;
+        this.ref.flags.flag2 = options.can_be_removed_if_unused;
+        this.ref.flags.flag3 = options.call_can_be_unwrapped_if_unused;
+        return this;
     }
 };
 
@@ -289,7 +316,22 @@ pub const ImportIdentifier = struct {
     /// If true, this was originally an identifier expression such as "foo". If
     /// false, this could potentially have been a member access expression such
     /// as "ns.foo" off of an imported namespace object.
-    was_originally_identifier: bool = false,
+    pub fn was_originally_identifier(this: ImportIdentifier) bool {
+        return this.ref.flags.flag1;
+    }
+
+    pub const Options = struct {
+        ref: Ref,
+        was_originally_identifier: bool = false,
+    };
+
+    pub fn init(options: Options) ImportIdentifier {
+        var this = ImportIdentifier{
+            .ref = options.ref.withoutFlags(),
+        };
+        this.ref.flags.flag1 = options.was_originally_identifier;
+        return this;
+    }
 };
 
 /// This is a dot expression on exports, such as `exports.<ref>`. It is given
@@ -297,7 +339,31 @@ pub const ImportIdentifier = struct {
 /// the identifier in the Ref
 pub const CommonJSExportIdentifier = struct {
     ref: Ref = Ref.None,
-    base: Base = .exports,
+
+    pub inline fn base(this: CommonJSExportIdentifier) Base {
+        if (this.ref.flags.flag1) {
+            return .module_dot_exports;
+        }
+
+        return .exports;
+    }
+
+    pub inline fn setBase(this: *CommonJSExportIdentifier, base_: Base) void {
+        this.ref.flags.flag1 = base_ == .module_dot_exports;
+    }
+
+    pub const Options = struct {
+        ref: Ref,
+        base: Base = .exports,
+    };
+
+    pub inline fn init(options: Options) CommonJSExportIdentifier {
+        var this = CommonJSExportIdentifier{
+            .ref = options.ref.withoutFlags(),
+        };
+        this.setBase(options.base);
+        return this;
+    }
 
     /// The original variant of the dot expression must be known so that in the case that we
     /// - fail to convert this to ESM

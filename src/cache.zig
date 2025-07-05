@@ -265,6 +265,12 @@ pub const JavaScript = struct {
         };
 
         const result = parser.parse() catch |err| {
+            if (comptime Environment.isDebug) {
+                if (bun.getenvTruthy("BUN_DEBUG_PARSE_ERRORS")) {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                }
+            }
+
             if (temp_log.errors == 0) {
                 log.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
             }

@@ -111,8 +111,9 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        pub fn getWithLengthAndEql(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
-            const end = comptime brk: {
+        // Let comptime memoize the function
+        fn endLen(comptime len: usize) usize {
+            return comptime brk: {
                 var i = len_indexes[len];
                 @setEvalBranchQuota(99999);
 
@@ -120,10 +121,13 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
                 break :brk i;
             };
+        }
+
+        pub fn getWithLengthAndEql(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
 
             // This benchmarked faster for both small and large lists of strings than using a big switch statement
             // But only so long as the keys are a sorted list.
-            inline for (len_indexes[len]..end) |i| {
+            inline for (len_indexes[len]..comptime endLen(len)) |i| {
                 if (eqls(str, kvs[i].key)) {
                     return kvs[i].value;
                 }
@@ -133,14 +137,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         pub fn getWithLengthAndEqlList(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
-            const end = comptime brk: {
-                var i = len_indexes[len];
-                @setEvalBranchQuota(99999);
-
-                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
-
-                break :brk i;
-            };
+            const end = comptime endLen(len);
 
             const start = comptime len_indexes[len];
             const range = comptime keys()[start..end];
@@ -173,18 +170,9 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             comptime var len: usize = precomputed.min_len;
             inline while (len <= precomputed.max_len) : (len += 1) {
                 if (str.len == len) {
-                    const end = comptime brk: {
-                        var i = len_indexes[len];
-                        @setEvalBranchQuota(99999);
-
-                        while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
-
-                        break :brk i;
-                    };
-
                     // This benchmarked faster for both small and large lists of strings than using a big switch statement
                     // But only so long as the keys are a sorted list.
-                    inline for (len_indexes[len]..end) |i| {
+                    inline for (len_indexes[len]..comptime endLen(len)) |i| {
                         if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
                             return i;
                         }
@@ -193,6 +181,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                     return null;
                 }
             }
+
             return null;
         }
 
@@ -229,31 +218,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         pub fn getASCIIICaseInsensitive(input: anytype) ?V {
-            return getWithEqlLowercase(input, bun.strings.eqlComptimeIgnoreLen);
-        }
-
-        pub fn getWithEqlLowercase(input: anytype, comptime eql: anytype) ?V {
-            const Input = @TypeOf(input);
-            const length = if (@hasField(Input, "len")) input.len else input.length();
-            if (length < precomputed.min_len or length > precomputed.max_len)
-                return null;
-
-            comptime var i: usize = precomputed.min_len;
-            inline while (i <= precomputed.max_len) : (i += 1) {
-                if (length == i) {
-                    const lowerbuf: [i]u8 = brk: {
-                        var buf: [i]u8 = undefined;
-                        for (input, &buf) |c, *j| {
-                            j.* = std.ascii.toLower(c);
-                        }
-                        break :brk buf;
-                    };
-
-                    return getWithLengthAndEql(&lowerbuf, i, eql);
-                }
-            }
-
-            return null;
+            return getCaseInsensitiveWithEql(input, bun.strings.eqlComptimeIgnoreLen);
         }
 
         pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {
@@ -272,9 +237,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        pub fn getAnyCase(input: anytype) ?V {
-            return getCaseInsensitiveWithEql(input, bun.strings.eqlComptimeIgnoreLen);
-        }
+        pub const getAnyCase = getASCIIICaseInsensitive;
 
         pub fn getCaseInsensitiveWithEql(input: anytype, comptime eql: anytype) ?V {
             const Input = @TypeOf(input);
@@ -282,20 +245,11 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             if (length < precomputed.min_len or length > precomputed.max_len)
                 return null;
 
-            comptime var i: usize = precomputed.min_len;
-            inline while (i <= precomputed.max_len) : (i += 1) {
+            var lowerbuf: [precomputed.max_len]u8 = undefined;
+            inline for (precomputed.min_len..precomputed.max_len + 1) |i| {
                 if (length == i) {
-                    const lowercased: [i]u8 = brk: {
-                        var buf: [i]u8 = undefined;
-                        for (input[0..i], &buf) |c, *b| {
-                            b.* = switch (c) {
-                                'A'...'Z' => c + 32,
-                                else => c,
-                            };
-                        }
-                        break :brk buf;
-                    };
-                    return getWithLengthAndEql(&lowercased, i, eql);
+                    toLowerCased(lowerbuf[0..i], input);
+                    return getWithLengthAndEql(lowerbuf[0..i], i, eql);
                 }
             }
 
@@ -326,6 +280,15 @@ pub fn ComptimeStringMap(comptime V: type, comptime kvs_list: anytype) type {
 
 pub fn ComptimeStringMap16(comptime V: type, comptime kvs_list: anytype) type {
     return ComptimeStringMapWithKeyType(u16, V, kvs_list);
+}
+
+fn toLowerCased(buf: []u8, input: []const u8) void {
+    for (input[0..input.len], buf[0..input.len]) |c, *b| {
+        b.* = switch (c) {
+            'A'...'Z' => c + 32,
+            else => c,
+        };
+    }
 }
 
 const TestEnum = enum {

@@ -7287,6 +7287,33 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+
+    // Test for @layer color-scheme bug
+    prefix_test(
+      `@layer shm.colors {
+        body.theme-dark {
+          color-scheme: dark;
+        }
+
+        body.theme-light {
+          color-scheme: light;
+        }
+      }`,
+      `@layer shm.colors {
+        body.theme-dark {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: dark;
+        }
+
+        body.theme-light {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light;
+        }
+      }`,
+      { chrome: Some(90 << 16) },
+    );
   });
 
   describe("edge cases", () => {

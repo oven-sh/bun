@@ -44,6 +44,7 @@ pub const PropertyHandlerContext = struct {
     dark: ArrayList(css.Property),
     context: DeclarationContext,
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
+    layer_name: ?css.css_rules.layer.LayerName,
 
     pub fn new(
         allocator: Allocator,
@@ -60,6 +61,7 @@ pub const PropertyHandlerContext = struct {
             .dark = ArrayList(css.Property){},
             .context = DeclarationContext.none,
             .unused_symbols = unused_symbols,
+            .layer_name = null,
         };
     }
 
@@ -74,11 +76,16 @@ pub const PropertyHandlerContext = struct {
             .dark = .{},
             .context = context,
             .unused_symbols = this.unused_symbols,
+            .layer_name = this.layer_name,
         };
     }
 
     pub fn addDarkRule(this: *@This(), allocator: Allocator, property: css.Property) void {
         this.dark.append(allocator, property) catch bun.outOfMemory();
+    }
+
+    pub fn setLayerContext(this: *@This(), layer_name: ?css.css_rules.layer.LayerName) void {
+        this.layer_name = if (layer_name) |name| name.deepClone(this.allocator) else null;
     }
 
     pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
@@ -155,7 +162,7 @@ pub const PropertyHandlerContext = struct {
         }
 
         if (this.dark.items.len > 0) {
-            dest.append(this.allocator, css.CssRule(T){
+            const media_rule = css.CssRule(T){
                 .media = MediaRule(T){
                     .query = MediaList{
                         .media_queries = brk: {
@@ -200,7 +207,26 @@ pub const PropertyHandlerContext = struct {
                     },
                     .loc = style_rule.loc,
                 },
-            }) catch bun.outOfMemory();
+            };
+
+            // If we have a layer context, wrap the media rule in a layer block
+            if (this.layer_name) |layer_name| {
+                dest.append(this.allocator, css.CssRule(T){
+                    .layer_block = css.css_rules.layer.LayerBlockRule(T){
+                        .name = layer_name.deepClone(this.allocator),
+                        .rules = css.CssRuleList(T){
+                            .v = brk: {
+                                var list = ArrayList(css.CssRule(T)).initCapacity(this.allocator, 1) catch bun.outOfMemory();
+                                list.appendAssumeCapacity(media_rule);
+                                break :brk list;
+                            },
+                        },
+                        .loc = style_rule.loc,
+                    },
+                }) catch bun.outOfMemory();
+            } else {
+                dest.append(this.allocator, media_rule) catch bun.outOfMemory();
+            }
         }
 
         return dest;

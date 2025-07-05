@@ -2499,6 +2499,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
     case ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
+    case ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
 
     default: {
         break;

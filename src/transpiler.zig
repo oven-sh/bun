@@ -1373,15 +1373,15 @@ pub const Transpiler = struct {
                 const encoded_len = std.base64.standard.Encoder.calcSize(source.contents.len);
                 const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
                 _ = bun.base64.encode(encoded, source.contents);
-                
+
                 // Generate simple JavaScript code similar to text loader but with base64 conversion
                 var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, loader);
                 parser_opts.features.allow_runtime = transpiler.options.allow_runtime;
-                
+
                 const base64_string = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = encoded,
                 }, logger.Loc.Empty);
-                
+
                 // Use the lazy export AST to handle the runtime import properly
                 const ast = (js_parser.newLazyExportAST(
                     allocator,
@@ -1392,7 +1392,7 @@ pub const Transpiler = struct {
                     source,
                     "__base64ToUint8Array",
                 ) catch return null) orelse return null;
-                
+
                 return ParseResult{
                     .ast = ast,
                     .source = source.*,

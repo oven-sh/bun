@@ -998,7 +998,7 @@ pub fn transpileSourceCode(
             }
 
             var parse_result: ParseResult = switch (disable_transpilying or
-                (loader == .json)) {
+                (loader == .json or loader == .bytes)) {
                 inline else => |return_file_only| brk: {
                     break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                         parse_options,

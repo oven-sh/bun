@@ -931,7 +931,6 @@ install_build_essentials() {
 		make \
 		python3 \
 		libtool \
-		ruby \
 		perl
 
 	install_cmake

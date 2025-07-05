@@ -9,6 +9,7 @@ onConnectError: JSC.JSValue = .zero,
 onEnd: JSC.JSValue = .zero,
 onError: JSC.JSValue = .zero,
 onHandshake: JSC.JSValue = .zero,
+onSession: JSC.JSValue = .zero,
 
 binary_type: BinaryType = .Buffer,
 
@@ -124,6 +125,7 @@ pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, is_server: b
         .{ "onEnd", "end" },
         .{ "onError", "error" },
         .{ "onHandshake", "handshake" },
+        .{ "onSession", "session" },
     };
     inline for (pairs) |pair| {
         if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
@@ -170,6 +172,7 @@ pub fn unprotect(this: *Handlers) void {
     this.onEnd.unprotect();
     this.onError.unprotect();
     this.onHandshake.unprotect();
+    this.onSession.unprotect();
 }
 
 pub fn withAsyncContextIfNeeded(this: *Handlers, globalObject: *JSC.JSGlobalObject) void {
@@ -204,6 +207,7 @@ pub fn protect(this: *Handlers) void {
     this.onEnd.protect();
     this.onError.protect();
     this.onHandshake.protect();
+    this.onSession.protect();
 }
 
 const BinaryType = JSC.ArrayBuffer.BinaryType;

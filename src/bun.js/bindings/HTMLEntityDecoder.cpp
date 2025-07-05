@@ -8,7 +8,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WTF;
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeHTMLEntity, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeHTMLEntity, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

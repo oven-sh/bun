@@ -33,6 +33,7 @@
 #include "wtf/Compiler.h"
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
+#include <wtf/text/StringBuilder.h>
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
@@ -489,6 +490,62 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     }
 }
 
+extern "C" bool Bun__decodeEntity(const BunString* in, BunString* out);
+
+JSC_DEFINE_HOST_FUNCTION(functionBunDecodeHTMLEntity,
+    (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue argument = callFrame->argument(0);
+    auto string = argument.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::StringBuilder builder;
+    builder.reserveCapacity(string.length());
+    size_t index = 0;
+    while (true) {
+        size_t amp = string.find('&', index);
+        if (amp == WTF::notFound) {
+            builder.append(string.substring(index));
+            break;
+        }
+        builder.append(string.substring(index, amp - index));
+        size_t semi = string.find(';', amp + 1);
+        if (semi == WTF::notFound) {
+            builder.append(string.substring(amp));
+            break;
+        }
+
+        size_t len = semi - amp - 1;
+        if (len == 0) {
+            builder.append(string.substring(amp, semi - amp + 1));
+            index = semi + 1;
+            continue;
+        }
+
+        BunString bunIn;
+        if (string.is8Bit()) {
+            auto span = string.span8().subspan(amp + 1, len);
+            bunIn = BunString__fromLatin1(reinterpret_cast<const char*>(span.data()), span.size());
+        } else {
+            auto span = string.span16().subspan(amp + 1, len);
+            bunIn = BunString__fromUTF16(span.data(), span.size());
+        }
+
+        BunString bunOut;
+        bool ok = Bun__decodeEntity(&bunIn, &bunOut);
+        if (ok) {
+            builder.append(bunOut.toWTFString(BunString::NonNull));
+        } else {
+            builder.append(string.substring(amp, semi - amp + 1));
+        }
+        index = semi + 1;
+    }
+
+    return JSValue::encode(jsString(vm, builder.toString()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
@@ -727,6 +784,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
+    decodeHTMLEntity                               functionBunDecodeHTMLEntity                                          DontDelete|Function 1
     deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback

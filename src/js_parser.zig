@@ -13914,7 +13914,6 @@ fn NewParser_(
                             },
                             name_loc,
                         ),
-                        .optional_chain = optional_chain.*,
                         .optional_chain = old_optional_chain,
                     }, left.loc);
                 } else {

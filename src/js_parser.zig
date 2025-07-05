@@ -13915,6 +13915,7 @@ fn NewParser_(
                             name_loc,
                         ),
                         .optional_chain = optional_chain.*,
+                        .optional_chain = old_optional_chain,
                     }, left.loc);
                 } else {
                     // "a.b"
@@ -13927,7 +13928,15 @@ fn NewParser_(
                     const name_loc = p.lexer.loc();
                     try p.lexer.next();
 
-                    left.* = p.newExpr(E.Dot{ .target = left.*, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
+                    left.* = p.newExpr(
+                        E.Dot{
+                            .target = left.*,
+                            .name = name,
+                            .name_loc = name_loc,
+                            .optional_chain = old_optional_chain,
+                        },
+                        left.loc,
+                    );
                 }
                 optional_chain.* = old_optional_chain;
                 return .next;
@@ -14052,6 +14061,7 @@ fn NewParser_(
                 // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
                 const head = p.lexer.rawTemplateContents();
                 try p.lexer.next();
+
                 left.* = p.newExpr(E.Template{
                     .tag = left.*,
                     .head = .{ .raw = head },
@@ -15209,10 +15219,8 @@ fn NewParser_(
                         _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
                     }
 
-                    const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
+                    value.* = p.newExpr(try p.parseClass(classKeyword, name, ParseClassOptions{}), loc);
                     p.popScope();
-
-                    value.* = p.newExpr(class, loc);
                     return;
                 },
                 .t_new => {

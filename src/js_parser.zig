@@ -1679,11 +1679,11 @@ pub const SideEffects = enum(u1) {
                 }
             },
             .e_identifier => |ident| {
-                if (ident.must_keep_due_to_with_stmt) {
+                if (ident.must_keep_due_to_with_stmt()) {
                     return expr;
                 }
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
+                if (ident.can_be_removed_if_unused() or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
                     return null;
                 }
             },
@@ -5243,9 +5243,7 @@ fn NewParser_(
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
-                            return p.newExpr(E.Identifier{
-                                .ref = namespace_ref,
-                            }, arg.loc);
+                            return p.newExpr(E.Identifier.init(.{ .ref = namespace_ref }), arg.loc);
                         }
 
                         return p.newExpr(
@@ -5853,7 +5851,7 @@ fn NewParser_(
 
                                     .namespace => |map| {
                                         const expr = p.newExpr(E.Dot{
-                                            .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
+                                            .target = p.newExpr(E.Identifier{ .ref = ns_alias.namespace_ref }, loc),
                                             .name = ns_alias.alias,
                                             .name_loc = loc,
                                         }, loc);
@@ -5870,17 +5868,20 @@ fn NewParser_(
                         }
                     }
 
-                    return p.newExpr(E.ImportIdentifier{
+                    return p.newExpr(E.ImportIdentifier.init(.{
                         .ref = ident.ref,
                         .was_originally_identifier = true,
-                    }, loc);
+                    }), loc);
                 }
             }
 
             // Substitute an EImportIdentifier now if this is an import item
             if (p.is_import_item.contains(ref)) {
                 return p.newExpr(
-                    E.ImportIdentifier{ .ref = ref, .was_originally_identifier = opts.was_originally_identifier },
+                    E.ImportIdentifier.init(.{
+                        .ref = ref,
+                        .was_originally_identifier = opts.was_originally_identifier,
+                    }),
                     loc,
                 );
             }
@@ -5922,7 +5923,7 @@ fn NewParser_(
 
                     p.recordUsage(ns_ref);
                     const prop = p.newExpr(E.Dot{
-                        .target = p.newExpr(E.Identifier.init(ns_ref), loc),
+                        .target = p.newExpr(E.Identifier{ .ref = ns_ref }, loc),
                         .name = name,
                         .name_loc = loc,
                     }, loc);
@@ -15317,11 +15318,11 @@ fn NewParser_(
 
             const value = p.handleIdentifier(
                 loc,
-                E.Identifier{
+                E.Identifier.init(.{
                     .ref = result.ref,
                     .must_keep_due_to_with_stmt = result.is_inside_with_scope,
                     .can_be_removed_if_unused = true,
-                },
+                }),
                 parts[0],
                 .{
                     .was_originally_identifier = true,
@@ -16187,9 +16188,8 @@ fn NewParser_(
                     }
 
                     const result = p.findSymbol(expr.loc, name) catch unreachable;
-
-                    e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                     e_.ref = result.ref;
+                    e_.setMustKeepDueToWithStmt(result.is_inside_with_scope);
 
                     // Handle assigning to a constant
                     if (in.assign_target != .none) {
@@ -16250,10 +16250,10 @@ fn NewParser_(
 
                             // Copy the side effect flags over in case this expression is unused
                             if (def.can_be_removed_if_unused) {
-                                e_.can_be_removed_if_unused = true;
+                                e_.setCanBeRemovedIfUnused(true);
                             }
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
-                                e_.call_can_be_unwrapped_if_unused = true;
+                                e_.setCallCanBeUnwrappedIfUnused(true);
                             }
 
                             // If the user passed --drop=console, drop all property accesses to console.
@@ -17233,7 +17233,7 @@ fn NewParser_(
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
                         .e_identifier => |ident| {
-                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused;
+                            e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or ident.call_can_be_unwrapped_if_unused();
 
                             // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
                             // become "eval(x)" after we visit the target due to dead code elimination,
@@ -17857,7 +17857,7 @@ fn NewParser_(
                 .e_identifier => |ex| {
                     bun.assert(!ex.ref.isSourceContentsSlice()); // was not visited
 
-                    if (ex.must_keep_due_to_with_stmt) {
+                    if (ex.must_keep_due_to_with_stmt()) {
                         return false;
                     }
 
@@ -17880,7 +17880,7 @@ fn NewParser_(
                     // incorrect but proper TDZ analysis is very complicated and would have to
                     // be very conservative, which would inhibit a lot of optimizations of code
                     // inside closures. This may need to be revisited if it proves problematic.
-                    if (ex.can_be_removed_if_unused or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
+                    if (ex.can_be_removed_if_unused() or p.symbols.items[ex.ref.innerIndex()].kind != .unbound) {
                         return true;
                     }
                 },
@@ -18324,11 +18324,11 @@ fn NewParser_(
                     p.recordUsage(ref);
                     return p.handleIdentifier(
                         loc,
-                        E.Identifier{
+                        E.Identifier.init(.{
                             .ref = ref,
                             .can_be_removed_if_unused = true,
                             .call_can_be_unwrapped_if_unused = true,
-                        },
+                        }),
                         null,
                         .{
                             .was_originally_identifier = true,
@@ -18449,7 +18449,7 @@ fn NewParser_(
 
                             return p.handleIdentifier(
                                 name_loc,
-                                E.Identifier{ .ref = ref },
+                                .{ .ref = ref },
                                 name,
                                 .{
                                     .assign_target = identifier_opts.assign_target,
@@ -18840,11 +18840,11 @@ fn NewParser_(
                                     p.recordUsage(ref);
 
                                     return p.newExpr(
-                                        E.CommonJSExportIdentifier{
+                                        E.CommonJSExportIdentifier.init(.{
                                             .ref = ref,
                                             // Record this as from module.exports
                                             .base = .module_dot_exports,
-                                        },
+                                        }),
                                         name_loc,
                                     );
                                 } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
@@ -19524,11 +19524,11 @@ fn NewParser_(
                     stmts.appendAssumeCapacity(stmt.*);
                     stmts.appendAssumeCapacity(Stmt.assign(
                         p.newExpr(E.Dot{
-                            .target = p.newExpr(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
+                            .target = p.newExpr(E.Identifier.init(.{ .ref = enclosing_namespace_arg_ref }), stmt.loc),
                             .name = original_name,
                             .name_loc = data.func.name.?.loc,
                         }, stmt.loc),
-                        p.newExpr(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc),
+                        p.newExpr(E.Identifier.init(.{ .ref = data.func.name.?.ref.? }), data.func.name.?.loc),
                     ));
                 } else if (!mark_as_dead) {
                     if (name_symbol.remove_overwritten_function_declaration) {
@@ -19619,7 +19619,7 @@ fn NewParser_(
                             p.newExpr(
                                 E.Dot{
                                     .target = p.newExpr(
-                                        E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? },
+                                        E.Identifier.init(.{ .ref = p.enclosing_namespace_arg_ref.? }),
                                         stmt.loc,
                                     ),
                                     .name = p.symbols.items[data.class.class_name.?.ref.?.innerIndex()].original_name,
@@ -19628,7 +19628,7 @@ fn NewParser_(
                                 stmt.loc,
                             ),
                             p.newExpr(
-                                E.Identifier{ .ref = data.class.class_name.?.ref.? },
+                                E.Identifier.init(.{ .ref = data.class.class_name.?.ref.? }),
                                 data.class.class_name.?.loc,
                             ),
                         ),
@@ -22152,10 +22152,10 @@ fn NewParser_(
             const ref = p.runtimeIdentifierRef(loc, name);
             p.recordUsage(ref);
             return p.newExpr(
-                E.ImportIdentifier{
+                E.ImportIdentifier.init(.{
                     .ref = ref,
                     .was_originally_identifier = false,
-                },
+                }),
                 loc,
             );
         }

@@ -2,7 +2,7 @@ pub fn writeOutputFilesToDisk(
     c: *LinkerContext,
     root_path: string,
     chunks: []Chunk,
-    output_files: *std.ArrayList(options.OutputFile),
+    output_files: *OutputFileListBuilder,
 ) !void {
     const trace = bun.perf.trace("Bundler.writeOutputFilesToDisk");
     defer trace.end();
@@ -41,7 +41,7 @@ pub fn writeOutputFilesToDisk(
     var pathbuf: bun.PathBuffer = undefined;
     const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", c);
 
-    for (chunks) |*chunk| {
+    for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
         const trace2 = bun.perf.trace("Bundler.writeChunkToDisk");
         defer trace2.end();
         defer max_heap_allocator.reset();
@@ -292,14 +292,12 @@ pub fn writeOutputFilesToDisk(
         }
 
         const source_map_index: ?u32 = if (source_map_output_file != null)
-            @as(u32, @truncate(output_files.items.len + 1))
+            try output_files.insertForSourcemapOrBytecode(source_map_output_file.?)
         else
             null;
 
-        const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
-            @as(u32, @truncate(output_files.items.len + 2))
-        else if (bytecode_output_file != null)
-            @as(u32, @truncate(output_files.items.len + 1))
+        const bytecode_index: ?u32 = if (bytecode_output_file != null)
+            try output_files.insertForSourcemapOrBytecode(bytecode_output_file.?)
         else
             null;
 
@@ -309,7 +307,8 @@ pub fn writeOutputFilesToDisk(
             c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
         else
             .chunk;
-        try output_files.append(options.OutputFile.init(.{
+
+        const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
             .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
             .input_path = input_path,
             .input_loader = if (chunk.entry_point.is_entry_point)
@@ -337,27 +336,19 @@ pub fn writeOutputFilesToDisk(
                 chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
             else
                 null,
-            .referenced_css_files = switch (chunk.content) {
+            .referenced_css_chunks = switch (chunk.content) {
                 .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                 .css => &.{},
                 .html => &.{},
             },
         }));
 
-        if (source_map_output_file) |sourcemap_file| {
-            try output_files.append(sourcemap_file);
-        }
-
-        if (bytecode_output_file) |bytecode_file| {
-            try output_files.append(bytecode_file);
-        }
+        // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
+        bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
     }
 
     {
-        const offset = output_files.items.len;
-        output_files.items.len += c.parse_graph.additional_output_files.items.len;
-
-        for (c.parse_graph.additional_output_files.items, output_files.items[offset..][0..c.parse_graph.additional_output_files.items.len]) |*src, *dest| {
+        for (c.parse_graph.additional_output_files.items, output_files.getMutableAdditionalOutputFiles()) |*src, *dest| {
             const bytes = src.value.buffer.bytes;
             src.value.buffer.bytes.len = 0;
 
@@ -442,3 +433,4 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const Chunk = bundler.Chunk;
 const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
 const debug = LinkerContext.debug;
+const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;

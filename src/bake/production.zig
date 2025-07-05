@@ -458,9 +458,9 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             else => {},
         }
         var file_count: u32 = 1;
-        var css_file_count: u32 = @intCast(main_file.referenced_css_files.len);
+        var css_file_count: u32 = @intCast(main_file.referenced_css_chunks.len);
         if (route.file_layout.unwrap()) |file| {
-            css_file_count += @intCast(pt.outputFile(file).referenced_css_files.len);
+            css_file_count += @intCast(pt.outputFile(file).referenced_css_chunks.len);
             file_count += 1;
         }
         var next: ?FrameworkRouter.Route.Index = route.parent.unwrap();
@@ -480,7 +480,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 else => {},
             }
             if (parent.file_layout.unwrap()) |file| {
-                css_file_count += @intCast(pt.outputFile(file).referenced_css_files.len);
+                css_file_count += @intCast(pt.outputFile(file).referenced_css_chunks.len);
                 file_count += 1;
             }
             next = parent.parent.unwrap();
@@ -494,14 +494,15 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         file_count = 1;
         css_file_count = 0;
         file_list.putIndex(global, 0, pt.preloadBundledModule(main_file_route_index));
-        for (main_file.referenced_css_files) |ref| {
+        for (main_file.referenced_css_chunks) |ref| {
+            const file = bundled_outputs[ref.get()];
             bun.assert(ref.get() >= css_chunks_first);
             styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;
         }
         if (route.file_layout.unwrap()) |file| {
             file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
-            for (pt.outputFile(file).referenced_css_files) |ref| {
+            for (pt.outputFile(file).referenced_css_chunks) |ref| {
                 styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                 css_file_count += 1;
             }
@@ -512,7 +513,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             const parent = router.routePtr(parent_index);
             if (parent.file_layout.unwrap()) |file| {
                 file_list.putIndex(global, file_count, pt.preloadBundledModule(file));
-                for (pt.outputFile(file).referenced_css_files) |ref| {
+                for (pt.outputFile(file).referenced_css_chunks) |ref| {
                     styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
                     css_file_count += 1;
                 }

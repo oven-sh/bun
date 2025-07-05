@@ -2,6 +2,8 @@ pub const LinkerContext = struct {
     pub const debug = Output.scoped(.LinkerCtx, false);
     pub const CompileResult = bundler.CompileResult;
 
+    pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
+
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
     allocator: std.mem.Allocator = undefined,

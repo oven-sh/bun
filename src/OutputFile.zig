@@ -20,7 +20,7 @@ side: ?bun.bake.Side,
 /// This is only set for the JS bundle, and not files associated with an
 /// entrypoint like sourcemaps and bytecode
 entry_point_index: ?u32,
-referenced_css_files: []const Index = &.{},
+referenced_css_chunks: []const Index = &.{},
 source_index: Index.Optional = .none,
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
@@ -30,7 +30,7 @@ pub fn deinit(this: *OutputFile) void {
 
     bun.default_allocator.free(this.src_path.text);
     bun.default_allocator.free(this.dest_path);
-    bun.default_allocator.free(this.referenced_css_files);
+    bun.default_allocator.free(this.referenced_css_chunks);
 }
 
 // Depending on:
@@ -206,7 +206,7 @@ pub const Options = struct {
     },
     side: ?bun.bake.Side,
     entry_point_index: ?u32,
-    referenced_css_files: []const Index = &.{},
+    referenced_css_chunks: []const Index = &.{},
 };
 
 pub fn init(options: Options) OutputFile {
@@ -240,7 +240,7 @@ pub fn init(options: Options) OutputFile {
         },
         .side = options.side,
         .entry_point_index = options.entry_point_index,
-        .referenced_css_files = options.referenced_css_files,
+        .referenced_css_chunks = options.referenced_css_chunks,
     };
 }
 

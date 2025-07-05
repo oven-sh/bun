@@ -326,11 +326,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         }
     }
 
-    var output_files = std.ArrayList(options.OutputFile).initCapacity(
-        bun.default_allocator,
-        (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) +
-            @as(usize, c.parse_graph.additional_output_files.items.len),
-    ) catch unreachable;
+    var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
     const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
@@ -346,7 +342,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
         // In-memory build
-        for (chunks) |*chunk| {
+        for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
             const public_path = if (chunk.is_browser_chunk_from_server_build)
@@ -495,14 +491,12 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             };
 
             const source_map_index: ?u32 = if (sourcemap_output_file != null)
-                @as(u32, @truncate(output_files.items.len + 1))
+                try output_files.insertForSourcemapOrBytecode(sourcemap_output_file.?)
             else
                 null;
 
-            const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
-                @as(u32, @truncate(output_files.items.len + 2))
-            else if (bytecode_output_file != null)
-                @as(u32, @truncate(output_files.items.len + 1))
+            const bytecode_index: ?u32 = if (bytecode_output_file != null)
+                try output_files.insertForSourcemapOrBytecode(bytecode_output_file.?)
             else
                 null;
 
@@ -512,7 +506,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
             else
                 .chunk;
-            try output_files.append(options.OutputFile.init(.{
+
+            const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
                 .data = .{
                     .buffer = .{
                         .data = code_result.buffer,
@@ -539,24 +534,21 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                     chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
                 else
                     null,
-                .referenced_css_files = switch (chunk.content) {
+                .referenced_css_chunks = switch (chunk.content) {
                     .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
                     .css => &.{},
                     .html => &.{},
                 },
             }));
-            if (sourcemap_output_file) |sourcemap_file| {
-                try output_files.append(sourcemap_file);
-            }
-            if (bytecode_output_file) |bytecode_file| {
-                try output_files.append(bytecode_file);
-            }
+
+            // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
+            bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
         }
 
-        try output_files.appendSlice(c.parse_graph.additional_output_files.items);
+        output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
     }
 
-    return output_files;
+    return output_files.take();
 }
 
 const bun = @import("bun");
@@ -600,3 +592,4 @@ const base64 = bun.base64;
 const JSC = bun.JSC;
 
 pub const ThreadPoolLib = bun.ThreadPool;
+const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;

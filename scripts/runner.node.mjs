@@ -51,6 +51,7 @@ import {
   isBuildkite,
   isCI,
   isGithubAction,
+  isLinux,
   isMacOS,
   isWindows,
   isX64,
@@ -59,6 +60,7 @@ import {
   startGroup,
   tmpdir,
   unzip,
+  uploadArtifact,
 } from "./utils.mjs";
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
@@ -145,6 +147,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["junit-upload"]: {
       type: "boolean",
       default: isBuildkite,
+    },
+    ["coredump-upload"]: {
+      type: "boolean",
+      default: isBuildkite && isLinux,
     },
   },
 });
@@ -605,6 +611,78 @@ async function runTests() {
     }
   }
 
+  if (options["coredump-upload"]) {
+    try {
+      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+      let coresDir = sysctl.stdout;
+      if (sysctl.ok) {
+        if (coresDir.startsWith("|")) {
+          throw new Error("cores are being piped not saved");
+        }
+        // change /foo/bar/%e-%p.core to /foo/bar
+        coresDir = dirname(sysctl.stdout);
+      } else {
+        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+      }
+
+      const coresDirBase = dirname(coresDir);
+      const coresDirName = basename(coresDir);
+      const coreFileNames = readdirSync(coresDir);
+
+      if (coreFileNames.length > 0) {
+        console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
+        let totalBytes = 0;
+        let totalBlocks = 0;
+        for (const f of coreFileNames) {
+          const stat = statSync(join(coresDir, f));
+          totalBytes += stat.size;
+          totalBlocks += stat.blocks;
+        }
+        console.log(`total apparent size = ${totalBytes} bytes`);
+        console.log(`total size on disk = ${512 * totalBlocks} bytes`);
+        const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
+        const outfileName = `${coresDirName}.tar.gz.age`;
+        const outfileAbs = join(outdir, outfileName);
+
+        // This matches an age identity known by Bun employees. Core dumps from CI have to be kept
+        // secret since they will contain API keys.
+        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu"; // reject external PRs changing this, see above
+
+        // Run tar in the parent directory of coresDir so that it creates archive entries with
+        // coresDirName in them. This way when you extract the tarball you get a folder named
+        // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
+        // current directory
+        const before = Date.now();
+        const zipAndEncrypt = await spawnSafe({
+          command: "bash",
+          args: [
+            "-c",
+            // tar -S: handle sparse files efficiently
+            `set -euo pipefail && tar -Sc "$0" | gzip -1 | age -e -r ${ageRecipient} -o "$1"`,
+            // $0
+            coresDirName,
+            // $1
+            outfileAbs,
+          ],
+          cwd: coresDirBase,
+          stdout: () => {},
+          timeout: 60_000,
+        });
+        const elapsed = Date.now() - before;
+        if (!zipAndEncrypt.ok) {
+          throw new Error(zipAndEncrypt.error);
+        }
+        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
+        await uploadArtifact(outfileAbs);
+      } else {
+        console.log(`no cores found in ${coresDir}`);
+      }
+    } catch (err) {
+      console.error("Error collecting and uploading core dumps:", err);
+    }
+  }
+
   if (!isCI && !isQuiet) {
     console.table({
       "Total Tests": okResults.length + failedResults.length + flakyResults.length,
@@ -780,6 +858,7 @@ async function spawnSafe(options) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
     error = error.indexOf("\\n") !== -1 ? error.substring(0, error.indexOf("\\n")) : error;
+    error = `pid ${subprocess.pid} ${error}`;
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";
@@ -871,7 +950,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   };
 
   if (basename(execPath).includes("asan")) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
   }
 
   if (isWindows && bunEnv.Path) {
@@ -1023,7 +1102,7 @@ function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
-  if (/napi/i.test(testPath)) {
+  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
     return napiTimeout;
   }
   return testTimeout;

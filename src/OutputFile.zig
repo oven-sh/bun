@@ -25,12 +25,12 @@ source_index: Index.Optional = .none,
 
 pub const Index = bun.GenericIndex(u32, OutputFile);
 
-pub fn deinit(this: *OutputFile) void {
+pub fn deinit(this: *OutputFile, default_allocator: std.mem.Allocator) void {
     this.value.deinit();
 
-    bun.default_allocator.free(this.src_path.text);
-    bun.default_allocator.free(this.dest_path);
-    bun.default_allocator.free(this.referenced_css_files);
+    default_allocator.free(this.src_path.text);
+    default_allocator.free(this.dest_path);
+    default_allocator.free(this.referenced_css_files);
 }
 
 // Depending on:

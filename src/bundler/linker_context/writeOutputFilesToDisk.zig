@@ -1,5 +1,6 @@
 pub fn writeOutputFilesToDisk(
     c: *LinkerContext,
+    tracked_default_allocator: std.mem.Allocator,
     root_path: string,
     chunks: []Chunk,
     output_files: *std.ArrayList(options.OutputFile),
@@ -26,17 +27,17 @@ pub fn writeOutputFilesToDisk(
     var max_heap_allocator: bun.MaxHeapAllocator = undefined;
     defer max_heap_allocator.deinit();
 
-    const code_allocator = max_heap_allocator.init(bun.default_allocator);
+    const code_allocator = max_heap_allocator.init(tracked_default_allocator);
 
     var max_heap_allocator_source_map: bun.MaxHeapAllocator = undefined;
     defer max_heap_allocator_source_map.deinit();
 
-    const source_map_allocator = max_heap_allocator_source_map.init(bun.default_allocator);
+    const source_map_allocator = max_heap_allocator_source_map.init(tracked_default_allocator);
 
     var max_heap_allocator_inline_source_map: bun.MaxHeapAllocator = undefined;
     defer max_heap_allocator_inline_source_map.deinit();
 
-    const code_with_inline_source_map_allocator = max_heap_allocator_inline_source_map.init(bun.default_allocator);
+    const code_with_inline_source_map_allocator = max_heap_allocator_inline_source_map.init(tracked_default_allocator);
 
     var pathbuf: bun.PathBuffer = undefined;
     const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", c);
@@ -77,22 +78,31 @@ pub fn writeOutputFilesToDisk(
         ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
         var source_map_output_file: ?options.OutputFile = null;
+        errdefer {
+            if (source_map_output_file) |*output_file| {
+                output_file.deinit(tracked_default_allocator);
+            }
+        }
 
-        const input_path = try bun.default_allocator.dupe(
+        var input_path = try tracked_default_allocator.dupe(
             u8,
             if (chunk.entry_point.is_entry_point)
                 c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path.text
             else
                 chunk.final_rel_path,
         );
+        errdefer {
+            tracked_default_allocator.free(input_path);
+        }
 
         switch (chunk.content.sourcemap(c.options.source_maps)) {
             .external, .linked => |tag| {
                 const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
-                const source_map_final_rel_path = strings.concat(default_allocator, &.{
+                const source_map_final_rel_path = strings.concat(tracked_default_allocator, &.{
                     chunk.final_rel_path,
                     ".map",
                 }) catch @panic("Failed to allocate memory for external source map path");
+                errdefer tracked_default_allocator.free(source_map_final_rel_path);
 
                 if (tag == .linked) {
                     const a, const b = if (public_path.len > 0)
@@ -108,6 +118,7 @@ pub fn writeOutputFilesToDisk(
                     buf.appendSliceAssumeCapacity(a);
                     buf.appendSliceAssumeCapacity(b);
                     buf.appendAssumeCapacity('\n');
+                    code_allocator.free(code_result.buffer);
                     code_result.buffer = buf.items;
                 }
 
@@ -142,9 +153,11 @@ pub fn writeOutputFilesToDisk(
                     .result => {},
                 }
 
+                const input_path_joined = try strings.concat(tracked_default_allocator, &.{ input_path, ".map" });
+
                 source_map_output_file = options.OutputFile.init(.{
                     .output_path = source_map_final_rel_path,
-                    .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
+                    .input_path = input_path_joined,
                     .loader = .json,
                     .input_loader = .file,
                     .output_kind = .sourcemap,
@@ -172,11 +185,12 @@ pub fn writeOutputFilesToDisk(
                 _ = base64.encode(buf.items[buf.items.len - encode_len ..], output_source_map);
 
                 buf.appendAssumeCapacity('\n');
+                code_allocator.free(code_result.buffer);
                 code_result.buffer = buf.items;
             },
             .none => {},
         }
-        const bytecode_output_file: ?options.OutputFile = brk: {
+        var bytecode_output_file: ?options.OutputFile = brk: {
             if (c.options.generate_bytecode_cache) {
                 const loader: Loader = if (chunk.entry_point.is_entry_point)
                     c.parse_graph.input_files.items(.loader)[
@@ -236,8 +250,8 @@ pub fn writeOutputFilesToDisk(
                         }
 
                         break :brk options.OutputFile.init(.{
-                            .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                            .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                            .output_path = tracked_default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                            .input_path = std.fmt.allocPrint(tracked_default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
                             .input_loader = .file,
                             .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                             .output_kind = .bytecode,
@@ -256,6 +270,9 @@ pub fn writeOutputFilesToDisk(
             }
 
             break :brk null;
+        };
+        errdefer if (bytecode_output_file) |*output_file| {
+            output_file.deinit(tracked_default_allocator);
         };
 
         switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
@@ -310,8 +327,12 @@ pub fn writeOutputFilesToDisk(
         else
             .chunk;
         try output_files.append(options.OutputFile.init(.{
-            .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
-            .input_path = input_path,
+            .output_path = tracked_default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
+            .input_path = brk: {
+                const ret = input_path;
+                input_path = "";
+                break :brk ret;
+            },
             .input_loader = if (chunk.entry_point.is_entry_point)
                 c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
             else
@@ -338,17 +359,17 @@ pub fn writeOutputFilesToDisk(
             else
                 null,
             .referenced_css_files = switch (chunk.content) {
-                .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
+                .javascript => |js| @ptrCast(try tracked_default_allocator.dupe(u32, js.css_chunks)),
                 .css => &.{},
                 .html => &.{},
             },
         }));
 
-        if (source_map_output_file) |sourcemap_file| {
+        if (bun.take(&source_map_output_file)) |sourcemap_file| {
             try output_files.append(sourcemap_file);
         }
 
-        if (bytecode_output_file) |bytecode_file| {
+        if (bun.take(&bytecode_output_file)) |bytecode_file| {
             try output_files.append(bytecode_file);
         }
     }
@@ -427,7 +448,6 @@ const LinkerContext = bun.bundle_v2.LinkerContext;
 const string = bun.string;
 const Output = bun.Output;
 const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 const sourcemap = bun.sourcemap;

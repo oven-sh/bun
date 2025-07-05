@@ -1,4 +1,22 @@
 pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
+    // TODO: Ideally we end the scope unconditionally but that would require a
+    //       lot of changes since we also transfer ownership of the memory in the
+    //       success case.
+    //
+    // If we hit successful codepaths, we should return a list of output files
+    // and the caller should handle it and all should be fine and dandy.
+    //
+    // But it is *very* easy to leak memory if we hit a codepath which returns an
+    // error and we forgot an `errdefer` somewhere.
+    var error_alloc_scope = bun.shell.AllocScope{
+        .__scope = bun.AllocationScope.init(bun.default_allocator),
+    };
+    errdefer error_alloc_scope.endScope();
+    // **IMPORTANT**:
+    // Any usages of `bun.default_allocator` which own their allocations and
+    // *don't* pass it to somewhere else should use this allocator.
+    const tracked_default_allocator = error_alloc_scope.allocator();
+
     const trace = bun.perf.trace("Bundler.generateChunksInParallel");
     defer trace.end();
 
@@ -327,10 +345,16 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     }
 
     var output_files = std.ArrayList(options.OutputFile).initCapacity(
-        bun.default_allocator,
+        error_alloc_scope.allocator(),
         (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) +
             @as(usize, c.parse_graph.additional_output_files.items.len),
     ) catch unreachable;
+    errdefer {
+        for (output_files.items) |*file| {
+            file.deinit(tracked_default_allocator);
+        }
+        output_files.deinit();
+    }
 
     const root_path = c.resolver.opts.output_dir;
     const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
@@ -343,7 +367,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
 
     if (root_path.len > 0) {
-        try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
+        try c.writeOutputFilesToDisk(tracked_default_allocator, root_path, chunks, &output_files);
     } else {
         // In-memory build
         for (chunks) |*chunk| {
@@ -367,7 +391,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
             var sourcemap_output_file: ?options.OutputFile = null;
-            const input_path = try bun.default_allocator.dupe(
+            const input_path = try error_alloc_scope.allocator().dupe(
                 u8,
                 if (chunk.entry_point.is_entry_point)
                     c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path.text
@@ -377,8 +401,8 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
 
             switch (chunk.content.sourcemap(c.options.source_maps)) {
                 .external, .linked => |tag| {
-                    const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
-                    var source_map_final_rel_path = bun.default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
+                    const output_source_map = chunk.output_source_map.finalize(error_alloc_scope.allocator(), code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    var source_map_final_rel_path = error_alloc_scope.allocator().alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                     bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                     bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
@@ -405,7 +429,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                         .data = .{
                             .buffer = .{
                                 .data = output_source_map,
-                                .allocator = bun.default_allocator,
+                                .allocator = error_alloc_scope.allocator(),
                             },
                         },
                         .hash = null,
@@ -413,14 +437,14 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                         .input_loader = .file,
                         .output_path = source_map_final_rel_path,
                         .output_kind = .sourcemap,
-                        .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
+                        .input_path = try strings.concat(error_alloc_scope.allocator(), &.{ input_path, ".map" }),
                         .side = null,
                         .entry_point_index = null,
                         .is_executable = false,
                     });
                 },
                 .@"inline" => {
-                    const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
+                    const output_source_map = chunk.output_source_map.finalize(error_alloc_scope.allocator(), code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const encode_len = base64.encodeLen(output_source_map);
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
@@ -460,15 +484,15 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
 
                         if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
                             const bytecode, const cached_bytecode = result;
-                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                            const source_provider_url_str = source_provider_url.toSlice(error_alloc_scope.allocator());
                             defer source_provider_url_str.deinit();
                             debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
                             break :brk options.OutputFile.init(.{
-                                .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                .output_path = error_alloc_scope.allocator().dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                .input_path = std.fmt.allocPrint(error_alloc_scope.allocator(), "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                                 .output_kind = .bytecode,
@@ -484,7 +508,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                             });
                         } else {
                             // an error
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
+                            c.log.addErrorFmt(null, Logger.Loc.Empty, error_alloc_scope.allocator(), "Failed to generate bytecode for {s}", .{
                                 chunk.final_rel_path,
                             }) catch unreachable;
                         }
@@ -525,7 +549,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 .display_size = @as(u32, @truncate(display_size)),
                 .output_kind = output_kind,
                 .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
-                .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
+                .output_path = try error_alloc_scope.allocator().dupe(u8, chunk.final_rel_path),
                 .is_executable = chunk.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
@@ -540,7 +564,7 @@ pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_
                 else
                     null,
                 .referenced_css_files = switch (chunk.content) {
-                    .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
+                    .javascript => |js| @ptrCast(try error_alloc_scope.allocator().dupe(u32, js.css_chunks)),
                     .css => &.{},
                     .html => &.{},
                 },

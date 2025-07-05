@@ -1639,7 +1639,7 @@ pub const BundleV2 = struct {
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
-                output_file.deinit();
+                output_file.deinit(bun.default_allocator);
             }
 
             this.output_files.clearAndFree();

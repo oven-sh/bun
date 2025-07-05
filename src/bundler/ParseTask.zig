@@ -580,19 +580,16 @@ fn getAST(
             const encoded_len = std.base64.standard.Encoder.calcSize(source.contents.len);
             const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
             _ = bun.base64.encode(encoded, source.contents);
-            
+
             const base64_string = Expr.init(E.String, E.String{
                 .data = encoded,
             }, Logger.Loc.Empty);
-            
+
             const root = Expr.init(E.Call, E.Call{
-                .target = .{
-                    .data = .{ .e_identifier = .{ .ref = Ref.None } },
-                    .loc = .{ .start = 0 }
-                },
+                .target = .{ .data = .{ .e_identifier = .{ .ref = Ref.None } }, .loc = .{ .start = 0 } },
                 .args = BabyList(Expr).init(try allocator.dupe(Expr, &.{base64_string})),
             }, Logger.Loc.Empty);
-            
+
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "__base64ToUint8Array")).?);
         },
         .file, .wasm => {

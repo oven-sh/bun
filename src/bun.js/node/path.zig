@@ -2928,17 +2928,17 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
 }
 
 comptime {
-    @export(&bun.jsc.host_fn.wrap4(Path.basename), .{ .name = "Bun__Path__basename" });
-    @export(&bun.jsc.host_fn.wrap4(Path.dirname), .{ .name = "Bun__Path__dirname" });
-    @export(&bun.jsc.host_fn.wrap4(Path.extname), .{ .name = "Bun__Path__extname" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.basename), .{ .name = "Bun__Path__basename" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.dirname), .{ .name = "Bun__Path__dirname" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.extname), .{ .name = "Bun__Path__extname" });
     @export(&path_format, .{ .name = "Bun__Path__format" });
-    @export(&bun.jsc.host_fn.wrap4(Path.isAbsolute), .{ .name = "Bun__Path__isAbsolute" });
-    @export(&bun.jsc.host_fn.wrap4(Path.join), .{ .name = "Bun__Path__join" });
-    @export(&bun.jsc.host_fn.wrap4(Path.normalize), .{ .name = "Bun__Path__normalize" });
-    @export(&bun.jsc.host_fn.wrap4(Path.parse), .{ .name = "Bun__Path__parse" });
-    @export(&bun.jsc.host_fn.wrap4(Path.relative), .{ .name = "Bun__Path__relative" });
-    @export(&bun.jsc.host_fn.wrap4(Path.resolve), .{ .name = "Bun__Path__resolve" });
-    @export(&bun.jsc.host_fn.wrap4(Path.toNamespacedPath), .{ .name = "Bun__Path__toNamespacedPath" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.isAbsolute), .{ .name = "Bun__Path__isAbsolute" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.join), .{ .name = "Bun__Path__join" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.normalize), .{ .name = "Bun__Path__normalize" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.parse), .{ .name = "Bun__Path__parse" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.relative), .{ .name = "Bun__Path__relative" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.resolve), .{ .name = "Bun__Path__resolve" });
+    @export(&bun.jsc.host_fn.wrap4v(Path.toNamespacedPath), .{ .name = "Bun__Path__toNamespacedPath" });
 }
 
 fn path_format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {

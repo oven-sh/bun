@@ -170,11 +170,11 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
 
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);
-    break :@"return" fn (p[0].type.?) callconv(jsc.conv) JSValue;
+    break :@"return" fn (p[0].type.?) callconv(.c) JSValue;
 } {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
-        pub fn wrapped(arg0: p[0].type.?) callconv(jsc.conv) JSValue {
+        pub fn wrapped(arg0: p[0].type.?) callconv(.c) JSValue {
             return toJSHostCall(arg0, @src(), func, .{arg0});
         }
     }.wrapped;
@@ -182,11 +182,11 @@ pub fn wrap1(comptime func: anytype) @"return": {
 
 pub fn wrap2(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 2);
-    break :@"return" fn (p[0].type.?, p[1].type.?) callconv(jsc.conv) JSValue;
+    break :@"return" fn (p[0].type.?, p[1].type.?) callconv(.c) JSValue;
 } {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
-        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?) callconv(jsc.conv) JSValue {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?) callconv(.c) JSValue {
             return toJSHostCall(arg0, @src(), func, .{ arg0, arg1 });
         }
     }.wrapped;
@@ -194,11 +194,11 @@ pub fn wrap2(comptime func: anytype) @"return": {
 
 pub fn wrap3(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 3);
-    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?) callconv(jsc.conv) JSValue;
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?) callconv(.c) JSValue;
 } {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
-        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?) callconv(jsc.conv) JSValue {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?) callconv(.c) JSValue {
             return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2 });
         }
     }.wrapped;
@@ -206,11 +206,11 @@ pub fn wrap3(comptime func: anytype) @"return": {
 
 pub fn wrap4(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 4);
-    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(.c) JSValue;
 } {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
-        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(.c) JSValue {
             return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
         }
     }.wrapped;
@@ -218,11 +218,11 @@ pub fn wrap4(comptime func: anytype) @"return": {
 
 pub fn wrap5(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 5);
-    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?, p[4].type.?) callconv(jsc.conv) JSValue;
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?, p[4].type.?) callconv(.c) JSValue;
 } {
     const p = @typeInfo(@TypeOf(func)).@"fn".params;
     return struct {
-        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?, arg4: p[4].type.?) callconv(jsc.conv) JSValue {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?, arg4: p[4].type.?) callconv(.c) JSValue {
             return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3, arg4 });
         }
     }.wrapped;
@@ -236,6 +236,19 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
         @compileError("first arg must be *JSGlobalObject");
     }
     return params;
+}
+
+/// Uses .SysV callconv on Windows. Use for a function that interfaces with javascript. otherwise use wrap4.
+pub fn wrap4v(comptime func: anytype) @"return": {
+    const p = checkWrapParams(func, 4);
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+} {
+    const p = @typeInfo(@TypeOf(func)).@"fn".params;
+    return struct {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
+        }
+    }.wrapped;
 }
 
 const private = struct {
@@ -493,7 +506,7 @@ pub fn DOMCall(
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
-        const PutFnType = *const fn (globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(jsc.conv) void;
+        const PutFnType = *const fn (globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(.c) void;
         const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
         pub fn put(globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {

@@ -495,7 +495,6 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
         css_file_count = 0;
         file_list.putIndex(global, 0, pt.preloadBundledModule(main_file_route_index));
         for (main_file.referenced_css_chunks) |ref| {
-            const file = bundled_outputs[ref.get()];
             bun.assert(ref.get() >= css_chunks_first);
             styles.putIndex(global, css_file_count, css_chunk_js_strings[ref.get() - css_chunks_first]);
             css_file_count += 1;

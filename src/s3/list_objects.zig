@@ -43,7 +43,7 @@ const S3ListObjectsContents = struct {
     key: []const u8,
     etag: ?[]const u8,
     checksum_type: ?[]const u8,
-    checksum_algorithme: ?[]const u8,
+    checksum_algorithm: ?[]const u8,
     last_modified: ?[]const u8,
     object_size: ?i64,
     storage_class: ?[]const u8,
@@ -127,8 +127,8 @@ pub const S3ListObjectsV2Result = struct {
                     objectInfo.put(globalObject, JSC.ZigString.static("eTag"), bun.String.createUTF8ForJS(globalObject, etag));
                 }
 
-                if (item.checksum_algorithme) |checksum_algorithme| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("checksumAlgorithme"), bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
+                if (item.checksum_algorithm) |checksum_algorithm| {
+                    objectInfo.put(globalObject, JSC.ZigString.static("checksumAlgorithm"), bun.String.createUTF8ForJS(globalObject, checksum_algorithm));
                 }
 
                 if (item.checksum_type) |checksum_type| {
@@ -226,7 +226,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                     var storage_class: ?[]const u8 = null;
                     var etag: ?[]const u8 = null;
                     var checksum_type: ?[]const u8 = null;
-                    var checksum_algorithme: ?[]const u8 = null;
+                    var checksum_algorithm: ?[]const u8 = null;
                     var owner_id: ?[]const u8 = null;
                     var owner_display_name: ?[]const u8 = null;
                     var is_restore_in_progress: ?bool = null;
@@ -274,7 +274,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                                     }
                                 } else if (strings.eql(inner_tag_name_or_tag_end, "ChecksumAlgorithm")) {
                                     if (strings.indexOf(xml[i..], "</ChecksumAlgorithm>")) |__tag_end| {
-                                        checksum_algorithme = xml[i .. i + __tag_end];
+                                        checksum_algorithm = xml[i .. i + __tag_end];
                                         i = i + __tag_end + 20;
                                     }
                                 } else if (strings.eql(inner_tag_name_or_tag_end, "ETag")) {
@@ -382,7 +382,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                             .key = object_key_val,
                             .etag = etag,
                             .checksum_type = checksum_type,
-                            .checksum_algorithme = checksum_algorithme,
+                            .checksum_algorithm = checksum_algorithm,
                             .last_modified = last_modified,
                             .object_size = object_size,
                             .storage_class = storage_class,

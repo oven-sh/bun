@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
+import { type Mock, afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { expectType } from "./utilities";
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
@@ -121,10 +121,11 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<5 | "asdf">(c);
 });
 
+// spyon optional method
 const mySpyOnObjectWithOptionalMethod: {
   optionalMethod?: (input: { question: string }) => { answer: string };
 } = {
-  optionalMethod: input => ({ answer: `Aswer to ${input.question}` }),
+  optionalMethod: input => ({ answer: `Answer to ${input.question}` }),
 };
 
 const mySpiedMethodOfOptional = spyOn(mySpyOnObjectWithOptionalMethod, "optionalMethod");
@@ -144,3 +145,38 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+// spyon private method
+const privateMethodWithSymbolName = Symbol("privateMethodWithSymbolName");
+
+class MySpiedClassWithPrivateMethod {
+  private privateMethod(input: { privateQuestion: string }): { privateAnswer: string } {
+    return { privateAnswer: `Answer to ${input.privateQuestion}` };
+  }
+
+  private [privateMethodWithSymbolName](input: { privateQuestionSymbol: string }): { privateAnswerSymbol: string } {
+    return { privateAnswerSymbol: `Answer to ${input.privateQuestionSymbol}` };
+  }
+
+  public publicMethod(input: { publicQuestion: string }): { publicAnswer: string } {
+    return { publicAnswer: `Answer to ${input.publicQuestion}` };
+  }
+}
+
+const mySpiedClassWithPrivateMethod = new MySpiedClassWithPrivateMethod();
+const a = mySpiedClassWithPrivateMethod["privateMethod"];
+const b = mySpiedClassWithPrivateMethod["publicMethod"];
+
+const mySpiedPrivateMethod = spyOn(mySpiedClassWithPrivateMethod, "privateMethod");
+expectType<Mock<(input: { privateQuestion: string }) => { privateAnswer: string }>>(mySpiedPrivateMethod);
+
+const mySpiedPrivateMethodWithSymbol = spyOn(mySpiedClassWithPrivateMethod, privateMethodWithSymbolName);
+expectType<Mock<(input: { privateQuestionSymbol: string }) => { privateAnswerSymbol: string }>>(
+  mySpiedPrivateMethodWithSymbol,
+);
+
+const mySpiedPublicMethod = spyOn(mySpiedClassWithPrivateMethod, "publicMethod");
+expectType<Mock<(input: { publicQuestion: string }) => { publicAnswer: string }>>(mySpiedPublicMethod);
+
+const notExistsMethod = spyOn(mySpiedClassWithPrivateMethod, "123");
+expectType<Mock<() => never>>(notExistsMethod);

@@ -229,7 +229,7 @@ pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     var obj = JSC.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {
-        obj.put(globalThis, JSC.ZigString.initUTF8(k), bun.String.createUTF8ForJS(globalThis, v.value));
+        obj.put(globalThis, JSC.ZigString.initUTF8(k), try bun.String.createUTF8ForJS(globalThis, v.value));
     }
     return obj;
 }

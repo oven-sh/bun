@@ -125,7 +125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
     if (auto* buffer = jsDynamicCast<JSArrayBufferView*>(bufferValue)) {
         if (buffer->isDetached()) {
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return JSValue::encode(jsUndefined());
+            return {};
         }
 
         JSValue result = parser->impl()->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());

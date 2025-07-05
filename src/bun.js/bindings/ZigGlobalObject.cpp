@@ -1945,7 +1945,7 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
         code = AbortError;
     auto value = createDOMException(globalObject, code, message);
 
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
 
     return JSValue::encode(value);
 }
@@ -2022,7 +2022,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
         Bun__reportError(&lexicalGlobalObject, JSValue::encode(scope.exception()));
     }
 #endif
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+    ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     if (scope.exception()) [[unlikely]]
         return {};
     return result;
@@ -2199,7 +2199,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 
     auto callData = JSC::getCallData(function);
     auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-    EXCEPTION_ASSERT(!!scope.exception() == !result);
+    ASSERT(!!scope.exception() == !result);
     return JSValue::encode(result);
 }
 

@@ -162,8 +162,14 @@ pub const VM = opaque {
     }
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
+    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
+        var scope: bun.jsc.CatchScope = undefined;
+        scope.init(global_object, @src());
+        defer scope.deinit();
+        scope.assertNoException();
         JSC__VM__throwError(vm, global_object, value);
+        scope.assertExceptionPresenceMatches(true);
+        return error.JSError;
     }
 
     extern fn JSC__VM__releaseWeakRefs(vm: *VM) void;

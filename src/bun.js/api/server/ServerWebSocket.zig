@@ -142,7 +142,7 @@ pub fn onMessage(
     const arguments = [_]JSValue{
         this.getThisValue(),
         switch (opcode) {
-            .text => bun.String.createUTF8ForJS(globalObject, message),
+            .text => bun.String.createUTF8ForJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
             .binary => this.binaryToJS(globalObject, message) catch .zero, // TODO: properly propagate exception upwards
             else => unreachable,
         },
@@ -322,14 +322,18 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
             }
         }
 
-        _ = handler.onClose.call(
-            globalObject,
-            .js_undefined,
-            &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), bun.String.createUTF8ForJS(globalObject, message) },
-        ) catch |e| {
+        const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
             log("onClose error", .{});
             handler.runErrorCallback(vm, globalObject, err);
+            return;
+        };
+
+        _ = handler.onClose.call(globalObject, .js_undefined, &[_]JSC.JSValue{ this.getThisValue(), JSValue.jsNumber(code), message_js }) catch |e| {
+            const err = globalObject.takeException(e);
+            log("onClose error", .{});
+            handler.runErrorCallback(vm, globalObject, err);
+            return;
         };
     } else if (signal) |sig| {
         const loop = vm.eventLoop();
@@ -1242,7 +1246,7 @@ pub fn isSubscribed(
 pub fn getRemoteAddress(
     this: *ServerWebSocket,
     globalThis: *JSC.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     if (this.isClosed()) {
         return .js_undefined;
     }

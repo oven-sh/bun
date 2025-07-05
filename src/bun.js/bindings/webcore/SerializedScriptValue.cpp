@@ -1575,6 +1575,8 @@ private:
         }
 
         VM& vm = m_lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
         if (isArray(value))
             return false;
 
@@ -1667,7 +1669,6 @@ private:
             }
             if (auto* errorInstance = jsDynamicCast<ErrorInstance*>(obj)) {
                 auto& vm = m_lexicalGlobalObject->vm();
-                auto scope = DECLARE_THROW_SCOPE(vm);
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
@@ -1676,7 +1677,7 @@ private:
                 String message;
                 PropertyDescriptor messageDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    EXCEPTION_ASSERT(!scope.exception());
+                    ASSERT(!scope.exception());
                     message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1684,7 +1685,7 @@ private:
                 unsigned line = 0;
                 PropertyDescriptor lineDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    EXCEPTION_ASSERT(!scope.exception());
+                    ASSERT(!scope.exception());
                     line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1692,7 +1693,7 @@ private:
                 unsigned column = 0;
                 PropertyDescriptor columnDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    EXCEPTION_ASSERT(!scope.exception());
+                    ASSERT(!scope.exception());
                     column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1700,7 +1701,7 @@ private:
                 String sourceURL;
                 PropertyDescriptor sourceURLDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    EXCEPTION_ASSERT(!scope.exception());
+                    ASSERT(!scope.exception());
                     sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1708,7 +1709,7 @@ private:
                 String stack;
                 PropertyDescriptor stackDescriptor;
                 if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    EXCEPTION_ASSERT(!scope.exception());
+                    ASSERT(!scope.exception());
                     stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
                 }
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1783,6 +1784,8 @@ private:
                 if (checkForDuplicate(obj))
                     return true;
                 bool success = dumpArrayBufferView(obj, code);
+                if (scope.exception()) [[unlikely]]
+                    return false;
                 recordObject(obj);
                 return success;
             }
@@ -1997,7 +2000,6 @@ private:
                     return true;
                 }
                 case CryptoKeyType::Public: {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
                     auto* pkey = handle.asymmetricKey().get();
 
                     BIO* bio = BIO_new(BIO_s_mem());
@@ -2015,7 +2017,6 @@ private:
                     return true;
                 }
                 case CryptoKeyType::Private: {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
                     auto* pkey = handle.asymmetricKey().get();
 
                     BIO* bio = BIO_new(BIO_s_mem());
@@ -2631,7 +2632,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
 
             write(index);
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-            if (dumpIfTerminal(inValue, terminalCode)) {
+            auto dumped = dumpIfTerminal(inValue, terminalCode);
+            if (scope.exception()) [[unlikely]]
+                return SerializationReturnCode::ExistingExceptionError;
+            if (dumped) {
                 if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
                     return terminalCode;
                 indexStack.last()++;
@@ -2693,7 +2697,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 return SerializationReturnCode::ExistingExceptionError;
 
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-            if (!dumpIfTerminal(inValue, terminalCode)) {
+            auto dumped = dumpIfTerminal(inValue, terminalCode);
+            if (scope.exception()) [[unlikely]]
+                return SerializationReturnCode::ExistingExceptionError;
+            if (!dumped) {
                 stateStack.append(ObjectEndVisitMember);
                 goto stateUnknown;
             }
@@ -2799,7 +2806,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         stateUnknown:
         case StateUnknown: {
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-            if (dumpIfTerminal(inValue, terminalCode)) {
+            auto dumped = dumpIfTerminal(inValue, terminalCode);
+            if (scope.exception()) [[unlikely]]
+                return SerializationReturnCode::ExistingExceptionError;
+            if (dumped) {
                 if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
                     return terminalCode;
                 break;
@@ -5270,7 +5280,6 @@ DeserializationResult CloneDeserializer::deserialize()
         case ArrayStartState: {
             uint32_t length;
             if (!read(length)) {
-                fail();
                 goto error;
             }
             JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
@@ -5284,7 +5293,6 @@ DeserializationResult CloneDeserializer::deserialize()
         case ArrayStartVisitMember: {
             uint32_t index;
             if (!read(index)) {
-                fail();
                 goto error;
             }
             if (index == TerminatorTag) {
@@ -5296,10 +5304,14 @@ DeserializationResult CloneDeserializer::deserialize()
                 goto objectStartVisitMember;
             }
 
-            if (JSValue terminal = readTerminal()) {
+            JSValue terminal = readTerminal();
+            if (scope.exception()) [[unlikely]]
+                goto error;
+            if (m_failed)
+                goto error;
+            if (terminal) {
                 putProperty(outputObjectStack.last(), index, terminal);
                 if (scope.exception()) [[unlikely]] {
-                    fail();
                     goto error;
                 }
                 goto arrayStartVisitMember;
@@ -5314,7 +5326,6 @@ DeserializationResult CloneDeserializer::deserialize()
             JSObject* outArray = outputObjectStack.last();
             putProperty(outArray, indexStack.last(), outValue);
             if (scope.exception()) [[unlikely]] {
-                fail();
                 goto error;
             }
             indexStack.removeLast();
@@ -5343,10 +5354,14 @@ DeserializationResult CloneDeserializer::deserialize()
                 break;
             }
 
-            if (JSValue terminal = readTerminal()) {
+            JSValue terminal = readTerminal();
+            if (scope.exception()) [[unlikely]]
+                goto error;
+            if (m_failed)
+                goto error;
+            if (terminal) {
                 putProperty(outputObjectStack.last(), cachedString->identifier(vm), terminal);
                 if (scope.exception()) [[unlikely]] {
-                    fail();
                     goto error;
                 }
                 goto objectStartVisitMember;
@@ -5386,7 +5401,6 @@ DeserializationResult CloneDeserializer::deserialize()
         case MapDataEndVisitValue: {
             mapStack.last()->set(m_lexicalGlobalObject, mapKeyStack.last(), outValue);
             if (scope.exception()) [[unlikely]] {
-                fail();
                 goto error;
             }
             mapKeyStack.removeLast();
@@ -5415,7 +5429,6 @@ DeserializationResult CloneDeserializer::deserialize()
             JSSet* set = setStack.last();
             set->add(m_lexicalGlobalObject, outValue);
             if (scope.exception()) [[unlikely]] {
-                fail();
                 goto error;
             }
             goto setDataStartVisitEntry;
@@ -5423,7 +5436,12 @@ DeserializationResult CloneDeserializer::deserialize()
 
         stateUnknown:
         case StateUnknown:
-            if (JSValue terminal = readTerminal()) {
+            JSValue terminal = readTerminal();
+            if (scope.exception()) [[unlikely]]
+                goto error;
+            if (m_failed)
+                goto error;
+            if (terminal) {
                 outValue = terminal;
                 break;
             }

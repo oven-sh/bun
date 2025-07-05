@@ -127,7 +127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         if (object->getPropertySlot(globalObject,
                 vm.propertyNames->toStringTagSymbol, slot)) {
-            EXCEPTION_ASSERT(!scope.exception());
+            ASSERT(!scope.exception());
             if (slot.isValue()) {
                 JSValue value = slot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
                 if (value.isString()) {

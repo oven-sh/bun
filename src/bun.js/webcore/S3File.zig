@@ -540,7 +540,7 @@ pub fn getBucketName(
 
 pub fn getBucket(this: *Blob, globalThis: *JSC.JSGlobalObject) callconv(JSC.conv) JSValue {
     if (getBucketName(this)) |name| {
-        return bun.String.createUTF8ForJS(globalThis, name);
+        return bun.String.createUTF8ForJS(globalThis, name) catch .zero;
     }
     return .js_undefined;
 }

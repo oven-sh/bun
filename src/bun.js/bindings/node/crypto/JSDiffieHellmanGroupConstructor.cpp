@@ -22,6 +22,7 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellmanGroup, (JSC::JSGlobalObject * lexicalG
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
 }
 

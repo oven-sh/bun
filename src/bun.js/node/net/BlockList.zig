@@ -170,16 +170,16 @@ pub fn rules(this: *@This(), globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JS
         switch (rule) {
             .addr => |a| {
                 var buf: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(bun.String.createFormatForJS(globalThis, "Address: {s} {s}", .{ a.family().upper(), a.fmt(&buf) }));
+                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Address: {s} {s}", .{ a.family().upper(), a.fmt(&buf) }));
             },
             .range => |r| {
                 var buf_s: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
                 var buf_e: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(bun.String.createFormatForJS(globalThis, "Range: {s} {s}-{s}", .{ r.start.family().upper(), r.start.fmt(&buf_s), r.end.fmt(&buf_e) }));
+                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Range: {s} {s}-{s}", .{ r.start.family().upper(), r.start.fmt(&buf_s), r.end.fmt(&buf_e) }));
             },
             .subnet => |s| {
                 var buf: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(bun.String.createFormatForJS(globalThis, "Subnet: {s} {s}/{d}", .{ s.network.family().upper(), s.network.fmt(&buf), s.prefix }));
+                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Subnet: {s} {s}/{d}", .{ s.network.family().upper(), s.network.fmt(&buf), s.prefix }));
             },
         }
     }

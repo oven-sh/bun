@@ -498,10 +498,9 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.line(`${type.cppName()} ${storageLocation};`);
         }
-        cpp.line(`if (!convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}))`);
-        cpp.indent();
-        cpp.line(`return {};`);
-        cpp.dedent();
+        cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+        cpp.line(`if (!did_convert) return {};`);
         break;
       }
       default:
@@ -1017,7 +1016,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
     }
 
     if (variants.length === 1) {
-      cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame);`);
+      cpp.line(
+        `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, variants[0].suffix)}(global, callFrame));`,
+      );
     } else {
       let argIndex = 0;
       let strategies: DistinguishStrategy[] | null = null;
@@ -1053,7 +1054,9 @@ function emitCppVariationSelector(fn: Func, namespaceVar: string) {
         const { condition, canThrow } = getDistinguishCode(s, arg.type, "distinguishingValue");
         cpp.line(`if (${condition}) {`);
         cpp.indent();
-        cpp.line(`return ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame);`);
+        cpp.line(
+          `RELEASE_AND_RETURN(throwScope, ${extInternalDispatchVariant(namespaceVar, fn.name, v.suffix)}(global, callFrame));`,
+        );
         cpp.dedent();
         cpp.line(`}`);
         if (canThrow) {

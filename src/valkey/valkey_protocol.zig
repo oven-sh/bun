@@ -316,7 +316,7 @@ pub const RESPValue = union(RESPType) {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
 
                 // Add the push type
-                const kind_str = bun.String.createUTF8ForJS(globalObject, push.kind);
+                const kind_str = try bun.String.createUTF8ForJS(globalObject, push.kind);
                 js_obj.put(globalObject, "type", kind_str);
 
                 // Add the data as an array

@@ -135,7 +135,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     // wrap the arguments in an anonymous function expression
     int startOffset = 0;
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
-    EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
+    ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
@@ -619,11 +619,11 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     bool isFunction = value.isCallable();
 
     if (slot.isStrictMode() && !isDeclared && isContextualStore && !isFunction) {
-        return Base::put(cell, globalObject, propertyName, value, slot);
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
     if (!isDeclared && value.isSymbol()) {
-        return Base::put(cell, globalObject, propertyName, value, slot);
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
     slot.setThisValue(sandbox);
@@ -639,7 +639,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     slot.setThisValue(thisValue);
 
-    return Base::put(cell, globalObject, propertyName, value, slot);
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
 // This is copy-pasted from JSC's ProxyObject.cpp
@@ -706,7 +706,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             PropertySlot target_slot(receiver, PropertySlot::InternalMethodType::Get);
             JSObject* target = proxyObject->target();
             bool hasProperty = target->getPropertySlot(globalObject, propertyName, target_slot);
-            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
+            ASSERT(!scope.exception() || !hasProperty);
             if (hasProperty) {
                 unsigned ignoredAttributes = 0;
                 JSValue result = target_slot.getValue(globalObject, propertyName);

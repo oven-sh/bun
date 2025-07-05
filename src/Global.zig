@@ -111,6 +111,7 @@ pub fn isExiting() bool {
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
+    @branchHint(.cold);
     is_exiting.store(true, .monotonic);
 
     // If we are crashing, allow the crash handler to finish it's work.
@@ -186,8 +187,7 @@ pub fn notimpl() noreturn {
 }
 
 // Make sure we always print any leftover
-pub fn crash() noreturn {
-    @branchHint(.cold);
+pub inline fn crash() noreturn {
     Global.exit(1);
 }
 

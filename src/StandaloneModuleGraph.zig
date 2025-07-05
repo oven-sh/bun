@@ -663,9 +663,9 @@ pub const StandaloneModuleGraph = struct {
                 const writer = file.writer();
                 const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
                 var buffered_writer = bun.default_allocator.create(BufferedWriter) catch bun.outOfMemory();
-                buffered_writer.* = .{
-                    .unbuffered_writer = writer,
-                };
+                // https://github.com/ziglang/zig/issues/24313
+                buffered_writer.end = 0;
+                buffered_writer.unbuffered_writer = writer;
                 macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
                     Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
                     cleanup(zname, cloned_executable_fd);

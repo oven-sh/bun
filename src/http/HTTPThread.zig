@@ -21,18 +21,18 @@ lazy_libdeflater: ?*LibdeflateState = null,
 lazy_request_body_buffer: ?*HeapRequestBodyBuffer = null,
 
 pub const HeapRequestBodyBuffer = struct {
-    buffer: [512 * 1024]u8 = undefined,
+    buffer: [512 * 1024]u8,
     fixed_buffer_allocator: std.heap.FixedBufferAllocator,
 
-    pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
-
     pub fn init() *@This() {
-        var this = HeapRequestBodyBuffer.new(.{
-            .fixed_buffer_allocator = undefined,
-        });
+        // https://github.com/ziglang/zig/issues/24313
+        var this = bun.default_allocator.create(HeapRequestBodyBuffer) catch bun.outOfMemory();
         this.fixed_buffer_allocator = std.heap.FixedBufferAllocator.init(&this.buffer);
         return this;
+    }
+
+    pub fn deinit(this: *@This()) void {
+        bun.default_allocator.destroy(this);
     }
 
     pub fn put(this: *@This()) void {
@@ -99,10 +99,20 @@ const ShutdownMessage = struct {
 };
 
 pub const LibdeflateState = struct {
-    decompressor: *bun.libdeflate.Decompressor = undefined,
-    shared_buffer: [512 * 1024]u8 = undefined,
+    decompressor: *bun.libdeflate.Decompressor,
+    shared_buffer: [512 * 1024]u8,
 
-    pub const new = bun.TrivialNew(@This());
+    pub fn create() *@This() {
+        // https://github.com/ziglang/zig/issues/24313
+        var this = bun.default_allocator.create(LibdeflateState) catch bun.outOfMemory();
+        this.decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory();
+        return this;
+    }
+
+    pub fn deinit(this: *@This()) void {
+        this.decompressor.deinit();
+        bun.default_allocator.destroy(this);
+    }
 };
 
 const request_body_send_stack_buffer_size = 32 * 1024;
@@ -125,9 +135,7 @@ pub inline fn getRequestBodySendBuffer(this: *@This(), estimated_size: usize) Re
 
 pub fn deflater(this: *@This()) *LibdeflateState {
     if (this.lazy_libdeflater == null) {
-        this.lazy_libdeflater = LibdeflateState.new(.{
-            .decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory(),
-        });
+        this.lazy_libdeflater = LibdeflateState.create();
     }
 
     return this.lazy_libdeflater.?;

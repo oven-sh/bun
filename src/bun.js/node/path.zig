@@ -452,7 +452,12 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -644,7 +649,12 @@ pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -843,7 +853,12 @@ pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -954,7 +969,12 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         return .zero;
     };
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
@@ -1259,7 +1279,12 @@ pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_large) = undefined;
+    stack_fallback.fallback_allocator = arena.allocator();
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
@@ -1674,7 +1699,11 @@ pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [
     const len = pathZStr.len;
     if (len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -1997,7 +2026,12 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JS
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -2364,7 +2398,12 @@ pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     const toZigStr = to_ptr.getZigString(globalObject) catch return .zero;
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
+
     const allocator = stack_fallback.get();
 
     var fromZigSlice = fromZigStr.toSlice(allocator);
@@ -2808,7 +2847,11 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_large) = undefined;
+    stack_fallback.fallback_allocator = arena.allocator();
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
     const allocator = stack_fallback.get();
 
     var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
@@ -2953,7 +2996,11 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     const len = pathZStr.len;
     if (len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
+    var stack_fallback: std.heap.StackFallbackAllocator(stack_fallback_size_small) = undefined;
+    stack_fallback.fallback_allocator = bun.default_allocator;
+    if (comptime std.debug.runtime_safety) {
+        stack_fallback.get_called = false;
+    }
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);

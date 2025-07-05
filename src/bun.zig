@@ -2596,7 +2596,7 @@ pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args:
 
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
-pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+pub inline fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const pointer = allocator.create(T) catch outOfMemory();
     pointer.* = t;
     return pointer;
@@ -2615,11 +2615,8 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 pub inline fn new(comptime T: type, init: T) *T {
     const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
-    else pointer: {
-        const pointer = default_allocator.create(T) catch outOfMemory();
-        pointer.* = init;
-        break :pointer pointer;
-    };
+    else
+        bun.create(default_allocator, T, init);
 
     // TODO::
     // if (comptime Environment.allow_assert) {
@@ -2666,9 +2663,9 @@ pub inline fn dupe(comptime T: type, t: *T) *T {
 
 /// Implements `fn new` for a type.
 /// Pair with `TrivialDeinit` if the type contains no pointers.
-pub fn TrivialNew(comptime T: type) fn (T) *T {
+pub fn TrivialNew(comptime T: type) fn (T) callconv(.@"inline") *T {
     return struct {
-        pub fn new(t: T) *T {
+        pub inline fn new(t: T) *T {
             return bun.new(T, t);
         }
     }.new;
@@ -2676,9 +2673,9 @@ pub fn TrivialNew(comptime T: type) fn (T) *T {
 
 /// Implements `fn deinit` for a type.
 /// Pair with `TrivialNew` if the type contains no pointers.
-pub fn TrivialDeinit(comptime T: type) fn (*T) void {
+pub fn TrivialDeinit(comptime T: type) fn (*T) callconv(.@"inline") void {
     return struct {
-        pub fn deinit(self: *T) void {
+        pub inline fn deinit(self: *T) void {
             // TODO: assert that the structure contains no pointers.
             //
             // // Assert the structure contains no pointers. If there are
@@ -3442,10 +3439,10 @@ pub const DebugThreadLock = if (Environment.isDebug)
 else
     struct {
         pub const unlocked: @This() = .{};
-        pub fn lock(_: *@This()) void {}
-        pub fn unlock(_: *@This()) void {}
-        pub fn assertLocked(_: *const @This()) void {}
-        pub fn initLocked() @This() {
+        pub inline fn lock(noalias _: *const @This()) void {}
+        pub inline fn unlock(noalias _: *const @This()) void {}
+        pub inline fn assertLocked(noalias _: *const @This()) void {}
+        pub inline fn initLocked() @This() {
             return .{};
         }
     };

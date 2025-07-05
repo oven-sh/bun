@@ -1700,15 +1700,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .dev_server = dev_server,
             });
 
-            if (RequestContext.pool == null) {
-                RequestContext.pool = bun.create(
-                    server.allocator,
-                    RequestContext.RequestContextStackAllocator,
-                    RequestContext.RequestContextStackAllocator.init(bun.typedAllocator(RequestContext)),
-                );
-            }
+            const pool = brk: {
+                if (RequestContext.pool == null) {
+                    const pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
+                    pool.zero(server.allocator);
+                    RequestContext.pool = pool;
+                    break :brk pool;
+                }
+                break :brk RequestContext.pool.?;
+            };
 
-            server.request_pool_allocator = RequestContext.pool.?;
+            server.request_pool_allocator = pool;
 
             if (comptime ssl_enabled) {
                 Analytics.Features.https_server += 1;

@@ -489,7 +489,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const allocator = dev.allocation_scope.allocator();
     dev.allocator = allocator;
     dev.log = .init(allocator);
-    dev.deferred_request_pool = .init(allocator);
+    dev.deferred_request_pool.zero(allocator);
 
     const global = dev.vm.global;
 

@@ -622,6 +622,27 @@ pub fn printHelp(subcommand: Subcommand) void {
     }
 }
 
+fn chdir(cwd_: string) !void {
+    var buf: bun.PathBuffer = undefined;
+    var buf2: bun.PathBuffer = undefined;
+    var final_path: [:0]u8 = undefined;
+    if (cwd_.len > 0 and cwd_[0] == '.') {
+        const cwd = try bun.getcwd(&buf);
+        var parts = [_]string{cwd_};
+        const path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
+        buf2[path_.len] = 0;
+        final_path = buf2[0..path_.len :0];
+    } else {
+        bun.copy(u8, &buf, cwd_);
+        buf[cwd_.len] = 0;
+        final_path = buf[0..cwd_.len :0];
+    }
+    bun.sys.chdir("", final_path).unwrap() catch |err| {
+        Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
+        Global.crash();
+    };
+}
+
 pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
     Output.is_verbose = Output.isVerbose();
 
@@ -819,24 +840,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }
 
     if (args.option("--cwd")) |cwd_| {
-        var buf: bun.PathBuffer = undefined;
-        var buf2: bun.PathBuffer = undefined;
-        var final_path: [:0]u8 = undefined;
-        if (cwd_.len > 0 and cwd_[0] == '.') {
-            const cwd = try bun.getcwd(&buf);
-            var parts = [_]string{cwd_};
-            const path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
-            buf2[path_.len] = 0;
-            final_path = buf2[0..path_.len :0];
-        } else {
-            bun.copy(u8, &buf, cwd_);
-            buf[cwd_.len] = 0;
-            final_path = buf[0..cwd_.len :0];
-        }
-        bun.sys.chdir("", final_path).unwrap() catch |err| {
-            Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
-            Global.crash();
-        };
+        try chdir(cwd_);
     }
 
     if (comptime subcommand == .update) {

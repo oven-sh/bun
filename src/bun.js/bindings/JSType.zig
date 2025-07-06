@@ -648,22 +648,22 @@ pub const JSType = enum(u8) {
         };
     }
 
-    pub fn toC(this: JSType) C_API.JSTypedArrayType {
+    pub fn toTypedArrayType(this: JSType) bun.jsc.ArrayBuffer.TypedArrayType {
         return switch (this) {
-            .Int8Array => .kJSTypedArrayTypeInt8Array,
-            .Int16Array => .kJSTypedArrayTypeInt16Array,
-            .Int32Array => .kJSTypedArrayTypeInt32Array,
-            .Uint8Array => .kJSTypedArrayTypeUint8Array,
-            .Uint8ClampedArray => .kJSTypedArrayTypeUint8ClampedArray,
-            .Uint16Array => .kJSTypedArrayTypeUint16Array,
-            .Uint32Array => .kJSTypedArrayTypeUint32Array,
-            .Float32Array => .kJSTypedArrayTypeFloat32Array,
-            .Float64Array => .kJSTypedArrayTypeFloat64Array,
-            .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
-            .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
-            .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
-            // .DataView => .kJSTypedArrayTypeDataView,
-            else => .kJSTypedArrayTypeNone,
+            .Int8Array => .TypeInt8,
+            .Int16Array => .TypeInt16,
+            .Int32Array => .TypeInt32,
+            .Uint8Array => .TypeUint8,
+            .Uint8ClampedArray => .TypeUint8Clamped,
+            .Uint16Array => .TypeUint16,
+            .Uint32Array => .TypeUint32,
+            .Float16Array => .TypeFloat16,
+            .Float32Array => .TypeFloat32,
+            .Float64Array => .TypeFloat64,
+            .BigInt64Array => .TypeBigInt64,
+            .BigUint64Array => .TypeBigUint64,
+            .DataView => .TypeDataView,
+            else => .TypeNone,
         };
     }
 

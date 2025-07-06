@@ -504,7 +504,7 @@ pub fn toArrayBuffer(
     valueLength: ?JSValue,
     finalizationCtxOrPtr: ?JSValue,
     finalizationCallback: ?JSValue,
-) JSC.JSValue {
+) bun.JSError!JSC.JSValue {
     switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
         .err => |erro| {
             return erro;
@@ -534,7 +534,7 @@ pub fn toArrayBuffer(
                 }
             }
 
-            return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback, null);
+            return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback);
         },
     }
 }

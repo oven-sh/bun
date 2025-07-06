@@ -841,7 +841,7 @@ pub export fn napi_get_typedarray_info(
 
     const array_buffer = typedarray.asArrayBuffer(env.toJS()) orelse return env.invalidArg();
     if (maybe_type) |@"type"|
-        @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return env.invalidArg();
+        @"type".* = array_buffer.typed_array_type.toTypedArrayType().toNapi() orelse return env.invalidArg();
 
     // TODO: handle detached
     if (maybe_data) |data|

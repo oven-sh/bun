@@ -426,6 +426,10 @@ pub fn installWithManager(
             while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
         }
         manager.enqueueDependencyList(root.dependencies);
+        // schedule any downloads or patch tasks for the initial install
+        // otherwise pendingTaskCount() will remain zero and runTasks will never
+        // be triggered
+        manager.drainDependencyList();
     } else {
         {
             var iter = manager.lockfile.patched_dependencies.iterator();

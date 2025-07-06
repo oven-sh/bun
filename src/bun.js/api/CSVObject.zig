@@ -102,14 +102,14 @@ pub fn parse(
     }
 
     var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to get the string out of th JS world"));
+        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to get the string out of th JS world") catch bun.outOfMemory());
     };
     defer input_slice.deinit();
     var source = logger.Source.initPathString("input.csv", input_slice.slice());
 
     // Parse the CSV data
     const parse_result = CSVParser.CSV.parse(&source, &log, allocator, false, parser_options) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse CSV"));
+        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse CSV") catch bun.outOfMemory());
     };
 
     const js_val = parse_result.toJS(allocator, globalThis) catch |err| switch (err) {
@@ -117,7 +117,7 @@ pub fn parse(
         else => {
             // clear the JSC exception so we can throw our own
             globalThis.clearException();
-            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to convert CSV to JS"));
+            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to convert CSV to JS") catch bun.outOfMemory());
         },
     };
 

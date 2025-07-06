@@ -206,8 +206,10 @@ export function writableStreamAbort(stream, reason) {
 
 export function writableStreamClose(stream) {
   const state = $getByIdDirectPrivate(stream, "state");
-  if (state === "closed" || state === "errored")
-    return Promise.$reject($makeTypeError("Cannot close a writable stream that is closed or errored"));
+  if (state === "closed")
+    return Promise.$reject($ERR_WRITABLE_STREAM_ALREADY_CLOSED("Cannot close a stream that has already been closed"));
+
+  if (state === "errored") return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
 
   $assert(state === "writable" || state === "erroring");
   $assert(!$writableStreamCloseQueuedOrInFlight(stream));

@@ -237,6 +237,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
   ["ERR_STREAM_WRAP", Error],
   ["ERR_STREAM_WRITE_AFTER_END", Error],
+  ["ERR_WRITABLE_STREAM_ALREADY_CLOSED", TypeError],
   ["ERR_STRING_TOO_LONG", Error],
   ["ERR_TLS_CERT_ALTNAME_FORMAT", SyntaxError],
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],

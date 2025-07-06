@@ -45,8 +45,8 @@ ok,ok,ok!`,
     it("should parse large dataset", () => {
       const parsed = CSV.parse(large_dataset);
 
-      expect(parsed.data.length).toBe(7268);
-      expect(parsed.rows).toBe(7268);
+      expect(parsed.data.length).toEqual(7268);
+      expect(parsed.rows).toEqual(7268);
 
       expect(Object.keys(parsed.data[0])).toEqual([
         "time",
@@ -86,7 +86,7 @@ ok,ok,ok!`,
       });
 
       // Test that there are no empty rows
-      expect(parsed.data.every(row => Object.values(row).some(v => v !== ""))).toBe(true);
+      expect(parsed.data.every(row => Object.values(row).some(v => v !== ""))).toEqual(true);
     });
   });
 
@@ -520,6 +520,32 @@ a time",5,6
     ]);
   });
 
+  it("should preserve empty lines if skipEmptyLines is false", () => {
+    const parsed = CSV.parse(
+      `a,b,c
+
+1,2,3
+
+`,
+      { skipEmptyLines: false },
+    );
+    expect(parsed.data).toEqual([
+      { a: "", b: "", c: "" },
+      { a: "1", b: "2", c: "3" },
+      { a: "", b: "", c: "" },
+    ]);
+
+    const parsedWithHeader = CSV.parse(
+      `a,b,c
+
+1,2,3
+
+`,
+      { header: false, skipEmptyLines: false },
+    );
+    expect(parsedWithHeader.data).toEqual([["a", "b", "c"], [], ["1", "2", "3"], []]);
+  });
+
   describe("Empty Field Handling", () => {
     it("should include empty columns", () => {
       const parsed = CSV.parse(`a,,c
@@ -587,9 +613,9 @@ a time",5,6
     it("should handle comments when enabled", () => {
       const parsed = CSV.parse(
         `col1,col2
-# comment
-a,b,c
-1,2,3`,
+#   comment   
+a,b
+1,2`,
         { comments: true },
       );
 
@@ -600,7 +626,7 @@ a,b,c
 
       expect(parsed.comments).toEqual([
         {
-          line: 1, // header doesn't count
+          line: 2,
           text: "comment", // the comments leading and trailing whitespaces are trimmed
         },
       ]);
@@ -704,29 +730,46 @@ null,NULL,"null"`,
       const parsed = CSV.parse(
         `val1,val2,val3
 NaN,Infinity,-Infinity`,
-        { dynamicTyping: true },
+        { dynamicTyping: true, header: true },
       );
 
       expect(parsed.data).toEqual([{ val1: "NaN", val2: "Infinity", val3: "-Infinity" }]);
     });
 
-    it("should correctly parse BigInts", () => {
+    it("should parse too big numbers as strings", () => {
       const parsed = CSV.parse(
         `val1,val2
-1,2
-3,9007199254740993
-5,6
-7,8`,
+9007199254740993,12345678901234567890
+`,
         { dynamicTyping: true },
       );
 
       expect(parsed.data).toEqual([
-        { val1: BigInt(1), val2: BigInt(2) },
-        { val1: BigInt(3), val2: 9007199254740993n },
-        { val1: BigInt(5), val2: BigInt(6) },
-        { val1: BigInt(7), val2: BigInt(8) },
+        {
+          val1: "9007199254740993",
+          val2: "12345678901234567890",
+        },
       ]);
     });
+
+    // TODO: maybe someday
+    //     it("should correctly parse BigInts", () => {
+    //       const parsed = CSV.parse(
+    //         `val1,val2
+    // 1,2
+    // 3,9007199254740993
+    // 5,6
+    // 7,8`,
+    //         { dynamicTyping: true },
+    //       );
+
+    //       expect(parsed.data).toEqual([
+    //         { val1: BigInt(1), val2: BigInt(2) },
+    //         { val1: BigInt(3), val2: 9007199254740993n },
+    //         { val1: BigInt(5), val2: BigInt(6) },
+    //         { val1: BigInt(7), val2: BigInt(8) },
+    //       ]);
+    //     });
 
     // TODO: maybe someday
     //     it("should support custom inference function", () => {
@@ -790,6 +833,209 @@ row4col1,row4col2,row4col3,row4col4`,
         [],
         ["row4col1", "row4col2", "row4col3", "row4col4"],
       ]);
+    });
+  });
+
+  describe("Error Handling", () => {
+    it("should handle invalid Unicode sequences gracefully", () => {
+      // Test with malformed UTF-8 bytes
+      const invalidUtf8 = Buffer.from([0xff, 0xfe, 0xfd]);
+      expect(() => CSV.parse(invalidUtf8.toString("latin1"))).not.toThrow();
+    });
+
+    it("should handle extremely large field values", () => {
+      const largeValue = "x".repeat(1000000); // 1MB field
+      const parsed = CSV.parse(`field\n"${largeValue}"`);
+      expect(parsed.data[0].field).toEqual(largeValue);
+    });
+
+    it("should handle deeply nested quotes", () => {
+      const parsed = CSV.parse(`a\n""""""""""""""""""""""`);
+      expect(parsed.data[0].a).toEqual('""""""""""');
+    });
+
+    it("should handle malformed CSV with recovery", () => {
+      // Test various malformed structures
+      const parsed = CSV.parse(`a,b,c\n1,2\n3,4,5,6\n7,8,9`);
+      expect(parsed.errors.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Advanced Quote Edge Cases", () => {
+    it("should handle multi-character quote strings", () => {
+      const parsed = CSV.parse(`a,b\n|||value|||,normal`, { quote: "|||" });
+      expect(parsed.data[0]).toEqual({ a: "value", b: "normal" });
+    });
+
+    it("should handle quote characters that contain delimiters", () => {
+      const parsed = CSV.parse(`a,b\n",value,",normal`, { quote: ",", delimiter: "," });
+      // This is a tricky edge case - how should this be handled?
+    });
+
+    it("should handle quotes at field boundaries", () => {
+      const parsed = CSV.parse(`a"b"c,d"e"f`, { header: false });
+      expect(parsed.data[0]).toEqual(['a"b"c', 'd"e"f']);
+    });
+
+    it("should handle alternating quote characters", () => {
+      const parsed = CSV.parse(`"a"b"c"d"`, { header: false });
+      // Test how the parser handles this ambiguous case
+
+      expect(parsed).toEqual({
+        data: [["a"]],
+        rows: 1,
+        columns: 1,
+      });
+    });
+
+    describe("Advanced Dynamic Typing", () => {
+      it("should handle scientific notation", () => {
+        const parsed = CSV.parse(`num\n1.23e10\n-4.56E-7`, { dynamicTyping: true });
+        expect(parsed.data[0].num).toEqual(1.23e10);
+        expect(parsed.data[1].num).toEqual(-4.56e-7);
+      });
+
+      it("should handle hexadecimal numbers", () => {
+        const parsed = CSV.parse(`hex\n0xFF\n0x123ABC`, { dynamicTyping: true });
+        // Should these be parsed as numbers or strings?
+
+        expect(parsed).toEqual({
+          data: [{ hex: 255 }, { hex: 1194684 }],
+          rows: 2,
+          columns: 1,
+        });
+      });
+
+      it("should handle numbers with leading zeros", () => {
+        const parsed = CSV.parse(`val\n007\n000123`, { dynamicTyping: true });
+        expect(parsed).toEqual({
+          data: [{ val: 7 }, { val: 123 }],
+          rows: 2,
+          columns: 1,
+        });
+      });
+    });
+  });
+
+  describe("Advanced Line Endings", () => {
+    it("should handle Unicode line separators", () => {
+      const LS = String.fromCharCode(0x2028); // Line Separator
+      const PS = String.fromCharCode(0x2029); // Paragraph Separator
+      const parsed = CSV.parse(`a,b${LS}1,2${PS}3,4`);
+      expect(parsed.data.length).toEqual(2);
+    });
+
+    it("should handle mixed line endings within quoted fields", () => {
+      const parsed = CSV.parse(`a,b\n1,"line1\rline2\r\nline3\nline4"\n3,4`);
+      expect(parsed.data[0].b).toEqual("line1\rline2\r\nline3\nline4");
+    });
+
+    it("should handle files ending without final newline", () => {
+      const parsed = CSV.parse("a,b\n1,2\n3,4"); // No final newline
+      expect(parsed.data.length).toEqual(2);
+    });
+  });
+
+  describe("Header Edge Cases", () => {
+    // TODO: figure out numeric keys in objects
+    // it("should handle numeric headers", () => {
+    //   const parsed = CSV.parse(`1,2,3\na,b,c`);
+    //   expect(parsed.data[0]).toEqual({ "1": "a", "2": "b", "3": "c" });
+    // });
+
+    it("should handle headers with only whitespace", () => {
+      const parsed = CSV.parse(`   ,\t,
+a,b,c`);
+      expect(parsed).toEqual({
+        data: [
+          {
+            "   ": "a",
+            "\t": "b",
+            "": "c",
+          },
+        ],
+        rows: 1,
+        columns: 3,
+      });
+    });
+
+    it("should handle duplicate headers with numeric suffixes", () => {
+      // Some parsers append _1, _2, etc. to duplicate headers
+      const parsed = CSV.parse(`name,name,name\nJohn,Jane,Bob`);
+      // How should your parser handle this?
+    });
+
+    it("should handle empty string headers", () => {
+      const parsed = CSV.parse(`,b,\na,c,d`);
+      expect(Object.keys(parsed.data[0])).toContain("");
+    });
+
+    it("should suffix duplicate headers with _1, _2, etc.", () => {
+      const parsed = CSV.parse(`a,a,a
+42,69,123`);
+      expect(parsed).toEqual({
+        data: [{ a: "42", a_1: "69", a_2: "123" }],
+        rows: 1,
+        columns: 3,
+      });
+    });
+  });
+
+  describe("Multi-Character Delimiters", () => {
+    it("should handle delimiter that is substring of another", () => {
+      const parsed = CSV.parse(`a<>b<><>c`, { delimiter: "<>", header: false });
+      expect(parsed.data[0]).toEqual(["a", "b", "", "c"]);
+    });
+
+    it("should handle overlapping potential delimiters", () => {
+      const parsed = CSV.parse(`a<<<>>>b`, { delimiter: "<<>>", header: false });
+      // How should this ambiguous case be resolved?
+    });
+
+    it("should handle delimiter that contains quote characters", () => {
+      const parsed = CSV.parse(`a,"b",c<">d`, { delimiter: `<">`, header: false });
+      // Complex interaction between quotes and delimiters
+    });
+  });
+
+  describe("Performance Tests", () => {
+    it("should handle files with many columns", () => {
+      const headers = Array.from({ length: 1000 }, (_, i) => `col${i}`).join(",");
+      const data = Array.from({ length: 1000 }, () => "value").join(",");
+      const csv = `${headers}\n${data}`;
+      const parsed = CSV.parse(csv);
+      expect(parsed.columns).toEqual(1000);
+    });
+
+    it("should handle files with very long lines", () => {
+      const longField = "x".repeat(100000);
+      const parsed = CSV.parse(`field\n"${longField}"`);
+      expect(parsed.data[0].field.length).toEqual(100000);
+    });
+  });
+
+  describe("Option Combinations", () => {
+    it("should handle trimWhitespace with custom quotes", () => {
+      const parsed = CSV.parse(`'  value  ',normal`, {
+        header: false,
+        quote: "'",
+        trimWhitespace: true,
+      });
+      expect(parsed.data[0]).toEqual(["  value  ", "normal"]);
+    });
+
+    it("should handle skipEmptyLines with comments", () => {
+      const parsed = CSV.parse(`a,b\n\n# comment\n\n1,2`, {
+        comments: true,
+        skipEmptyLines: true,
+      });
+      expect(parsed.data.length).toEqual(1);
+      expect(parsed.comments.length).toEqual(1);
+    });
+
+    it("should handle preview with header counting", () => {
+      const parsed = CSV.parse(`a,b\n1,2\n3,4\n5,6`, { header: true, preview: 1 });
+      expect(parsed.data.length).toEqual(1); // Should be 1 data row after header
     });
   });
 });

@@ -528,6 +528,28 @@ pub const CSV = struct {
         fields.deinit();
     }
 
+    fn processHeadersForDuplicates(p: *CSV, headers: []const []const u8) ![][]const u8 {
+        var processed_headers = try p.allocator.alloc([]const u8, headers.len);
+        var header_counts = std.HashMap([]const u8, usize, std.hash_map.StringContext, std.hash_map.default_max_load_percentage).init(p.allocator);
+        defer header_counts.deinit();
+
+        for (headers, 0..) |header, i| {
+            const result = try header_counts.getOrPut(header);
+            if (result.found_existing) {
+                // This is a duplicate, increment count and create suffixed name
+                result.value_ptr.* += 1;
+                const suffixed_name = try std.fmt.allocPrint(p.allocator, "{s}_{d}", .{ header, result.value_ptr.* });
+                processed_headers[i] = suffixed_name;
+            } else {
+                // First occurrence, set count to 0 and use original name
+                result.value_ptr.* = 0;
+                processed_headers[i] = try p.allocator.dupe(u8, header);
+            }
+        }
+
+        return processed_headers;
+    }
+
     fn isEmptyRecord(_: *CSV, record: std.ArrayList(Expr)) bool {
         if (record.items.len == 0) {
             return true;
@@ -587,11 +609,10 @@ pub const CSV = struct {
 
         // Parse all rows
         var records_processed: usize = 0;
-        while (p.index < p.contents.len) {
-            var record = try p.parseRecord(records_processed);
-            errdefer p.cleanupFields(&record);
+        var expected_field_count: ?usize = if (header_fields) |h| h.items.len else null;
 
-            // Check if this is a comment line
+        while (p.index < p.contents.len) {
+            // Check if this is a comment line first
             if (p.isCommentLine()) {
                 const comment_text = try p.parseCommentLine();
                 errdefer p.allocator.free(comment_text);
@@ -601,6 +622,20 @@ pub const CSV = struct {
                 // Skip CRLF after comment
                 _ = p.consumeEndOfLine();
                 continue;
+            }
+
+            var record = try p.parseRecord(records_processed);
+            errdefer p.cleanupFields(&record);
+
+            // Check for field count inconsistencies and add errors
+            if (expected_field_count == null) {
+                // First record sets the expected field count
+                expected_field_count = record.items.len;
+            } else if (record.items.len != expected_field_count.?) {
+                // Field count mismatch - add error
+                const error_msg = try std.fmt.allocPrint(p.allocator, "Field count mismatch: expected {d}, got {d}", .{ expected_field_count.?, record.items.len });
+                errdefer p.allocator.free(error_msg);
+                try p.addErrorToArray(error_msg);
             }
 
             // Skip CRLF between records
@@ -627,11 +662,20 @@ pub const CSV = struct {
 
         // 3. Build Final AST
         if (header_fields) |h| {
+            // Process headers to handle duplicates
+            const processed_headers = try p.processHeadersForDuplicates(h.items);
+            defer {
+                for (processed_headers) |header| {
+                    p.allocator.free(header);
+                }
+                p.allocator.free(processed_headers);
+            }
+
             // Process as objects
             for (all_records.items, 0..) |record, idx| {
                 var row_object = p.e(E.Object{}, .{ .start = 0 });
-                for (0..h.items.len) |i| {
-                    const key_data = try p.allocator.dupe(u8, h.items[i]);
+                for (0..processed_headers.len) |i| {
+                    const key_data = try p.allocator.dupe(u8, processed_headers[i]);
                     const key_expr = p.e(E.String{ .data = key_data }, .{ .start = @intCast(idx) });
 
                     const value_expr = if (i < record.items.len)
@@ -713,8 +757,7 @@ pub const CSV = struct {
 
         try comment_obj.data.e_object.properties.push(p.allocator, .{
             .key = p.e(E.String{ .data = "line" }, loc),
-            // TODO: figure out why the line number is off by one
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number - 1)) }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
         });
 
         try comment_obj.data.e_object.properties.push(p.allocator, .{
@@ -723,6 +766,24 @@ pub const CSV = struct {
         });
 
         try p.result.comments.data.e_array.push(p.allocator, comment_obj);
+    }
+
+    fn addErrorToArray(p: *CSV, error_message: []const u8) !void {
+        const loc = logger.Loc{ .start = @intCast(p.line_number) };
+
+        var error_obj = p.e(E.Object{}, loc);
+
+        try error_obj.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "line" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
+        });
+
+        try error_obj.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "message" }, loc),
+            .value = p.e(E.String{ .data = error_message }, loc),
+        });
+
+        try p.result.errors.data.e_array.push(p.allocator, error_obj);
     }
 
     /// Parse a string value with dynamic typing enabled
@@ -751,15 +812,31 @@ pub const CSV = struct {
             return p.e(E.Null{}, loc);
         }
 
+        // Check for non-finite numeric values that should remain as strings
+        if (std.ascii.eqlIgnoreCase(trimmed_value, "nan") or
+            std.ascii.eqlIgnoreCase(trimmed_value, "infinity") or
+            std.ascii.eqlIgnoreCase(trimmed_value, "-infinity"))
+        {
+            return p.e(E.String{ .data = trimmed_value }, loc);
+        }
+
         // Try to parse as number
         if (std.fmt.parseFloat(f64, trimmed_value)) |parsed_number| {
+            // Check if the parsed number is finite
+            if (!std.math.isFinite(parsed_number)) {
+                // Non-finite numbers (NaN, Infinity, -Infinity) should be strings
+                return p.e(E.String{ .data = trimmed_value }, loc);
+            }
+
             // Check if the number is within safe integer range
             if (@abs(parsed_number) <= @as(f64, @floatFromInt(JSC.MAX_SAFE_INTEGER)) and @trunc(parsed_number) == parsed_number) {
                 // It's a safe integer, use as number
                 return p.e(E.Number{ .value = parsed_number }, loc);
             } else if (@trunc(parsed_number) == parsed_number) {
-                // It's an integer but outside safe range, use as bigint
-                return p.e(E.BigInt{ .value = trimmed_value }, loc);
+                // We return BigInts as strings to align with other CSV JS parsers
+                // TODO: add an option to parse when BigInt.toJS is implemented
+                // return p.e(E.BigInt{ .value = trimmed_value }, loc);
+                return p.e(E.String{ .data = trimmed_value }, loc);
             } else {
                 // It's a floating point number
                 return p.e(E.Number{ .value = parsed_number }, loc);

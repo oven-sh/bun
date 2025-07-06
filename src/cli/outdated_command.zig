@@ -39,10 +39,12 @@ pub const OutdatedCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
-
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
+
+        if (!cli.json_output) {
+            Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         const manager, const original_cwd = PackageManager.init(ctx, cli, .outdated) catch |err| {
             if (!cli.silent) {
@@ -315,7 +317,7 @@ pub const OutdatedCommand = struct {
         manager: *PackageManager,
         outdated_deps: []const OutdatedInfo,
         was_filtered: bool,
-    ) !void {
+    ) void {
         const lockfile = manager.lockfile;
         const string_buf = lockfile.buffers.string_bytes.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -327,11 +329,7 @@ pub const OutdatedCommand = struct {
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
-        // Use a buffered writer for efficiency
-        var buffered_writer = std.io.bufferedWriter(bun.Output.stdout_file.writer());
-        const writer = buffered_writer.writer();
-
-        try writer.print("{{\n", .{});
+        Output.print("{{\n", .{});
         var first_entry = true;
 
         for (outdated_deps) |info| {
@@ -378,7 +376,7 @@ pub const OutdatedCommand = struct {
             }
 
             if (!first_entry) {
-                try writer.print(",\n", .{});
+                Output.print(",\n", .{});
             }
             first_entry = false;
 
@@ -397,24 +395,24 @@ pub const OutdatedCommand = struct {
             const latest_version_str = version_buf.items;
 
             // Use bun.fmt.formatJSONStringUTF8 for safe JSON string formatting
-            try writer.print("  {}: {{\n", .{bun.fmt.formatJSONStringUTF8(package_display_name, .{})});
-            try writer.print("    \"current\": {},\n", .{bun.fmt.formatJSONStringUTF8(current_version_str, .{})});
-            try writer.print("    \"wanted\": {},\n", .{bun.fmt.formatJSONStringUTF8(update_version_str, .{})});
-            try writer.print("    \"latest\": {}", .{bun.fmt.formatJSONStringUTF8(latest_version_str, .{})});
+            Output.print("  {}: {{\n", .{bun.fmt.formatJSONStringUTF8(package_display_name, .{})});
+            Output.print("    \"current\": {},\n", .{bun.fmt.formatJSONStringUTF8(current_version_str, .{})});
+            Output.print("    \"wanted\": {},\n", .{bun.fmt.formatJSONStringUTF8(update_version_str, .{})});
+            Output.print("    \"latest\": {}", .{bun.fmt.formatJSONStringUTF8(latest_version_str, .{})});
 
             if (was_filtered) {
                 const workspace_name = pkg_names[info.workspace_pkg_id].slice(string_buf);
-                try writer.print(",\n    \"dependent\": {}\n", .{bun.fmt.formatJSONStringUTF8(workspace_name, .{})});
+                Output.print(",\n    \"dependent\": {}\n", .{bun.fmt.formatJSONStringUTF8(workspace_name, .{})});
             } else {
-                try writer.print("\n", .{});
+                Output.print("\n", .{});
             }
-            try writer.print("  }}", .{});
+            Output.print("  }}", .{});
 
             version_buf.clearRetainingCapacity();
         }
 
-        try writer.print("\n}}\n", .{});
-        try buffered_writer.flush();
+        Output.print("\n}}\n", .{});
+        Output.flush();
     }
 
     fn printOutdatedInfo(
@@ -460,13 +458,14 @@ pub const OutdatedCommand = struct {
             }
         }
 
-        const outdated_deps = try collectOutdatedDependencies(manager, workspace_pkg_ids, package_patterns);
+        var outdated_deps = try collectOutdatedDependencies(manager, workspace_pkg_ids, package_patterns);
         defer outdated_deps.deinit(bun.default_allocator);
 
         if (outdated_deps.items.len == 0) return;
 
         if (manager.options.json_output) {
-            return printOutdatedJson(manager, outdated_deps.items, was_filtered);
+            printOutdatedJson(manager, outdated_deps.items, was_filtered);
+            return;
         }
 
         try printOutdatedTable(manager, outdated_deps.items, workspace_pkg_ids, was_filtered, enable_ansi_colors);
@@ -704,6 +703,7 @@ pub const OutdatedCommand = struct {
         manager: *PackageManager,
         workspace_pkg_ids: []const PackageID,
     ) !void {
+        const show_progress = !manager.options.json_output;
         const log_level = manager.options.log_level;
         const lockfile = manager.lockfile;
         const resolutions = lockfile.buffers.resolutions.items;
@@ -736,7 +736,9 @@ pub const OutdatedCommand = struct {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
 
-                    manager.startProgressBarIfNone();
+                    if (show_progress) {
+                        manager.startProgressBarIfNone();
+                    }
 
                     var task = manager.getNetworkTask();
                     task.* = .{
@@ -769,7 +771,7 @@ pub const OutdatedCommand = struct {
                         .onResolve = {},
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
-                        .progress_bar = true,
+                        .progress_bar = show_progress,
                         .manifests_only = true,
                     },
                     true,
@@ -783,6 +785,7 @@ pub const OutdatedCommand = struct {
 
         const RunClosure = struct {
             manager: *PackageManager,
+            show_progress: bool,
             err: ?anyerror = null,
             pub fn isDone(closure: *@This()) bool {
                 if (closure.manager.pendingTaskCount() > 0) {
@@ -794,7 +797,7 @@ pub const OutdatedCommand = struct {
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
-                            .progress_bar = true,
+                            .progress_bar = closure.show_progress,
                             .manifests_only = true,
                         },
                         true,
@@ -809,10 +812,10 @@ pub const OutdatedCommand = struct {
             }
         };
 
-        var run_closure: RunClosure = .{ .manager = manager };
+        var run_closure: RunClosure = .{ .manager = manager, .show_progress = show_progress };
         manager.sleepUntil(&run_closure, &RunClosure.isDone);
 
-        if (log_level.showProgress()) {
+        if (show_progress and log_level.showProgress()) {
             manager.endProgressBar();
             Output.flush();
         }

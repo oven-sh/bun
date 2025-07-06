@@ -877,7 +877,7 @@ describe("bundler", () => {
     plugins(build) {
       // Test multiple file types with custom contents
       build.onLoad({ filter: /\.(png|wasm)$/ }, async args => {
-        const ext = args.path.split('.').pop();
+        const ext = args.path.split(".").pop();
         return {
           loader: "file",
           contents: `custom ${ext} contents`,

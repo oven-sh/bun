@@ -1,36 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
-const invalid_package_id = Install.invalid_package_id;
-const Resolution = Install.Resolution;
-const string = bun.string;
-const strings = bun.strings;
-const String = bun.String;
-const PathBuffer = bun.PathBuffer;
-const FileSystem = bun.fs.FileSystem;
-const path = bun.path;
-const glob = bun.glob;
-const Table = bun.fmt.Table;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const OOM = bun.OOM;
-const UpdateRequest = PackageManager.UpdateRequest;
-const PackageJSONEditor = PackageManager.PackageJSONEditor;
-const JSPrinter = bun.js_printer;
-const JSAst = bun.JSAst;
-const Environment = bun.Environment;
-const logger = bun.logger;
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
-
 pub const TerminalHyperlink = struct {
     link: []const u8,
     text: []const u8,
@@ -1221,3 +1188,38 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 };
+
+// @sortImports
+
+const std = @import("std");
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.CLI.Command;
+const Install = bun.install;
+const PackageManager = Install.PackageManager;
+const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
+const Behavior = Install.Dependency.Behavior;
+const invalid_package_id = Install.invalid_package_id;
+const Resolution = Install.Resolution;
+const string = bun.string;
+const strings = bun.strings;
+const String = bun.String;
+const PathBuffer = bun.PathBuffer;
+const FileSystem = bun.fs.FileSystem;
+const path = bun.path;
+const glob = bun.glob;
+const Table = bun.fmt.Table;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const OOM = bun.OOM;
+const UpdateRequest = PackageManager.UpdateRequest;
+const PackageJSONEditor = PackageManager.PackageJSONEditor;
+const JSPrinter = bun.js_printer;
+const JSAst = bun.JSAst;
+const Environment = bun.Environment;
+const logger = bun.logger;
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+
+extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;

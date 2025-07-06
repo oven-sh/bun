@@ -1021,8 +1021,8 @@ const Template = enum {
             return false;
         }
 
-        const pathbuffer = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(pathbuffer);
+        const pathbuffer = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuffer);
 
         return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
@@ -1097,8 +1097,8 @@ const Template = enum {
 
         if (Environment.isWindows) {
             if (bun.getenvZAnyCase("USER")) |user| {
-                const pathbuf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(pathbuf);
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
                 const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {
                     return false;
                 };

@@ -642,8 +642,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         errdefer types.deinit(allocator);
 
         for (options.framework.file_system_router_types, 0..) |fsr, i| {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
             const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                 continue;
@@ -5180,8 +5180,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, g.current_chunk_parts.items.len);
             errdefer file_paths.deinit(gpa);
@@ -5464,8 +5464,8 @@ const DirectoryWatchStore = struct {
             => bun.debugAssert(false),
         }
 
-        const buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(buf);
+        const buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
@@ -5894,8 +5894,8 @@ pub const SerializedFailure = struct {
 
 // For debugging, it is helpful to be able to see bundles.
 fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
-    const buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(buf);
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
     const name = bun.path.joinAbsStringBuf("/", buf, &.{
         @tagName(graph),
         rel_path,
@@ -7648,8 +7648,8 @@ pub const SourceMapStore = struct {
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
 
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
 
             for (paths) |native_file_path| {
                 try source_map_strings.appendSlice(",");

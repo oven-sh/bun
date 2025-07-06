@@ -643,11 +643,11 @@ pub const FSWatcher = struct {
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        const joined_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(joined_buf);
+        const joined_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(joined_buf);
         const file_path: [:0]const u8 = brk: {
-            const buf = bun.PathBufferPool.get();
-            defer bun.PathBufferPool.put(buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             var slice = args.path.slice();
             if (bun.strings.startsWith(slice, "file://")) {
                 slice = slice[6..];

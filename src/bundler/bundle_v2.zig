@@ -2955,8 +2955,8 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
-                                const buf = bun.PathBufferPool.get();
-                                defer bun.PathBufferPool.put(buf);
+                                const buf = bun.path_buffer_pool.get();
+                                defer bun.path_buffer_pool.put(buf);
                                 const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
                                     const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
                                     if (Environment.isWindows) {

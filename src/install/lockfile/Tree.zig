@@ -382,7 +382,7 @@ pub fn isFilteredDependencyOrWorkspace(
     var workspace_matched = workspace_filters.len == 0;
 
     for (workspace_filters) |filter| {
-        var filter_path: bun.AbsPath(.{ .path_separators = .posix }) = .initTopLevelDir();
+        var filter_path: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
         defer filter_path.deinit();
 
         const pattern, const name_or_path = switch (filter) {
@@ -399,7 +399,7 @@ pub fn isFilteredDependencyOrWorkspace(
                     return false;
                 }
 
-                filter_path.join(res.value.workspace.slice(lockfile.buffers.string_bytes.items));
+                filter_path.join(&.{res.value.workspace.slice(lockfile.buffers.string_bytes.items)});
 
                 break :path_pattern .{ path_pattern, filter_path.slice() };
             },

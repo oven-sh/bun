@@ -161,8 +161,8 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
-    const renormalized = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(renormalized);
+    const renormalized = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(renormalized);
 
     var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
@@ -188,8 +188,8 @@ pub fn toWPathNormalized16(wbuf: []u16, path: []const u16) [:0]u16 {
 }
 
 pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
-    const renormalized = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(renormalized);
+    const renormalized = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(renormalized);
 
     var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
@@ -228,12 +228,12 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: ?*bun.PathBuffer = null;
-    defer if (renormalized) |r| bun.PathBufferPool.put(r);
+    defer if (renormalized) |r| bun.path_buffer_pool.put(r);
 
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
-        renormalized = bun.PathBufferPool.get();
+        renormalized = bun.path_buffer_pool.get();
         @memcpy(renormalized.?[0..utf8.len], utf8);
         for (renormalized.?[0..utf8.len]) |*c| {
             if (c.* == '/') {

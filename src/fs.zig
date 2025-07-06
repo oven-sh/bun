@@ -1382,10 +1382,10 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf3);
+                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf3);
 
                 var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;

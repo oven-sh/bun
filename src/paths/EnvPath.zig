@@ -53,7 +53,7 @@ pub fn EnvPath(comptime opts: EnvPathOptions) type {
 
         pub const PathComponentBuilder = struct {
             env_path: *EnvPath(opts),
-            path_buf: AbsPath(.{ .path_separators = .auto }),
+            path_buf: AbsPath(.{ .sep = .auto }),
 
             pub fn append(this: *@This(), component: string) void {
                 this.path_buf.append(component);
@@ -72,7 +72,7 @@ pub fn EnvPath(comptime opts: EnvPathOptions) type {
         pub fn pathComponentBuilder(this: *@This()) PathComponentBuilder {
             return .{
                 .env_path = this,
-                .path_buf = .initEmpty(),
+                .path_buf = .init(),
             };
         }
     };

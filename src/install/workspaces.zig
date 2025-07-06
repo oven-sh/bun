@@ -805,7 +805,7 @@ pub fn installIsolatedPackages(
                         continue;
                     }
 
-                    var pkg_cache_dir_subpath: bun.RelPath(.{ .path_separators = .auto }) = .from(switch (pkg_res_tag) {
+                    var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res_tag) {
                         .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
                         .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                         .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
@@ -1109,8 +1109,8 @@ const Symlinker = struct {
                 };
             },
             .expect_existing => {
-                const current_link_buf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(current_link_buf);
+                const current_link_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(current_link_buf);
                 const current_link = switch (sys.readlink(this.dest, current_link_buf)) {
                     .result => |res| res,
                     .err => |readlink_err| return switch (readlink_err.getErrno()) {
@@ -1350,7 +1350,7 @@ pub const Store = struct {
                 .remote_tarball,
                 .folder,
                 => {
-                    var store_path: bun.RelPath(.{ .path_separators = .auto }) = .init();
+                    var store_path: bun.RelPath(.{ .sep = .auto }) = .init();
                     defer store_path.deinit();
 
                     store_path.appendFmt("node_modules/{}", .{
@@ -1593,7 +1593,7 @@ pub const Store = struct {
                             &pkg_res,
                         );
 
-                        var pkg_cache_dir_subpath: bun.RelPath(.{ .path_separators = .auto }) = .from(switch (pkg_res.tag) {
+                        var pkg_cache_dir_subpath: bun.RelPath(.{ .sep = .auto }) = .from(switch (pkg_res.tag) {
                             .npm => manager.cachedNPMPackageFolderName(pkg_name.slice(string_buf), pkg_res.value.npm.version, patch_info.contentsHash()),
                             .git => manager.cachedGitFolderName(&pkg_res.value.git, patch_info.contentsHash()),
                             .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
@@ -1607,7 +1607,7 @@ pub const Store = struct {
                         const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                         defer cache_dir_path.deinit();
 
-                        var dest_subpath: bun.RelPath(.{ .path_separators = .auto }) = .init();
+                        var dest_subpath: bun.RelPath(.{ .sep = .auto }) = .init();
                         defer dest_subpath.deinit();
 
                         installer.appendStorePath(&dest_subpath, this.entry_id);
@@ -1843,27 +1843,25 @@ pub const Store = struct {
                             const dep_dep_id = node_dep_ids[dep_node_id.get()];
                             const dep_name = dependencies[dep_dep_id].name;
 
-                            var dest: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
+                            var dest: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                             defer dest.deinit();
 
                             installer.appendStoreNodeModulesPath(&dest, this.entry_id);
                             dest.append(dep_name.slice(string_buf));
 
-                            var dep_store_path: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
+                            var dep_store_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                             defer dep_store_path.deinit();
 
                             installer.appendStorePath(&dep_store_path, dep.entry_id);
 
-                            var target: bun.RelPath(.{ .path_separators = .auto }) = .init();
-                            defer target.deinit();
-
-                            {
+                            const target = target: {
                                 var dest_save = dest.save();
                                 defer dest_save.restore();
 
                                 dest.undo(1);
-                                dest.relative(&dep_store_path, &target);
-                            }
+                                break :target dest.relative(&dep_store_path);
+                            };
+                            defer target.deinit();
 
                             const symlinker: Symlinker = .init(dest.sliceZ(), target.sliceZ(), dep_store_path.sliceZ());
 
@@ -1984,7 +1982,7 @@ pub const Store = struct {
                             break :brk .{ false, false };
                         };
 
-                        var pkg_cwd: bun.AbsPath(.{ .path_separators = .auto }) = .initTopLevelDir();
+                        var pkg_cwd: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer pkg_cwd.deinit();
 
                         installer.appendStorePath(&pkg_cwd, this.entry_id);
@@ -2363,7 +2361,8 @@ pub const Store = struct {
                 .symlink => {
                     const symlink_dir_path = this.manager.globalLinkDirPath();
 
-                    buf.reset(symlink_dir_path);
+                    buf.clear();
+                    buf.append(symlink_dir_path);
                     buf.append(pkg_res.value.symlink.slice(string_buf));
                 },
                 else => {

@@ -1,4 +1,3 @@
-import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
@@ -22,8 +21,8 @@ describe("bun outdated", () => {
     return testDir;
   }
 
-  async function runCommand(cmd: string[], testDir: string, expectSuccess = true) {
-    const { stdout, stderr, exited } = spawn({
+  async function runCommand(cmd: string[], testDir: string) {
+    const { stdout, stderr, exited } = Bun.spawn({
       cmd,
       cwd: testDir,
       stdout: "pipe",

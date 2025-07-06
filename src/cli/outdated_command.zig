@@ -294,6 +294,9 @@ pub const OutdatedCommand = struct {
 
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
+                // Ensure the update version is actually newer than current version
+                if (resolution.value.npm.version.order(update_version.version, string_buf, manifest.string_buf) != .lt) continue;
+
                 outdated_ids.append(
                     bun.default_allocator,
                     .{

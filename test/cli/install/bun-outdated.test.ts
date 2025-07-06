@@ -10,11 +10,11 @@ describe("bun outdated", () => {
         version: "1.0.0",
         dependencies: {
           // Use packages with known older versions for testing
-          "react": "16.8.0", // Known to have many newer versions
-          "lodash": "4.17.0", // Also has newer versions
+          "lodash": "1.0.0", // Very old version, latest is 4.17.21
+          "express": "1.0.0", // Very old version, latest is 4.x
         },
         devDependencies: {
-          "typescript": "3.9.0", // Older version of TypeScript
+          "typescript": "~5.0.0", // Older but valid version of TypeScript
         },
       }),
     });
@@ -22,22 +22,25 @@ describe("bun outdated", () => {
   }
 
   async function runCommand(cmd: string[], testDir: string) {
-    const { stdout, exited } = Bun.spawn({
+    const { stdout, stderr, exited } = Bun.spawn({
       cmd,
       cwd: testDir,
       stdout: "pipe",
+      stderr: "pipe",
       stdin: "ignore",
-      stderr: "inherit",
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        BUN_DEBUG_QUIET_LOGS: "1", // Suppress debug logs
+      },
     });
 
-    const [output, exitCode] = await Promise.all([
+    const [output, error, exitCode] = await Promise.all([
       new Response(stdout).text(),
-
+      new Response(stderr).text(),
       exited,
     ]);
 
-    return { output, code: exitCode };
+    return { output, error, code: exitCode };
   }
 
   describe("bun outdated --json", () => {
@@ -45,16 +48,32 @@ describe("bun outdated", () => {
       const testDir = await setupTest();
       
       // First install to create a lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      if (installResult.code !== 0) {
+        console.error("Install failed:", installResult.error);
+        console.error("Install stdout:", installResult.output);
+      }
+      expect(installResult.code).toBe(0);
       
       // Then run outdated --json
-      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
+      if (code !== 0) {
+        console.error("Command failed with code:", code);
+        console.error("Error output:", error);
+        console.error("Stdout:", output);
+      }
       expect(code).toBe(0);
-      
 
       // Parse the JSON to verify it's valid
-      const json = JSON.parse(output);
+      let json;
+      try {
+        json = JSON.parse(output);
+      } catch (e) {
+        console.error("Failed to parse JSON:", e);
+        console.error("Raw output:", JSON.stringify(output));
+        throw e;
+      }
       
       // Check that we have at least some outdated packages
       expect(Object.keys(json).length).toBeGreaterThan(0);
@@ -82,16 +101,17 @@ describe("bun outdated", () => {
           name: "app-pkg",
           version: "1.0.0",
           dependencies: {
-            "react": "16.8.0",
+            "lodash": "1.0.0",
           },
         }),
       });
       
       // Install to create lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      expect(installResult.code).toBe(0);
       
       // Run outdated with filter to include workspace info
-      const { output, code } = await runCommand([bunExe(), "outdated", "--json", "--filter=*"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json", "--filter=*"], testDir);
 
       expect(code).toBe(0);
       
@@ -113,10 +133,11 @@ describe("bun outdated", () => {
       const testDir = await setupTest();
       
       // Install to create lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      expect(installResult.code).toBe(0);
       
       // Run outdated --json
-      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
       expect(code).toBe(0);
       
@@ -148,17 +169,18 @@ describe("bun outdated", () => {
           name: "test-pkg",
           version: "1.0.0",
           dependencies: {
-            // Use a package that's typically up to date
-            "fs": "latest",
+            // Use a package that's already at latest version
+            "lodash": "4.17.21", // This should be the latest version
           },
         }),
       });
       
       // Install to create lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      expect(installResult.code).toBe(0);
       
       // Run outdated --json
-      const { output, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json"], testDir);
 
       expect(code).toBe(0);
       
@@ -167,6 +189,7 @@ describe("bun outdated", () => {
         const json = JSON.parse(output);
         // Should be an empty object if no packages are outdated
         expect(typeof json).toBe("object");
+        expect(Object.keys(json).length).toBe(0);
       }
     });
 
@@ -174,10 +197,11 @@ describe("bun outdated", () => {
       const testDir = await setupTest();
       
       // Install to create lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      expect(installResult.code).toBe(0);
       
       // Run outdated --json with package filter
-      const { output, code } = await runCommand([bunExe(), "outdated", "--json", "react"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated", "--json", "lodash"], testDir);
 
       expect(code).toBe(0);
       
@@ -185,10 +209,10 @@ describe("bun outdated", () => {
       if (output.trim()) {
         const json = JSON.parse(output);
         
-        // Should only contain react-related packages
+        // Should only contain lodash-related packages
         const packageNames = Object.keys(json);
         packageNames.forEach(name => {
-          expect(name.toLowerCase()).toMatch(/react/);
+          expect(name.toLowerCase()).toMatch(/lodash/);
         });
       }
     });
@@ -199,10 +223,11 @@ describe("bun outdated", () => {
       const testDir = await setupTest();
       
       // Install to create lockfile
-      await runCommand([bunExe(), "install"], testDir);
+      const installResult = await runCommand([bunExe(), "install"], testDir);
+      expect(installResult.code).toBe(0);
       
       // Run outdated without --json
-      const { output, code } = await runCommand([bunExe(), "outdated"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "outdated"], testDir);
 
       expect(code).toBe(0);
       
@@ -213,8 +238,8 @@ describe("bun outdated", () => {
         expect(output).toContain("Current");
         expect(output).toContain("Update");
         expect(output).toContain("Latest");
-        // Should contain table formatting characters
-        expect(output).toMatch(/[│┌┐└┘─]/);
+                // Should contain table formatting characters (Unicode or ASCII)
+        expect(output).toMatch(/[│┌┐└┘─|]/);
       }
     });
   });

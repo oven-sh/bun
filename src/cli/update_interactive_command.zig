@@ -798,6 +798,7 @@ pub const UpdateInteractiveCommand = struct {
         while (true) {
             if (!initial_draw) {
                 Output.up(total_lines);
+                Output.clearToEnd();
             }
             initial_draw = false;
             total_lines = 0;
@@ -833,12 +834,18 @@ pub const UpdateInteractiveCommand = struct {
                     
                     // Calculate padding to align column headers with values
                     var j: usize = 0;
-                    const dep_type_text_len: usize = pkg.dependency_type.len;
-                    const checkbox_and_cursor_width = 7; // 4 for cursor/space + 3 for checkbox
-                    const padding_to_current = if (state.max_name_len + checkbox_and_cursor_width > dep_type_text_len) 
-                        state.max_name_len + checkbox_and_cursor_width - dep_type_text_len 
-                    else 
-                        4;
+                    // Calculate actual displayed text length including count if present
+                    const dep_type_text_len: usize = if (selected_count > 0) blk: {
+                        var buf: [32]u8 = undefined;
+                        const count_str = std.fmt.bufPrint(&buf, "{d}", .{selected_count}) catch "0";
+                        break :blk pkg.dependency_type.len + 1 + count_str.len; // +1 for space
+                    } else pkg.dependency_type.len;
+                    
+                    // The padding should align with the first character of package names
+                    // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
+                    // Headers start at: "  " (2 spaces) + dep_type_text
+                    // So we need to pad: 4 (cursor/space) + 2 (checkbox+space) + max_name_len - dep_type_text_len
+                    const padding_to_current = 4 + 2 + state.max_name_len - dep_type_text_len;
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }
@@ -854,7 +861,8 @@ pub const UpdateInteractiveCommand = struct {
                     while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    Output.pretty("<r><d>Latest<r>\n", .{});
+                    Output.pretty("<r><d>Latest<r>", .{});
+                    Output.print("\x1B[0K\n", .{});
                     displayed_lines += 1;
                     current_dep_type = pkg.dependency_type;
                 }
@@ -962,10 +970,9 @@ pub const UpdateInteractiveCommand = struct {
                 Output.pretty("<r>{s}<r>", .{pkg.current_version});
                 
                 // Print padding after current version
-                const current_visible_width = bun.strings.visible.width.utf8(pkg.current_version);
-                const actual_current_padding = state.max_current_len - current_visible_width;
+                const current_padding = state.max_current_len - pkg.current_version.len;
                 j = 0;
-                while (j < actual_current_padding + 2) : (j += 1) {
+                while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
                 

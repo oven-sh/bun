@@ -978,6 +978,9 @@ pub const UpdateInteractiveCommand = struct {
                 
                 // Target version with diffFmt coloring - bold if not using latest
                 const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
+                
+                // Calculate the width first, then print
+                var target_width: usize = pkg.update_version.len;
                 if (current_ver_parsed.valid and target_ver_parsed.valid) {
                     const current_full = Semver.Version{
                         .major = current_ver_parsed.version.major orelse 0,
@@ -991,6 +994,11 @@ pub const UpdateInteractiveCommand = struct {
                         .patch = target_ver_parsed.version.patch orelse 0,
                         .tag = target_ver_parsed.version.tag,
                     };
+                    
+                    // Format once to get the width
+                    var temp_buf: [256]u8 = undefined;
+                    const formatted = try std.fmt.bufPrint(&temp_buf, "{}", .{target_full.diffFmt(current_full, pkg.update_version, pkg.current_version)});
+                    target_width = bun.strings.visible.width.utf8(formatted);
                     
                     // Print target version
                     if (selected and !pkg.use_latest) {
@@ -1013,29 +1021,6 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
-                }
-                
-                // Print padding after target version
-                // Need to calculate the actual displayed width with formatting
-                var target_width: usize = pkg.update_version.len;
-                if (current_ver_parsed.valid and target_ver_parsed.valid) {
-                    // Count the formatted width
-                    const current_full = Semver.Version{
-                        .major = current_ver_parsed.version.major orelse 0,
-                        .minor = current_ver_parsed.version.minor orelse 0,
-                        .patch = current_ver_parsed.version.patch orelse 0,
-                        .tag = current_ver_parsed.version.tag,
-                    };
-                    const target_full = Semver.Version{
-                        .major = target_ver_parsed.version.major orelse 0,
-                        .minor = target_ver_parsed.version.minor orelse 0,
-                        .patch = target_ver_parsed.version.patch orelse 0,
-                        .tag = target_ver_parsed.version.tag,
-                    };
-                    
-                    var temp_buf: [256]u8 = undefined;
-                    const formatted = try std.fmt.bufPrint(&temp_buf, "{}", .{target_full.diffFmt(current_full, pkg.update_version, pkg.current_version)});
-                    target_width = bun.strings.visible.width.utf8(formatted);
                 }
                 
                 const target_padding = state.max_update_len - target_width;

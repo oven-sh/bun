@@ -243,10 +243,6 @@ pub const OutdatedCommand = struct {
         const pkg_dependencies = packages.items(.dependencies);
 
         var outdated_ids: std.ArrayListUnmanaged(OutdatedInfo) = .{};
-        
-        if (!manager.options.json_output) {
-            Output.prettyln("DEBUG: collectOutdatedDependencies called with {} workspaces", .{workspace_pkg_ids.len});
-        }
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
             const pkg_deps = pkg_dependencies[workspace_pkg_id];
@@ -293,15 +289,10 @@ pub const OutdatedCommand = struct {
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
 
-                const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
-                else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
-
-                if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
-
-                // Ensure the update version is actually newer than current version
-                if (resolution.value.npm.version.order(update_version.version, string_buf, manifest.string_buf) != .lt) continue;
+                // A package is outdated if the current version is older than the latest version
+                if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) {
+                    continue;
+                }
 
                 outdated_ids.append(
                     bun.default_allocator,
@@ -359,26 +350,6 @@ pub const OutdatedCommand = struct {
             else
                 manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
-            const behavior_str = if (dep.behavior.dev)
-                " (dev)"
-            else if (dep.behavior.peer)
-                " (peer)"
-            else if (dep.behavior.optional)
-                " (optional)"
-            else
-                "";
-
-            const package_display_name = if (behavior_str.len > 0) blk: {
-                const combined = std.fmt.allocPrint(bun.default_allocator, "{s}{s}", .{package_name, behavior_str}) catch bun.outOfMemory();
-                break :blk combined;
-            } else package_name;
-
-            defer {
-                if (behavior_str.len > 0) {
-                    bun.default_allocator.free(package_display_name);
-                }
-            }
-
             if (!first_entry) {
                 Output.print(",\n", .{});
             }
@@ -398,11 +369,20 @@ pub const OutdatedCommand = struct {
             version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
             const latest_version_str = version_buf.items;
 
-            // Use bun.fmt.formatJSONStringUTF8 for safe JSON string formatting
-            Output.print("  {}: {{\n", .{bun.fmt.formatJSONStringUTF8(package_display_name, .{})});
+            // Use clean package name as JSON key
+            Output.print("  {}: {{\n", .{bun.fmt.formatJSONStringUTF8(package_name, .{})});
             Output.print("    \"current\": {},\n", .{bun.fmt.formatJSONStringUTF8(current_version_str, .{})});
             Output.print("    \"wanted\": {},\n", .{bun.fmt.formatJSONStringUTF8(update_version_str, .{})});
             Output.print("    \"latest\": {}", .{bun.fmt.formatJSONStringUTF8(latest_version_str, .{})});
+
+            // Add dependency type if not a regular production dependency
+            if (dep.behavior.dev) {
+                Output.print(",\n    \"type\": \"dev\"", .{});
+            } else if (dep.behavior.peer) {
+                Output.print(",\n    \"type\": \"peer\"", .{});
+            } else if (dep.behavior.optional) {
+                Output.print(",\n    \"type\": \"optional\"", .{});
+            }
 
             if (was_filtered) {
                 const workspace_name = pkg_names[info.workspace_pkg_id].slice(string_buf);

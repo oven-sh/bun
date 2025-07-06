@@ -109,7 +109,7 @@ describe("bun outdated", () => {
       }
     });
 
-    it("should include dependency type in package name for dev dependencies", async () => {
+    it("should include dependency type field for dev dependencies", async () => {
       const testDir = await setupTest();
       
       // Install to create lockfile
@@ -124,17 +124,19 @@ describe("bun outdated", () => {
       if (output.trim()) {
         const json = JSON.parse(output);
         
-        // Check if we have any dev dependencies marked
-        const packageNames = Object.keys(json);
-        const devDependencies = packageNames.filter(name => name.includes(" (dev)"));
+        // Check if we have any dev dependencies with type field
+        const packages = Object.entries(json);
+        const devDependencies = packages.filter(([, info]) => (info as any).type === "dev");
         
-        // We should have at least the typescript dev dependency
+        // We should have at least the typescript dev dependency if it's outdated
         if (devDependencies.length > 0) {
-          devDependencies.forEach(devDep => {
-            expect(devDep).toContain(" (dev)");
-            expect(json[devDep]).toHaveProperty("current");
-            expect(json[devDep]).toHaveProperty("wanted");
-            expect(json[devDep]).toHaveProperty("latest");
+          devDependencies.forEach(([packageName, packageInfo]) => {
+            expect((packageInfo as any).type).toBe("dev");
+            expect(packageInfo).toHaveProperty("current");
+            expect(packageInfo).toHaveProperty("wanted"); 
+            expect(packageInfo).toHaveProperty("latest");
+            // Package name should be clean (no (dev) suffix)
+            expect(packageName).not.toContain(" (dev)");
           });
         }
       }

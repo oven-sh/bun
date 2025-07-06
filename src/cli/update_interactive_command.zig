@@ -856,9 +856,20 @@ pub const UpdateInteractiveCommand = struct {
                 }
 
                 // Package name - make it a hyperlink if colors are enabled and using default registry
-                const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
+                const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
+                    pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
                 const package_url = if (Output.enable_ansi_colors and uses_default_registry)
-                    try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/{s}", .{pkg.name})
+                    try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
+                        if (selected) {
+                            if (pkg.use_latest) {
+                                break :brk pkg.latest_version;
+                            } else {
+                                break :brk pkg.update_version;
+                            }
+                        } else {
+                            break :brk pkg.current_version;
+                        }
+                    } })
                 else
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);

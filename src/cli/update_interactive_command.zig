@@ -117,7 +117,7 @@ pub const UpdateInteractiveCommand = struct {
     ) !void {
         // This function follows the same pattern as updatePackageJSONAndInstallWithManagerWithUpdates
         // from updatePackageJSONAndInstall.zig
-        
+
         // Load and parse the current package.json
         var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
@@ -142,15 +142,15 @@ pub const UpdateInteractiveCommand = struct {
             },
             .entry => |entry| entry,
         };
-        
+
         const current_package_json_indent = current_package_json.indentation;
-        const preserve_trailing_newline = current_package_json.source.contents.len > 0 and 
+        const preserve_trailing_newline = current_package_json.source.contents.len > 0 and
             current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
-        
+
         // Set update mode
         manager.to_update = true;
         manager.update_requests = updates;
-        
+
         // Edit the package.json with all updates
         // For interactive mode, we'll edit all as dependencies
         // TODO: preserve original dependency types
@@ -165,13 +165,13 @@ pub const UpdateInteractiveCommand = struct {
                 .before_install = true,
             },
         );
-        
+
         // Serialize the updated package.json
         var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
-        
+
         _ = JSPrinter.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
@@ -185,9 +185,9 @@ pub const UpdateInteractiveCommand = struct {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
-        
+
         const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
-        
+
         // Call installWithManager to perform the installation
         try manager.installWithManager(ctx, new_package_json_source, original_cwd);
     }
@@ -255,7 +255,7 @@ pub const UpdateInteractiveCommand = struct {
                 defer bun.default_allocator.free(workspace_pkg_ids);
 
                 try updateManifestsIfNecessary(manager, workspace_pkg_ids);
-                
+
                 // Get outdated packages
                 const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
                 defer {
@@ -268,17 +268,17 @@ pub const UpdateInteractiveCommand = struct {
                     }
                     bun.default_allocator.free(outdated_packages);
                 }
-                
+
                 if (outdated_packages.len == 0) {
                     // Check if we're using --latest flag
                     const is_latest_mode = manager.options.do.update_to_latest;
-                    
+
                     if (is_latest_mode) {
                         Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
                     } else {
                         // Count how many packages have newer versions available
                         var packages_with_newer_versions: usize = 0;
-                        
+
                         // We need to check all packages for newer versions
                         for (workspace_pkg_ids) |workspace_pkg_id| {
                             const pkg_deps = manager.lockfile.packages.items(.dependencies)[workspace_pkg_id];
@@ -290,9 +290,9 @@ pub const UpdateInteractiveCommand = struct {
                                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                                 const resolution = manager.lockfile.packages.items(.resolution)[package_id];
                                 if (resolution.tag != .npm) continue;
-                                
+
                                 const package_name = manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items);
-                                
+
                                 var expired = false;
                                 const manifest = manager.manifests.byNameAllowExpired(
                                     manager,
@@ -301,66 +301,59 @@ pub const UpdateInteractiveCommand = struct {
                                     &expired,
                                     .load_from_memory_fallback_to_disk,
                                 ) orelse continue;
-                                
+
                                 const latest = manifest.findByDistTag("latest") orelse continue;
-                                
+
                                 // Check if current version is less than latest
                                 if (resolution.value.npm.version.order(latest.version, manager.lockfile.buffers.string_bytes.items, manifest.string_buf) == .lt) {
                                     packages_with_newer_versions += 1;
                                 }
                             }
                         }
-                        
+
                         if (packages_with_newer_versions > 0) {
                             Output.prettyln("<r><green>✓<r> All packages are up to date!\n", .{});
-                            Output.prettyln("<r><d>Excluded {d} package{s} with potentially breaking changes. Run <cyan>`bun update -i --latest`<r><d> to update<r>", .{ 
-                                packages_with_newer_versions, 
-                                if (packages_with_newer_versions == 1) "" else "s" 
-                            });
+                            Output.prettyln("<r><d>Excluded {d} package{s} with potentially breaking changes. Run <cyan>`bun update -i --latest`<r><d> to update<r>", .{ packages_with_newer_versions, if (packages_with_newer_versions == 1) "" else "s" });
                         } else {
                             Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
                         }
                     }
                     return;
                 }
-                
+
                 // Prompt user to select packages
                 const selected = try promptForUpdates(bun.default_allocator, outdated_packages);
                 defer bun.default_allocator.free(selected);
-                
+
                 // Create package specifier array from selected packages
                 var package_specifiers = std.ArrayList([]const u8).init(bun.default_allocator);
                 defer package_specifiers.deinit();
-                
+
                 // Create a map to track dependency types for packages
                 var dep_types = std.StringHashMap([]const u8).init(bun.default_allocator);
                 defer dep_types.deinit();
-                
+
                 for (outdated_packages, selected) |pkg, is_selected| {
                     if (!is_selected) continue;
-                    
+
                     try dep_types.put(pkg.name, pkg.dependency_type);
-                    
+
                     // Use latest version if user selected it with 'l' key
                     const target_version = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
-                    
+
                     // Create a full package specifier string for UpdateRequest.parse
-                    const package_specifier = try std.fmt.allocPrint(
-                        bun.default_allocator,
-                        "{s}@{s}",
-                        .{ pkg.name, target_version }
-                    );
-                    
+                    const package_specifier = try std.fmt.allocPrint(bun.default_allocator, "{s}@{s}", .{ pkg.name, target_version });
+
                     try package_specifiers.append(package_specifier);
                 }
-                
+
                 // dep_types will be freed when we exit this scope
-                
+
                 if (package_specifiers.items.len == 0) {
                     Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
                     return;
                 }
-                
+
                 // Parse the package specifiers into UpdateRequests
                 var update_requests_array = UpdateRequest.Array{};
                 const update_requests = UpdateRequest.parse(
@@ -371,11 +364,11 @@ pub const UpdateInteractiveCommand = struct {
                     &update_requests_array,
                     .update,
                 );
-                
+
                 // Perform the update
                 Output.prettyln("\n<r><cyan>Installing updates...<r>", .{});
                 Output.flush();
-                
+
                 try updatePackages(
                     manager,
                     ctx,
@@ -487,7 +480,6 @@ pub const UpdateInteractiveCommand = struct {
         return workspace_pkg_ids.items;
     }
 
-
     fn getOutdatedPackages(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -499,14 +491,14 @@ pub const UpdateInteractiveCommand = struct {
         const pkg_names = packages.items(.name);
         const pkg_resolutions = packages.items(.resolution);
         const pkg_dependencies = packages.items(.dependencies);
-        
+
         var outdated_packages = std.ArrayList(OutdatedPackage).init(allocator);
         defer outdated_packages.deinit();
-        
+
         var version_buf = std.ArrayList(u8).init(allocator);
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
-        
+
         for (workspace_pkg_ids) |workspace_pkg_id| {
             const pkg_deps = pkg_dependencies[workspace_pkg_id];
             for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
@@ -517,10 +509,10 @@ pub const UpdateInteractiveCommand = struct {
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
-                
+
                 const name_slice = dep.name.slice(string_buf);
                 const package_name = pkg_names[package_id].slice(string_buf);
-                
+
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
                     manager,
@@ -529,56 +521,57 @@ pub const UpdateInteractiveCommand = struct {
                     &expired,
                     .load_from_memory_fallback_to_disk,
                 ) orelse continue;
-                
+
                 const latest = manifest.findByDistTag("latest") orelse continue;
-                
+
                 const update_version = if (manager.options.do.update_to_latest)
                     latest
                 else if (resolved_version.tag == .npm)
                     manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                 else
                     manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
-                
+
                 // Skip if current version is already the latest
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
-                
+
                 // Skip if update version is the same as current version
                 // Note: Current version is in lockfile's string_buf, update version is in manifest's string_buf
                 const current_ver = resolution.value.npm.version;
                 const update_ver = update_version.version;
-                
+
                 // Compare the actual version numbers
-                if (current_ver.major == update_ver.major and 
-                    current_ver.minor == update_ver.minor and 
+                if (current_ver.major == update_ver.major and
+                    current_ver.minor == update_ver.minor and
                     current_ver.patch == update_ver.patch and
-                    current_ver.tag.eql(update_ver.tag)) {
+                    current_ver.tag.eql(update_ver.tag))
+                {
                     continue;
                 }
-                
+
                 version_buf.clearRetainingCapacity();
                 try version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)});
                 const current_version_buf = try allocator.dupe(u8, version_buf.items);
-                
+
                 version_buf.clearRetainingCapacity();
                 try version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)});
                 const update_version_buf = try allocator.dupe(u8, version_buf.items);
-                
+
                 version_buf.clearRetainingCapacity();
                 try version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)});
                 const latest_version_buf = try allocator.dupe(u8, version_buf.items);
-                
+
                 // Already filtered by version.order check above
-                
+
                 version_buf.clearRetainingCapacity();
                 const dep_type = if (dep.behavior.dev) "devDependencies" else if (dep.behavior.optional) "optionalDependencies" else if (dep.behavior.peer) "peerDependencies" else "dependencies";
-                
+
                 // Get workspace name but only show if it's actually a workspace
                 const workspace_resolution = pkg_resolutions[workspace_pkg_id];
-                const workspace_name = if (workspace_resolution.tag == .workspace) 
-                    pkg_names[workspace_pkg_id].slice(string_buf) 
-                else 
+                const workspace_name = if (workspace_resolution.tag == .workspace)
+                    pkg_names[workspace_pkg_id].slice(string_buf)
+                else
                     "";
-                
+
                 try outdated_packages.append(.{
                     .name = try allocator.dupe(u8, name_slice),
                     .current_version = try allocator.dupe(u8, current_version_buf),
@@ -594,9 +587,9 @@ pub const UpdateInteractiveCommand = struct {
                 });
             }
         }
-        
+
         const result = try outdated_packages.toOwnedSlice();
-        
+
         // Sort packages: dependencies first, then devDependencies, etc.
         std.sort.pdq(OutdatedPackage, result, {}, struct {
             fn lessThan(_: void, a: OutdatedPackage, b: OutdatedPackage) bool {
@@ -604,11 +597,11 @@ pub const UpdateInteractiveCommand = struct {
                 const a_priority = depTypePriority(a.dependency_type);
                 const b_priority = depTypePriority(b.dependency_type);
                 if (a_priority != b_priority) return a_priority < b_priority;
-                
+
                 // Then by name
                 return strings.order(a.name, b.name) == .lt;
             }
-            
+
             fn depTypePriority(dep_type: []const u8) u8 {
                 if (strings.eqlComptime(dep_type, "dependencies")) return 0;
                 if (strings.eqlComptime(dep_type, "devDependencies")) return 1;
@@ -617,7 +610,7 @@ pub const UpdateInteractiveCommand = struct {
                 return 4;
             }
         }.lessThan);
-        
+
         return result;
     }
 
@@ -641,13 +634,13 @@ pub const UpdateInteractiveCommand = struct {
         const selected = try allocator.alloc(bool, packages.len);
         // Default to all unselected
         @memset(selected, false);
-        
+
         // Calculate max column widths - need to account for diffFmt ANSI codes
         var max_name_len: usize = "Package".len;
         var max_current_len: usize = "Current".len;
         var max_target_len: usize = "Target".len;
         var max_latest_len: usize = "Latest".len;
-        
+
         for (packages) |pkg| {
             // Include dev tag length in max calculation
             var dev_tag_len: usize = 0;
@@ -660,59 +653,15 @@ pub const UpdateInteractiveCommand = struct {
             }
             const name_len = pkg.name.len + dev_tag_len;
             max_name_len = @max(max_name_len, name_len);
-            
+
             // For current version - it's always displayed without formatting
             max_current_len = @max(max_current_len, pkg.current_version.len);
-            
-            // For target and latest versions, we need to account for potential diffFmt coloring
-            // Parse the versions to see if they would get colored
-            const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
-            const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
-            const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
-            
-            if (current_ver_parsed.valid and target_ver_parsed.valid) {
-                const current_full = Semver.Version{
-                    .major = current_ver_parsed.version.major orelse 0,
-                    .minor = current_ver_parsed.version.minor orelse 0,
-                    .patch = current_ver_parsed.version.patch orelse 0,
-                    .tag = current_ver_parsed.version.tag,
-                };
-                const target_full = Semver.Version{
-                    .major = target_ver_parsed.version.major orelse 0,
-                    .minor = target_ver_parsed.version.minor orelse 0,
-                    .patch = target_ver_parsed.version.patch orelse 0,
-                    .tag = target_ver_parsed.version.tag,
-                };
-                
-                // Format and measure visible width
-                var temp_buf: [256]u8 = undefined;
-                const formatted = try std.fmt.bufPrint(&temp_buf, "{}", .{target_full.diffFmt(current_full, pkg.update_version, pkg.current_version)});
-                max_target_len = @max(max_target_len, bun.strings.visible.width.utf8(formatted));
-            } else {
-                max_target_len = @max(max_target_len, pkg.update_version.len);
-            }
-            
-            if (current_ver_parsed.valid and latest_ver_parsed.valid) {
-                const current_full = Semver.Version{
-                    .major = current_ver_parsed.version.major orelse 0,
-                    .minor = current_ver_parsed.version.minor orelse 0,
-                    .patch = current_ver_parsed.version.patch orelse 0,
-                    .tag = current_ver_parsed.version.tag,
-                };
-                const latest_full = Semver.Version{
-                    .major = latest_ver_parsed.version.major orelse 0,
-                    .minor = latest_ver_parsed.version.minor orelse 0,
-                    .patch = latest_ver_parsed.version.patch orelse 0,
-                    .tag = latest_ver_parsed.version.tag,
-                };
-                
-                // Format and measure visible width
-                var temp_buf: [256]u8 = undefined;
-                const formatted = try std.fmt.bufPrint(&temp_buf, "{}", .{latest_full.diffFmt(current_full, pkg.latest_version, pkg.current_version)});
-                max_latest_len = @max(max_latest_len, bun.strings.visible.width.utf8(formatted));
-            } else {
-                max_latest_len = @max(max_latest_len, pkg.latest_version.len);
-            }
+
+            // For max width calculation, just use the plain version string length
+            // The diffFmt adds ANSI codes but doesn't change the visible width of the version
+            // Version strings are always ASCII so we can use string length directly
+            max_target_len = @max(max_target_len, pkg.update_version.len);
+            max_latest_len = @max(max_latest_len, pkg.latest_version.len);
         }
 
         var state = MultiSelectState{
@@ -765,12 +714,13 @@ pub const UpdateInteractiveCommand = struct {
         const colors = Output.enable_ansi_colors;
 
         // Clear any previous progress output
-        Output.print("\r\x1B[2K", .{});  // Clear entire line
-        Output.print("\x1B[1A\x1B[2K", .{});  // Move up one line and clear it too
+        Output.print("\r\x1B[2K", .{}); // Clear entire line
+        Output.print("\x1B[1A\x1B[2K", .{}); // Move up one line and clear it too
         Output.flush();
-        
+
         // Print the prompt
         Output.prettyln("<r><cyan>?<r> Select packages to update<d> - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest<r>", .{});
+
         Output.prettyln("", .{});
 
         if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
@@ -794,7 +744,7 @@ pub const UpdateInteractiveCommand = struct {
                 Output.prettyln("<r><green>✓<r> Selected {d} package{s} to update", .{ count, if (count == 1) "" else "s" });
             }
         }
-        
+
         while (true) {
             if (!initial_draw) {
                 Output.up(total_lines);
@@ -804,18 +754,18 @@ pub const UpdateInteractiveCommand = struct {
             total_lines = 0;
 
             var displayed_lines: usize = 0;
-            
+
             // Group by dependency type
             var current_dep_type: ?[]const u8 = null;
-            
+
             for (state.packages, state.selected, 0..) |*pkg, selected, i| {
-                // Print dependency type header with column headers if changed  
+                // Print dependency type header with column headers if changed
                 if (current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type)) {
                     if (displayed_lines > 0) {
                         Output.print("\n", .{});
                         displayed_lines += 1;
                     }
-                    
+
                     // Count selected packages in this dependency type
                     var selected_count: usize = 0;
                     for (state.packages, state.selected) |p, sel| {
@@ -823,15 +773,15 @@ pub const UpdateInteractiveCommand = struct {
                             selected_count += 1;
                         }
                     }
-                    
+
                     // Print dependency type - bold if any selected
                     Output.print("  ", .{});
                     if (selected_count > 0) {
-                        Output.pretty("<r><b>{s} {d}<r>", .{pkg.dependency_type, selected_count});
+                        Output.pretty("<r><b>{s} {d}<r>", .{ pkg.dependency_type, selected_count });
                     } else {
                         Output.pretty("<r>{s}<r>", .{pkg.dependency_type});
                     }
-                    
+
                     // Calculate padding to align column headers with values
                     var j: usize = 0;
                     // Calculate actual displayed text length including count if present
@@ -840,7 +790,7 @@ pub const UpdateInteractiveCommand = struct {
                         const count_str = std.fmt.bufPrint(&buf, "{d}", .{selected_count}) catch "0";
                         break :blk pkg.dependency_type.len + 1 + count_str.len; // +1 for space
                     } else pkg.dependency_type.len;
-                    
+
                     // The padding should align with the first character of package names
                     // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
                     // Headers start at: "  " (2 spaces) + dep_type_text
@@ -849,36 +799,36 @@ pub const UpdateInteractiveCommand = struct {
                     while (j < padding_to_current) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    
+
                     // Column headers aligned with their columns
-                    Output.pretty("<r><d>Current<r>", .{});
+                    Output.print("Current", .{});
                     j = 0;
                     while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    Output.pretty("<r><d>Target<r>", .{});
-                    j = 0; 
+                    Output.print("Target", .{});
+                    j = 0;
                     while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    Output.pretty("<r><d>Latest<r>", .{});
+                    Output.print("Latest", .{});
                     Output.print("\x1B[0K\n", .{});
                     displayed_lines += 1;
                     current_dep_type = pkg.dependency_type;
                 }
                 const is_cursor = i == state.cursor;
                 const checkbox = if (selected) "■" else "□";
-                
+
                 // Calculate padding
                 const name_padding = state.max_name_len - pkg.name.len;
-                
+
                 // Determine version change severity for checkbox color
                 const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
-                const update_ver_parsed = if (pkg.use_latest) 
+                const update_ver_parsed = if (pkg.use_latest)
                     Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version))
-                else 
+                else
                     Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
-                
+
                 var checkbox_color: []const u8 = "green"; // default
                 if (current_ver_parsed.valid and update_ver_parsed.valid) {
                     const current_full = Semver.Version{
@@ -893,7 +843,7 @@ pub const UpdateInteractiveCommand = struct {
                         .patch = update_ver_parsed.version.patch orelse 0,
                         .tag = update_ver_parsed.version.tag,
                     };
-                    
+
                     const target_ver_str = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
                     const diff = update_full.whichVersionIsDifferent(current_full, target_ver_str, pkg.current_version);
                     if (diff) |d| {
@@ -917,14 +867,14 @@ pub const UpdateInteractiveCommand = struct {
                         }
                     }
                 }
-                
+
                 // Cursor and checkbox
                 if (is_cursor) {
                     Output.pretty("  <r><cyan>❯<r> ", .{});
                 } else {
                     Output.print("    ", .{});
                 }
-                
+
                 // Checkbox with appropriate color
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -937,17 +887,17 @@ pub const UpdateInteractiveCommand = struct {
                 } else {
                     Output.print("{s} ", .{checkbox});
                 }
-                
+
                 // Package name - make it a hyperlink if colors are enabled and using default registry
-                const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash;
+                const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
                 const package_url = if (Output.enable_ansi_colors and uses_default_registry)
-                    try std.fmt.allocPrint(bun.default_allocator, "https://registry.npmjs.org/{s}", .{pkg.name})
+                    try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/{s}", .{pkg.name})
                 else
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
-                
+
                 const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
-                
+
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
                         Output.pretty("<r><red>{}<r>", .{hyperlink});
@@ -959,28 +909,30 @@ pub const UpdateInteractiveCommand = struct {
                 } else {
                     Output.pretty("<r>{}<r>", .{hyperlink});
                 }
-                
+
                 // Print padding after name
                 var j: usize = 0;
                 while (j < name_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
-                
+
                 // Current version
                 Output.pretty("<r>{s}<r>", .{pkg.current_version});
-                
+
                 // Print padding after current version
                 const current_padding = state.max_current_len - pkg.current_version.len;
                 j = 0;
                 while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
-                
+
                 // Target version with diffFmt coloring - bold if not using latest
                 const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
-                
-                // Calculate the width first, then print
-                var target_width: usize = pkg.update_version.len;
+
+                // For width calculation, use the plain version string length
+                // since diffFmt only adds colors, not visible characters
+                const target_width: usize = pkg.update_version.len;
+
                 if (current_ver_parsed.valid and target_ver_parsed.valid) {
                     const current_full = Semver.Version{
                         .major = current_ver_parsed.version.major orelse 0,
@@ -994,12 +946,7 @@ pub const UpdateInteractiveCommand = struct {
                         .patch = target_ver_parsed.version.patch orelse 0,
                         .tag = target_ver_parsed.version.tag,
                     };
-                    
-                    // Format once to get the width
-                    var temp_buf: [256]u8 = undefined;
-                    const formatted = try std.fmt.bufPrint(&temp_buf, "{}", .{target_full.diffFmt(current_full, pkg.update_version, pkg.current_version)});
-                    target_width = bun.strings.visible.width.utf8(formatted);
-                    
+
                     // Print target version
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
@@ -1022,13 +969,13 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
                 }
-                
+
                 const target_padding = state.max_update_len - target_width;
                 j = 0;
                 while (j < target_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
                 }
-                
+
                 // Latest version with diffFmt coloring - bold if using latest
                 const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
                 if (current_ver_parsed.valid and latest_ver_parsed.valid) {
@@ -1044,7 +991,7 @@ pub const UpdateInteractiveCommand = struct {
                         .patch = latest_ver_parsed.version.patch orelse 0,
                         .tag = latest_ver_parsed.version.tag,
                     };
-                    
+
                     // Dim if latest matches target version
                     const is_same_as_target = strings.eql(pkg.latest_version, pkg.update_version);
                     if (is_same_as_target) {
@@ -1082,12 +1029,11 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print("\x1B[22m", .{}); // Reset dim
                     }
                 }
-                
-                
+
                 Output.print("\x1B[0K\n", .{});
                 displayed_lines += 1;
             }
-            
+
             total_lines = displayed_lines;
             Output.clearToEnd();
             Output.flush();

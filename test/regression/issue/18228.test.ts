@@ -49,7 +49,7 @@ process.send({ url: server.url.href });
 
   // Wait for server URL via IPC
   const { promise, resolve } = Promise.withResolvers<string>();
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", serverCode],
     env: bunEnv,
@@ -60,7 +60,7 @@ process.send({ url: server.url.href });
     },
     stderr: "pipe",
   });
-  
+
   const url = await promise;
 
   // Make multiple requests and abort them immediately

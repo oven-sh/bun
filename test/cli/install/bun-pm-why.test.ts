@@ -153,7 +153,6 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
     expect(install.exitCode).toBe(0);
-    expect(install.stderr.toString()).toContain("");
 
     const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), ...cmd.split(" "), "mime-types"],

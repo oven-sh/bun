@@ -28,6 +28,7 @@ pub const WhyCommand = struct {
         spec: string,
         dep_type: DependencyType,
         pkg_id: PackageID,
+        workspace: bool,
     };
 
     const DependencyType = enum {
@@ -163,10 +164,10 @@ pub const WhyCommand = struct {
             \\Explain why a package is installed
             \\
             \\<b>Arguments:<r>
-            \\  <blue>\<package\><r>  <d>The package name to explain (supports glob patterns like '@org/*')<r>
+            \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
             \\
             \\<b>Options:<r>
-            \\  <cyan>--top<r>      <d>Show only the top dependency tree instead of nested ones<r>
+            \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
             \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
             \\
             \\<b>Examples:<r>
@@ -284,6 +285,7 @@ pub const WhyCommand = struct {
                     .spec = spec,
                     .dep_type = dep_type,
                     .pkg_id = @as(PackageID, @intCast(pkg_idx)),
+                    .workspace = strings.startsWithComptime(dep_pkg_version, "workspace:") or dep_pkg_version.len == 0,
                 });
             }
 
@@ -323,13 +325,12 @@ pub const WhyCommand = struct {
                 defer ctx_data.clearPathTracker();
 
                 for (dependents.items, 0..) |dep, dep_idx| {
-                    const is_workspace = std.mem.startsWith(u8, dep.version, "workspace:");
                     const is_last = dep_idx == dependents.items.len - 1;
                     const prefix = if (is_last) PREFIX_LAST else PREFIX_MIDDLE;
 
-                    printPackageWithType(dep.name, dep.version, dep.spec, dep.dep_type, prefix);
+                    printPackageWithType(prefix, &dep);
                     if (!top_only) {
-                        try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, is_workspace);
+                        try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, dep.workspace);
                     }
                 }
             }
@@ -339,12 +340,10 @@ pub const WhyCommand = struct {
         }
     }
 
-    fn printPackageWithType(name: string, version: string, spec: string, dep_type: DependencyType, prefix: string) void {
-        const is_workspace = std.mem.startsWith(u8, version, "workspace:") or version.len == 0;
-
+    fn printPackageWithType(prefix: string, package: *const DependentInfo) void {
         Output.pretty("<d>{s}<r>", .{prefix});
 
-        switch (dep_type) {
+        switch (package.dep_type) {
             .dev => Output.pretty("<magenta>dev<r> ", .{}),
             .peer => Output.pretty("<yellow>peer<r> ", .{}),
             .optional => Output.pretty("<cyan>optional<r> ", .{}),
@@ -352,20 +351,20 @@ pub const WhyCommand = struct {
             else => {},
         }
 
-        if (is_workspace) {
-            Output.pretty("<blue>{s}<r>", .{name});
-            if (version.len > 0) {
+        if (package.workspace) {
+            Output.pretty("<blue>{s}<r>", .{package.name});
+            if (package.version.len > 0) {
                 Output.pretty("<d><blue>@workspace<r>", .{});
             }
         } else {
-            Output.pretty("{s}", .{name});
-            if (version.len > 0) {
-                Output.pretty("<d>@{s}<r>", .{version});
+            Output.pretty("{s}", .{package.name});
+            if (package.version.len > 0) {
+                Output.pretty("<d>@{s}<r>", .{package.version});
             }
         }
 
-        if (spec.len > 0) {
-            Output.prettyln(" <d>(requires {s})<r>", .{spec});
+        if (package.spec.len > 0) {
+            Output.prettyln(" <d>(requires {s})<r>", .{package.spec});
         } else {
             Output.prettyln("", .{});
         }
@@ -409,33 +408,31 @@ pub const WhyCommand = struct {
         try ctx.path_tracker.put(current_pkg_id, depth);
         defer _ = ctx.path_tracker.remove(current_pkg_id);
 
-        const dependents = if (ctx.all_dependents.get(current_pkg_id)) |deps| deps else std.ArrayList(DependentInfo).init(ctx.allocator);
+        if (ctx.all_dependents.get(current_pkg_id)) |dependents| {
+            for (dependents.items, 0..) |dep, dep_idx| {
+                if (parent_is_workspace and dep.version.len == 0) {
+                    continue;
+                }
 
-        if (depth >= max_depth) {
-            if (dependents.items.len > 0) {
-                Output.prettyln("<d>{s}└─ (deeper dependencies hidden)<r>", .{prefix});
-            }
-            return;
-        }
-        for (dependents.items, 0..) |dep, dep_idx| {
-            const is_workspace = std.mem.startsWith(u8, dep.version, "workspace:");
-            if (parent_is_workspace and dep.version.len == 0) {
-                continue;
-            }
+                if (depth >= max_depth) {
+                    Output.prettyln("<d>{s}└─ (deeper dependencies hidden)<r>", .{prefix});
+                    return;
+                }
 
-            const is_dep_last = dep_idx == dependents.items.len - 1;
-            const prefix_char = if (is_dep_last) "└─ " else "├─ ";
+                const is_dep_last = dep_idx == dependents.items.len - 1;
+                const prefix_char = if (is_dep_last) "└─ " else "├─ ";
 
-            const full_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, prefix_char });
-            printPackageWithType(dep.name, dep.version, dep.spec, dep.dep_type, full_prefix);
+                const full_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, prefix_char });
+                printPackageWithType(full_prefix, &dep);
 
-            const next_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, if (is_dep_last) "   " else "│  " });
+                const next_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, if (is_dep_last) "   " else "│  " });
 
-            const print_break_line = is_dep_last and dependents.items.len > 1 and !printed_break_line;
-            try printDependencyTree(ctx, dep.pkg_id, next_prefix, depth + 1, printed_break_line or print_break_line, is_workspace);
+                const print_break_line = is_dep_last and dependents.items.len > 1 and !printed_break_line;
+                try printDependencyTree(ctx, dep.pkg_id, next_prefix, depth + 1, printed_break_line or print_break_line, dep.workspace);
 
-            if (print_break_line) {
-                Output.prettyln("<d>{s}<r>", .{prefix});
+                if (print_break_line) {
+                    Output.prettyln("<d>{s}<r>", .{prefix});
+                }
             }
         }
     }

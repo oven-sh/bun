@@ -49,10 +49,10 @@ Limit the dependency tree depth:
 ```bash
 $ bun why express --depth 2
 express@4.18.2
-  └─ my-package@workspace (requires ^4.18.2)
+  └─ express-pollyfill@1.20.1 (requires ^4.18.2)
      └─ body-parser@1.20.1 (requires ^1.20.1)
      └─ accepts@1.3.8 (requires ^1.3.8)
-     └─ (deeper dependencies hidden)
+        └─ (deeper dependencies hidden)
 ```
 
 ## Understanding the Output
@@ -65,11 +65,3 @@ The output shows:
 - The version requirement specified in each package's dependencies
 
 For nested dependencies, the command shows the complete dependency tree by default, with indentation indicating the relationship hierarchy.
-
-Different dependency types are color-coded:
-
-- Development dependencies are shown in magenta as `dev`
-- Peer dependencies are shown in yellow as `peer`
-- Optional dependencies are shown in cyan as `optional`
-- Optional Peer dependencies are shown in cyan as `optional peer`
-- Production dependencies have no special indicator

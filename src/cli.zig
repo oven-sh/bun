@@ -1557,10 +1557,10 @@ pub const Command = struct {
                         \\Explain why a package is installed
                         \\
                         \\<b>Arguments:<r>
-                        \\  <blue>\<package\><r>  <d>The package name to explain (supports glob patterns like '@org/*')<r>
+                        \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
                         \\
                         \\<b>Options:<r>
-                        \\  <cyan>--top<r>      <d>Show only the top dependency tree instead of nested ones<r>
+                        \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
                         \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
                         \\
                         \\<b>Examples:<r>
